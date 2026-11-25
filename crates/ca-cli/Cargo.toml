@@ -4,6 +4,7 @@ description = "Code Arena: the code-arena program"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [[bin]]
@@ -11,12 +12,25 @@ name = "code-arena"
 path = "src/main.rs"
 
 [dependencies]
+ca-agent.workspace = true
+ca-arena.workspace = true
 ca-core.workspace = true
+ca-llm.workspace = true
+ca-mcp.workspace = true
 ca-settings.workspace = true
+ca-tools.workspace = true
+ca-workspace.workspace = true
 anyhow.workspace = true
+chrono.workspace = true
 clap.workspace = true
+dirs.workspace = true
+rpassword.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true

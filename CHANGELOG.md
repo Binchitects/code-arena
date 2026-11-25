@@ -6,6 +6,16 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 ## Unreleased (0.1.0)
 
 ### Added
+- `code-arena login` (an API key typed without echo, or a user name, password and second
+  factor), `logout`, `models` (each with its window and longest answer), `doctor` (the folders,
+  the Arena, the account, the models, Arena's tools, and what this Arena has, feature by
+  feature, kept for the next start) and `version`.
+- `code-arena -p PROMPT` (or `-p -` from stdin): one answer on stdout, the progress on stderr,
+  `--output json` with the result, the model and the tokens; `--mode`, `--model`, `--thinking`,
+  `-C FOLDER`, `--add-dir`.
+- A minimal MCP client over streamable HTTP (initialize, tools page by page, JSON or an event
+  stream), for counting Arena's tools.
+- A test that fails when code reads an environment variable anywhere but the settings.
 - The Rust workspace: `ca-core`, `ca-settings`, `ca-net`, `ca-arena`, `ca-llm`, `ca-tools`,
   `ca-workspace` and the `code-arena` program.
 - One settings schema (`ca-settings`), with the person's and the project's `settings.json`

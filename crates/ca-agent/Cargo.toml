@@ -4,6 +4,7 @@ description = "Code Arena: the agent's turn, its modes, kept rules and approvals
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]

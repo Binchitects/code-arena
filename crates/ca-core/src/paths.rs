@@ -10,19 +10,15 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// From the environment: `CODE_ARENA_HOME` puts both under one folder (`config/`, `data/`), for a portable copy;
-    /// else the system's own places (`~/.config/code-arena`, `~/.local/share/code-arena` or `$XDG_*`; on Windows
-    /// `%APPDATA%\code-arena` and `%LOCALAPPDATA%\code-arena`; on macOS `~/Library/Application Support/code-arena`).
-    pub fn from_env() -> Self {
-        Self::resolve(std::env::var_os("CODE_ARENA_HOME").map(PathBuf::from))
-    }
-
-    pub fn resolve(home: Option<PathBuf>) -> Self {
+    /// `home` (`CODE_ARENA_HOME`) puts both under one folder (`config/`, `data/`), for a portable copy; else the
+    /// system's own places (`~/.config/code-arena` and `~/.local/share/code-arena`, or `$XDG_*`; on Windows
+    /// `%APPDATA%\code-arena` and `%LOCALAPPDATA%\code-arena`).
+    pub fn resolve(home: Option<PathBuf>, xdg_config: Option<PathBuf>, xdg_data: Option<PathBuf>) -> Self {
         if let Some(home) = home.filter(|h| !h.as_os_str().is_empty()) {
             return Self::under(&home);
         }
-        let config = config_base().join("code-arena");
-        let data = data_base().join("code-arena");
+        let config = xdg_config.unwrap_or_else(config_base).join("code-arena");
+        let data = xdg_data.unwrap_or_else(data_base).join("code-arena");
         Self { config, data }
     }
 
@@ -55,31 +51,20 @@ impl Paths {
 }
 
 fn config_base() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        // As the C# Code Arena and most CLI tools on macOS do: XDG's place when set, else ~/.config.
-        if let Some(x) = std::env::var_os("XDG_CONFIG_HOME") {
-            return PathBuf::from(x);
-        }
+    if cfg!(target_os = "macos") {
+        // As on Linux: ~/.config, as the C# Code Arena and most command-line tools on macOS have it.
         return dirs::home_dir().unwrap_or_default().join(".config");
     }
-    #[allow(unreachable_code)]
     dirs::config_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn data_base() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
-            return PathBuf::from(x);
-        }
+    if cfg!(target_os = "macos") {
         return dirs::home_dir().unwrap_or_default().join(".local").join("share");
     }
-    #[cfg(windows)]
-    {
+    if cfg!(windows) {
         return dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
     }
-    #[allow(unreachable_code)]
     dirs::data_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
@@ -89,7 +74,7 @@ mod tests {
 
     #[test]
     fn one_home_holds_both() {
-        let p = Paths::resolve(Some(PathBuf::from("/media/usb/ca")));
+        let p = Paths::resolve(Some(PathBuf::from("/media/usb/ca")), None, None);
         assert_eq!(p.config, PathBuf::from("/media/usb/ca/config"));
         assert_eq!(p.data, PathBuf::from("/media/usb/ca/data"));
         assert_eq!(p.credentials_file(), PathBuf::from("/media/usb/ca/config/credentials.json"));
@@ -97,8 +82,8 @@ mod tests {
 
     #[test]
     fn an_empty_home_is_none() {
-        let p = Paths::resolve(Some(PathBuf::new()));
-        assert!(p.config.ends_with("code-arena"));
+        let p = Paths::resolve(Some(PathBuf::new()), Some(PathBuf::from("/x/cfg")), None);
+        assert_eq!(p.config, PathBuf::from("/x/cfg/code-arena"));
         assert!(p.data.ends_with("code-arena"));
     }
 }

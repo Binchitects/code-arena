@@ -17,7 +17,7 @@ use serde_json::Value;
 pub use files::{EditFile, ListDir, ReadFile, WriteFile};
 pub use git::Git;
 pub use search::{Glob, Grep};
-pub use shell::RunShell;
+pub use shell::{RunShell, shell_for};
 
 /// How a tool's calls ask the person, as the mode says for its kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

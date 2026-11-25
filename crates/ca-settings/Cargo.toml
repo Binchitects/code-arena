@@ -4,6 +4,7 @@ description = "Code Arena: the settings schema, its layers and the Arena connect
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]

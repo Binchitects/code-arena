@@ -18,6 +18,8 @@ pub const CONNECTION_VARS: &[(&str, &str)] = &[
     ("ARENA_CA_CERT", "a CA file to trust besides the system's, for this run"),
     ("SSL_CERT_FILE", "a CA file to trust, read last"),
     ("CODE_ARENA_HOME", "one folder for settings and data (config/ and data/), for a portable copy"),
+    ("XDG_CONFIG_HOME", "where settings go on Linux, as the system says"),
+    ("XDG_DATA_HOME", "where data goes on Linux, as the system says"),
     ("NO_COLOR", "no colours in the terminal"),
 ];
 
