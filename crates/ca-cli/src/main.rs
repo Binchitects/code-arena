@@ -27,26 +27,26 @@ struct Cli {
     /// A message to start the conversation in this terminal with.
     prompt: Option<String>,
     /// Carry on with this folder's last session.
-    #[arg(short = 'c', long = "continue")]
+    #[arg(short = 'c', long = "continue", global = true)]
     continue_last: bool,
     /// Take up a saved session: its id, or none to choose from a list.
-    #[arg(long, num_args = 0..=1, default_missing_value = "")]
+    #[arg(long, num_args = 0..=1, default_missing_value = "", global = true)]
     resume: Option<String>,
     /// ask, auto-edit, plan or yolo.
-    #[arg(long)]
+    #[arg(long, global = true)]
     mode: Option<String>,
-    #[arg(short = 'm', long)]
+    #[arg(short = 'm', long, global = true)]
     model: Option<String>,
     /// default, off, low, medium, high or xhigh.
-    #[arg(long)]
+    #[arg(long, global = true)]
     thinking: Option<String>,
     #[arg(long, value_enum, default_value_t = Output::Text)]
     output: Output,
     /// Work in this folder.
-    #[arg(short = 'C', long = "cd", value_name = "FOLDER")]
+    #[arg(short = 'C', long = "cd", value_name = "FOLDER", global = true)]
     cwd: Option<PathBuf>,
     /// A folder the tools may use besides the working directory (again for more).
-    #[arg(long = "add-dir", value_name = "FOLDER")]
+    #[arg(long = "add-dir", value_name = "FOLDER", global = true)]
     add_dir: Vec<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,

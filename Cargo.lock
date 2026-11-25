@@ -295,6 +295,7 @@ dependencies = [
  "async-trait",
  "ca-llm",
  "ca-workspace",
+ "futures-util",
  "globset",
  "grep-regex",
  "grep-searcher",

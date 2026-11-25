@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 
 use crate::text::cut_middle;
-use crate::{Context, Kind, Output, Tool, arg_str, arg_u64};
+use crate::{Context, Kind, Output, Tool, arg_bool, arg_str, arg_u64};
 
 /// What the model reads of an output; the middle of a longer one is cut.
 const SHOWN: usize = 30_000;
@@ -81,7 +81,9 @@ impl Tool for RunShell {
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "The command line."},
-                    "timeout": {"type": "integer", "description": "Seconds before it is stopped (1 to 600)."}
+                    "timeout": {"type": "integer", "description": "Seconds before it is stopped (1 to 600)."},
+                    "no_time_limit": {"type": "boolean", "description": "For what takes longer than 600 s (a full build, a long test suite): it runs as a job of its own, and you are told when it ends, to carry on then. The turn does not wait for it."},
+                    "background": {"type": "boolean", "description": "For what never ends by itself (a dev server, a watcher): it runs until stopped; you get its first output after a few seconds."}
                 },
                 "required": ["command"]
             }),
@@ -91,13 +93,25 @@ impl Tool for RunShell {
         Kind::Shell
     }
     fn subject(&self, args: &Value) -> String {
-        args.get("command").and_then(Value::as_str).unwrap_or_default().to_string()
+        let c = args.get("command").and_then(Value::as_str).unwrap_or_default();
+        // The question says how it waits, and "always" for one kind does not cover another.
+        if arg_bool(args, "background") {
+            format!("[in the background] {c}")
+        } else if arg_bool(args, "no_time_limit") {
+            format!("[no time limit] {c}")
+        } else {
+            c.to_string()
+        }
     }
     async fn run(&self, args: Value, ctx: &Context) -> Output {
         let command = match arg_str(&args, "command") {
             Ok(c) => c.to_string(),
             Err(o) => return o,
         };
+        let background = arg_bool(&args, "background");
+        if background || arg_bool(&args, "no_time_limit") {
+            return start_job(&command, background, ctx).await;
+        }
         let limit = arg_u64(&args, "timeout")
             .map(|s| Duration::from_secs(s.clamp(1, MOST_SECONDS)))
             .unwrap_or(ctx.shell_timeout);
@@ -172,6 +186,105 @@ impl Tool for RunShell {
         let body = if shown.is_empty() { "(no output)".to_string() } else { shown };
         let o = format!("{head}\n{body}");
         if code == Some(0) { Output::ok(o) } else { Output::error(o) }
+    }
+}
+
+/// A command as a job of its own.
+async fn start_job(command: &str, background: bool, ctx: &Context) -> Output {
+    let Some(jobs) = &ctx.jobs else {
+        return Output::error(
+            "This run ends with its answer, so it cannot keep a command running: run it with a time limit (timeout, at most 600 s), or in parts.",
+        );
+    };
+    let (shell, mut flags) = shell_for(ctx.shell.as_deref());
+    flags.push(command.to_string());
+    let id = match jobs.start(command, &shell, &flags, ctx.workspace.cwd(), HIDDEN_VARS, background) {
+        Ok(id) => id,
+        Err(e) => return Output::error(format!("{shell} could not start: {e}")),
+    };
+    if background {
+        // Its first output: where it listens, or why it failed.
+        let ended = jobs.wait(id, Duration::from_secs(3)).await;
+        let out = jobs.output(id, 4_000).unwrap_or_default();
+        let state = match jobs.info(id) {
+            Some(i) if ended => format!(
+                "Job {id} ended already, with exit code {}.",
+                i.exit.map(|c| c.to_string()).unwrap_or_else(|| "none".into())
+            ),
+            _ => format!("Job {id} runs in the background until stopped (stop_command with job {id})."),
+        };
+        return Output::ok(format!(
+            "{state} Its first output:\n{}",
+            if out.trim().is_empty() { "(none yet)" } else { out.trim_end() }
+        ));
+    }
+    Output::ok(format!(
+        "Job {id} runs with no time limit. You are told when it ends, with its exit code and the end of its output, and carry on then; meanwhile go on with other work, or end your answer. command_output with job {id} reads its latest output."
+    ))
+}
+
+pub struct CommandOutput;
+
+#[async_trait::async_trait]
+impl Tool for CommandOutput {
+    fn def(&self) -> ToolDef {
+        ToolDef {
+            name: "command_output".into(),
+            description: "The state and the latest output of a command run with no time limit or in the background; with wait, waits for it to end (10 minutes at most).".into(),
+            parameters: json!({"type": "object", "properties": {"job": {"type": "integer"}, "wait": {"type": "boolean"}}, "required": ["job"]}),
+        }
+    }
+    fn kind(&self) -> Kind {
+        Kind::Read
+    }
+    fn subject(&self, args: &Value) -> String {
+        format!("job {}", arg_u64(args, "job").unwrap_or(0))
+    }
+    async fn run(&self, args: Value, ctx: &Context) -> Output {
+        let Some(jobs) = &ctx.jobs else { return Output::error("No command runs with no time limit in this run.") };
+        let id = arg_u64(&args, "job").unwrap_or(0) as u32;
+        if crate::arg_bool(&args, "wait") {
+            jobs.wait(id, Duration::from_secs(600)).await;
+        }
+        let Some(i) = jobs.info(id) else { return Output::error(format!("There is no job {id}.")) };
+        let state = if i.running {
+            "running".to_string()
+        } else {
+            format!("ended, exit code {}", i.exit.map(|c| c.to_string()).unwrap_or_else(|| "none (stopped)".into()))
+        };
+        Output::ok(format!(
+            "Job {id} ({}): {state}.\n{}",
+            i.command,
+            cut_middle(jobs.output(id, 30_000).unwrap_or_default().trim_end(), SHOWN)
+        ))
+    }
+}
+
+pub struct StopCommand;
+
+#[async_trait::async_trait]
+impl Tool for StopCommand {
+    fn def(&self) -> ToolDef {
+        ToolDef {
+            name: "stop_command".into(),
+            description: "Stops a command run with no time limit or in the background, with what it started. It always asks the person first.".into(),
+            parameters: json!({"type": "object", "properties": {"job": {"type": "integer"}}, "required": ["job"]}),
+        }
+    }
+    fn kind(&self) -> Kind {
+        Kind::Shell
+    }
+    fn subject(&self, args: &Value) -> String {
+        format!("job {}", arg_u64(args, "job").unwrap_or(0))
+    }
+    async fn run(&self, args: Value, ctx: &Context) -> Output {
+        let Some(jobs) = &ctx.jobs else { return Output::error("No command runs with no time limit in this run.") };
+        let id = arg_u64(&args, "job").unwrap_or(0) as u32;
+        if jobs.stop(id) {
+            Output::ok(format!("Job {id} was stopped."))
+        } else {
+            Output::error(format!("Job {id} is not running."))
+        }
     }
 }
 

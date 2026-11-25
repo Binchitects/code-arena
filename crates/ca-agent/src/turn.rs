@@ -198,6 +198,9 @@ impl Agent {
         let seq = self.add(Message::user(text), true).unwrap_or(self.history.len() as i64);
         // The turn's checkpoint: what each file holds before the turn first writes it.
         self.ctx.checkpoints.begin(seq);
+        if let Some(j) = &self.ctx.jobs {
+            j.begin_turn(seq);
+        }
         let mut out = TurnOutcome::default();
         let mut carried = 0;
         let mut overflowed = false;

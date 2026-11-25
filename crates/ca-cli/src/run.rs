@@ -165,5 +165,6 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
 pub fn usage_line(out: &ca_agent::TurnOutcome) -> String {
     let u = out.usage;
     let cached = (u.cached * 100).checked_div(u.prompt).map(|p| format!(" ({p}% cached)")).unwrap_or_default();
-    format!("{} in{cached} · {} out · {} requests", ui::short(u.prompt), ui::short(u.completion), out.steps)
+    let requests = if out.steps == 1 { "request" } else { "requests" };
+    format!("{} in{cached} · {} out · {} {requests}", ui::short(u.prompt), ui::short(u.completion), out.steps)
 }

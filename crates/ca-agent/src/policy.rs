@@ -68,6 +68,11 @@ impl Rule {
         }
         let Some(p) = &self.pattern else { return true };
         if tool == "run_shell" {
+            // How it waits (`[no time limit] `, `[in the background] `) is no part of the command a rule names.
+            let subject = match subject.strip_prefix('[').and_then(|r| r.split_once("] ")) {
+                Some((_, rest)) => rest,
+                None => subject,
+            };
             // A command is matched whole and part by part: `run_shell(rm *)` refuses `make && rm -rf build` too.
             wildcard(p, subject.trim()) || command_parts(subject).iter().any(|part| wildcard(p, part))
         } else {
@@ -224,6 +229,10 @@ impl Policy {
                 "plan mode: nothing is changed until the plan is approved. Investigate, then propose the plan".into(),
             );
         }
+        // Stopping a command the person may be relying on asks every time, in every mode.
+        if tool == "stop_command" {
+            return Decision::Ask;
+        }
         if kind == Kind::Read || self.mode == Mode::Yolo {
             return Decision::Run;
         }
@@ -240,6 +249,9 @@ impl Policy {
 
     /// "Always", for this session: every file edit; a command by its first two words (`npm test …`).
     pub fn remember(&mut self, tool: &str, kind: Kind, subject: &str) {
+        if tool == "stop_command" {
+            return;
+        }
         self.always.insert(always_key(tool, kind, subject));
     }
 }
@@ -282,6 +294,18 @@ mod tests {
         let p = Policy::new(Mode::Ask, rules);
         assert_eq!(p.decide("run_shell", Kind::Shell, "npm test -- --watch=false"), Decision::Run);
         assert_eq!(p.decide("run_shell", Kind::Shell, "npm install"), Decision::Ask);
+    }
+
+    #[test]
+    fn a_deny_rule_holds_for_commands_with_no_time_limit_too() {
+        let rules = Rules::from_setting(&json!({"deny": ["run_shell(rm *)"]}));
+        let p = Policy::new(Mode::Yolo, rules);
+        assert!(matches!(
+            p.decide("run_shell", Kind::Shell, "[no time limit] make && rm -rf build"),
+            Decision::Refuse(_)
+        ));
+        assert!(matches!(p.decide("run_shell", Kind::Shell, "[in the background] rm -rf /tmp/x"), Decision::Refuse(_)));
+        assert_eq!(p.decide("stop_command", Kind::Shell, "job 1"), Decision::Ask, "stopping asks even in yolo");
     }
 
     #[test]

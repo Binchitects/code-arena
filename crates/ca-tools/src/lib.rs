@@ -3,6 +3,7 @@
 pub mod checkpoints;
 mod files;
 mod git;
+pub mod jobs;
 mod search;
 mod shell;
 pub mod text;
@@ -18,7 +19,7 @@ use serde_json::Value;
 pub use files::{EditFile, ListDir, ReadFile, WriteFile};
 pub use git::Git;
 pub use search::{Glob, Grep};
-pub use shell::{RunShell, shell_for};
+pub use shell::{CommandOutput, RunShell, StopCommand, shell_for};
 
 /// How a tool's calls ask the person, as the mode says for its kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,11 +59,19 @@ pub struct Context {
     pub shell_timeout: Duration,
     /// What each file held before the turn first wrote it, for `/rewind`.
     pub checkpoints: Arc<checkpoints::Checkpoints>,
+    /// Commands with no time limit and in the background; `None` where a run cannot keep them (`-p`).
+    pub jobs: Option<Arc<jobs::Jobs>>,
 }
 
 impl Context {
     pub fn new(workspace: Arc<Workspace>, shell: Option<String>, shell_timeout: Duration) -> Self {
-        Context { workspace, shell, shell_timeout, checkpoints: Arc::new(checkpoints::Checkpoints::default()) }
+        Context {
+            workspace,
+            shell,
+            shell_timeout,
+            checkpoints: Arc::new(checkpoints::Checkpoints::default()),
+            jobs: None,
+        }
     }
 }
 
@@ -85,6 +94,8 @@ pub fn builtin() -> Vec<Arc<dyn Tool>> {
         Arc::new(Glob),
         Arc::new(Grep),
         Arc::new(RunShell),
+        Arc::new(CommandOutput),
+        Arc::new(StopCommand),
         Arc::new(Git),
     ]
 }

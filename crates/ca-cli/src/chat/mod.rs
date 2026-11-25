@@ -155,6 +155,7 @@ fn help() -> &'static str {
 /compact              summarize the older part of the conversation now\n\
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
+/jobs [stop N]        commands run with no time limit or in the background; stop N stops one\n\
 /rewind [N] [code|chat]  your questions; /rewind N goes back to before question N\n\
 /search WORDS         earlier sessions in this folder that said these words\n\
 /commands             your own and the project's commands, sub-agents and skills\n\
@@ -204,6 +205,10 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     }
     ui.say(&ui.dim("/help for the commands. Ctrl+C stops a turn; Ctrl+D leaves."));
 
+    let mut ended = match &p.agent.ctx.jobs {
+        Some(j) => j.listen(),
+        None => mpsc::unbounded_channel().1,
+    };
     let _raw = RawMode::on()?;
     let mut keys = spawn_input();
     let mut drawn = Drawn::default();
@@ -213,16 +218,28 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     let mut first = args.first.clone();
 
     loop {
+        let mut carry_on = false;
         let line = if let Some(f) = first.take() {
             ui.say(&format!("{PROMPT}{f}"));
             f
+        } else if let Ok(j) = ended.try_recv() {
+            carry_on = true;
+            job_note(&j, ui)
         } else {
             draw(&ed, &mut drawn);
-            let Some(line) = read_line(&mut ed, &mut keys, &mut drawn, &mut interrupted_once, ui) else { break };
-            line
+            match read_line(&mut ed, &mut keys, &mut ended, &mut drawn, &mut interrupted_once, ui).await {
+                Input::Line(l) => l,
+                Input::JobEnded(j) => {
+                    carry_on = true;
+                    job_note(&j, ui)
+                }
+                Input::Leave => break,
+            }
         };
-        hist.add(&line);
-        ed.remember(&line);
+        if !carry_on {
+            hist.add(&line);
+            ed.remember(&line);
+        }
         let trimmed = line.trim();
         if trimmed == "/exit" || trimmed == "/quit" {
             break;
@@ -233,12 +250,12 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             shell_output = Some(format!("I ran `{cmd}` myself:\n{}", o.text));
             continue;
         }
-        if trimmed.starts_with('/') && command(trimmed, &mut p, app, ui, &mut session_usage).await? {
+        if !carry_on && trimmed.starts_with('/') && command(trimmed, &mut p, app, ui, &mut session_usage).await? {
             continue;
         }
         // Read again at each message: a command or skill added or changed works now.
         let library = ca_agent::library::load(&p.sources);
-        let line = if trimmed.starts_with('/') {
+        let line = if !carry_on && trimmed.starts_with('/') {
             match library.slash(trimmed) {
                 Some(expanded) => expanded,
                 None => {
@@ -259,6 +276,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         let started = Instant::now();
         let mut progress = Progress::new(ui, true);
         let mut typed = Editor::default();
+        let jobs = p.agent.ctx.jobs.clone();
         let result = {
             let turn = p.agent.turn(&message, &mut progress);
             tokio::pin!(turn);
@@ -269,6 +287,14 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
                         let Event::Key(k) = ev else { continue };
                         if k.kind != KeyEventKind::Press { continue; }
                         if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) {
+                            // The turn stops, and the commands it started with no time limit; those in the background run on.
+                            if let Some(j) = &jobs
+                                && let Some(t) = j.current_turn()
+                            {
+                                for id in j.stop_turn(t) {
+                                    ui.say(&ui.dim(&format!("Stopped job {id}.")));
+                                }
+                            }
                             break None;
                         }
                         let waiting = pending.lock().ok().and_then(|mut g| g.take());
@@ -317,19 +343,36 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             ed.set(&typed.text());
         }
     }
+    if let Some(j) = &p.agent.ctx.jobs {
+        j.stop_all();
+    }
     Ok(0)
 }
 
 /// Reads keys until a line is sent; `None` to leave.
-fn read_line(
+/// What the prompt gave: a line, a job that ended meanwhile, or the end.
+enum Input {
+    Line(String),
+    JobEnded(ca_tools::jobs::Ended),
+    Leave,
+}
+
+async fn read_line(
     ed: &mut Editor,
     keys: &mut mpsc::UnboundedReceiver<Event>,
+    ended: &mut mpsc::UnboundedReceiver<ca_tools::jobs::Ended>,
     drawn: &mut Drawn,
     once: &mut bool,
     ui: Ui,
-) -> Option<String> {
+) -> Input {
     loop {
-        let ev = keys.blocking_recv_compat()?;
+        let ev = tokio::select! {
+            e = keys.recv() => match e { Some(e) => e, None => return Input::Leave },
+            Some(j) = ended.recv() => {
+                finish_prompt(&ed.text(), drawn);
+                return Input::JobEnded(j);
+            }
+        };
         let action = match ev {
             Event::Paste(s) => {
                 ed.paste(&s);
@@ -345,15 +388,15 @@ fn read_line(
         match action {
             Action::Submit(line) => {
                 finish_prompt(&line, drawn);
-                return Some(line);
+                return Input::Line(line);
             }
             Action::Exit => {
                 finish_prompt("", drawn);
-                return None;
+                return Input::Leave;
             }
             Action::Interrupt if *once => {
                 finish_prompt("", drawn);
-                return None;
+                return Input::Leave;
             }
             Action::Interrupt => {
                 *once = true;
@@ -383,17 +426,6 @@ fn suspend() {
     }
 }
 
-/// A key from the input thread, waiting for it (the prompt has nothing else to do meanwhile).
-trait BlockingRecv {
-    fn blocking_recv_compat(&mut self) -> Option<Event>;
-}
-
-impl BlockingRecv for mpsc::UnboundedReceiver<Event> {
-    fn blocking_recv_compat(&mut self) -> Option<Event> {
-        tokio::task::block_in_place(|| self.blocking_recv())
-    }
-}
-
 /// The person's questions in this session: (number, its place in the session, its first line).
 fn questions(p: &Prepared) -> anyhow::Result<Vec<(usize, i64, String)>> {
     let store = p.store.lock().map_err(|_| anyhow::anyhow!("the session's store"))?;
@@ -404,6 +436,10 @@ fn questions(p: &Prepared) -> anyhow::Result<Vec<(usize, i64, String)>> {
     for m in page.messages {
         if m.turn != last_turn {
             last_turn = m.turn;
+            // A turn a job's end started is no question of the person's.
+            if m.message.content.starts_with("(Code Arena: job ") {
+                continue;
+            }
             out.push((
                 out.len() + 1,
                 m.seq,
@@ -473,6 +509,17 @@ fn context_line(a: &ca_agent::Agent) -> String {
         None => "compacts only when a request would not fit".into(),
     };
     format!("context {} / {} ({}%), {when}", ui::short(used), ui::short(w.size), used * 100 / w.size.max(1))
+}
+
+/// A job with no time limit ended: said here, and the model carries on from it in a turn of its own.
+fn job_note(j: &ca_tools::jobs::Ended, ui: Ui) -> String {
+    let how = match (j.stopped, j.exit) {
+        (true, _) => "was stopped".to_string(),
+        (false, Some(c)) => format!("ended with exit code {c}"),
+        (false, None) => "ended by a signal".to_string(),
+    };
+    ui.say(&ui.dim(&format!("job {} {how}: the model carries on", j.id)));
+    format!("(Code Arena: job {} `{}` {how}. The end of its output:)\n{}", j.id, j.command, j.tail.trim_end())
 }
 
 /// The last two turns of a resumed session, as they were said.
@@ -671,6 +718,33 @@ async fn command(
             }
         }
         "/rewind" => rewind(rest, p, ui)?,
+        "/jobs" => match &p.agent.ctx.jobs {
+            None => ui.say("No jobs in this run."),
+            Some(j) => {
+                if let Some(id) = rest.strip_prefix("stop").map(str::trim).and_then(|n| n.parse::<u32>().ok()) {
+                    ui.say(if j.stop(id) { "Stopped." } else { "That job is not running." });
+                } else {
+                    let list = j.list();
+                    if list.is_empty() {
+                        ui.say("No command runs with no time limit or in the background.");
+                    }
+                    for i in list {
+                        let state = if i.running {
+                            "running".to_string()
+                        } else {
+                            format!("ended ({})", i.exit.map(|c| c.to_string()).unwrap_or_else(|| "stopped".into()))
+                        };
+                        ui.say(&format!(
+                            "{:>3}  {:<12} {}{}",
+                            i.id,
+                            state,
+                            i.command,
+                            if i.background { ui.dim("  (background)") } else { String::new() }
+                        ));
+                    }
+                }
+            }
+        },
         "/search" => {
             let hits = p.store.lock().map_err(|_| anyhow::anyhow!("the store"))?.search(&p.folder, rest, 20)?;
             if hits.is_empty() {

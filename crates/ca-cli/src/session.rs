@@ -247,6 +247,10 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         aside: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone() })),
         notes: vec![],
     };
+    // A conversation keeps commands with no time limit and in the background; -p ends with its answer.
+    if o.interactive {
+        agent.ctx.jobs = Some(Arc::new(ca_tools::jobs::Jobs::default()));
+    }
     // A resumed session's summary is Code Arena's note, not the person's words.
     agent.notes = agent
         .history

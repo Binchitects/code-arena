@@ -59,6 +59,16 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   `description`, `tools`, `model`) are read and listed (the `task` tool that runs them comes in
   0.7). `/NAME` works in `-p` too.
 - `/commands` and `/skills` in the chat.
+- Commands with no time limit (`run_shell` with `no_time_limit`: a full build, a long test suite)
+  run as jobs of their own: the turn does not wait, and when one ends the model is told its exit
+  code and the end of its output and carries on in a turn of its own. Commands in the
+  `background` (a dev server) run until stopped, the model getting their first output after a few
+  seconds. `command_output` reads a job's latest output (or waits for it); `stop_command` stops
+  one and asks every time, in every mode. Ctrl+C stops the turn and the jobs it started with no
+  time limit; those in the background run on. `/jobs [stop N]`. Asking says how a command waits,
+  and "always" for one way does not cover another; kept rules hold for every way. `-p`, which ends
+  with its answer, refuses them with a reason.
+- Options such as `--mode` and `--model` are taken after `chat` too.
 - Checkpoints: each turn keeps what every file its tools wrote held before (the last 50 turns, in
   this run). `/rewind` lists your questions; `/rewind N` goes back to before question N (the files
   put back, a file a turn made removed, and the conversation cut there), `/rewind N code` or
