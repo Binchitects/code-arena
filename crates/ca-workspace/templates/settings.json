@@ -1,0 +1,9 @@
+// The project's Code Arena settings, for everyone who opens it.
+// A project can only make Code Arena more careful: "deny" rules are added to each person's,
+// and anything that would let a tool run unasked is not read from here.
+{
+  "permissions": {
+    // Refused in every mode, for example: "read_file(.env*)", "run_shell(git push --force*)"
+    "deny": []
+  }
+}

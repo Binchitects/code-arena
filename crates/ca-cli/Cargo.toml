@@ -1,0 +1,22 @@
+[package]
+name = "ca-cli"
+description = "Code Arena: the code-arena program"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "code-arena"
+path = "src/main.rs"
+
+[dependencies]
+ca-core.workspace = true
+ca-settings.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

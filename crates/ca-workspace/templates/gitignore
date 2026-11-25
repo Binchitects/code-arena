@@ -1,0 +1,6 @@
+# Each person's own state and the tools' outputs: never committed.
+local/
+media/
+plots/
+vm/
+*.local.json

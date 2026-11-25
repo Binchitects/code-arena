@@ -393,9 +393,9 @@ the same inputs, so each number has a "before".
   schema entry is never read. A few values are not settings: the IDE's run key and the
   mark of a start without a console. They are listed in the test, each with the reason.
 - **One format.** `settings.json` is the person's settings, with comments kept on write.
-  `config.json` is gone: what it held (the key, providers, MCP servers) is in
-  `settings.json` or in the OS keyring. The API key goes in the keyring when there is
-  one, else in a 0600 file. No key is ever written into `settings.json`.
+  `config.json` is gone. The Arena connection (address, API key, gateway, CA) is kept apart in
+  `credentials.json` (0600, in a 0700 folder), so settings can be shown and shared. The OS
+  keyring comes later as an option. No key is ever written into `settings.json`.
 
 ## Build, CI/CD and releases
 
@@ -417,15 +417,14 @@ CHANGELOG.md
 
 `docker/builder/Dockerfile` builds everything for Linux and Windows, from Linux:
 
-- the pinned Rust toolchain, `cargo-zigbuild` (glibc 2.17 for Linux x64 and arm64, so
-  any distribution of the last ten years runs it), and `cargo-xwin` for Windows x64 and
-  arm64;
-- Node and pnpm for the page, and SQLite's sources come with `rusqlite`;
-- `docker run … code-arena-builder make dist` writes `dist/` with every package and
-  `SHA256SUMS`.
+- the pinned Rust toolchain (1.100.0), rustfmt and clippy, and the musl target, so the Linux
+  binary is static and runs on any distribution;
+- Node and pnpm for the page, once there is one (0.4);
+- `scripts/in-builder.sh make dist` writes `dist/` with the package and `SHA256SUMS`.
 
-macOS builds need Apple's SDK, which cannot go in an image. They are built on GitHub's
-macOS runners, and on a Mac by hand.
+Windows and macOS builds come from their own CI runners. Cross-building Windows from Linux
+would need Microsoft's SDK in the image, under Microsoft's licence, which was declined. macOS
+needs Apple's SDK, which cannot go in an image. Linux arm64 is built on GitHub's arm64 runner.
 
 The image is built and pushed to `ghcr.io/binchitects/code-arena-builder` by CI. On this
 host it is built through the proxy that the Docker daemon already uses.

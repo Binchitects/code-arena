@@ -1,0 +1,16 @@
+[package]
+name = "ca-workspace"
+description = "Code Arena: the folder it works in, what its tools may touch, and the project's .code-arena/"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
