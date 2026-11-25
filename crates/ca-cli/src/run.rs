@@ -123,6 +123,12 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
     };
     let mut p = session::prepare(app, &opts, Arc::new(NoAsking), args.resume).await?;
     let model = p.agent.model.clone();
+    // `-p "/NAME words"`: a command or a skill of the project's or yours.
+    let prompt = if prompt.trim_start().starts_with('/') {
+        ca_agent::library::load(&p.sources).slash(prompt.trim()).unwrap_or(prompt)
+    } else {
+        prompt
+    };
     let mut progress = Progress::new(ui, args.output == OutputFormat::Text);
     let result = p.agent.turn(&prompt, &mut progress).await;
     match (args.output, result) {

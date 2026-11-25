@@ -156,6 +156,9 @@ fn help() -> &'static str {
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
 /search WORDS         earlier sessions in this folder that said these words\n\
+/commands             your own and the project's commands, sub-agents and skills\n\
+/skills               the skills\n\
+/NAME [words]         a command or a skill, with your words\n\
 /mcp                  Arena's, Farzan Graph's and your MCP servers: connected or not, and why\n\
 /exit                 leave (also Ctrl+D)\n\
 !command              run a command yourself; its output goes with your next message\n\
@@ -232,6 +235,22 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         if trimmed.starts_with('/') && command(trimmed, &mut p, app, ui, &mut session_usage).await? {
             continue;
         }
+        // Read again at each message: a command or skill added or changed works now.
+        let library = ca_agent::library::load(&p.sources);
+        let line = if trimmed.starts_with('/') {
+            match library.slash(trimmed) {
+                Some(expanded) => expanded,
+                None => {
+                    ui.say(&ui.yellow(&format!(
+                        "No command or skill {}: /help, /commands and /skills list them.",
+                        trimmed.split_whitespace().next().unwrap_or(trimmed)
+                    )));
+                    continue;
+                }
+            }
+        } else {
+            line
+        };
         let message = match shell_output.take() {
             Some(s) => format!("{s}\n\n{line}"),
             None => line.clone(),
@@ -556,6 +575,28 @@ async fn command(
             ui.say(&ui.dim("  the biggest:"));
             for (i, role, chars, start) in b.biggest {
                 ui.say(&ui.dim(&format!("    #{:<4} {role:<12}{:>8}  {start}", i + 1, t(chars))));
+            }
+        }
+        "/commands" | "/skills" => {
+            let lib = ca_agent::library::load(&p.sources);
+            if name == "/commands" {
+                for c in &lib.commands {
+                    ui.say(&format!("/{:<20} {} {}", c.name, c.description, ui.dim(&format!("({})", c.source))));
+                }
+                for a in &lib.agents {
+                    ui.say(&format!(
+                        "{:<21} {} {}",
+                        format!("agent {}", a.name),
+                        a.description,
+                        ui.dim(&format!("({})", a.source))
+                    ));
+                }
+            }
+            for k in &lib.skills {
+                ui.say(&format!("/{:<20} {} {}", k.name, k.description, ui.dim(&format!("(skill, {})", k.source))));
+            }
+            if lib.commands.is_empty() && lib.skills.is_empty() && lib.agents.is_empty() {
+                ui.say("None yet: .code-arena/commands/NAME.md is /NAME, .code-arena/skills/NAME/SKILL.md a skill, .code-arena/agents/NAME.md a sub-agent.");
             }
         }
         "/search" => {

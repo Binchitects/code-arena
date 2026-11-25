@@ -45,6 +45,8 @@ pub struct Prepared {
     /// Said when a session was taken up: how many messages, and how many the model reads as a summary.
     pub resumed: Option<String>,
     pub servers: crate::servers::Servers,
+    /// Where commands, skills and sub-agents are read from (again at each message).
+    pub sources: Vec<ca_agent::library::Source>,
 }
 
 /// Keeps each message in the session's store as it is added.
@@ -193,6 +195,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     let (shell, _) = ca_tools::shell_for(shell_setting.as_deref());
     let person = instructions::person_candidates(&app.paths.config, app.home.as_deref());
     let read = instructions::read_all(&person, ws.root(), ws.cwd());
+    let sources = ca_agent::library::sources(ws.root(), &app.paths.config, app.home.as_deref());
+    let library = ca_agent::library::load(&sources);
     let env = Environment {
         os: std::env::consts::OS.into(),
         shell,
@@ -222,7 +226,14 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         policy: Policy::new(mode, Rules::from_setting(&app.settings.value(&schema::PERMISSIONS))),
         approver,
         max_steps: app.settings.integer(&schema::MAX_STEPS).max(1) as usize,
-        system: instructions::system_prompt(&env, &read),
+        system: {
+            let mut s = instructions::system_prompt(&env, &read);
+            if let Some(n) = library.skills_note() {
+                s.push('\n');
+                s.push_str(&n);
+            }
+            s
+        },
         history,
         recorder: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone() })),
         inbox: None,
@@ -241,6 +252,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         .collect();
     // What the session's store gives the model: results kept aside, and the session's own messages.
     agent.tools.extend(crate::session_tools::tools(store.clone(), session.clone(), folder.clone()));
+    agent.tools.push(ca_agent::library::skill_tool(sources.clone()));
     // The MCP servers: those that answer within a few seconds now, the others when they do.
     let local: Vec<String> = agent.tools.iter().map(|t| t.def().name).collect();
     let (configured, notes) = crate::servers::configured(app, &local);
@@ -268,5 +280,5 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
             ui.say(&ui.dim(&line));
         }
     }
-    Ok(Prepared { agent, store, session, folder, resumed, servers })
+    Ok(Prepared { agent, store, session, folder, resumed, servers, sources })
 }

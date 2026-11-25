@@ -3,6 +3,7 @@
 
 pub mod context;
 pub mod instructions;
+pub mod library;
 pub mod mend;
 pub mod policy;
 mod turn;

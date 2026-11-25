@@ -50,6 +50,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   `search_sessions` (the folder's other sessions).
 - In the chat: `/compact`, `/context` (what fills the window, by kind, and the biggest messages),
   and after each turn how full the window is (`context 18.2k / 131k (14%), compacts at 80%`).
+- Commands, skills and sub-agents as Markdown files, the project's (`.code-arena/`, `.arena/`,
+  Claude Code's `.claude/`, Qwen Code's `.qwen/`) over yours (the config folder, `~/.code-arena`,
+  `~/.claude`), read again at each message: `commands/NAME.md` is `/NAME`
+  (`commands/git/commit.md` is `/git:commit`; `$ARGUMENTS`, `$1`…; front matter `description`
+  and `argument-hint`); `skills/NAME/SKILL.md` is listed for the model, loaded with the `skill`
+  tool (and the files beside it), or used as `/NAME words`; `agents/NAME.md` (`name`,
+  `description`, `tools`, `model`) are read and listed (the `task` tool that runs them comes in
+  0.7). `/NAME` works in `-p` too.
+- `/commands` and `/skills` in the chat.
 - `/mcp` in the chat: each server, connected or not and why.
 - In the chat: `/help`, `/model`, `/mode`, `/thinking`, `/cost`, `/clear`, `/resume`, `/search`,
   `/exit`, and `!command`.

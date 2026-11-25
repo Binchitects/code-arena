@@ -299,3 +299,36 @@ async fn the_persons_own_mcp_server_answers_a_call() {
     );
     assert_eq!(msgs.last().expect("last")["content"], "HELLO from the server");
 }
+
+#[tokio::test]
+async fn a_projects_command_runs_from_print_mode() {
+    let gateway = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(path("/v1/chat/completions")).respond_with(Echo(seen.clone())).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    let repo = tempfile::tempdir().expect("repo");
+    std::fs::create_dir(repo.path().join(".git")).expect("a repository");
+    let out = code_arena(home.path())
+        .args(["-p", "/explain the parser", "-C"])
+        .arg(repo.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let requests = seen.lock().expect("lock");
+    let msgs = requests[0]["messages"].as_array().expect("messages");
+    let asked = msgs.last().expect("last")["content"].as_str().expect("text");
+    // The default .code-arena/commands/explain.md, with the words typed after the name.
+    assert!(asked.starts_with("Explain the parser in this project"), "{asked}");
+    // The default skill is listed for the model.
+    assert!(msgs[0]["content"].as_str().expect("system").contains("- explain-module: Explain how one module"));
+    let tools: Vec<&str> =
+        requests[0]["tools"].as_array().expect("tools").iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+    assert!(
+        tools.contains(&"skill") && tools.contains(&"read_result") && tools.contains(&"session_search"),
+        "{tools:?}"
+    );
+}
