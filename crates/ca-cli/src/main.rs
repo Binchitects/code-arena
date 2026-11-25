@@ -6,6 +6,7 @@ mod chat;
 mod run;
 mod servers;
 mod session;
+mod session_tools;
 mod ui;
 
 use std::path::PathBuf;

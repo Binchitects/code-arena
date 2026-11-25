@@ -60,6 +60,23 @@ impl Recorder for StoreRecorder {
             eprintln!("The session could not be kept: {e}");
         }
     }
+
+    fn compacted(&mut self, summary: &str, kept: usize) {
+        let Ok(s) = self.store.lock() else { return };
+        let total = s.summary(&self.session).map(|x| x.messages).unwrap_or(0);
+        let through = total - kept as i64 - 1;
+        if through >= 0
+            && let Err(e) = s.compact(&self.session, through, summary)
+        {
+            eprintln!("The compaction could not be kept: {e}");
+        }
+    }
+}
+
+impl ca_agent::Aside for StoreRecorder {
+    fn keep(&mut self, text: &str) -> Option<String> {
+        self.store.lock().ok()?.keep_result(&self.session, text).ok()
+    }
 }
 
 pub fn open_store(app: &App) -> anyhow::Result<Store> {
@@ -146,18 +163,26 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     };
 
     let gateway = app.gateway()?;
+    let listed = gateway.models().await.unwrap_or_default();
     let stored_model =
         if session.is_empty() { None } else { store.summary(&session).ok().map(|s| s.model).filter(|m| !m.is_empty()) };
     let model = match o.model.clone().or(stored_model).or_else(|| app.settings.string(&schema::MODEL)) {
         Some(m) => m,
-        None => gateway
-            .models()
-            .await?
-            .into_iter()
-            .next()
-            .map(|m| m.id)
-            .context("the gateway lists no model for your key")?,
+        None => listed.first().map(|m| m.id.clone()).context("the gateway lists no model for your key")?,
     };
+    let info = listed.iter().find(|m| m.id == model);
+    let configured = app.settings.integer(&schema::CONTEXT).max(0) as u64;
+    let size = info.and_then(|m| m.context).or((configured > 0).then_some(configured));
+    let compact_at = match app.settings.integer(&schema::COMPACT_AT) {
+        0 => None,
+        p => Some(p.clamp(20, 95) as u64),
+    };
+    let window = ca_agent::Window::new(
+        size,
+        info.and_then(|m| m.max_output),
+        compact_at,
+        app.settings.integer(&schema::COMPACT_TARGET) as u64,
+    );
     let session = if session.is_empty() { store.create(&folder, &model, mode.name())? } else { session };
     store.set_model(&session, &model, mode.name())?;
     let store = Arc::new(Mutex::new(store));
@@ -203,7 +228,19 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         inbox: None,
         deferred: vec![],
         joins: None,
+        window,
+        aside: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone() })),
+        notes: vec![],
     };
+    // A resumed session's summary is Code Arena's note, not the person's words.
+    agent.notes = agent
+        .history
+        .iter()
+        .enumerate()
+        .map(|(i, m)| i == 0 && m.content.starts_with("(Code Arena: the earlier part"))
+        .collect();
+    // What the session's store gives the model: results kept aside, and the session's own messages.
+    agent.tools.extend(crate::session_tools::tools(store.clone(), session.clone(), folder.clone()));
     // The MCP servers: those that answer within a few seconds now, the others when they do.
     let local: Vec<String> = agent.tools.iter().map(|t| t.def().name).collect();
     let (configured, notes) = crate::servers::configured(app, &local);
@@ -222,7 +259,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         agent.tools.extend(j.tools);
         agent.deferred.extend(j.deferred);
         if let Some(n) = j.note {
-            agent.history.push(Message::user(n));
+            agent.note(n);
         }
     }
     agent.joins = Some(later);

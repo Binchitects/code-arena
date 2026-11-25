@@ -7,6 +7,7 @@ use ca_llm::{Finish, Gateway, LlmError, Message, Request, Sink, Thinking, ToolCa
 use ca_tools::{Context, Kind, Output, Tool};
 use serde_json::Value;
 
+use crate::context::{self, Window};
 use crate::mend::{self, Mended};
 use crate::policy::{Answer, Approver, Decision, Policy};
 
@@ -98,6 +99,17 @@ pub struct Agent {
     pub recorder: Option<Box<dyn Recorder>>,
     /// Messages the person sent while the turn worked: read at its next step, as theirs.
     pub inbox: Option<Arc<std::sync::Mutex<Vec<String>>>>,
+    /// The model's window, and when the session compacts.
+    pub window: Window,
+    /// Where results too big for the window are kept, to be read on with `read_result`.
+    pub aside: Option<Box<dyn Aside>>,
+    /// Which history entries are Code Arena's own notes (read by the model, not kept in the session).
+    pub notes: Vec<bool>,
+}
+
+/// Keeps a result aside and names it (`r1`), for `read_result`.
+pub trait Aside: Send {
+    fn keep(&mut self, text: &str) -> Option<String>;
 }
 
 /// Tools that joined: a server connected.
@@ -122,6 +134,8 @@ fn load_tools_def() -> ToolDef {
 pub trait Recorder: Send {
     /// `begins_turn`: the person's own message, which starts a turn.
     fn record(&mut self, message: &Message, begins_turn: bool);
+    /// A compaction: the model reads `summary` in place of every kept message but the last `kept`.
+    fn compacted(&mut self, _summary: &str, _kept: usize) {}
 }
 
 impl Agent {
@@ -171,7 +185,7 @@ impl Agent {
             self.deferred.extend(j.deferred);
             if let Some(n) = j.note {
                 // A note of Code Arena's: the model reads it; the session does not keep it (it is said again next time).
-                self.history.push(Message::user(n));
+                self.note(n);
             }
         }
     }
@@ -184,9 +198,9 @@ impl Agent {
         self.add(Message::user(text), true);
         let mut out = TurnOutcome::default();
         let mut carried = 0;
+        let mut overflowed = false;
         loop {
             self.take_joins(events);
-            let defs = self.defs();
             if out.steps > 0 {
                 let waiting: Vec<String> = match &self.inbox {
                     Some(i) => i.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default(),
@@ -200,18 +214,22 @@ impl Agent {
             if out.steps >= self.max_steps {
                 return Err(TurnError::Steps(out.steps));
             }
-            let mut messages = Vec::with_capacity(self.history.len() + 1);
-            messages.push(Message::system(self.system.clone()));
-            messages.extend(self.history.iter().cloned());
-            let request = Request {
-                model: self.model.clone(),
-                messages,
-                tools: defs,
-                thinking: self.thinking.clone(),
-                max_tokens: self.max_tokens,
-                tags: vec![],
+            self.condense_used_results();
+            self.make_room(events, false).await;
+            let defs = self.defs();
+            let request = self.request(defs.clone(), None);
+            let chars = context::request_chars(&self.system, &self.history, &defs);
+            let c = match self.gateway.complete(&request, &mut EventSink(events)).await {
+                Err(LlmError::ContextOverflow(why)) if !overflowed => {
+                    // The window refused it: compacted at once and asked again, once.
+                    overflowed = true;
+                    events.notice(&format!("The window refused the request ({why}): compacting, then asking again."));
+                    self.make_room(events, true).await;
+                    continue;
+                }
+                r => r?,
             };
-            let c = self.gateway.complete(&request, &mut EventSink(events)).await?;
+            self.window.learn(chars, c.usage.prompt);
             out.steps += 1;
             out.usage.add(c.usage);
             events.step_end();
@@ -227,13 +245,197 @@ impl Agent {
             if matches!(finish, Finish::Length | Finish::Dropped) && carried < CARRY_ON {
                 carried += 1;
                 // Code Arena's own note: the answer goes on where it stopped, without a word to the person.
-                self.add(Message::user("(Your answer was cut off. Carry on exactly where it stopped, without repeating what you said.)"), false);
+                self.note(
+                    "(Your answer was cut off. Carry on exactly where it stopped, without repeating what you said.)"
+                        .into(),
+                );
                 out.answer.push_str(&words);
                 continue;
             }
             out.answer.push_str(&words);
             return Ok(out);
         }
+    }
+
+    fn request(&self, tools: Vec<ToolDef>, tool_choice: Option<&str>) -> Request {
+        let mut messages = Vec::with_capacity(self.history.len() + 1);
+        messages.push(Message::system(self.system.clone()));
+        messages.extend(self.history.iter().cloned());
+        Request {
+            model: self.model.clone(),
+            messages,
+            tools,
+            thinking: self.thinking.clone(),
+            max_tokens: self.max_tokens,
+            tags: vec![],
+            tool_choice: tool_choice.map(str::to_string),
+        }
+    }
+
+    /// About how many tokens the next request holds.
+    pub fn context_used(&self) -> u64 {
+        self.window.tokens(context::request_chars(&self.system, &self.history, &self.defs()))
+    }
+
+    /// What fills the next request, by kind.
+    pub fn context_breakdown(&self) -> context::Breakdown {
+        context::breakdown(&self.system, &self.history, &self.notes, &self.defs())
+    }
+
+    /// Results the model has used (two answers or more have followed them) go to it condensed from now on: their
+    /// key lines and the handle that reads them whole. A pass that would free little waits, so the start of the
+    /// requests the engine has cached does not change for a little.
+    fn condense_used_results(&mut self) {
+        let mut answers_after = 0;
+        let mut candidates = Vec::new();
+        for i in (0..self.history.len()).rev() {
+            let m = &self.history[i];
+            match m.role {
+                ca_llm::Role::Assistant => answers_after += 1,
+                ca_llm::Role::Tool
+                    if answers_after >= 2 && m.content.len() > 3_000 && !m.content.starts_with("(Summarised") =>
+                {
+                    candidates.push(i)
+                }
+                _ => {}
+            }
+        }
+        let freed: usize = candidates.iter().map(|&i| self.history[i].content.len()).sum();
+        if freed < 6_000 {
+            return;
+        }
+        for i in candidates {
+            let full = std::mem::take(&mut self.history[i].content);
+            let handle = self.aside.as_mut().and_then(|a| a.keep(&full));
+            self.history[i].content = context::condensed(&full, handle.as_deref());
+        }
+    }
+
+    /// Room in the window for the next request: earlier results cleared first, then the older part of the
+    /// conversation summarized. `force`: the window refused a request, whatever the threshold says.
+    async fn make_room(&mut self, events: &mut dyn Events, force: bool) {
+        let used = self.context_used();
+        if !force && used <= self.window.threshold() {
+            return;
+        }
+        let freed = self.clear_old_results();
+        if freed > 0 {
+            events
+                .notice(&format!("Cleared earlier tool results (~{} tokens) to make room.", self.window.tokens(freed)));
+            if !force && self.context_used() <= self.window.threshold() {
+                return;
+            }
+        }
+        match self.compact(events, force).await {
+            Ok(Some(_)) => {}
+            Ok(None) => events.notice("Nothing older to summarize: the turn goes on as it is."),
+            Err(e) => events.notice(&format!("The conversation could not be summarized ({e}): it goes on as it is.")),
+        }
+    }
+
+    /// Results older than the person's last two messages (past 1,000 characters) are kept aside and replaced by a
+    /// line saying how to read them again. Gives the characters freed.
+    fn clear_old_results(&mut self) -> usize {
+        let mut persons = 0;
+        let mut cut_at = None;
+        for i in (0..self.history.len()).rev() {
+            if self.is_persons(i) {
+                persons += 1;
+                if persons == 2 {
+                    cut_at = Some(i);
+                    break;
+                }
+            }
+        }
+        let Some(cut) = cut_at else { return 0 };
+        let mut freed = 0;
+        for i in 0..cut {
+            let m = &self.history[i];
+            if m.role == ca_llm::Role::Tool && m.content.len() > 1_000 && !m.content.starts_with("(Cleared") {
+                let full = std::mem::take(&mut self.history[i].content);
+                let handle = self.aside.as_mut().and_then(|a| a.keep(&full));
+                let line = match handle {
+                    Some(h) => format!(
+                        "(Cleared to make room in the window: this result ({} characters) is kept as {h}. read_result {{\"id\":\"{h}\"}} reads it again.)",
+                        full.len()
+                    ),
+                    None => format!("(Cleared to make room in the window: this result had {} characters.)", full.len()),
+                };
+                freed += full.len().saturating_sub(line.len());
+                self.history[i].content = line;
+            }
+        }
+        freed
+    }
+
+    /// A message the person typed (not a tool's result, not one of Code Arena's notes).
+    fn is_persons(&self, i: usize) -> bool {
+        let m = &self.history[i];
+        m.role == ca_llm::Role::User && !self.notes.get(i).copied().unwrap_or(false)
+    }
+
+    /// Summarizes the older part of the conversation, keeping the recent part whole (within the target share of
+    /// the window, from a message of the person's). The session keeps every message; only what the model reads
+    /// changes. Gives the summary, or `None` when there is nothing older to summarize.
+    pub async fn compact(&mut self, events: &mut dyn Events, force: bool) -> Result<Option<String>, LlmError> {
+        let budget = (self.window.size * self.window.target / 100) as usize;
+        let budget_chars = (budget as f64 * self.window.chars_per_token) as usize;
+        // From the end back, as far as the target allows, then on back to a message of the person's.
+        let mut kept_from = self.history.len();
+        let mut chars = 0;
+        for i in (0..self.history.len()).rev() {
+            chars += context::message_chars(&self.history[i]);
+            if chars > budget_chars && kept_from < self.history.len() {
+                break;
+            }
+            kept_from = i;
+        }
+        while kept_from < self.history.len() && !self.is_persons(kept_from) {
+            kept_from += 1;
+        }
+        let last_persons = (0..self.history.len()).rev().find(|&i| self.is_persons(i)).unwrap_or(0);
+        // The person's last message is past the target, or the engine refused what fits it: keep from that message.
+        if kept_from >= self.history.len() || force {
+            kept_from = last_persons;
+        }
+        if kept_from == 0 {
+            return Ok(None);
+        }
+        events.notice("Compacting: the older part of the conversation is being summarized.");
+        let older: Vec<Message> = self.history[..kept_from].to_vec();
+        let mut ask = self.request(self.defs(), Some("none"));
+        ask.messages.truncate(1);
+        ask.messages.extend(older.iter().cloned());
+        ask.messages.push(Message::user(context::SUMMARY_ASK));
+        ask.max_tokens = Some(self.window.reserve.clamp(1024, 8192) as u32);
+        let summary = match self.gateway.complete(&ask, &mut ca_llm::Quiet).await {
+            Ok(c)
+                if !c.message.content.trim().is_empty()
+                    && !context::looped(&c.message.content)
+                    && c.finish != Finish::Length =>
+            {
+                c.message.content
+            }
+            Ok(_) | Err(_) => fallback_summary(&older, &self.notes[..kept_from.min(self.notes.len())]),
+        };
+        let kept_recorded =
+            (kept_from..self.history.len()).filter(|&i| !self.notes.get(i).copied().unwrap_or(false)).count();
+        if let Some(r) = self.recorder.as_mut() {
+            r.compacted(&summary, kept_recorded);
+        }
+        let kept: Vec<Message> = self.history.drain(kept_from..).collect();
+        let kept_notes: Vec<bool> = if self.notes.len() > kept_from {
+            self.notes.drain(kept_from..).collect()
+        } else {
+            vec![false; kept.len()]
+        };
+        self.history.clear();
+        self.notes.clear();
+        self.note(format!("(Code Arena: the earlier part of this conversation is summarized here; every message is kept.)\n\n{summary}"));
+        self.history.extend(kept);
+        self.notes.extend(kept_notes);
+        events.notice(&format!("Compacted: the model now reads about {} tokens.", self.context_used()));
+        Ok(Some(summary))
     }
 
     /// The calls of one answer: those that only read run at once; one that changes something runs after the calls
@@ -355,17 +557,81 @@ impl Agent {
         if let Some(r) = self.recorder.as_mut() {
             r.record(&m, begins_turn);
         }
+        self.sync_notes();
         self.history.push(m);
+        self.notes.push(false);
+    }
+
+    /// A note of Code Arena's for the model: not kept in the session, not shown.
+    pub fn note(&mut self, text: String) {
+        self.sync_notes();
+        self.history.push(Message::user(text));
+        self.notes.push(true);
+    }
+
+    /// History given whole (a resumed session) has no flags yet: its entries are the session's.
+    fn sync_notes(&mut self) {
+        if self.notes.len() < self.history.len() {
+            self.notes.resize(self.history.len(), false);
+        }
     }
 
     fn push_result(&mut self, call: &ToolCall, o: Output, note: Option<String>) {
-        let mut text = ca_tools::text::cut_middle(&o.text, RESULT_CHARS);
+        let mut text = if o.text.chars().count() > RESULT_CHARS
+            && let Some(h) = self.aside.as_mut().and_then(|a| a.keep(&o.text))
+        {
+            aside_view(&o.text, &h)
+        } else {
+            ca_tools::text::cut_middle(&o.text, RESULT_CHARS)
+        };
         if let Some(n) = note {
             text.push_str("\n\n");
             text.push_str(&n);
         }
         self.add(Message::tool(call.id.clone(), text), false);
     }
+}
+
+/// A big result as the model reads it: its start and its end, and how to read the rest.
+fn aside_view(text: &str, handle: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let head: Vec<&str> = lines.iter().take(80).copied().collect();
+    let tail: Vec<&str> = lines.iter().skip(lines.len().saturating_sub(40).max(head.len())).copied().collect();
+    let shown = |v: &[&str]| v.iter().map(|l| l.chars().take(300).collect::<String>()).collect::<Vec<_>>().join("\n");
+    let not_shown = lines.len().saturating_sub(head.len() + tail.len());
+    format!(
+        "{}\n… {not_shown} lines not shown ({} characters in all). It is kept as {handle}: read_result {{\"id\":\"{handle}\",\"from\":{},\"lines\":200}} reads on, and {{\"id\":\"{handle}\",\"find\":\"text\"}} gives the lines that hold some text.\n{}",
+        shown(&head),
+        text.len(),
+        head.len() + 1,
+        shown(&tail)
+    )
+}
+
+/// A summary that could not be made: what the older messages held, from the person's messages and the files and
+/// commands the tools touched. The turn goes on.
+fn fallback_summary(older: &[Message], notes: &[bool]) -> String {
+    let mut s = String::from(
+        "## State\nThe model gave no summary; this is what the earlier messages held.\n\n## The person asked\n",
+    );
+    for (i, m) in older.iter().enumerate() {
+        if m.role == ca_llm::Role::User && !notes.get(i).copied().unwrap_or(false) {
+            s.push_str(&format!(
+                "- {}\n",
+                m.content.lines().next().unwrap_or("").chars().take(200).collect::<String>()
+            ));
+        }
+    }
+    s.push_str("\n## Calls made\n");
+    for m in older {
+        for c in &m.tool_calls {
+            s.push_str(&format!("- {} {}\n", c.name, c.arguments.chars().take(120).collect::<String>()));
+        }
+    }
+    if let Some(last) = older.iter().rev().find(|m| m.role == ca_llm::Role::Assistant && !m.content.is_empty()) {
+        s.push_str(&format!("\n## The last answer\n{}\n", last.content.chars().take(1500).collect::<String>()));
+    }
+    s
 }
 
 #[cfg(test)]
@@ -432,6 +698,9 @@ mod tests {
             inbox: None,
             deferred: vec![],
             joins: None,
+            window: Window::default(),
+            aside: None,
+            notes: vec![],
         };
         (server, a, dir, seen)
     }
@@ -540,6 +809,100 @@ mod tests {
         // glob was called straight from the list: loaded then, and run.
         assert!(names(2).contains(&"glob".to_string()) && !names(2).contains(&"load_tools".to_string()));
         assert!(seen[2]["messages"][5]["content"].as_str().expect("t").contains("notes.txt"));
+    }
+
+    struct Kept(Arc<std::sync::Mutex<Vec<String>>>);
+    impl crate::turn::Aside for Kept {
+        fn keep(&mut self, text: &str) -> Option<String> {
+            let mut k = self.0.lock().expect("lock");
+            k.push(text.to_string());
+            Some(format!("r{}", k.len()))
+        }
+    }
+    struct Compactions(Arc<std::sync::Mutex<Vec<(String, usize)>>>);
+    impl crate::turn::Recorder for Compactions {
+        fn record(&mut self, _m: &Message, _b: bool) {}
+        fn compacted(&mut self, summary: &str, kept: usize) {
+            self.0.lock().expect("lock").push((summary.to_string(), kept));
+        }
+    }
+
+    #[tokio::test]
+    async fn past_the_threshold_the_older_part_is_summarized() {
+        let summary = say("## Goal\nanswer questions", "stop");
+        let (_s, mut a, _d, seen) =
+            agent(vec![say("one", "stop"), say("two", "stop"), summary, say("three", "stop")], Mode::Ask).await;
+        let done = Arc::new(std::sync::Mutex::new(vec![]));
+        a.recorder = Some(Box::new(Compactions(done.clone())));
+        a.turn(&"a".repeat(2_000), &mut Quiet).await.expect("turn 1");
+        a.turn(&"b".repeat(2_000), &mut Quiet).await.expect("turn 2");
+        // A small window: the next request passes 80% of it.
+        a.window = Window::new(Some(1_500), Some(100), Some(80), 25);
+        a.turn("third question", &mut Quiet).await.expect("turn 3");
+        let seen = seen.lock().expect("lock");
+        let ask = &seen[2];
+        assert_eq!(ask["tool_choice"], "none");
+        assert!(
+            ask["messages"].as_array().expect("m").last().expect("last")["content"]
+                .as_str()
+                .expect("t")
+                .starts_with("Summarize the conversation")
+        );
+        let after = seen[3]["messages"].as_array().expect("m");
+        assert!(after[1]["content"].as_str().expect("t").contains("## Goal\nanswer questions"));
+        assert_eq!(after.last().expect("last")["content"], "third question");
+        assert_eq!(after.len(), 3, "system, the summary, the question kept whole");
+        let done = done.lock().expect("lock");
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].1, 1, "the store keeps every message: the model reads the summary for all but the last one");
+    }
+
+    #[tokio::test]
+    async fn a_result_too_big_for_the_window_is_kept_aside() {
+        let (_s, mut a, d, seen) = agent(
+            vec![call("read_file", r#"{"path": "big.txt", "offset": 1, "limit": 2000}"#), say("ok", "stop")],
+            Mode::Ask,
+        )
+        .await;
+        std::fs::write(
+            d.path().join("big.txt"),
+            (0..2000).map(|i| format!("line {i} {}\n", "x".repeat(20))).collect::<String>(),
+        )
+        .expect("write");
+        let kept = Arc::new(std::sync::Mutex::new(vec![]));
+        a.aside = Some(Box::new(Kept(kept.clone())));
+        a.turn("read it", &mut Quiet).await.expect("turn");
+        assert_eq!(kept.lock().expect("lock").len(), 1);
+        let content = seen.lock().expect("lock")[1]["messages"][3]["content"].as_str().expect("t").to_string();
+        assert!(content.contains("It is kept as r1: read_result"), "{}", &content[..200]);
+        assert!(content.len() < 16_000);
+    }
+
+    #[tokio::test]
+    async fn the_windows_refusal_compacts_and_asks_again_once() {
+        let server = MockServer::start().await;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        Mock::given(wiremock::matchers::path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(serde_json::json!({"error": {"message": "maximum context length is 1000 tokens"}})),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(wiremock::matchers::path("/v1/chat/completions"))
+            .respond_with(Script { answers: vec![say("ok", "stop")], at: AtomicUsize::new(0), seen: seen.clone() })
+            .mount(&server)
+            .await;
+        let (_s2, mut a, _d, _) = agent(vec![], Mode::Ask).await;
+        a.gateway = Gateway::new(&server.uri(), Secret::new("sk-test"), None).expect("gw");
+        a.history.push(Message::user("an old question"));
+        a.history.push(Message::assistant("an old answer"));
+        let out = a.turn("new", &mut Quiet).await.expect("turn");
+        assert_eq!(out.answer, "ok");
+        // The summary was asked, then the question again.
+        assert_eq!(seen.lock().expect("lock").len(), 2);
     }
 
     #[tokio::test]

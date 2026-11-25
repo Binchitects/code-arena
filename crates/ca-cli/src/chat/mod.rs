@@ -151,6 +151,8 @@ fn help() -> &'static str {
 /mode [mode]          show the mode, or switch: ask, auto-edit, plan, yolo\n\
 /thinking [level]     default, off, low, medium, high, xhigh\n\
 /cost                 tokens spent in this session\n\
+/context              what fills the model's window, piece by piece\n\
+/compact              summarize the older part of the conversation now\n\
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
 /search WORDS         earlier sessions in this folder that said these words\n\
@@ -279,7 +281,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             Some(Ok(out)) => {
                 session_usage.add(out.usage);
                 let secs = started.elapsed().as_secs();
-                ui.say(&ui.dim(&usage_line(&out)));
+                ui.say(&ui.dim(&format!("{} · {}", usage_line(&out), context_line(&p.agent))));
                 if secs > 10 {
                     ui::out("\x07");
                 }
@@ -370,6 +372,17 @@ impl BlockingRecv for mpsc::UnboundedReceiver<Event> {
     fn blocking_recv_compat(&mut self) -> Option<Event> {
         tokio::task::block_in_place(|| self.blocking_recv())
     }
+}
+
+/// `context 18.2k / 131k (14%), compacts at 80%`
+fn context_line(a: &ca_agent::Agent) -> String {
+    let used = a.context_used();
+    let w = &a.window;
+    let when = match w.compact_at {
+        Some(p) => format!("compacts at {p}%"),
+        None => "compacts only when a request would not fit".into(),
+    };
+    format!("context {} / {} ({}%), {when}", ui::short(used), ui::short(w.size), used * 100 / w.size.max(1))
 }
 
 /// The last two turns of a resumed session, as they were said.
@@ -514,6 +527,35 @@ async fn command(
             }
             if p.servers.is_empty() {
                 ui.say("No MCP server: sign in for Arena's tools, or add yours under mcpServers in settings.json.");
+            }
+        }
+        "/compact" => {
+            let mut progress = Progress::new(ui, false);
+            match p.agent.compact(&mut progress, true).await {
+                Ok(Some(_)) => ui.say(&format!("Compacted: {}.", context_line(&p.agent))),
+                Ok(None) => ui.say("Nothing older to summarize."),
+                Err(e) => ui.say(&ui.red(&format!("The model gave no summary ({e}): the conversation is as it was."))),
+            }
+        }
+        "/context" => {
+            let b = p.agent.context_breakdown();
+            let w = &p.agent.window;
+            let t = |c: usize| ui::short(w.tokens(c));
+            ui.say(&context_line(&p.agent));
+            for (label, chars) in [
+                ("system prompt and instructions", b.system),
+                ("tools' definitions", b.tools),
+                ("your messages", b.you),
+                ("answers and calls", b.answers),
+                ("tool results", b.tool_results),
+                ("Code Arena's notes", b.notes),
+            ] {
+                ui.say(&format!("  {:<32}{:>8}", label, t(chars)));
+            }
+            ui.say(&format!("  {:<32}{:>8}", "kept for the answer", ui::short(w.reserve)));
+            ui.say(&ui.dim("  the biggest:"));
+            for (i, role, chars, start) in b.biggest {
+                ui.say(&ui.dim(&format!("    #{:<4} {role:<12}{:>8}  {start}", i + 1, t(chars))));
             }
         }
         "/search" => {

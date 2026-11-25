@@ -33,6 +33,23 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   loaded, so the start of the requests stays the same.
 - Pictures, sounds and files a tool returns are saved under `.code-arena/media/` (git-ignored),
   named after the tool and the time, and the model is told where.
+- The model's window from the gateway (`/v1/model/info`, else `agent.context`, else 32,768), with
+  room kept for the answer (its longest answer, at most an eighth of the window), and the
+  characters a token holds learned from the gateway's own counts.
+- Before anything is summarized: a result over 16,000 characters is kept aside in the session
+  (`r1`, `r2`…) and the model reads its start and end with how to read on (`read_result`, by
+  lines or by text); results the model has used are condensed to their key lines; past the
+  threshold, results older than your last two messages are cleared (kept aside).
+- Compaction past `agent.compactAt` (80%), keeping the recent part whole (`agent.compactTarget`,
+  25%) from a message of yours: the summary is asked with the same prompt and tools
+  (`tool_choice: none`), in sections; one that comes back empty, cut or in a loop is replaced by
+  what the older messages held. The session keeps every message; only what the model reads
+  changes, and a resumed session starts from its last summary. A request the window refuses is
+  compacted and asked again, once.
+- `session_search` and `session_read` (this session's messages, those summarized too), and
+  `search_sessions` (the folder's other sessions).
+- In the chat: `/compact`, `/context` (what fills the window, by kind, and the biggest messages),
+  and after each turn how full the window is (`context 18.2k / 131k (14%), compacts at 80%`).
 - `/mcp` in the chat: each server, connected or not and why.
 - In the chat: `/help`, `/model`, `/mode`, `/thinking`, `/cost`, `/clear`, `/resume`, `/search`,
   `/exit`, and `!command`.

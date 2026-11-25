@@ -260,6 +260,26 @@ pub static SERVER_WAIT: Setting = Setting {
     section: "MCP servers",
 };
 
+pub static COMPACT_AT: Setting = Setting {
+    key: "agent.compactAt",
+    kind: Kind::Integer { min: 0, max: 95 },
+    default: "80",
+    description: "When the next request would pass this share of the model's window (percent, 20 to 95), the older part of the conversation is summarized. 0: only when a request would not fit.",
+    scope: Scope::User,
+    env: None,
+    section: "Agent",
+};
+
+pub static COMPACT_TARGET: Setting = Setting {
+    key: "agent.compactTarget",
+    kind: Kind::Integer { min: 5, max: 85 },
+    default: "25",
+    description: "What a compaction keeps whole: the recent part of the conversation, up to this share of the window (percent).",
+    scope: Scope::User,
+    env: None,
+    section: "Agent",
+};
+
 /// Every setting, in the Settings editor's order.
 pub static ALL: &[&Setting] = &[
     &MODEL,
@@ -267,6 +287,8 @@ pub static ALL: &[&Setting] = &[
     &THINKING,
     &CONTEXT,
     &MAX_STEPS,
+    &COMPACT_AT,
+    &COMPACT_TARGET,
     &SHELL,
     &SHELL_TIMEOUT,
     &ALLOWED_PATHS,

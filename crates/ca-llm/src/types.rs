@@ -124,6 +124,8 @@ pub struct Request {
     pub max_tokens: Option<u32>,
     /// `chat:<id>`, `project:<id>`: how Arena's usage log knows where a request counts.
     pub tags: Vec<String>,
+    /// `none`: the tools are offered but not to be called (a summary).
+    pub tool_choice: Option<String>,
 }
 
 impl Request {
@@ -142,6 +144,9 @@ impl Request {
         }
         if let Some(m) = self.max_tokens {
             body["max_tokens"] = json!(m);
+        }
+        if let Some(tc) = &self.tool_choice {
+            body["tool_choice"] = json!(tc);
         }
         if !self.tags.is_empty() {
             body["metadata"] = json!({"tags": self.tags});
