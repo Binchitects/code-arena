@@ -198,7 +198,8 @@ async fn start_job(command: &str, background: bool, ctx: &Context) -> Output {
     };
     let (shell, mut flags) = shell_for(ctx.shell.as_deref());
     flags.push(command.to_string());
-    let id = match jobs.start(command, &shell, &flags, ctx.workspace.cwd(), HIDDEN_VARS, background) {
+    let (program, args) = ctx.command(&shell, &flags);
+    let id = match jobs.start(command, &program, &args, ctx.workspace.cwd(), HIDDEN_VARS, background) {
         Ok(id) => id,
         Err(e) => return Output::error(format!("{shell} could not start: {e}")),
     };

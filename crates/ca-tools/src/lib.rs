@@ -4,6 +4,7 @@ pub mod checkpoints;
 mod files;
 mod git;
 pub mod jobs;
+pub mod sandbox;
 mod search;
 mod shell;
 pub mod text;
@@ -61,9 +62,19 @@ pub struct Context {
     pub checkpoints: Arc<checkpoints::Checkpoints>,
     /// Commands with no time limit and in the background; `None` where a run cannot keep them (`-p`).
     pub jobs: Option<Arc<jobs::Jobs>>,
+    /// Where the agent's commands run: `None` runs them as the person.
+    pub sandbox: Option<Arc<sandbox::Sandbox>>,
 }
 
 impl Context {
+    /// A program as the agent's commands run it: in the sandbox when there is one.
+    pub fn command(&self, program: &str, args: &[String]) -> (String, Vec<String>) {
+        match &self.sandbox {
+            Some(s) => s.wrap(program, args, self.workspace.cwd()),
+            None => (program.to_string(), args.to_vec()),
+        }
+    }
+
     pub fn new(workspace: Arc<Workspace>, shell: Option<String>, shell_timeout: Duration) -> Self {
         Context {
             workspace,
@@ -71,6 +82,7 @@ impl Context {
             shell_timeout,
             checkpoints: Arc::new(checkpoints::Checkpoints::default()),
             jobs: None,
+            sandbox: None,
         }
     }
 }

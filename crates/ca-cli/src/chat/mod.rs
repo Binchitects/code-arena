@@ -156,6 +156,7 @@ fn help() -> &'static str {
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
 /jobs [stop N]        commands run with no time limit or in the background; stop N stops one\n\
+/sandbox              what commands in the sandbox may do\n\
 /rewind [N] [code|chat]  your questions; /rewind N goes back to before question N\n\
 /search WORDS         earlier sessions in this folder that said these words\n\
 /commands             your own and the project's commands, sub-agents and skills\n\
@@ -718,6 +719,17 @@ async fn command(
             }
         }
         "/rewind" => rewind(rest, p, ui)?,
+        "/sandbox" => match &p.agent.ctx.sandbox {
+            Some(s) => {
+                for line in s.describe() {
+                    ui.say(&line);
+                }
+            }
+            None => ui.say(&format!(
+                "No sandbox: commands run as you, and the mode is what guards them ({}).",
+                ca_tools::sandbox::find().err().unwrap_or_else(|| "tools.sandbox is off".into())
+            )),
+        },
         "/jobs" => match &p.agent.ctx.jobs {
             None => ui.say("No jobs in this run."),
             Some(j) => {

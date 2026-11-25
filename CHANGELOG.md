@@ -68,6 +68,13 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   time limit; those in the background run on. `/jobs [stop N]`. Asking says how a command waits,
   and "always" for one way does not cover another; kept rules hold for every way. `-p`, which ends
   with its answer, refuses them with a reason.
+- The agent's commands (`run_shell`, jobs, `!command`) run in a sandbox where the system has one:
+  bubblewrap on Linux, `sandbox-exec` on macOS (`tools.sandbox`: `auto`, `on`, `off`). They read
+  everything but what holds secrets (`~/.ssh`, `~/.gnupg`, cloud and Kubernetes credentials,
+  `.netrc`, `.npmrc`, browsers' profiles, Code Arena's own folders), which they cannot see; they
+  write only in the working folders, the build tools' caches, `tools.sandboxWritable` and a
+  `/tmp` of their own; Docker's and Podman's sockets are out of reach; `tools.sandboxNetwork`
+  takes the network away. Without one, the session says why. `/sandbox` says what applies.
 - Options such as `--mode` and `--model` are taken after `chat` too.
 - Checkpoints: each turn keeps what every file its tools wrote held before (the last 50 turns, in
   this run). `/rewind` lists your questions; `/rewind N` goes back to before question N (the files

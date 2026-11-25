@@ -280,6 +280,36 @@ pub static COMPACT_TARGET: Setting = Setting {
     section: "Agent",
 };
 
+pub static SANDBOX: Setting = Setting {
+    key: "tools.sandbox",
+    kind: Kind::Enum(&["auto", "on", "off"]),
+    default: r#""auto""#,
+    description: "The agent's commands in a sandbox (bubblewrap on Linux, sandbox-exec on macOS): they read everything but what holds secrets, and write only in the working folders, the build caches and a /tmp of their own. auto: when the system has one (else they run as you, and the session says why); on: refuse to start without one; off: run as you.",
+    scope: Scope::User,
+    env: None,
+    section: "Sandbox",
+};
+
+pub static SANDBOX_NETWORK: Setting = Setting {
+    key: "tools.sandboxNetwork",
+    kind: Kind::Bool,
+    default: "true",
+    description: "Whether commands in the sandbox may reach the network.",
+    scope: Scope::Project,
+    env: None,
+    section: "Sandbox",
+};
+
+pub static SANDBOX_WRITABLE: Setting = Setting {
+    key: "tools.sandboxWritable",
+    kind: Kind::StringList,
+    default: "[]",
+    description: "More folders commands in the sandbox may write (whole paths).",
+    scope: Scope::User,
+    env: None,
+    section: "Sandbox",
+};
+
 /// Every setting, in the Settings editor's order.
 pub static ALL: &[&Setting] = &[
     &MODEL,
@@ -302,6 +332,9 @@ pub static ALL: &[&Setting] = &[
     &CODE_INTEL_TOOLS,
     &TOOL_CHARS,
     &SERVER_WAIT,
+    &SANDBOX,
+    &SANDBOX_NETWORK,
+    &SANDBOX_WRITABLE,
 ];
 
 pub fn find(key: &str) -> Option<&'static Setting> {

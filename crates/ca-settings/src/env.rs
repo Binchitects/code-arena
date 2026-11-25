@@ -20,6 +20,7 @@ pub const CONNECTION_VARS: &[(&str, &str)] = &[
     ("CODE_ARENA_HOME", "one folder for settings and data (config/ and data/), for a portable copy"),
     ("XDG_CONFIG_HOME", "where settings go on Linux, as the system says"),
     ("XDG_DATA_HOME", "where data goes on Linux, as the system says"),
+    ("XDG_RUNTIME_DIR", "where the person's sockets are (Podman's, Docker's), kept out of the sandbox"),
     ("NO_COLOR", "no colours in the terminal"),
 ];
 

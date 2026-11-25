@@ -12,6 +12,7 @@ const ALLOWED: &[(&str, &str)] = &[
     ("ca-settings/src/env.rs", "match std::env::var(name)"),
     // Finding a program on PATH is the system's business, not a setting.
     ("ca-tools/src/shell.rs", "std::env::var_os(\"PATH\")"),
+    ("ca-tools/src/sandbox.rs", "std::env::var_os(\"PATH\")"),
 ];
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {

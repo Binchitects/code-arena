@@ -247,6 +247,33 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         aside: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone() })),
         notes: vec![],
     };
+    // The sandbox, as the settings and this system allow.
+    let sandbox_mode = app.settings.string(&schema::SANDBOX).unwrap_or_else(|| "auto".into());
+    if sandbox_mode != "off" {
+        match ca_tools::sandbox::find() {
+            Ok(kind) => {
+                let allowed = agent.ctx.workspace.allowed().to_vec();
+                let extra: Vec<PathBuf> =
+                    app.settings.strings(&schema::SANDBOX_WRITABLE).into_iter().map(PathBuf::from).collect();
+                let own = vec![app.paths.config.clone(), app.paths.data.clone()];
+                let runtime = app.settings.env().get("XDG_RUNTIME_DIR").map(PathBuf::from);
+                let s = ca_tools::sandbox::Sandbox::new(
+                    kind,
+                    app.settings.bool(&schema::SANDBOX_NETWORK),
+                    &allowed,
+                    &extra,
+                    app.home.as_deref(),
+                    &own,
+                    runtime.as_deref(),
+                );
+                agent.ctx.sandbox = Some(Arc::new(s));
+            }
+            Err(why) if sandbox_mode == "on" => bail!("tools.sandbox is on, but {why}"),
+            Err(why) => {
+                ui.say(&ui.dim(&format!("No sandbox: {why}. Commands run as you; the mode is what guards them.")))
+            }
+        }
+    }
     // A conversation keeps commands with no time limit and in the background; -p ends with its answer.
     if o.interactive {
         agent.ctx.jobs = Some(Arc::new(ca_tools::jobs::Jobs::default()));
