@@ -47,6 +47,8 @@ pub struct Prepared {
     pub servers: crate::servers::Servers,
     /// Where commands, skills and sub-agents are read from (again at each message).
     pub sources: Vec<ca_agent::library::Source>,
+    /// Tools turned off for this session (`/tools off`).
+    pub disabled: Vec<Arc<dyn ca_tools::Tool>>,
 }
 
 /// Keeps each message in the session's store as it is added.
@@ -262,7 +264,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
                     app.settings.bool(&schema::SANDBOX_NETWORK),
                     &allowed,
                     &extra,
-                    app.home.as_deref(),
+                    // The system's home: its secrets stay hidden from a portable copy too (CODE_ARENA_HOME).
+                    dirs::home_dir().as_deref(),
                     &own,
                     runtime.as_deref(),
                 );
@@ -315,5 +318,5 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
             ui.say(&ui.dim(&line));
         }
     }
-    Ok(Prepared { agent, store, session, folder, resumed, servers, sources })
+    Ok(Prepared { agent, store, session, folder, resumed, servers, sources, disabled: vec![] })
 }

@@ -115,10 +115,11 @@ impl Tool for RunShell {
         let limit = arg_u64(&args, "timeout")
             .map(|s| Duration::from_secs(s.clamp(1, MOST_SECONDS)))
             .unwrap_or(ctx.shell_timeout);
-        let (shell, flags) = shell_for(ctx.shell.as_deref());
-        let mut cmd = tokio::process::Command::new(&shell);
-        cmd.args(&flags)
-            .arg(&command)
+        let (shell, mut flags) = shell_for(ctx.shell.as_deref());
+        flags.push(command.clone());
+        let (program, args) = ctx.command(&shell, &flags);
+        let mut cmd = tokio::process::Command::new(&program);
+        cmd.args(&args)
             .current_dir(ctx.workspace.cwd())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

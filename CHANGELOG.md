@@ -75,6 +75,16 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   write only in the working folders, the build tools' caches, `tools.sandboxWritable` and a
   `/tmp` of their own; Docker's and Podman's sockets are out of reach; `tools.sandboxNetwork`
   takes the network away. Without one, the session says why. `/sandbox` says what applies.
+- `@files` in a message: `@src/parser.rs` sends the file with it, numbered as `read_file` numbers
+  it; `@src/parser.rs:40-60` (or `#L40-L60`) those lines with three around them; a folder its list;
+  `@"a b.txt"` a name with spaces. What is no file the tools may read (`@Override`, an email
+  address) stays as typed. 60,000 characters a file, 150,000 a message.
+- Waiting in a model's line: while Arena holds a request back because the model's line is full, Code
+  Arena waits in it as a person in the web chat does, asking again when Arena says, for up to
+  15 minutes.
+- In the chat: the model's thinking shown dimmed before its answer; an edit's diff under its call;
+  `/tools [on|off NAME]` (a tool, or a server's tools), `/permissions [allow|deny RULE]` and
+  `/compact-at [% [%]|off]` for the session.
 - Options such as `--mode` and `--model` are taken after `chat` too.
 - Checkpoints: each turn keeps what every file its tools wrote held before (the last 50 turns, in
   this run). `/rewind` lists your questions; `/rewind N` goes back to before question N (the files

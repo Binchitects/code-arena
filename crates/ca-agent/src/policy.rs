@@ -148,6 +148,22 @@ pub struct Rules {
 }
 
 impl Rules {
+    /// A rule that refuses, for this session.
+    pub fn deny(&mut self, rule: &str) {
+        if let Some(r) = Rule::parse(rule) {
+            self.deny.push(r);
+        }
+    }
+
+    /// The rules as written: (allow, deny).
+    pub fn written(&self) -> (Vec<String>, Vec<String>) {
+        let w = |r: &Rule| match &r.pattern {
+            Some(p) => format!("{}({p})", r.tool),
+            None => r.tool.clone(),
+        };
+        (self.allow.iter().map(w).collect(), self.deny.iter().map(w).collect())
+    }
+
     /// A rule kept for this session only (a trusted server's tools: `mcp__name__*`).
     pub fn allow(&mut self, rule: &str) {
         if let Some(r) = Rule::parse(rule) {

@@ -86,8 +86,22 @@ impl Sandbox {
             hidden.push(r.join("docker.sock"));
             hidden.push(r.join("podman/podman.sock"));
         }
+        // Each where it really is (`/var/run` is a link to `/run`: bubblewrap cannot bind through a link), once.
+        let real = |v: Vec<PathBuf>| {
+            let mut out: Vec<PathBuf> = Vec::new();
+            for p in v {
+                let r = std::fs::canonicalize(&p).unwrap_or(p);
+                if !out.contains(&r) {
+                    out.push(r);
+                }
+            }
+            out
+        };
+        let writable = real(writable);
+        let mut hidden = real(hidden);
         // A folder the tools may use is never hidden, even one inside a hidden one.
-        hidden.retain(|h| !allowed.iter().any(|a| a.starts_with(h)));
+        hidden
+            .retain(|h| !allowed.iter().any(|a| std::fs::canonicalize(a).unwrap_or_else(|_| a.clone()).starts_with(h)));
         Sandbox { kind, network, writable, hidden }
     }
 
@@ -243,6 +257,28 @@ mod tests {
         assert!(joined.contains(&format!("--ro-bind /dev/null {}", home.join(".netrc").display())));
         assert!(joined.contains("--unshare-net"));
         assert!(joined.ends_with(&format!("--chdir {} -- bash -c make", work.display())));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn paths_through_links_are_bound_where_they_really_are() {
+        let d = tempfile::tempdir().expect("temp");
+        let real = d.path().join("run");
+        std::fs::create_dir_all(&real).expect("mkdir");
+        std::fs::write(real.join("docker.sock"), "").expect("write");
+        std::os::unix::fs::symlink(&real, d.path().join("varrun")).expect("link");
+        let s = Sandbox::new(
+            Kind::SandboxExec,
+            true,
+            &[],
+            &[],
+            None,
+            &[d.path().join("varrun/docker.sock"), real.join("docker.sock")],
+            None,
+        );
+        let canon = std::fs::canonicalize(real.join("docker.sock")).expect("canon");
+        assert_eq!(s.hidden.iter().filter(|h| **h == canon).count(), 1);
+        assert!(!s.hidden.iter().any(|h| h.starts_with(d.path().join("varrun"))));
     }
 
     #[test]

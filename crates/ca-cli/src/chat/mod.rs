@@ -156,6 +156,9 @@ fn help() -> &'static str {
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
 /jobs [stop N]        commands run with no time limit or in the background; stop N stops one\n\
+/tools [on|off NAME]  the tools, by group; turn a tool or a server's tools on or off for this session\n\
+/permissions [allow|deny RULE]  the kept rules, and more for this session\n\
+/compact-at [% [%]]   when the session compacts, and what it keeps; off for only when a request would not fit\n\
 /sandbox              what commands in the sandbox may do\n\
 /rewind [N] [code|chat]  your questions; /rewind N goes back to before question N\n\
 /search WORDS         earlier sessions in this folder that said these words\n\
@@ -186,6 +189,9 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     if args.choose {
         resume = choose_session(app, &args.opts)?;
     }
+    // Keys are read from the start: what is typed while the session gets ready waits for the prompt.
+    let raw = RawMode::on()?;
+    let mut keys = spawn_input();
     let mut p = session::prepare(app, &args.opts, approver.clone(), resume).await?;
     let inbox = Arc::new(Mutex::new(Vec::<String>::new()));
     p.agent.inbox = Some(inbox.clone());
@@ -210,8 +216,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         Some(j) => j.listen(),
         None => mpsc::unbounded_channel().1,
     };
-    let _raw = RawMode::on()?;
-    let mut keys = spawn_input();
+    let _raw = raw;
     let mut drawn = Drawn::default();
     let mut interrupted_once = false;
     let mut session_usage = ca_llm::Usage::default();
@@ -276,6 +281,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         };
         let started = Instant::now();
         let mut progress = Progress::new(ui, true);
+        progress.show_thinking = true;
         let mut typed = Editor::default();
         let jobs = p.agent.ctx.jobs.clone();
         let result = {
@@ -424,6 +430,53 @@ fn suspend() {
         let _ = nix::sys::signal::raise(nix::sys::signal::Signal::SIGTSTP);
         let _ = terminal::enable_raw_mode();
         ui::set_raw(true);
+    }
+}
+
+/// `/tools`: the tools by group; `/tools off NAME` (a tool, or a group: a server's name) leaves them out of the
+/// requests for this session, and a call to one is refused; `/tools on NAME` brings them back.
+fn tools_command(rest: &str, p: &mut Prepared, ui: Ui) {
+    let (cmd, name) = rest.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((rest, ""));
+    let agent = &mut p.agent;
+    match cmd {
+        "off" if !name.is_empty() => {
+            let (off, on): (Vec<_>, Vec<_>) =
+                agent.tools.drain(..).partition(|t| t.def().name == name || t.group() == name);
+            agent.tools = on;
+            let (off2, on2): (Vec<_>, Vec<_>) =
+                agent.deferred.drain(..).partition(|t| t.def().name == name || t.group() == name);
+            agent.deferred = on2;
+            let n = off.len() + off2.len();
+            p.disabled.extend(off.into_iter().chain(off2));
+            ui.say(&if n == 0 {
+                format!("No tool or group named {name}.")
+            } else {
+                format!("{n} tools off for this session.")
+            });
+        }
+        "on" if !name.is_empty() => {
+            let (on, still): (Vec<_>, Vec<_>) =
+                p.disabled.drain(..).partition(|t| t.def().name == name || t.group() == name);
+            p.disabled = still;
+            ui.say(&format!("{} tools on again.", on.len()));
+            p.agent.tools.extend(on);
+        }
+        _ => {
+            let mut groups: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+            for t in &agent.tools {
+                groups.entry(t.group()).or_default().push(t.def().name);
+            }
+            for t in &agent.deferred {
+                groups.entry(t.group()).or_default().push(format!("{} (loaded when needed)", t.def().name));
+            }
+            for t in &p.disabled {
+                groups.entry(t.group()).or_default().push(format!("{} (off)", t.def().name));
+            }
+            for (g, names) in groups {
+                ui.say(&format!("{} {}", ui.bold(&g), ui.dim(&format!("({})", names.len()))));
+                ui.say(&format!("  {}", names.join(", ")));
+            }
+        }
     }
 }
 
@@ -719,6 +772,58 @@ async fn command(
             }
         }
         "/rewind" => rewind(rest, p, ui)?,
+        "/tools" => tools_command(rest, p, ui),
+        "/permissions" => {
+            let (cmd, rule) = rest.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((rest, ""));
+            match cmd {
+                "allow" if !rule.is_empty() => {
+                    p.agent.policy.rules.allow(rule);
+                    ui.say(&format!(
+                        "Allowed for this session: {rule} (add it to permissions.allow in settings.json to keep it)."
+                    ));
+                }
+                "deny" if !rule.is_empty() => {
+                    p.agent.policy.rules.deny(rule);
+                    ui.say(&format!(
+                        "Refused for this session: {rule} (add it to permissions.deny in settings.json to keep it)."
+                    ));
+                }
+                _ => {
+                    let (allow, deny) = p.agent.policy.rules.written();
+                    ui.say(&format!(
+                        "Allowed without asking: {}",
+                        if allow.is_empty() { "none".into() } else { allow.join(", ") }
+                    ));
+                    ui.say(&format!(
+                        "Refused in every mode: {}",
+                        if deny.is_empty() { "none".into() } else { deny.join(", ") }
+                    ));
+                    ui.say(&ui.dim("/permissions allow RULE or deny RULE: a tool's name with a pattern, run_shell(npm test*), read_file(.env*)."));
+                }
+            }
+        }
+        "/compact-at" => {
+            let mut words = rest.split_whitespace();
+            match words.next() {
+                None => ui.say(&context_line(&p.agent)),
+                Some("off") => {
+                    p.agent.window.compact_at = None;
+                    ui.say("For this session: compacts only when a request would not fit.");
+                }
+                Some(n) => {
+                    match n.trim_end_matches('%').parse::<u64>() {
+                        Ok(v) if (20..=95).contains(&v) => {
+                            p.agent.window.compact_at = Some(v);
+                            if let Some(t) = words.next().and_then(|t| t.trim_end_matches('%').parse::<u64>().ok()) {
+                                p.agent.window.target = t.clamp(5, v.saturating_sub(10).max(5));
+                            }
+                            ui.say(&format!("For this session: {} (agent.compactAt and agent.compactTarget in settings.json keep it).", context_line(&p.agent)));
+                        }
+                        _ => ui.say(&ui.red("A share from 20 to 95, or off.")),
+                    }
+                }
+            }
+        }
         "/sandbox" => match &p.agent.ctx.sandbox {
             Some(s) => {
                 for line in s.describe() {

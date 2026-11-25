@@ -332,3 +332,57 @@ async fn a_projects_command_runs_from_print_mode() {
         "{tools:?}"
     );
 }
+
+/// Where this machine can make a sandbox: the agent's command cannot read what holds secrets, nor write outside.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[tokio::test]
+async fn the_agents_commands_run_in_the_sandbox() {
+    if ca_tools::sandbox::find().is_err() {
+        return;
+    }
+    let fake_home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(fake_home.path().join(".ssh")).expect("ssh");
+    std::fs::write(fake_home.path().join(".ssh/id_test"), "SECRET-KEY-TEXT").expect("key");
+    let outside = tempfile::tempdir().expect("outside");
+    let command = format!(
+        "cat ~/.ssh/id_test 2>&1; echo ok > made.txt; echo x > {}/escaped.txt 2>&1; echo done",
+        outside.path().display()
+    );
+    let call = sse(
+        json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "run_shell", "arguments": json!({"command": command}).to_string()}}]}, "finish_reason": "tool_calls"}]}),
+    );
+    let answer = sse(json!({"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}));
+    let gateway = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    struct Two(std::sync::Arc<std::sync::Mutex<Vec<Value>>>, Vec<String>);
+    impl Respond for Two {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            let mut s = self.0.lock().expect("lock");
+            s.push(serde_json::from_slice(&r.body).expect("json"));
+            let i = (s.len() - 1).min(1);
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(self.1[i].clone())
+        }
+    }
+    Mock::given(path("/v1/chat/completions")).respond_with(Two(seen.clone(), vec![call, answer])).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("code-arena home");
+    let folder = tempfile::tempdir().expect("folder");
+    let out = code_arena(home.path())
+        .args(["-p", "probe", "--mode", "yolo", "-C"])
+        .arg(folder.path())
+        .env("HOME", fake_home.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let requests = seen.lock().expect("lock");
+    let result = requests[1]["messages"][3]["content"].as_str().expect("result").to_string();
+    assert!(!result.contains("SECRET-KEY-TEXT"), "{result}");
+    assert!(result.contains("done"), "{result}");
+    assert!(folder.path().join("made.txt").exists(), "writes inside the folder: {result}");
+    assert!(!outside.path().join("escaped.txt").exists(), "no write outside it: {result}");
+}

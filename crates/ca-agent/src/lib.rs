@@ -5,6 +5,7 @@ pub mod context;
 pub mod instructions;
 pub mod library;
 pub mod mend;
+pub mod mentions;
 pub mod policy;
 mod turn;
 

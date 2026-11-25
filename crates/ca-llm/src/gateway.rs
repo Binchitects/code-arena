@@ -147,8 +147,24 @@ impl Gateway {
     pub async fn complete(&self, request: &Request, sink: &mut dyn Sink) -> Result<Completion, LlmError> {
         let body = request.to_wire();
         let mut tries = 0;
+        let mut waiting_since: Option<tokio::time::Instant> = None;
+        let mut last_said: Option<tokio::time::Instant> = None;
         loop {
             match self.stream_once(&body, sink).await {
+                Err(Attempt::Busy { message, again }) => {
+                    let since = *waiting_since.get_or_insert_with(tokio::time::Instant::now);
+                    if since.elapsed() >= LINE_WAIT {
+                        return Err(LlmError::Refused(message));
+                    }
+                    if last_said.is_none_or(|t| t.elapsed() >= Duration::from_secs(120)) {
+                        sink.notice(&format!(
+                            "{message} Waiting in its line: asking again every {} s (Ctrl+C or Stop ends the wait).",
+                            again.as_secs()
+                        ));
+                        last_said = Some(tokio::time::Instant::now());
+                    }
+                    tokio::time::sleep(again).await;
+                }
                 Err(Attempt::Retry(why)) if tries < self.retries => {
                     tries += 1;
                     sink.notice(&format!("{why}: trying again ({tries} of {})", self.retries));
@@ -177,6 +193,11 @@ impl Gateway {
         let status = res.status();
         if !status.is_success() {
             let text = res.text().await.unwrap_or_default();
+            if let LlmError::Refused(m) = failure(status, &text, &url)
+                && let Some(again) = busy(&m)
+            {
+                return Err(Attempt::Busy { message: m, again });
+            }
             if matches!(status, StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT)
             {
                 return Err(Attempt::Retry(format!("the gateway answered {}", status.as_u16())));
@@ -219,7 +240,29 @@ impl Gateway {
 
 enum Attempt {
     Retry(String),
+    /// The model's line is full: Arena holds the request back, and says when to ask again.
+    Busy {
+        message: String,
+        again: Duration,
+    },
     Fail(LlmError),
+}
+
+/// How long Code Arena waits in a model's line before it gives up, as a person in the web chat would.
+const LINE_WAIT: Duration = Duration::from_secs(15 * 60);
+
+/// Arena's words when a model's line is full: "… is busy: 2 answers of the chat wait for it. Try again in 30 seconds."
+fn busy(message: &str) -> Option<Duration> {
+    if !message.contains(" is busy") {
+        return None;
+    }
+    let secs = message
+        .split("Try again in ")
+        .nth(1)
+        .and_then(|r| r.split_whitespace().next())
+        .and_then(|n| n.parse::<u64>().ok())
+        .unwrap_or(30);
+    Some(Duration::from_secs(secs.clamp(1, 300)))
 }
 
 /// The pieces of one streamed answer.
@@ -500,6 +543,36 @@ mod tests {
         let req = Request { model: "m".into(), messages: vec![Message::user("hi")], ..Default::default() };
         let err = gateway(&server).complete(&req, &mut Quiet).await.expect_err("refused");
         assert_eq!(err.to_string(), "Arena's safeguards refused the request: it holds a password.");
+    }
+
+    #[tokio::test]
+    async fn a_full_line_is_waited_in() {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({"error": {"message": "Qwen3-4B is busy: 2 answers of the chat wait for it. Try again in 1 seconds."}})))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(sse(&[
+                r#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#,
+                "[DONE]",
+            ])))
+            .mount(&server)
+            .await;
+        let mut sink = Collect::default();
+        let req = Request { model: "m".into(), messages: vec![Message::user("hi")], ..Default::default() };
+        let c = gateway(&server).complete(&req, &mut sink).await.expect("completes");
+        assert_eq!(c.message.content, "ok");
+        assert_eq!(sink.notices.len(), 1);
+        assert!(sink.notices[0].contains("Waiting in its line"));
+    }
+
+    #[test]
+    fn the_line_is_full_by_arenas_words() {
+        assert_eq!(busy("Qwen3-4B is busy: 2 answers wait. Try again in 30 seconds."), Some(Duration::from_secs(30)));
+        assert_eq!(busy("Arena's safeguards refused the request"), None);
     }
 
     #[test]

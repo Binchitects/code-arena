@@ -41,18 +41,43 @@ pub struct Progress {
     held: String,
     /// Whether this step printed any words yet.
     spoke: bool,
+    /// The model's thinking, shown dimmed before its answer (the chat; not -p).
+    pub show_thinking: bool,
+    thinking: bool,
 }
 
 impl Progress {
     pub fn new(ui: Ui, stream: bool) -> Self {
-        Self { ui, stream, at_line_start: true, held: String::new(), spoke: false }
+        Self {
+            ui,
+            stream,
+            at_line_start: true,
+            held: String::new(),
+            spoke: false,
+            show_thinking: false,
+            thinking: false,
+        }
     }
 }
 
 impl Events for Progress {
+    fn reasoning(&mut self, d: &str) {
+        if !self.stream || !self.show_thinking || (!self.thinking && d.trim().is_empty()) {
+            return;
+        }
+        self.thinking = true;
+        ui::out(&self.ui.dim(d));
+        self.at_line_start = d.ends_with('\n');
+    }
     fn text(&mut self, d: &str) {
         if !self.stream {
             return;
+        }
+        if self.thinking && !d.trim().is_empty() {
+            // The thinking is over: the answer on a line of its own.
+            self.thinking = false;
+            ui::out(if self.at_line_start { "\n" } else { "\n\n" });
+            self.at_line_start = true;
         }
         if !self.spoke {
             let words = d.trim_start();
@@ -78,13 +103,27 @@ impl Events for Progress {
         }
         self.held.clear();
         self.spoke = false;
+        self.thinking = false;
     }
     fn tool_end(&mut self, name: &str, subject: &str, o: &Output) {
         let s: String = subject.lines().next().unwrap_or("").chars().take(100).collect();
         self.ui.say(&format!("{} {name} {}", self.ui.dim("●"), self.ui.dim(&s)));
-        let first = o.text.lines().next().unwrap_or("").chars().take(120).collect::<String>();
-        let line = format!("  └ {first}");
-        self.ui.say(&if o.is_error { self.ui.red(&line) } else { self.ui.dim(&line) });
+        // An edit shows its diff (a dozen lines at most); anything else its first line.
+        let shown = if matches!(name, "edit_file" | "write_file") && !o.is_error { 13 } else { 1 };
+        for (i, l) in o.text.lines().take(shown).enumerate() {
+            let l: String = l.chars().take(160).collect();
+            let line = if i == 0 { format!("  └ {l}") } else { format!("    {l}") };
+            let painted = if o.is_error {
+                self.ui.red(&line)
+            } else if i > 0 && l.starts_with('+') {
+                self.ui.green(&line)
+            } else if i > 0 && l.starts_with('-') {
+                self.ui.red(&line)
+            } else {
+                self.ui.dim(&line)
+            };
+            self.ui.say(&painted);
+        }
     }
 }
 

@@ -223,6 +223,9 @@ impl Tool for McpTool {
         let s = args.to_string();
         if s.chars().count() > 200 { format!("{}…", s.chars().take(200).collect::<String>()) } else { s }
     }
+    fn group(&self) -> String {
+        self.server.name.clone()
+    }
     async fn run(&self, args: Value, _ctx: &Context) -> Output {
         match self.server.call(&self.remote, args, self.idle).await {
             Err(McpError::Timeout(s)) => Output::error(format!(

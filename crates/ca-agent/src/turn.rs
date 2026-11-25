@@ -195,6 +195,7 @@ impl Agent {
     }
 
     pub async fn turn(&mut self, text: &str, events: &mut dyn Events) -> Result<TurnOutcome, TurnError> {
+        let text = crate::mentions::attach(text, &self.ctx.workspace);
         let seq = self.add(Message::user(text), true).unwrap_or(self.history.len() as i64);
         // The turn's checkpoint: what each file holds before the turn first writes it.
         self.ctx.checkpoints.begin(seq);

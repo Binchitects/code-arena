@@ -94,6 +94,10 @@ pub trait Tool: Send + Sync {
     /// What a kept rule's pattern is matched against, and the question shows: a command, a path.
     fn subject(&self, args: &Value) -> String;
     async fn run(&self, args: Value, ctx: &Context) -> Output;
+    /// Its group, as `/tools` lists them and turns them off: Code Arena's own, or a server's.
+    fn group(&self) -> String {
+        "Code Arena's own".into()
+    }
 }
 
 /// Every built-in tool.
