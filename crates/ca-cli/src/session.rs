@@ -44,6 +44,7 @@ pub struct Prepared {
     pub folder: String,
     /// Said when a session was taken up: how many messages, and how many the model reads as a summary.
     pub resumed: Option<String>,
+    pub servers: crate::servers::Servers,
 }
 
 /// Keeps each message in the session's store as it is added.
@@ -176,7 +177,13 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         mode: mode.name().into(),
         interactive: o.interactive,
     };
-    let agent = Agent {
+    let ws_root = ws.root().to_path_buf();
+    let media_dir = if ws.in_repository() {
+        ws_root.join(".code-arena").join("media")
+    } else {
+        ws.cwd().join(".code-arena").join("media")
+    };
+    let mut agent = Agent {
         gateway,
         model,
         thinking,
@@ -194,6 +201,35 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         history,
         recorder: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone() })),
         inbox: None,
+        deferred: vec![],
+        joins: None,
     };
-    Ok(Prepared { agent, store, session, folder, resumed })
+    // The MCP servers: those that answer within a few seconds now, the others when they do.
+    let local: Vec<String> = agent.tools.iter().map(|t| t.def().name).collect();
+    let (configured, notes) = crate::servers::configured(app, &local);
+    for n in notes {
+        ui.say(&ui.yellow(&n));
+    }
+    for s in configured.iter().filter(|s| s.trusted) {
+        agent.policy.rules.allow(&format!("mcp__{}__*", s.name));
+    }
+    let servers: crate::servers::Servers = Arc::new(configured);
+    let wait = if o.interactive { app.settings.integer(&schema::SERVER_WAIT).max(0) as u64 } else { 25 };
+    let on_demand = app.settings.integer(&schema::TOOL_CHARS).max(0) as usize;
+    let (joined, later) =
+        crate::servers::start(servers.clone(), local, Duration::from_secs(wait), on_demand, media_dir).await;
+    for j in joined {
+        agent.tools.extend(j.tools);
+        agent.deferred.extend(j.deferred);
+        if let Some(n) = j.note {
+            agent.history.push(Message::user(n));
+        }
+    }
+    agent.joins = Some(later);
+    for line in crate::servers::describe(&servers) {
+        if !line.contains("connected,") {
+            ui.say(&ui.dim(&line));
+        }
+    }
+    Ok(Prepared { agent, store, session, folder, resumed, servers })
 }

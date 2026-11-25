@@ -118,7 +118,7 @@ async fn password_sign_in(ui: &Ui, url: &str, user: &str, ca: Option<&std::path:
 /// How many tools Arena's MCP endpoint lists.
 async fn arena_tools(conn: &Connection, key: &Secret) -> Result<usize, String> {
     let url = conn.mcp_url().ok_or("no address")?;
-    let mut m = ca_mcp::HttpMcp::new(&url, Some(key.clone()), conn.ca.as_deref()).map_err(|e| e.to_string())?;
+    let mut m = ca_mcp::Client::new(&url, Some(key.clone()), conn.ca.as_deref()).map_err(|e| e.to_string())?;
     m.initialize().await.map_err(|e| e.to_string())?;
     m.list_tools().await.map(|t| t.len()).map_err(|e| e.to_string())
 }

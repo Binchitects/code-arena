@@ -240,8 +240,10 @@ dependencies = [
 name = "ca-mcp"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "ca-core",
  "ca-net",
+ "futures-util",
  "reqwest",
  "serde_json",
  "thiserror",

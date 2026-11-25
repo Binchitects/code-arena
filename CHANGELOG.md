@@ -19,6 +19,21 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   a question.
 - `--continue` and `--resume [ID]` (no id: choose from a list), for the chat and for `-p`;
   `-p --output json` names its session.
+- MCP servers: Arena's tools (`https://DOMAIN/mcp`), Farzan Graph's (its copy of a tool Arena
+  serves left out, so no tool comes twice) and your own under `mcpServers` (a child process with
+  `command`, `args`, `env`, `cwd`, or a `url` with `headers`; `${NAME}` from the environment;
+  `trust`, `disabled`). They connect in the background: a conversation waits up to 3 s
+  (`mcp.startWait`), `-p` up to 25 s, and the wait ends as soon as each has answered once; one that
+  answers later joins the session at its next step. A server that went away is connected again at
+  the next call; one that fails is tried again after 5 s, then less often (up to every 5 min).
+- Tool calls have a deadline (10 min, or what the tool says in `_meta`), which each progress report
+  starts again; past it the call is given up and the server told (`notifications/cancelled`).
+- Tools on demand: past `tools.onDemandChars` (6,000) characters of a server's definitions, its
+  tools are listed in a note and loaded with `load_tools`, or by being called; what is loaded stays
+  loaded, so the start of the requests stays the same.
+- Pictures, sounds and files a tool returns are saved under `.code-arena/media/` (git-ignored),
+  named after the tool and the time, and the model is told where.
+- `/mcp` in the chat: each server, connected or not and why.
 - In the chat: `/help`, `/model`, `/mode`, `/thinking`, `/cost`, `/clear`, `/resume`, `/search`,
   `/exit`, and `!command`.
 

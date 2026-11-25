@@ -46,3 +46,43 @@ impl Env {
         self.vars.get(name).map(String::as_str).filter(|v| !v.is_empty())
     }
 }
+
+/// `${NAME}` in an MCP server's `env` or `headers`, taken from the environment, so tokens stay out of settings
+/// files. Names that are not set come back in the second list (and expand to nothing).
+pub fn expand(text: &str) -> (String, Vec<String>) {
+    let mut out = String::with_capacity(text.len());
+    let mut missing = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        match after.find('}') {
+            Some(end) => {
+                let name = &after[..end];
+                match std::env::var(name) {
+                    Ok(v) => out.push_str(&v),
+                    Err(_) => missing.push(name.to_string()),
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    (out, missing)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_not_set_expand_to_nothing_and_are_said() {
+        let (text, missing) = expand("Bearer ${CODE_ARENA_TEST_SURELY_UNSET} and ${unclosed");
+        assert_eq!(text, "Bearer  and ${unclosed");
+        assert_eq!(missing, vec!["CODE_ARENA_TEST_SURELY_UNSET"]);
+    }
+}

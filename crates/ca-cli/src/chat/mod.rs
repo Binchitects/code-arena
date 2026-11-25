@@ -154,6 +154,7 @@ fn help() -> &'static str {
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
 /search WORDS         earlier sessions in this folder that said these words\n\
+/mcp                  Arena's, Farzan Graph's and your MCP servers: connected or not, and why\n\
 /exit                 leave (also Ctrl+D)\n\
 !command              run a command yourself; its output goes with your next message\n\
 \n\
@@ -506,6 +507,14 @@ async fn command(
             p.agent.inbox = inbox;
             ui.say(&ui.dim(&format!("Resumed {}, {}.", p.session, p.resumed.clone().unwrap_or_default())));
             show_last_turns(p, ui);
+        }
+        "/mcp" => {
+            for line in crate::servers::describe(&p.servers) {
+                ui.say(&line);
+            }
+            if p.servers.is_empty() {
+                ui.say("No MCP server: sign in for Arena's tools, or add yours under mcpServers in settings.json.");
+            }
         }
         "/search" => {
             let hits = p.store.lock().map_err(|_| anyhow::anyhow!("the store"))?.search(&p.folder, rest, 20)?;

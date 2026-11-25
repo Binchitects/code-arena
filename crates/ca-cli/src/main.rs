@@ -4,6 +4,7 @@ mod account;
 mod app;
 mod chat;
 mod run;
+mod servers;
 mod session;
 mod ui;
 

@@ -84,6 +84,10 @@ pub struct Agent {
     pub thinking: Thinking,
     pub max_tokens: Option<u32>,
     pub tools: Vec<Arc<dyn Tool>>,
+    /// Tools listed, not sent whole: the model loads them with `load_tools` (or by calling one).
+    pub deferred: Vec<Arc<dyn Tool>>,
+    /// Servers that connect after the session began send their tools here.
+    pub joins: Option<tokio::sync::mpsc::UnboundedReceiver<Joined>>,
     pub ctx: Context,
     pub policy: Policy,
     pub approver: Arc<dyn Approver>,
@@ -96,6 +100,24 @@ pub struct Agent {
     pub inbox: Option<Arc<std::sync::Mutex<Vec<String>>>>,
 }
 
+/// Tools that joined: a server connected.
+pub struct Joined {
+    pub tools: Vec<Arc<dyn Tool>>,
+    pub deferred: Vec<Arc<dyn Tool>>,
+    /// Code Arena's note for the model: the server's instructions, the tools it may load.
+    pub note: Option<String>,
+}
+
+const LOAD_TOOLS: &str = "load_tools";
+
+fn load_tools_def() -> ToolDef {
+    ToolDef {
+        name: LOAD_TOOLS.into(),
+        description: "Loads tools listed in Code Arena's note (not sent whole, to keep the requests small), so they can be called: give their names.".into(),
+        parameters: serde_json::json!({"type": "object", "properties": {"names": {"type": "array", "items": {"type": "string"}}}, "required": ["names"]}),
+    }
+}
+
 /// Keeps each message as it is added, before the turn goes on.
 pub trait Recorder: Send {
     /// `begins_turn`: the person's own message, which starts a turn.
@@ -104,11 +126,54 @@ pub trait Recorder: Send {
 
 impl Agent {
     fn defs(&self) -> Vec<ToolDef> {
-        self.tools.iter().map(|t| t.def()).collect()
+        let mut d: Vec<ToolDef> = self.tools.iter().map(|t| t.def()).collect();
+        if !self.deferred.is_empty() {
+            d.push(load_tools_def());
+        }
+        d
     }
 
+    /// Every tool a call may name: those sent, those listed (loaded when called), and `load_tools`.
     fn schemas(&self) -> Vec<(String, Value)> {
-        self.tools.iter().map(|t| t.def()).map(|d| (d.name, d.parameters)).collect()
+        let mut s: Vec<(String, Value)> =
+            self.tools.iter().chain(self.deferred.iter()).map(|t| t.def()).map(|d| (d.name, d.parameters)).collect();
+        if !self.deferred.is_empty() {
+            let l = load_tools_def();
+            s.push((l.name, l.parameters));
+        }
+        s
+    }
+
+    /// A listed tool called by name is loaded then; it stays loaded, so the requests' start stays the same.
+    fn load(&mut self, name: &str) -> bool {
+        match self.deferred.iter().position(|t| t.def().name == name) {
+            Some(i) => {
+                let t = self.deferred.remove(i);
+                self.tools.push(t);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Takes in the tools of servers that connected since the last step.
+    fn take_joins(&mut self, events: &mut dyn Events) {
+        let Some(rx) = self.joins.as_mut() else { return };
+        let mut joined = Vec::new();
+        while let Ok(j) = rx.try_recv() {
+            joined.push(j);
+        }
+        for j in joined {
+            if !j.tools.is_empty() || !j.deferred.is_empty() {
+                events.notice(&format!("{} tools joined.", j.tools.len() + j.deferred.len()));
+            }
+            self.tools.extend(j.tools);
+            self.deferred.extend(j.deferred);
+            if let Some(n) = j.note {
+                // A note of Code Arena's: the model reads it; the session does not keep it (it is said again next time).
+                self.history.push(Message::user(n));
+            }
+        }
     }
 
     fn tool(&self, name: &str) -> Option<Arc<dyn Tool>> {
@@ -119,8 +184,9 @@ impl Agent {
         self.add(Message::user(text), true);
         let mut out = TurnOutcome::default();
         let mut carried = 0;
-        let defs = self.defs();
         loop {
+            self.take_joins(events);
+            let defs = self.defs();
             if out.steps > 0 {
                 let waiting: Vec<String> = match &self.inbox {
                     Some(i) => i.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default(),
@@ -140,7 +206,7 @@ impl Agent {
             let request = Request {
                 model: self.model.clone(),
                 messages,
-                tools: defs.clone(),
+                tools: defs,
                 thinking: self.thinking.clone(),
                 max_tokens: self.max_tokens,
                 tags: vec![],
@@ -176,16 +242,35 @@ impl Agent {
         let schemas = self.schemas();
         let mut i = 0;
         while i < calls.len() {
+            if calls[i].name == LOAD_TOOLS {
+                let names: Vec<String> = mend::parse_args(&calls[i].arguments, &mut vec![])
+                    .ok()
+                    .and_then(|v| v.get("names").cloned())
+                    .and_then(|n| serde_json::from_value(n).ok())
+                    .unwrap_or_default();
+                let (loaded, unknown): (Vec<String>, Vec<String>) =
+                    names.into_iter().partition(|n| self.load(n) || self.tool(n).is_some());
+                let mut text = if loaded.is_empty() {
+                    "Nothing loaded.".to_string()
+                } else {
+                    format!("Loaded {}: they can be called from now on.", loaded.join(", "))
+                };
+                if !unknown.is_empty() {
+                    text.push_str(&format!(" Not listed: {}.", unknown.join(", ")));
+                }
+                self.push_result(&calls[i], Output::ok(text), None);
+                i += 1;
+                continue;
+            }
             // A run of reading calls, together.
             let mut reads: Vec<(usize, Mended, Arc<dyn Tool>)> = Vec::new();
             let mut j = i;
             while j < calls.len() {
-                match mend::mend(&calls[j].name, &calls[j].arguments, &schemas) {
-                    Ok(m) => match self.tool(&m.name) {
-                        Some(t) if t.kind() == Kind::Read => reads.push((j, m, t)),
-                        _ => break,
-                    },
-                    Err(_) => break,
+                let Ok(m) = mend::mend(&calls[j].name, &calls[j].arguments, &schemas) else { break };
+                self.load(&m.name);
+                match self.tool(&m.name) {
+                    Some(t) if t.kind() == Kind::Read => reads.push((j, m, t)),
+                    _ => break,
                 }
                 j += 1;
             }
@@ -221,6 +306,7 @@ impl Agent {
             match mend::mend(&call.name, &call.arguments, &schemas) {
                 Err(why) => self.push_result(call, Output::error(why.0), None),
                 Ok(m) => {
+                    self.load(&m.name);
                     let Some(tool) = self.tool(&m.name) else {
                         self.push_result(call, Output::error(format!("There is no tool named {}.", m.name)), None);
                         i += 1;
@@ -344,6 +430,8 @@ mod tests {
             history: vec![],
             recorder: None,
             inbox: None,
+            deferred: vec![],
+            joins: None,
         };
         (server, a, dir, seen)
     }
@@ -409,6 +497,49 @@ mod tests {
         a.turn("edit", &mut Quiet).await.expect("turn");
         let msgs = &seen.lock().expect("lock")[1]["messages"];
         assert!(msgs[3]["content"].as_str().expect("t").starts_with("edit_file needs old_string and new_string."));
+    }
+
+    #[tokio::test]
+    async fn listed_tools_load_by_load_tools_or_by_being_called() {
+        let (_s, mut a, _d, seen) = agent(
+            vec![
+                call("load_tools", r#"{"names": ["grep", "nope"]}"#),
+                call("glob", r#"{"pattern": "*.txt"}"#),
+                say("Done.", "stop"),
+            ],
+            Mode::Ask,
+        )
+        .await;
+        // grep and glob are listed only.
+        let all = std::mem::take(&mut a.tools);
+        for t in all {
+            if t.def().name == "grep" || t.def().name == "glob" {
+                a.deferred.push(t);
+            } else {
+                a.tools.push(t);
+            }
+        }
+        a.turn("find notes", &mut Quiet).await.expect("turn");
+        let seen = seen.lock().expect("lock");
+        let names = |i: usize| -> Vec<String> {
+            seen[i]["tools"]
+                .as_array()
+                .expect("tools")
+                .iter()
+                .map(|t| t["function"]["name"].as_str().expect("n").to_string())
+                .collect()
+        };
+        assert!(names(0).contains(&"load_tools".to_string()) && !names(0).contains(&"grep".to_string()));
+        assert!(names(1).contains(&"grep".to_string()));
+        assert!(
+            seen[1]["messages"][3]["content"]
+                .as_str()
+                .expect("t")
+                .starts_with("Loaded grep: they can be called from now on. Not listed: nope.")
+        );
+        // glob was called straight from the list: loaded then, and run.
+        assert!(names(2).contains(&"glob".to_string()) && !names(2).contains(&"load_tools".to_string()));
+        assert!(seen[2]["messages"][5]["content"].as_str().expect("t").contains("notes.txt"));
     }
 
     #[tokio::test]

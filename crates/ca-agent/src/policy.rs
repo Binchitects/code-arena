@@ -143,6 +143,13 @@ pub struct Rules {
 }
 
 impl Rules {
+    /// A rule kept for this session only (a trusted server's tools: `mcp__name__*`).
+    pub fn allow(&mut self, rule: &str) {
+        if let Some(r) = Rule::parse(rule) {
+            self.allow.push(r);
+        }
+    }
+
     /// From the `permissions` setting: `{"allow": [...], "deny": [...]}`.
     pub fn from_setting(v: &Value) -> Self {
         let list = |k: &str| -> Vec<Rule> {

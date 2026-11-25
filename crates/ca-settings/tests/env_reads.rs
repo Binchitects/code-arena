@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 const ALLOWED: &[(&str, &str)] = &[
     // The one place the process's environment is read, into a snapshot.
     ("ca-settings/src/env.rs", "std::env::var("),
+    // `${NAME}` in the person's own MCP servers' settings: a variable they name there.
+    ("ca-settings/src/env.rs", "match std::env::var(name)"),
     // Finding a program on PATH is the system's business, not a setting.
     ("ca-tools/src/shell.rs", "std::env::var_os(\"PATH\")"),
 ];

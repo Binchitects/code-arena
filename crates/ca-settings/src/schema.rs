@@ -210,6 +210,56 @@ pub static COLOR: Setting = Setting {
     section: "Terminal",
 };
 
+pub static MCP_SERVERS: Setting = Setting {
+    key: "mcpServers",
+    kind: Kind::Object,
+    default: "{}",
+    description: "Your own MCP servers, in the shape Claude Code and others use: {\"name\": {\"command\": \"npx\", \"args\": [...], \"env\": {...}}} for a child process, or {\"url\": \"https://…/mcp\", \"headers\": {\"Authorization\": \"Bearer ${TOKEN}\"}}. ${NAME} is taken from the environment. \"trust\": true lets its tools run without asking; \"disabled\": true keeps it without starting it.",
+    scope: Scope::User,
+    env: None,
+    section: "MCP servers",
+};
+
+pub static ARENA_TOOLS: Setting = Setting {
+    key: "mcp.arenaTools",
+    kind: Kind::Bool,
+    default: "true",
+    description: "Arena's own tools (web search and pages, Python, pictures, speech, knowledge…), from https://DOMAIN/mcp with your key.",
+    scope: Scope::User,
+    env: None,
+    section: "MCP servers",
+};
+
+pub static CODE_INTEL_TOOLS: Setting = Setting {
+    key: "mcp.codeIntelTools",
+    kind: Kind::Bool,
+    default: "true",
+    description: "Farzan Graph's code search tools, at the address Arena gives (else https://code-intel.DOMAIN/mcp).",
+    scope: Scope::User,
+    env: None,
+    section: "MCP servers",
+};
+
+pub static TOOL_CHARS: Setting = Setting {
+    key: "tools.onDemandChars",
+    kind: Kind::Integer { min: 0, max: 10_000_000 },
+    default: "6000",
+    description: "Past this many characters of the servers' tool definitions, only the tools loaded go whole in each request; the others are listed for the model to load with load_tools. 0 sends them whole always.",
+    scope: Scope::User,
+    env: None,
+    section: "Tools",
+};
+
+pub static SERVER_WAIT: Setting = Setting {
+    key: "mcp.startWait",
+    kind: Kind::Integer { min: 0, max: 120 },
+    default: "3",
+    description: "Seconds a conversation waits at its start for the MCP servers (-p waits up to 25); a server that answers later joins when it does.",
+    scope: Scope::User,
+    env: None,
+    section: "MCP servers",
+};
+
 /// Every setting, in the Settings editor's order.
 pub static ALL: &[&Setting] = &[
     &MODEL,
@@ -225,6 +275,11 @@ pub static ALL: &[&Setting] = &[
     &PROJECT_FOLDER,
     &UPDATE_CHECK,
     &COLOR,
+    &MCP_SERVERS,
+    &ARENA_TOOLS,
+    &CODE_INTEL_TOOLS,
+    &TOOL_CHARS,
+    &SERVER_WAIT,
 ];
 
 pub fn find(key: &str) -> Option<&'static Setting> {

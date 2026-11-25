@@ -230,3 +230,72 @@ async fn continue_takes_up_the_folders_last_session() {
     let third = run(&["-p", "fresh", "--output", "json"]);
     assert_ne!(serde_json::from_slice::<Value>(&third.stdout).expect("json")["session"], id.as_str());
 }
+
+/// A tiny MCP server in sh: one tool, `shout`, that answers with what it was given.
+#[cfg(unix)]
+const ECHO_SERVER: &str = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$line" in
+    *'"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"serverInfo":{"name":"shout"},"instructions":"Shout when asked."}}\n' "$id" ;;
+    *'"tools/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"shout","description":"Says it loud","inputSchema":{"type":"object","properties":{"word":{"type":"string"}}}}]}}\n' "$id" ;;
+    *'"tools/call"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"HELLO from the server"}]}}\n' "$id" ;;
+  esac
+done
+"#;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_persons_own_mcp_server_answers_a_call() {
+    let gateway = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let call = sse(
+        json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "mcp__echo__shout", "arguments": "{\"word\":\"hello\"}"}}]}, "finish_reason": "tool_calls"}]}),
+    );
+    let answer = sse(json!({"choices": [{"delta": {"content": "The server shouted."}, "finish_reason": "stop"}]}));
+    struct Both(std::sync::Arc<std::sync::Mutex<Vec<Value>>>, Vec<String>);
+    impl Respond for Both {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            let mut s = self.0.lock().expect("lock");
+            s.push(serde_json::from_slice(&r.body).expect("json"));
+            let i = (s.len() - 1).min(self.1.len() - 1);
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(self.1[i].clone())
+        }
+    }
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Both(seen.clone(), vec![call, answer]))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    let settings = json!({
+        "mcpServers": {"echo": {"command": "sh", "args": ["-c", ECHO_SERVER], "trust": true}},
+        "mcp.arenaTools": false,
+        "mcp.codeIntelTools": false
+    });
+    std::fs::write(home.path().join("config/settings.json"), settings.to_string()).expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let out = code_arena(home.path())
+        .args(["-p", "shout hello", "--output", "json", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&out.stdout).expect("json")["result"], "The server shouted.");
+    let requests = seen.lock().expect("lock");
+    let tools: Vec<&str> =
+        requests[0]["tools"].as_array().expect("tools").iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+    assert!(tools.contains(&"mcp__echo__shout"), "{tools:?}");
+    let msgs = requests[1]["messages"].as_array().expect("messages");
+    assert!(
+        msgs.iter().any(|m| m["content"].as_str().is_some_and(|c| c.contains("Shout when asked."))),
+        "the server's instructions reach the model"
+    );
+    assert_eq!(msgs.last().expect("last")["content"], "HELLO from the server");
+}
