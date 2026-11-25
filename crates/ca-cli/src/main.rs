@@ -2,7 +2,9 @@
 
 mod account;
 mod app;
+mod chat;
 mod run;
+mod session;
 mod ui;
 
 use std::path::PathBuf;
@@ -20,8 +22,14 @@ struct Cli {
     /// Answer once, print the answer and exit (`-` reads the prompt from stdin).
     #[arg(short = 'p', long = "print", value_name = "PROMPT")]
     print: Option<String>,
-    /// A prompt to start with (the terminal conversation comes in 0.2; for now it runs as -p).
+    /// A message to start the conversation in this terminal with.
     prompt: Option<String>,
+    /// Carry on with this folder's last session.
+    #[arg(short = 'c', long = "continue")]
+    continue_last: bool,
+    /// Take up a saved session: its id, or none to choose from a list.
+    #[arg(long, num_args = 0..=1, default_missing_value = "")]
+    resume: Option<String>,
     /// ask, auto-edit, plan or yolo.
     #[arg(long)]
     mode: Option<String>,
@@ -70,6 +78,11 @@ enum Command {
     Models,
     /// What Code Arena sees: its folders, the Arena, and what that Arena has, feature by feature.
     Doctor,
+    /// A conversation in this terminal.
+    Chat {
+        /// A message to start with.
+        prompt: Option<String>,
+    },
     /// The version, the licence and the source.
     Version,
 }
@@ -106,8 +119,66 @@ fn format_error(e: &anyhow::Error) -> String {
     parts.join(": ")
 }
 
+/// What every way of running shares.
+struct Common {
+    print: Option<String>,
+    prompt: Option<String>,
+    continue_last: bool,
+    resume: Option<String>,
+    mode: Option<String>,
+    model: Option<String>,
+    thinking: Option<String>,
+    output: Output,
+    cwd: Option<PathBuf>,
+    add_dir: Vec<PathBuf>,
+}
+
+fn cli_opts(c: &Common) -> session::Opts {
+    session::Opts {
+        cwd: c.cwd.clone(),
+        add_dirs: c.add_dir.clone(),
+        mode: c.mode.clone(),
+        model: c.model.clone(),
+        thinking: c.thinking.clone(),
+        interactive: c.print.is_none(),
+    }
+}
+
+fn resume_of(c: &Common) -> session::Resume {
+    match (&c.resume, c.continue_last) {
+        (Some(id), _) if !id.is_empty() => session::Resume::Id(id.clone()),
+        (_, true) => session::Resume::Latest,
+        _ => session::Resume::New,
+    }
+}
+
+async fn chat(app: &mut app::App, opts: &session::Opts, first: Option<String>, c: &Common) -> anyhow::Result<i32> {
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        anyhow::bail!("the conversation needs a terminal: with a pipe, use -p (git diff | code-arena -p -)");
+    }
+    let args = chat::ChatArgs {
+        opts: session::Opts { interactive: true, ..opts.clone() },
+        resume: resume_of(c),
+        first,
+        choose: c.resume.as_deref() == Some(""),
+    };
+    chat::run(app, args).await
+}
+
 async fn go(cli: Cli) -> anyhow::Result<i32> {
     let mut app = app::App::load(None)?;
+    let cli_common = Common {
+        print: cli.print,
+        prompt: cli.prompt,
+        continue_last: cli.continue_last,
+        resume: cli.resume,
+        mode: cli.mode,
+        model: cli.model,
+        thinking: cli.thinking,
+        output: cli.output,
+        cwd: cli.cwd,
+        add_dir: cli.add_dir,
+    };
     match cli.command {
         Some(Command::Login { url, user, gateway, ca }) => {
             account::login(&app, account::LoginArgs { url, user, gateway, ca }).await.map(|()| 0)
@@ -119,42 +190,34 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
             println!("{} {} (MIT licence) {}", ca_core::PRODUCT, ca_core::VERSION, ca_core::SOURCE);
             Ok(0)
         }
-        None => {
-            let prompt = match (cli.print, cli.prompt) {
-                (Some(p), _) => p,
-                (None, Some(p)) => {
-                    app.ui.say(&app.ui.dim("(The terminal conversation comes in 0.2: this runs once, as -p.)"));
-                    p
-                }
-                (None, None) => {
-                    println!(
-                        "{} {}: the IDE comes in 0.4 and the terminal conversation in 0.2.",
-                        ca_core::PRODUCT,
-                        ca_core::VERSION
-                    );
-                    println!(
-                        "For now: code-arena -p \"what to do\", code-arena login, code-arena doctor (code-arena --help for more)."
-                    );
-                    return Ok(0);
-                }
-            };
-            let output = match cli.output {
-                Output::Text => run::OutputFormat::Text,
-                Output::Json => run::OutputFormat::Json,
-            };
-            run::run_once(
-                &mut app,
-                run::RunArgs {
-                    prompt,
-                    cwd: cli.cwd,
-                    add_dirs: cli.add_dir,
-                    mode: cli.mode,
-                    model: cli.model,
-                    thinking: cli.thinking,
-                    output,
-                },
-            )
-            .await
-        }
+        Some(Command::Chat { prompt }) => chat(&mut app, &cli_opts(&cli_common), prompt, &cli_common).await,
+        None => match cli_common.print.clone() {
+            Some(prompt) => {
+                let output = match cli_common.output {
+                    Output::Text => run::OutputFormat::Text,
+                    Output::Json => run::OutputFormat::Json,
+                };
+                let resume = resume_of(&cli_common);
+                let o = cli_opts(&cli_common);
+                run::run_once(
+                    &mut app,
+                    run::RunArgs {
+                        prompt,
+                        cwd: o.cwd,
+                        add_dirs: o.add_dirs,
+                        mode: o.mode,
+                        model: o.model,
+                        thinking: o.thinking,
+                        output,
+                        resume,
+                    },
+                )
+                .await
+            }
+            None => {
+                let first = cli_common.prompt.clone();
+                chat(&mut app, &cli_opts(&cli_common), first, &cli_common).await
+            }
+        },
     }
 }

@@ -177,3 +177,56 @@ fn print_without_signing_in_says_what_to_do() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("not signed in: run code-arena login"));
 }
+
+/// A model that answers every request the same, and keeps what each request held.
+struct Echo(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+
+impl Respond for Echo {
+    fn respond(&self, r: &Request) -> ResponseTemplate {
+        let body: Value = serde_json::from_slice(&r.body).expect("json");
+        self.0.lock().expect("lock").push(body);
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "text/event-stream")
+            .set_body_string(sse(json!({"choices": [{"delta": {"content": "Noted."}, "finish_reason": "stop"}]})))
+    }
+}
+
+#[tokio::test]
+async fn continue_takes_up_the_folders_last_session() {
+    let gateway = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(path("/v1/chat/completions")).respond_with(Echo(seen.clone())).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    let folder = tempfile::tempdir().expect("folder");
+    let run = |args: &[&str]| {
+        code_arena(home.path())
+            .args(args)
+            .arg("-C")
+            .arg(folder.path())
+            .env("ARENA_URL", "https://arena.example")
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .output()
+            .expect("runs")
+    };
+    let first = run(&["-p", "remember the word teal", "--output", "json"]);
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let id = serde_json::from_slice::<Value>(&first.stdout).expect("json")["session"].as_str().expect("id").to_string();
+    let second = run(&["-p", "which word?", "--continue", "--output", "json"]);
+    assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
+    assert_eq!(serde_json::from_slice::<Value>(&second.stdout).expect("json")["session"], id.as_str());
+    let requests = seen.lock().expect("lock");
+    let texts: Vec<String> = requests[1]["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .filter_map(|m| m["content"].as_str().map(str::to_string))
+        .collect();
+    assert!(texts.iter().any(|t| t == "remember the word teal"), "{texts:?}");
+    assert_eq!(texts.last().map(String::as_str), Some("which word?"));
+    // A new session without --continue reads nothing of it.
+    drop(requests);
+    let third = run(&["-p", "fresh", "--output", "json"]);
+    assert_ne!(serde_json::from_slice::<Value>(&third.stdout).expect("json")["session"], id.as_str());
+}

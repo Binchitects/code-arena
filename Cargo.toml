@@ -19,12 +19,14 @@ ca-mcp = { path = "crates/ca-mcp" }
 ca-tools = { path = "crates/ca-tools" }
 ca-agent = { path = "crates/ca-agent" }
 ca-workspace = { path = "crates/ca-workspace" }
+ca-session = { path = "crates/ca-session" }
 
 anyhow = "1"
 async-trait = "0.1"
 nix = { version = "0.30", default-features = false, features = ["signal", "process"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive", "env"] }
+crossterm = "0.29"
 dirs = "6"
 futures-util = "0.3"
 globset = "0.4"
@@ -33,12 +35,14 @@ grep-searcher = "0.1"
 ignore = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "http2", "cookies", "rustls-tls-native-roots"] }
 rpassword = "7"
+rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 similar = "2"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "io-std", "time", "sync", "signal"] }
+unicode-width = "0.2"
 url = "2"
 wiremock = "0.6"
 

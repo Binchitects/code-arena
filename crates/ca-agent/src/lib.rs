@@ -7,4 +7,4 @@ pub mod policy;
 mod turn;
 
 pub use policy::{Answer, Approver, Decision, Mode, NoAsking, Rules};
-pub use turn::{Agent, Events, TurnError, TurnOutcome};
+pub use turn::{Agent, Events, Recorder, TurnError, TurnOutcome};

@@ -2,6 +2,30 @@
 //! on stdout.
 
 use std::io::{IsTerminal, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether the terminal is in raw mode (the chat): lines must then end with `\r\n`.
+static RAW: AtomicBool = AtomicBool::new(false);
+
+pub fn set_raw(on: bool) {
+    RAW.store(on, Ordering::SeqCst);
+}
+
+/// Text as the terminal needs it now: `\n` as `\r\n` in raw mode.
+pub fn term(text: &str) -> std::borrow::Cow<'_, str> {
+    if RAW.load(Ordering::SeqCst) {
+        std::borrow::Cow::Owned(text.replace("\r\n", "\n").replace('\n', "\r\n"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
+/// Writes to stdout as the terminal needs it.
+pub fn out(text: &str) {
+    let mut o = std::io::stdout().lock();
+    let _ = o.write_all(term(text).as_bytes());
+    let _ = o.flush();
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Ui {
@@ -36,7 +60,8 @@ impl Ui {
     /// A line of progress on stderr.
     pub fn say(&self, text: &str) {
         let mut e = std::io::stderr().lock();
-        let _ = writeln!(e, "{text}");
+        let _ = e.write_all(term(&format!("{text}\n")).as_bytes());
+        let _ = e.flush();
     }
 }
 

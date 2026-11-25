@@ -64,6 +64,13 @@ pub fn signal_words(code: i32) -> Option<&'static str> {
 
 pub struct RunShell;
 
+impl RunShell {
+    /// A command line the person runs themselves (`!command`), as run_shell runs it.
+    pub async fn run_line(command: &str, ctx: &Context) -> Output {
+        RunShell.run(json!({"command": command}), ctx).await
+    }
+}
+
 #[async_trait::async_trait]
 impl Tool for RunShell {
     fn def(&self) -> ToolDef {

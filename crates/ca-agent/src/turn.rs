@@ -90,6 +90,16 @@ pub struct Agent {
     pub max_steps: usize,
     pub system: String,
     pub history: Vec<Message>,
+    /// Where each message goes as it is added (the session's store); none for a run that keeps nothing.
+    pub recorder: Option<Box<dyn Recorder>>,
+    /// Messages the person sent while the turn worked: read at its next step, as theirs.
+    pub inbox: Option<Arc<std::sync::Mutex<Vec<String>>>>,
+}
+
+/// Keeps each message as it is added, before the turn goes on.
+pub trait Recorder: Send {
+    /// `begins_turn`: the person's own message, which starts a turn.
+    fn record(&mut self, message: &Message, begins_turn: bool);
 }
 
 impl Agent {
@@ -106,11 +116,21 @@ impl Agent {
     }
 
     pub async fn turn(&mut self, text: &str, events: &mut dyn Events) -> Result<TurnOutcome, TurnError> {
-        self.history.push(Message::user(text));
+        self.add(Message::user(text), true);
         let mut out = TurnOutcome::default();
         let mut carried = 0;
         let defs = self.defs();
         loop {
+            if out.steps > 0 {
+                let waiting: Vec<String> = match &self.inbox {
+                    Some(i) => i.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default(),
+                    None => vec![],
+                };
+                for text in waiting {
+                    events.notice(&format!("› {text}  (sent while it worked)"));
+                    self.add(Message::user(text), false);
+                }
+            }
             if out.steps >= self.max_steps {
                 return Err(TurnError::Steps(out.steps));
             }
@@ -132,7 +152,7 @@ impl Agent {
             let calls = c.message.tool_calls.clone();
             let finish = c.finish;
             let words = c.message.content.clone();
-            self.history.push(c.message);
+            self.add(c.message, false);
             if !calls.is_empty() {
                 out.tool_calls += calls.len();
                 self.run_calls(&calls, events, &mut out).await;
@@ -141,9 +161,7 @@ impl Agent {
             if matches!(finish, Finish::Length | Finish::Dropped) && carried < CARRY_ON {
                 carried += 1;
                 // Code Arena's own note: the answer goes on where it stopped, without a word to the person.
-                self.history.push(Message::user(
-                    "(Your answer was cut off. Carry on exactly where it stopped, without repeating what you said.)",
-                ));
+                self.add(Message::user("(Your answer was cut off. Carry on exactly where it stopped, without repeating what you said.)"), false);
                 out.answer.push_str(&words);
                 continue;
             }
@@ -247,13 +265,20 @@ impl Agent {
         }
     }
 
+    fn add(&mut self, m: Message, begins_turn: bool) {
+        if let Some(r) = self.recorder.as_mut() {
+            r.record(&m, begins_turn);
+        }
+        self.history.push(m);
+    }
+
     fn push_result(&mut self, call: &ToolCall, o: Output, note: Option<String>) {
         let mut text = ca_tools::text::cut_middle(&o.text, RESULT_CHARS);
         if let Some(n) = note {
             text.push_str("\n\n");
             text.push_str(&n);
         }
-        self.history.push(Message::tool(call.id.clone(), text));
+        self.add(Message::tool(call.id.clone(), text), false);
     }
 }
 
@@ -317,6 +342,8 @@ mod tests {
             max_steps: 20,
             system: "sys".into(),
             history: vec![],
+            recorder: None,
+            inbox: None,
         };
         (server, a, dir, seen)
     }

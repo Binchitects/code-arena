@@ -1,22 +1,17 @@
 //! `-p`: one answer, printed, then out. The answer on stdout, the progress on stderr. It cannot ask, so what would
 //! ask is refused unless the mode allows it.
 
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
-use anyhow::{Context as _, bail};
-use ca_agent::instructions::{self, Environment};
-use ca_agent::policy::Policy;
-use ca_agent::{Agent, Events, Mode, NoAsking, Rules};
-use ca_llm::Thinking;
-use ca_settings::schema;
-use ca_tools::{Context, Output};
-use ca_workspace::Workspace;
+use anyhow::bail;
+use ca_agent::{Events, NoAsking};
+use ca_tools::Output;
 use serde_json::json;
 
 use crate::app::App;
+use crate::session::{self, Opts, Resume};
 use crate::ui::{self, Ui};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,13 +28,14 @@ pub struct RunArgs {
     pub model: Option<String>,
     pub thinking: Option<String>,
     pub output: OutputFormat,
+    pub resume: Resume,
 }
 
 /// The progress of a turn on stderr; the answer's words on stdout as they come (text output).
-struct Progress {
+pub struct Progress {
     ui: Ui,
     stream: bool,
-    at_line_start: bool,
+    pub at_line_start: bool,
     /// Whitespace that began a step's words: held until words follow, so a step that only calls tools prints no
     /// blank lines.
     held: String,
@@ -48,7 +44,7 @@ struct Progress {
 }
 
 impl Progress {
-    fn new(ui: Ui, stream: bool) -> Self {
+    pub fn new(ui: Ui, stream: bool) -> Self {
         Self { ui, stream, at_line_start: true, held: String::new(), spoke: false }
     }
 }
@@ -77,7 +73,7 @@ impl Events for Progress {
     }
     fn step_end(&mut self) {
         if self.stream && !self.at_line_start {
-            println!();
+            ui::out("\n");
             self.at_line_start = true;
         }
         self.held.clear();
@@ -94,9 +90,7 @@ impl Events for Progress {
 
 impl Progress {
     fn write(&mut self, d: &str) {
-        let mut o = std::io::stdout().lock();
-        let _ = o.write_all(d.as_bytes());
-        let _ = o.flush();
+        ui::out(d);
         self.at_line_start = d.ends_with('\n');
     }
 }
@@ -119,99 +113,24 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
     if prompt.trim().is_empty() {
         bail!("the prompt is empty");
     }
-    let cwd = match &args.cwd {
-        Some(c) => c.clone(),
-        None => std::env::current_dir()?,
-    };
-    let mut added = app.settings.strings(&schema::ALLOWED_PATHS).into_iter().map(PathBuf::from).collect::<Vec<_>>();
-    added.extend(args.add_dirs.iter().cloned());
-    let ws = Workspace::open(&cwd, &added).with_context(|| format!("the folder {}", cwd.display()))?;
-
-    // The project's own settings, now that the project is known.
-    let project_settings = ws.root().join(".code-arena").join("settings.json");
-    *app = App::load(Some(project_settings))?;
-    // Only a repository is taken for a project: a folder such as the Desktop gets no .code-arena/.
-    if app.settings.bool(&schema::PROJECT_FOLDER) && ws.in_repository() {
-        match ca_workspace::ensure_project_folder(ws.root()) {
-            Ok(c) if !c.files.is_empty() => ui.say(&ui.dim(&format!(
-                "Made {} with its default files ({} says what each is for).",
-                c.folder.display(),
-                c.folder.join("README.md").display()
-            ))),
-            Ok(_) => {}
-            Err(e) => ui.say(&ui.yellow(&format!("Could not make .code-arena/: {e}"))),
-        }
-    }
-
-    if let Some(m) = &args.mode {
-        app.settings.set_flag(&schema::MODE, json!(m));
-    }
-    let mode_word = app.settings.string(&schema::MODE).unwrap_or_else(|| "ask".into());
-    let Some(mode) = Mode::parse(&mode_word) else {
-        bail!("--mode {mode_word}: the modes are ask, auto-edit, plan and yolo")
-    };
-    if mode == Mode::Yolo {
-        ui.say(&ui.yellow("yolo: every command and edit runs without asking. Use it in a folder you can throw away."));
-    }
-
-    let gateway = app.gateway()?;
-    let model = match args.model.clone().or_else(|| app.settings.string(&schema::MODEL)) {
-        Some(m) => m,
-        None => gateway
-            .models()
-            .await?
-            .into_iter()
-            .next()
-            .map(|m| m.id)
-            .context("the gateway lists no model for your key")?,
-    };
-    let thinking =
-        Thinking::parse(&args.thinking.clone().or_else(|| app.settings.string(&schema::THINKING)).unwrap_or_default());
-    let shell_setting = app.settings.string(&schema::SHELL);
-    let (shell, _) = ca_tools::shell_for(shell_setting.as_deref());
-    let person = instructions::person_candidates(&app.paths.config, app.home.as_deref());
-    let read = instructions::read_all(&person, ws.root(), ws.cwd());
-    let env = Environment {
-        os: std::env::consts::OS.into(),
-        shell,
-        cwd: ws.cwd().display().to_string(),
-        branch: instructions::git_branch(ws.root()),
-        date: chrono::Local::now().format("%Y-%m-%d").to_string(),
-        mode: mode.name().into(),
+    let opts = Opts {
+        cwd: args.cwd,
+        add_dirs: args.add_dirs,
+        mode: args.mode,
+        model: args.model,
+        thinking: args.thinking,
         interactive: false,
     };
-    let mut agent = Agent {
-        gateway,
-        model: model.clone(),
-        thinking,
-        max_tokens: None,
-        tools: ca_tools::builtin(),
-        ctx: Context {
-            workspace: Arc::new(ws),
-            shell: shell_setting,
-            shell_timeout: Duration::from_secs(app.settings.integer(&schema::SHELL_TIMEOUT).max(1) as u64),
-        },
-        policy: Policy::new(mode, Rules::from_setting(&app.settings.value(&schema::PERMISSIONS))),
-        approver: Arc::new(NoAsking),
-        max_steps: app.settings.integer(&schema::MAX_STEPS).max(1) as usize,
-        system: instructions::system_prompt(&env, &read),
-        history: vec![],
-    };
+    let mut p = session::prepare(app, &opts, Arc::new(NoAsking), args.resume).await?;
+    let model = p.agent.model.clone();
     let mut progress = Progress::new(ui, args.output == OutputFormat::Text);
-    let result = agent.turn(&prompt, &mut progress).await;
+    let result = p.agent.turn(&prompt, &mut progress).await;
     match (args.output, result) {
         (OutputFormat::Text, Ok(out)) => {
             if !progress.at_line_start {
-                println!();
+                ui::out("\n");
             }
-            let u = out.usage;
-            let cached = (u.cached * 100).checked_div(u.prompt).map(|p| format!(" ({p}% cached)")).unwrap_or_default();
-            ui.say(&ui.dim(&format!(
-                "{} in{cached} · {} out · {} requests",
-                ui::short(u.prompt),
-                ui::short(u.completion),
-                out.steps
-            )));
+            ui.say(&ui.dim(&usage_line(&out)));
             Ok(0)
         }
         (OutputFormat::Text, Err(e)) => {
@@ -226,7 +145,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
             let body = json!({
                 "result": result,
                 "is_error": is_error,
-                "session": null,
+                "session": p.session,
                 "model": model,
                 "usage": {"input_tokens": usage.prompt, "cached_tokens": usage.cached, "output_tokens": usage.completion},
             });
@@ -234,4 +153,11 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
             Ok(i32::from(is_error))
         }
     }
+}
+
+/// `12.4k in (81% cached) · 310 out · 3 requests`
+pub fn usage_line(out: &ca_agent::TurnOutcome) -> String {
+    let u = out.usage;
+    let cached = (u.cached * 100).checked_div(u.prompt).map(|p| format!(" ({p}% cached)")).unwrap_or_default();
+    format!("{} in{cached} · {} out · {} requests", ui::short(u.prompt), ui::short(u.completion), out.steps)
 }

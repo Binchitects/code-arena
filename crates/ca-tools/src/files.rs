@@ -179,7 +179,8 @@ impl Tool for WriteFile {
             return Output::error(format!("{shown}: {}", io_words(&e)));
         }
         let lines = content.lines().count();
-        let mut o = Output::ok(format!("{} {shown} ({lines} lines).", if existed { "Replaced" } else { "Created" }));
+        let plural = if lines == 1 { "line" } else { "lines" };
+        let mut o = Output::ok(format!("{} {shown} ({lines} {plural}).", if existed { "Replaced" } else { "Created" }));
         o.wrote.push(real);
         o
     }

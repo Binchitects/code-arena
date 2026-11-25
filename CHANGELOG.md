@@ -3,6 +3,25 @@
 Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
 versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
 
+## Unreleased (0.2.0)
+
+### Added
+- Sessions kept in one SQLite database in the data folder (`sessions.db`): every message on disk
+  before the turn goes on, read back a page of turns at a time, searched with FTS5, with
+  compactions, results kept aside and the answer being written kept as a draft (recovered after a
+  crash).
+- `code-arena chat`, and `code-arena "message"`: a conversation in this terminal. The prompt is
+  edited as a shell's is (word moves, Ctrl+A/E/U/K/W, Ctrl+L, multi-line with Alt+Enter or a
+  trailing `\`, bracketed paste), ↑ and ↓ bring back what was sent in this folder (kept per
+  folder, 1,000 lines), Esc returns to what was being typed; approvals answer with y, n or a;
+  Ctrl+C stops a turn and keeps what was said; a line typed while a turn runs is read at its next
+  step; Ctrl+Z stops code-arena as a shell stops a job; the bell rings after a long turn and at
+  a question.
+- `--continue` and `--resume [ID]` (no id: choose from a list), for the chat and for `-p`;
+  `-p --output json` names its session.
+- In the chat: `/help`, `/model`, `/mode`, `/thinking`, `/cost`, `/clear`, `/resume`, `/search`,
+  `/exit`, and `!command`.
+
 ## 0.1.0 (2026-11-26)
 
 ### Added
