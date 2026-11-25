@@ -40,16 +40,37 @@ struct Progress {
     ui: Ui,
     stream: bool,
     at_line_start: bool,
+    /// Whitespace that began a step's words: held until words follow, so a step that only calls tools prints no
+    /// blank lines.
+    held: String,
+    /// Whether this step printed any words yet.
+    spoke: bool,
+}
+
+impl Progress {
+    fn new(ui: Ui, stream: bool) -> Self {
+        Self { ui, stream, at_line_start: true, held: String::new(), spoke: false }
+    }
 }
 
 impl Events for Progress {
     fn text(&mut self, d: &str) {
-        if self.stream {
-            let mut o = std::io::stdout().lock();
-            let _ = o.write_all(d.as_bytes());
-            let _ = o.flush();
-            self.at_line_start = d.ends_with('\n');
+        if !self.stream {
+            return;
         }
+        if !self.spoke {
+            let words = d.trim_start();
+            if words.is_empty() {
+                self.held.push_str(d);
+                return;
+            }
+            // The step's first words: what came before them was only whitespace.
+            self.held.clear();
+            self.spoke = true;
+            self.write(words);
+            return;
+        }
+        self.write(d);
     }
     fn notice(&mut self, t: &str) {
         self.ui.say(&self.ui.yellow(t));
@@ -59,15 +80,24 @@ impl Events for Progress {
             println!();
             self.at_line_start = true;
         }
+        self.held.clear();
+        self.spoke = false;
     }
-    fn tool_start(&mut self, name: &str, subject: &str) {
+    fn tool_end(&mut self, name: &str, subject: &str, o: &Output) {
         let s: String = subject.lines().next().unwrap_or("").chars().take(100).collect();
         self.ui.say(&format!("{} {name} {}", self.ui.dim("●"), self.ui.dim(&s)));
-    }
-    fn tool_end(&mut self, _name: &str, o: &Output) {
         let first = o.text.lines().next().unwrap_or("").chars().take(120).collect::<String>();
         let line = format!("  └ {first}");
         self.ui.say(&if o.is_error { self.ui.red(&line) } else { self.ui.dim(&line) });
+    }
+}
+
+impl Progress {
+    fn write(&mut self, d: &str) {
+        let mut o = std::io::stdout().lock();
+        let _ = o.write_all(d.as_bytes());
+        let _ = o.flush();
+        self.at_line_start = d.ends_with('\n');
     }
 }
 
@@ -100,7 +130,8 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
     // The project's own settings, now that the project is known.
     let project_settings = ws.root().join(".code-arena").join("settings.json");
     *app = App::load(Some(project_settings))?;
-    if app.settings.bool(&schema::PROJECT_FOLDER) {
+    // Only a repository is taken for a project: a folder such as the Desktop gets no .code-arena/.
+    if app.settings.bool(&schema::PROJECT_FOLDER) && ws.in_repository() {
         match ca_workspace::ensure_project_folder(ws.root()) {
             Ok(c) if !c.files.is_empty() => ui.say(&ui.dim(&format!(
                 "Made {} with its default files ({} says what each is for).",
@@ -166,7 +197,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
         system: instructions::system_prompt(&env, &read),
         history: vec![],
     };
-    let mut progress = Progress { ui, stream: args.output == OutputFormat::Text, at_line_start: true };
+    let mut progress = Progress::new(ui, args.output == OutputFormat::Text);
     let result = agent.turn(&prompt, &mut progress).await;
     match (args.output, result) {
         (OutputFormat::Text, Ok(out)) => {

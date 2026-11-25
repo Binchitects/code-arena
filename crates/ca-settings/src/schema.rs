@@ -184,7 +184,7 @@ pub static PROJECT_FOLDER: Setting = Setting {
     key: "workspace.projectFolder",
     kind: Kind::Bool,
     default: "true",
-    description: "Make the project's .code-arena/ folder, with its default files, the first time a folder is opened. Off: it is read when it is there, never made.",
+    description: "Make the project's .code-arena/ folder, with its default files, at the repository's root the first time a repository is opened (a folder that is no repository gets none). Off: it is read when it is there, never made.",
     scope: Scope::User,
     env: None,
     section: "Workspace",

@@ -22,7 +22,8 @@ pub trait Events: Send {
     fn notice(&mut self, _text: &str) {}
     /// A call about to run (after it was allowed).
     fn tool_start(&mut self, _name: &str, _subject: &str) {}
-    fn tool_end(&mut self, _name: &str, _output: &Output) {}
+    /// A call ended: its name, its subject and what it gave (reading calls that ran at once end in order).
+    fn tool_end(&mut self, _name: &str, _subject: &str, _output: &Output) {}
     /// The model's answer for this step is complete (before its tool calls run).
     fn step_end(&mut self) {}
 }
@@ -190,8 +191,8 @@ impl Agent {
                     async move { t.run(args, &ctx).await }
                 });
                 let results = futures_util::future::join_all(runs).await;
-                for ((idx, m, _), o) in ready.into_iter().zip(results) {
-                    events.tool_end(&m.name, &o);
+                for ((idx, m, t), o) in ready.into_iter().zip(results) {
+                    events.tool_end(&m.name, &t.subject(&m.args), &o);
                     self.push_result(&calls[idx], o, mend::note(&m));
                 }
                 i = j;
@@ -231,7 +232,7 @@ impl Agent {
                         Ok(()) => {
                             events.tool_start(&m.name, &subject);
                             let o = tool.run(m.args.clone(), &self.ctx).await;
-                            events.tool_end(&m.name, &o);
+                            events.tool_end(&m.name, &subject, &o);
                             for w in &o.wrote {
                                 if !out.wrote.contains(w) {
                                     out.wrote.push(w.clone());

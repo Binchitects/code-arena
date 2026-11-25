@@ -263,8 +263,8 @@ recorded 8.1 keeps it true.
 
 ## The project's `.code-arena/` folder
 
-The first time a folder is opened (IDE, `chat` or `-p`), Code Arena creates `.code-arena/`
-at the repository's root, or in the folder when it is no repository. It never overwrites
+The first time a repository is opened (IDE, `chat` or `-p`), Code Arena creates `.code-arena/`
+at its root. A folder that is no repository (the Desktop, a downloads folder) gets none. It never overwrites
 a file that exists, and it says in one line what it made.
 
 ```

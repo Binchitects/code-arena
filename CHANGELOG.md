@@ -3,7 +3,7 @@
 Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
 versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
 
-## Unreleased (0.1.0)
+## 0.1.0 (2026-11-26)
 
 ### Added
 - `code-arena login` (an API key typed without echo, or a user name, password and second
@@ -43,12 +43,18 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 - Instructions from `ARENA.md`, `AGENTS.md`, `CLAUDE.md` or `QWEN.md` (the person's, the
   repository root's and the working directory's).
 - Paths resolved as the system resolves them: a link that leads out counts as outside.
-- The project's `.code-arena/` folder, made with its default files the first time.
+- The project's `.code-arena/` folder, made with its default files at a repository's root the
+  first time (a folder that is no repository gets none).
 - The build image (`docker/builder`), static Linux binaries (musl), Windows binaries with the C
   runtime inside.
 - CI on six systems (Linux x64 and arm64, macOS arm64 and x64, Windows x64 and arm64): format,
   clippy and the tests; a release workflow that builds, packages and publishes each system's
   binary with `SHA256SUMS` on a `v*` tag; a workflow that publishes the build image to GHCR.
+
+### Fixed before release
+- `-p` printed blank lines before a step's tool calls, and listed calls that ran at once before
+  their results; each call now shows with its result, in order.
+- `.code-arena/` is made only at a repository's root, not in any folder `-p` runs in.
 
 ### Measured
 - The program is 7.1 MB (C# 8.1: 48.8 MB), starts in 0.4 ms (106 ms) and uses 2 MB of memory to

@@ -47,6 +47,7 @@ async fn print_mode_reads_a_file_and_answers_in_json() {
     let home = tempfile::tempdir().expect("home");
     let project = tempfile::tempdir().expect("project");
     std::fs::write(project.path().join("notes.txt"), "42\n").expect("write");
+    std::fs::create_dir(project.path().join(".git")).expect("a repository");
     let out = code_arena(home.path())
         .args(["-p", "what do the notes say?", "--output", "json", "-C"])
         .arg(project.path())
@@ -68,6 +69,46 @@ async fn print_mode_reads_a_file_and_answers_in_json() {
     assert!(!stderr.contains("sk-test-only") && !stdout.contains("sk-test-only"));
     // The project's folder was made, with its defaults.
     assert!(project.path().join(".code-arena/settings.json").is_file());
+}
+
+#[tokio::test]
+async fn text_output_shows_each_call_with_its_result_and_no_blank_lines() {
+    let gateway = MockServer::start().await;
+    // A model that writes blank lines before it calls two reading tools at once, then answers.
+    let calls = sse(json!({"choices": [{"delta": {"content": "\n\n", "tool_calls": [
+        {"index": 0, "id": "a", "function": {"name": "list_dir", "arguments": "{}"}},
+        {"index": 1, "id": "b", "function": {"name": "read_file", "arguments": "{\"path\":\"notes.txt\"}"}}
+    ]}, "finish_reason": "tool_calls"}]}));
+    let answer =
+        sse(json!({"choices": [{"delta": {"content": "\nIt is a folder of notes."}, "finish_reason": "stop"}]}));
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(vec![calls, answer], AtomicUsize::new(0)))
+        .mount(&gateway)
+        .await;
+
+    let home = tempfile::tempdir().expect("home");
+    let folder = tempfile::tempdir().expect("folder");
+    std::fs::write(folder.path().join("notes.txt"), "42\n").expect("write");
+    let out = code_arena(home.path())
+        .args(["-p", "what is this?", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(stdout, "It is a folder of notes.\n");
+    let lines: Vec<&str> = stderr.lines().collect();
+    let list = lines.iter().position(|l| l.starts_with("● list_dir")).expect("list_dir shown");
+    assert!(lines[list + 1].starts_with("  └ notes.txt"), "{stderr}");
+    assert!(lines[list + 2].starts_with("● read_file notes.txt"), "{stderr}");
+    assert!(lines[list + 3].starts_with("  └      1\t42"), "{stderr}");
+    // A folder that is no repository is no project: it gets no .code-arena/.
+    assert!(!folder.path().join(".code-arena").exists());
 }
 
 #[tokio::test]
