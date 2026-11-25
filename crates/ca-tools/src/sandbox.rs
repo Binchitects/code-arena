@@ -229,6 +229,7 @@ pub fn find() -> Result<Kind, String> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn bubblewraps_arguments() {
         let d = tempfile::tempdir().expect("temp");
@@ -281,6 +282,7 @@ mod tests {
         assert!(!s.hidden.iter().any(|h| h.starts_with(d.path().join("varrun"))));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_folder_the_tools_may_use_is_never_hidden() {
         let home = PathBuf::from("/home/me");

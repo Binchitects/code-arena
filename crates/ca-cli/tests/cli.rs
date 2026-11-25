@@ -343,7 +343,8 @@ async fn the_agents_commands_run_in_the_sandbox() {
     let fake_home = tempfile::tempdir().expect("home");
     std::fs::create_dir_all(fake_home.path().join(".ssh")).expect("ssh");
     std::fs::write(fake_home.path().join(".ssh/id_test"), "SECRET-KEY-TEXT").expect("key");
-    let outside = tempfile::tempdir().expect("outside");
+    // Not a temporary folder: commands may write the system's (on macOS, $TMPDIR under /var/folders).
+    let outside = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("outside");
     let command = format!(
         "cat ~/.ssh/id_test 2>&1; echo ok > made.txt; echo x > {}/escaped.txt 2>&1; echo done",
         outside.path().display()

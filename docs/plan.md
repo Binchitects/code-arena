@@ -468,7 +468,7 @@ systems, and a **headline**: one thing to show.
 |---|---|---|
 | **0.1** | *"It answers, on Arena 8.0 and 8.1."* `code-arena -p "…"` reads, edits and runs commands in a repository, on both servers, from one static binary on all six systems | workspace and crates' skeleton; CI on six runners; release workflow; build image; `login` (key and password, CA), `logout`, `models`, `doctor` (capabilities); gateway streaming with tool calls and mending; local file, grep, glob, shell and git tools; modes and approvals in `-p`; settings schema v0; `.code-arena/` creation |
 | **0.2** | *"A terminal agent you'd switch to."* `code-arena chat` with sessions, resume, compaction and MCP | TUI (line editor, history, Tab skips thinking, typed-while-running, Ctrl+Z); SQLite sessions; `--continue` and `--resume`; rewind and checkpoints; compaction and context accounting; big results kept aside; result condensing; Arena MCP, Farzan Graph and own MCP servers; tools on demand; ARENA.md and instruction files; commands, skills and sub-agent files; kept rules; sandbox; jobs (no time limit, background) |
-| **0.3** | *"Same chat, web and terminal."* A session continued on the web and back again | chat sync both ways (ids, branches, compaction, drafts, queue, turn lock, attachments); memory (Arena's and local); `.remember/`; skills from Arena and import/export; checklists; plans; goals; projects; assistants; capability negotiation complete with contract tests |
+| **0.3** | *"Same chat, web and terminal."* A session continued on the web and back again | chat sync both ways (ids, branches, compaction, drafts, queue, turn lock, attachments); memory (Arena's and local); `.remember/`; skills from Arena and import/export; checklists; plans; goals; projects; assistants; capability negotiation complete with contract tests; and what 0.2 left (the checklist says each): other providers, Tab to skip thinking, `stream-json`, the Arena account's compaction threshold and its tokenizer, git's filters kept from running, a long turn compacting itself |
 | **0.4** | *"Agent mode."* The IDE's minimal agent window, smooth on a 10,000-message session | the server (key, cookie, checks); SolidJS shell; Agent mode (thread, box, status line, pins, density); approvals; queued messages; Answer again; Edit; Rewind to here; Context panel; Tasks panel; Settings editor generated from the schema; perf CI with the first numbers against C# 8.1 |
 | **0.5** | *"Coder mode."* VS Code's workbench, keys and settings | Monaco; explorer; tabs and previews; editor groups; quick open and palette; search and replace; terminals (pty); Source Control (stage by hunk, branches, sync); compare; quick diff; themes (Arena's and VS Code's); keybindings.json and the Keyboard Shortcuts editor; settings.json layers; hot exit; breadcrumbs; outline; zen mode |
 | **0.6** | *"Language and debug."* Go to definition, breakpoints and formatting in five languages | LSP relay and the catalog; DAP relay and adapters; launch.json and tasks.json; formatters; Problems (check, LSP, security review); notebooks; merge conflicts and the merge editor; multi-root workspaces; TextMate grammars |
@@ -504,30 +504,34 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 
 ### Getting it and signing in
 
-- [ ] 0.1 Builds for linux-x64, linux-arm64, osx-arm64, osx-x64, win-x64, win-arm64
+- [x] 0.1 Builds for linux-x64, linux-arm64, osx-arm64, osx-x64, win-x64, win-arm64
 - [ ] 0.8 `install.sh` and `install.ps1` from Arena, checked against SHA-256 and the signed list (`SHA256SUMS.sig`, code-signing certificate)
 - [ ] 0.8 Windows: `code-arena-ide` launcher with no console, desktop and Start menu shortcuts, Authenticode-friendly (version info, icon)
 - [ ] 0.8 "Open in Code Arena" on folders: Explorer, GNOME Files, Dolphin, Nemo, Caja, Thunar, Finder Quick Actions; `uninstall` removes them
 - [ ] 0.8 `update`: daily check, the status bar's Update, size, SHA-256 and signature checked, old binary moved aside on Windows; `updateCheck` setting
-- [ ] 0.1 User-Agent `code-arena/X.Y.Z` on every request
+- [x] 0.1 User-Agent `code-arena/X.Y.Z` on every request
 - [ ] 0.8 Packages with README.txt, LICENSE and SHA256SUMS
-- [ ] 0.1 `login --url`, key typed without echo, checked with `/v1/models`, MCP counted; `logout`; `models` with windows and longest answers
-- [ ] 0.1 Sign-in by user name and password (lockout, second factor), key made as "Code Arena on NAME"
+- [x] 0.1 `login --url`, key typed without echo, checked with `/v1/models`, MCP counted; `logout`; `models` with windows and longest answers
+- [x] 0.1 Sign-in by user name and password (lockout, second factor), key made as "Code Arena on NAME"
 - [ ] 0.8 Accounts menu: whose key, sign in or out (revoking), Your account, People, Send feedback, signed-out dot
-- [ ] 0.1 Paths per system; `CODE_ARENA_HOME` (portable); `ARENA_URL`, `ARENA_API_KEY`, `ARENA_GATEWAY_URL`, `ARENA_MCP_URL`, `ARENA_MODEL`; `--gateway`
-- [ ] 0.2 Without an Arena: other providers; IDE without a model; what waits for sign-in
-- [ ] 0.1 Company CA: `--ca`, `ARENA_CA_CERT`, the saved path, `SSL_CERT_FILE`; never a switch to turn checks off
+- [x] 0.1 Paths per system; `CODE_ARENA_HOME` (portable); `ARENA_URL`, `ARENA_API_KEY`, `ARENA_GATEWAY_URL`, `ARENA_MCP_URL`, `ARENA_MODEL`; `--gateway`
+- [ ] 0.3 Without an Arena: other providers; IDE without a model; what waits for sign-in (moved from 0.2)
+- [x] 0.1 Company CA: `--ca`, `ARENA_CA_CERT`, the saved path, `SSL_CERT_FILE`; never a switch to turn checks off
 
 ### Working with it (CLI)
 
 - [ ] 0.4 `code-arena` opens the IDE; `web`; `--port`, `--no-open`
-- [ ] 0.2 `chat`, a prompt argument, `-p` (stdin with `-`), `--output json` (and better: `stream-json`), `--continue`, `--resume [id]`, `--plan`, `--web N`, `--version`
-- [ ] 0.2 Streaming with dimmed thinking; Tab skips thinking; `/thinking off`
-- [ ] 0.2 Tool lines with results (a diff, the last lines, counts); tokens and cache share per turn; the window's use; room kept for the answer
-- [ ] 0.2 Answers cut at the output limit carried on; a cut tool call redone in parts; repeated cuts end the turn
-- [ ] 0.2 Ctrl+C semantics; typing while a turn runs (read at the next step, or after the turn); ↑ takes back a pending line; commands typed meanwhile wait; questions read only what follows them
-- [ ] 0.2 Ctrl+Z and `fg`; a trailing `\` continues the line; the line editor's keys; history per folder shared with the IDE (1,000 kept); multi-line editing; plain lines without a TTY
-- [ ] 0.2 Every slash command in the manual's table: `/help /model /mode /thinking /tools /plan /checklist /review /agent /assistant /tasks /goal /compact /compact-at /context /cost /mcp /jobs /clear /resume /web /sync /project /projects /memory /remember /rewind /search /index /permissions /sandbox /commands /skills !cmd /NAME /exit` (each lands with its feature's milestone)
+- [x] 0.2 `chat`, a prompt argument, `-p` (stdin with `-`), `--output json`, `--continue`, `--resume [id]`, `--version`
+- [ ] 0.3 `--output stream-json`, `--plan`, `--web N` (moved from 0.2)
+- [x] 0.2 Streaming with dimmed thinking; `/thinking off`
+- [ ] 0.3 Tab skips thinking (moved from 0.2)
+- [x] 0.2 Tool lines with results (a diff for an edit, the first line otherwise); tokens and cache share per turn; the window's use; room kept for the answer
+- [x] 0.2 Answers cut at the output limit carried on (eight times a turn at most)
+- [ ] 0.3 A cut tool call redone in parts; cuts that repeat the same words end the turn (moved from 0.2)
+- [x] 0.2 Ctrl+C semantics; typing while a turn runs (read at the next step, or after the turn); a question reads only what is typed after it
+- [ ] 0.3 ↑ takes back a pending line; commands typed meanwhile run when the turn ends (moved from 0.2)
+- [x] 0.2 Ctrl+Z and `fg`; a trailing `\` continues the line; the line editor's keys; history per folder shared with the IDE (1,000 kept); multi-line editing; plain lines without a TTY
+- [ ] 0.2 Every slash command in the manual's table: `/help /model /mode /thinking /tools /plan /checklist /review /agent /assistant /tasks /goal /compact /compact-at /context /cost /mcp /jobs /clear /resume /web /sync /project /projects /memory /remember /rewind /search /index /permissions /sandbox /commands /skills !cmd /NAME /exit` (each lands with its feature's milestone) (each lands with its feature; 0.2 has `/help /model /mode /thinking /tools /compact /compact-at /context /cost /mcp /jobs /clear /resume /rewind /search /permissions /sandbox /commands /skills !cmd /NAME /exit`)
 
 ### The IDE: window, security, layout
 
@@ -611,22 +615,25 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 
 ### Modes, safety and tools
 
-- [ ] 0.1 Modes ask, auto-edit, plan, yolo; y, n, a; tools stay in allowed paths (links resolved); API key never in a child's environment
+- [x] 0.1 Modes ask, auto-edit, plan, yolo; y, n, a; tools stay in allowed paths (links resolved); API key never in a child's environment
 - [ ] 0.7 Laya command check (parts, probabilities shown, 60% asks even in yolo, `-p` refuses flagged, never removes a question)
-- [ ] 0.1 `read_file` (ranges, outline for big files, by symbol), `write_file`, `edit_file` (line endings kept), `list_dir`, `glob`, `grep` (no-backtracking, limits)
-- [ ] 0.1 `run_shell` (bash, Git bash, PowerShell, cmd; limits; middle cut with error lines listed; `read_result`)
-- [ ] 0.2 `command_output`, `stop_command` (always asks), jobs with no time limit and in the background, carry-on turns
-- [ ] 0.1 `git` read-only with today's protections (no hooks, filters, fsmonitor, network, outside paths)
+- [x] 0.1 `read_file` (ranges, a big file's first lines), `write_file`, `edit_file` (line endings kept), `list_dir`, `glob`, `grep` (no backtracking, limits)
+- [ ] 0.7 `read_file`'s outline of a big file and reading by symbol (with the code index)
+- [x] 0.1 `run_shell` (bash, Git bash, PowerShell, cmd; limits; middle cut with error lines listed; `read_result`)
+- [x] 0.2 `command_output`, `stop_command` (always asks), jobs with no time limit and in the background, carry-on turns
+- [x] 0.1 `git` read-only: no hooks, fsmonitor, external diff, text conversion, pager, network or outside paths
+- [ ] 0.3 `git`: the repository's clean and smudge filters and merge drivers kept from running too (moved from 0.1)
 - [ ] 0.8 `screenshot` (headless browser, or the whole screen)
 - [ ] 0.7 `ask_agent` and `/agent` (Claude Code, Codex, Gemini CLI by their own sign-ins)
-- [ ] 0.1 Read-only calls at once, changing calls in order
-- [ ] 0.1 Encodings (UTF-8, UTF-16, UTF-32 by BOM) and files held open by others; Git bash paths on Windows
-- [ ] 0.2 Arena's tools over MCP: names, `arena_` prefix, instructions passed on, media saved under `.code-arena/media/` (git-ignored), deadlines, progress, cancellation, keep-alive
-- [ ] 0.2 Farzan Graph's tools (dedup with Arena's), background connection, retry with backoff, `/mcp`, address validation
-- [ ] 0.2 Per-session tool choice; tools on demand (`load_tools`, `toolChars`)
+- [x] 0.1 Read-only calls at once, changing calls in order
+- [x] 0.1 Encodings (UTF-8, UTF-16, UTF-32 by BOM); Git bash paths on Windows
+- [ ] 0.3 Files held open by others on Windows (moved from 0.1)
+- [x] 0.2 Arena's tools over MCP: names, `arena_` prefix, instructions passed on, media saved under `.code-arena/media/` (git-ignored), deadlines, progress, cancellation, keep-alive
+- [x] 0.2 Farzan Graph's tools (dedup with Arena's), background connection, retry with backoff, `/mcp`, address validation
+- [x] 0.2 Per-session tool choice (`/tools on|off`); tools on demand (`load_tools`, `tools.onDemandChars`)
 - [ ] 0.7 Code index: `code_search`, `code_symbol`, `code_outline`; secrets never read; CLI `index` and `search` (better: tree-sitter for many languages)
 - [ ] 0.8 VMs: list, power, snapshot, copy, run, screenshot, input, test, create, clone, delete on four hypervisors; guest sign-in from the keyring; CLI `vm …`
-- [ ] 0.2 ARENA.md and AGENTS.md, CLAUDE.md, QWEN.md (person's, root, folder), 20,000 characters each, environment facts
+- [x] 0.2 ARENA.md and AGENTS.md, CLAUDE.md, QWEN.md (person's, root, folder), 20,000 characters each, environment facts
 
 ### Checklists, plan, sub-agents, goals, automation
 
@@ -643,38 +650,42 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 
 ### Sessions, window, memory
 
-- [ ] 0.2 Sessions stored durably, listed fast, resumed with the count of messages and of those summarized
-- [ ] 0.2 Window from `/v1/model/info`, threshold and target, structured summary, plan restated
-- [ ] 0.2 Big results kept aside; used results summarized; calls mended; results cleared before compacting; `session_search` and `session_read`; `search_sessions`; `search_history` and `open_chat`
-- [ ] 0.2 `/context` piece by piece, with Arena's tokenizer when it has one
-- [ ] 0.2 Never stuck on the window: summary failures, loops, one long turn, refusals of the window, llama.cpp's shared cache, measured token size, compaction ahead of need, the engine's own window learned, a stable prompt prefix
-- [ ] 0.2 `/compact-at` and its sources (flag, settings, Arena account, default)
+- [x] 0.2 Sessions stored durably, listed fast, resumed with the count of messages and of those summarized
+- [x] 0.2 Window from `/v1/model/info`, threshold and target, structured summary (the plan restated comes with the plan, 0.3)
+- [x] 0.2 Big results kept aside; used results summarized; calls mended; results cleared before compacting; `session_search` and `session_read`; `search_sessions`; `search_history` and `open_chat`
+- [x] 0.2 `/context` by kind, with the biggest messages
+- [ ] 0.3 `/context` counted with Arena's tokenizer when it has one (moved from 0.2)
+- [x] 0.2 Never stuck on the window: summary failures and loops, refusals of the window (compact and ask again), measured token size
+- [ ] 0.3 One long turn compacting its own steps; llama.cpp's shared cache asked again after two seconds; the engine's own window learned (moved from 0.2)
+- [x] 0.2 `/compact-at` for the session, `agent.compactAt` and `agent.compactTarget` in settings
+- [ ] 0.3 `/compact-at` kept in settings; the Arena account's threshold (moved from 0.2)
 - [ ] 0.3 Memory: Arena's (`remember`, `recall`, per project by origin, person, company), local fallback and import, denied by `feature.memory`
 - [ ] 0.3 `.remember/` long project memory (`remember_project`)
 - [ ] 0.3 `skill_save` (project or person), reminder after long turns
 - [ ] 0.4 Memory view
-- [ ] 0.2 `@files` and ranges; checkpoints and `/rewind` (code, chat, both), across compactions; rewind commits when commits are on
+- [x] 0.2 `@files` and ranges; checkpoints and `/rewind` (code, chat, both)
+- [ ] 0.7 Rewind committed when commits are on (with the commits)
 
 ### Commands, skills, rules, sandbox
 
-- [ ] 0.2 Commands (`$ARGUMENTS`, `$1`, front matter), sub-agent files, skills (agentskills.io), read again each turn; from `.code-arena/`, `.arena/`, `.claude/`, `.qwen/`, the home and the config folder
+- [x] 0.2 Commands (`$ARGUMENTS`, `$1`, front matter), sub-agent files, skills (agentskills.io), read again each turn; from `.code-arena/`, `.arena/`, `.claude/`, `.qwen/`, the home and the config folder
 - [ ] 0.4 Skills view (by source, open or use, New Skill, Refresh)
 - [ ] 0.3 Skills from Arena and plugins (cached, refreshed); built-in skills
 - [ ] 0.3 Import and export of skills (zip, folder, SKILL.md; conflicts; secrets never come in; Arena's safeguards; limits)
-- [ ] 0.2 Kept rules (`allow`, `deny`, patterns, commands matched by parts; the project may only deny)
-- [ ] 0.2 Sandbox (bubblewrap, sandbox-exec; secrets hidden, writes limited, Docker sockets out of reach, network off); better: a Windows sandbox (0.9)
+- [x] 0.2 Kept rules (`allow`, `deny`, patterns, commands matched by parts; the project may only deny)
+- [x] 0.2 Sandbox (bubblewrap, sandbox-exec; secrets hidden, writes limited, Docker sockets out of reach, network off); better: a Windows sandbox (0.9)
 
 ### Arena chats, projects, providers, commits, MCP, own tools
 
 - [ ] 0.3 Chats in Arena both ways: polling with the stamp (better: `watch` push where the server has it), the answer being written shown on the web, nothing lost on crash, ids on both sides, branches, compaction both ways, turn lock and the web's queue, `/web`, `/sync`, `/sync all`, background send of what Arena lacks
 - [ ] 0.3 Projects: choose, list, make, tags on gateway requests, goals and tasks tools (on servers that have `project_work`), the Projects view and the project tab (Overview, Goals and tasks, In it, People, Settings), export
-- [ ] 0.2 Other providers: Anthropic, OpenAI, DeepSeek, OpenRouter, Mistral, OpenAI-compatible; keys from the environment or the keyring; Arena's admin switch
+- [ ] 0.3 Other providers: Anthropic, OpenAI, DeepSeek, OpenRouter, Mistral, OpenAI-compatible; keys from the environment or the keyring; Arena's admin switch (moved from 0.2)
 - [ ] 0.7 Commits: **off by default**, made by the model in groups (see above), co-author trailer, only the turn's files, hooks, never mid-merge
 - [ ] 0.4 Terminal bell; the IDE's bubbles; desktop notifications; broadcasts
-- [ ] 0.2 The person's MCP servers (stdio and HTTP, `${NAME}` from the environment, `trust`, `disabled`, plan mode read-only)
+- [x] 0.2 The person's MCP servers (stdio and HTTP, `${NAME}` from the environment, `trust`, `disabled`, plan mode read-only)
 - [ ] 0.7 Own command tools (JSON, arguments on stdin and in the environment, kinds, timeouts); the project's tools and MCP servers enabled per person
 - [ ] 0.7 Tool settings: on or off, how it asks, description, fixed or default arguments, per project; the project may only turn off or ask
-- [ ] 0.1 Recovery from the gateway: retries, stalls, carrying on after a dropped stream, the model's line full, safeguard refusals in Arena's words, the error messages in the manual's list
+- [x] 0.1 Recovery from the gateway: retries, stalls, a dropped stream kept, the model's line full (waited in, 0.2), safeguard refusals in Arena's words
 
 ## Rules this work follows
 

@@ -16,12 +16,14 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.send_header('Content-Length',str(len(out))); self.end_headers(); self.wfile.write(out)
 import re
 srv=http.server.HTTPServer(('127.0.0.1',0),H); threading.Thread(target=srv.serve_forever,daemon=True).start()
-home=tempfile.mkdtemp(); work=tempfile.mkdtemp(); fake=tempfile.mkdtemp(); out_dir=tempfile.mkdtemp()
+home=tempfile.mkdtemp(); work=tempfile.mkdtemp(); fake=tempfile.mkdtemp(); out_dir=tempfile.mkdtemp(dir=os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(fake+"/.ssh"); open(fake+"/.ssh/id_test","w").write("SECRET-KEY-TEXT")
 env=dict(os.environ,HOME=fake,CODE_ARENA_HOME=home,ARENA_URL="https://arena.example",ARENA_API_KEY="sk-test-only",ARENA_GATEWAY_URL=f"http://127.0.0.1:{srv.server_port}",ARENA_MODEL="qwen",NO_PROXY="127.0.0.1")
 answers[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"]=answers[0]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"].replace("OUT",out_dir)
 r=subprocess.run([sys.argv[1],"-p","x","--mode","yolo","-C",work],env=env,capture_output=True,text=True,timeout=60)
 res=seen[1]["messages"][3]["content"]
 ok = "SECRET" not in res and "done" in res and os.path.exists(work+"/made.txt") and not os.path.exists(out_dir+"/escaped.txt")
+import shutil
+shutil.rmtree(out_dir, ignore_errors=True)
 print("ok" if ok else "FAIL: "+res)
 sys.exit(0 if ok else 1)

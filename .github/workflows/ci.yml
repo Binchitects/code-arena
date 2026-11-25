@@ -61,14 +61,14 @@ jobs:
         if: "!startsWith(matrix.name, 'win-')"
         run: |
           cargo build --locked -q -p ca-cli
-          python3 tests/pty/chat_approval.py target/debug/code-arena
-          python3 tests/pty/chat_jobs.py target/debug/code-arena
+          python3 tests/pty/chat_approval.py "$PWD/target/debug/code-arena"
+          python3 tests/pty/chat_jobs.py "$PWD/target/debug/code-arena"
       - name: The sandbox, where the runner can make one
         if: "!startsWith(matrix.name, 'win-')"
         shell: bash
         run: |
           if [ "$(uname)" = Darwin ] || bwrap --ro-bind / / --dev /dev --proc /proc -- true 2>/dev/null; then
-            python3 tests/pty/sandbox_check.py target/debug/code-arena
+            python3 tests/pty/sandbox_check.py "$PWD/target/debug/code-arena"
           else
             echo "bubblewrap cannot make a sandbox on this runner: skipped"
           fi
