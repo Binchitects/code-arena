@@ -23,6 +23,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   mark, CRLF kept), `list_dir`, `glob`, `grep` (no backtracking, `.gitignore` followed),
   `run_shell` (time limit, the process group stopped, the API key never passed on) and a
   read-only `git`.
+- The agent's turn: requests and tool calls until the model answers; reading calls run at once,
+  changing ones in order; an answer cut at the output limit or by a dropped stream carried on.
+- Modes `ask`, `auto-edit`, `plan` and `yolo`; kept rules (`permissions`: `run_shell(npm test*)`,
+  commands matched whole and part by part); "always" for the session; a run that cannot ask refuses
+  what would ask, with a reason the model passes on.
+- Calls mended before they run: other harnesses' tool and argument names, nearly-JSON arguments,
+  wrong types; a call missing what it needs is explained with the tool's parameters.
+- Instructions from `ARENA.md`, `AGENTS.md`, `CLAUDE.md` or `QWEN.md` (the person's, the
+  repository root's and the working directory's).
 - Paths resolved as the system resolves them: a link that leads out counts as outside.
 - The project's `.code-arena/` folder, made with its default files the first time.
 - The build image (`docker/builder`), static Linux binaries (musl).
