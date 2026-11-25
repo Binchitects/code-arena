@@ -56,10 +56,14 @@ pub struct StoreRecorder {
 }
 
 impl Recorder for StoreRecorder {
-    fn record(&mut self, message: &Message, begins_turn: bool) {
-        let Ok(s) = self.store.lock() else { return };
-        if let Err(e) = s.append(&self.session, message, begins_turn) {
-            eprintln!("The session could not be kept: {e}");
+    fn record(&mut self, message: &Message, begins_turn: bool) -> Option<i64> {
+        let s = self.store.lock().ok()?;
+        match s.append(&self.session, message, begins_turn) {
+            Ok(seq) => Some(seq),
+            Err(e) => {
+                eprintln!("The session could not be kept: {e}");
+                None
+            }
         }
     }
 
@@ -218,11 +222,11 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         thinking,
         max_tokens: None,
         tools: ca_tools::builtin(),
-        ctx: Context {
-            workspace: Arc::new(ws),
-            shell: shell_setting,
-            shell_timeout: Duration::from_secs(app.settings.integer(&schema::SHELL_TIMEOUT).max(1) as u64),
-        },
+        ctx: Context::new(
+            Arc::new(ws),
+            shell_setting,
+            Duration::from_secs(app.settings.integer(&schema::SHELL_TIMEOUT).max(1) as u64),
+        ),
         policy: Policy::new(mode, Rules::from_setting(&app.settings.value(&schema::PERMISSIONS))),
         approver,
         max_steps: app.settings.integer(&schema::MAX_STEPS).max(1) as usize,

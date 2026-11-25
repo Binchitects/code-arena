@@ -384,7 +384,7 @@ mod tests {
         write(&d.path().join(".code-arena/skills/release/notes.md"), "Notes.");
         let t = SkillTool { sources: sources(d.path(), &d.path().join("cfg"), None) };
         let ws = ca_workspace::Workspace::open(d.path(), &[]).expect("ws");
-        let ctx = Context { workspace: Arc::new(ws), shell: None, shell_timeout: std::time::Duration::from_secs(5) };
+        let ctx = Context::new(Arc::new(ws), None, std::time::Duration::from_secs(5));
         let o = t.run(json!({"name": "release"}), &ctx).await;
         assert_eq!(o.text, "Tag it.\n\n(Files beside it, to read with skill and file: notes.md.)");
         assert_eq!(t.run(json!({"name": "release", "file": "notes.md"}), &ctx).await.text, "Notes.");

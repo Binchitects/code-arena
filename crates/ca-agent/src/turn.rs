@@ -132,8 +132,8 @@ fn load_tools_def() -> ToolDef {
 
 /// Keeps each message as it is added, before the turn goes on.
 pub trait Recorder: Send {
-    /// `begins_turn`: the person's own message, which starts a turn.
-    fn record(&mut self, message: &Message, begins_turn: bool);
+    /// `begins_turn`: the person's own message, which starts a turn. Gives its place in the session.
+    fn record(&mut self, message: &Message, begins_turn: bool) -> Option<i64>;
     /// A compaction: the model reads `summary` in place of every kept message but the last `kept`.
     fn compacted(&mut self, _summary: &str, _kept: usize) {}
 }
@@ -195,7 +195,9 @@ impl Agent {
     }
 
     pub async fn turn(&mut self, text: &str, events: &mut dyn Events) -> Result<TurnOutcome, TurnError> {
-        self.add(Message::user(text), true);
+        let seq = self.add(Message::user(text), true).unwrap_or(self.history.len() as i64);
+        // The turn's checkpoint: what each file holds before the turn first writes it.
+        self.ctx.checkpoints.begin(seq);
         let mut out = TurnOutcome::default();
         let mut carried = 0;
         let mut overflowed = false;
@@ -553,13 +555,12 @@ impl Agent {
         }
     }
 
-    fn add(&mut self, m: Message, begins_turn: bool) {
-        if let Some(r) = self.recorder.as_mut() {
-            r.record(&m, begins_turn);
-        }
+    fn add(&mut self, m: Message, begins_turn: bool) -> Option<i64> {
+        let seq = self.recorder.as_mut().and_then(|r| r.record(&m, begins_turn));
         self.sync_notes();
         self.history.push(m);
         self.notes.push(false);
+        seq
     }
 
     /// A note of Code Arena's for the model: not kept in the session, not shown.
@@ -688,7 +689,7 @@ mod tests {
             thinking: Thinking::Default,
             max_tokens: None,
             tools: ca_tools::builtin(),
-            ctx: Context { workspace: Arc::new(ws), shell: None, shell_timeout: Duration::from_secs(30) },
+            ctx: Context::new(Arc::new(ws), None, Duration::from_secs(30)),
             policy: Policy::new(mode, Rules::default()),
             approver: Arc::new(NoAsking),
             max_steps: 20,
@@ -748,6 +749,10 @@ mod tests {
         let out = a.turn("write x", &mut Quiet).await.expect("turn");
         assert_eq!(std::fs::read_to_string(d.path().join("x.txt")).expect("read"), "hi");
         assert_eq!(out.wrote.len(), 1);
+        // The turn's checkpoint knows the file was not there: going back removes it.
+        let r = a.ctx.checkpoints.rewind(0);
+        assert_eq!(r.removed.len(), 1);
+        assert!(!d.path().join("x.txt").exists());
     }
 
     #[tokio::test]
@@ -821,7 +826,9 @@ mod tests {
     }
     struct Compactions(Arc<std::sync::Mutex<Vec<(String, usize)>>>);
     impl crate::turn::Recorder for Compactions {
-        fn record(&mut self, _m: &Message, _b: bool) {}
+        fn record(&mut self, _m: &Message, _b: bool) -> Option<i64> {
+            None
+        }
         fn compacted(&mut self, summary: &str, kept: usize) {
             self.0.lock().expect("lock").push((summary.to_string(), kept));
         }

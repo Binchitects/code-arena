@@ -1,5 +1,6 @@
 //! The agent's own tools: files, search, commands and git, inside the folders it may use.
 
+pub mod checkpoints;
 mod files;
 mod git;
 mod search;
@@ -55,6 +56,14 @@ pub struct Context {
     /// `tools.shell`, when set.
     pub shell: Option<String>,
     pub shell_timeout: Duration,
+    /// What each file held before the turn first wrote it, for `/rewind`.
+    pub checkpoints: Arc<checkpoints::Checkpoints>,
+}
+
+impl Context {
+    pub fn new(workspace: Arc<Workspace>, shell: Option<String>, shell_timeout: Duration) -> Self {
+        Context { workspace, shell, shell_timeout, checkpoints: Arc::new(checkpoints::Checkpoints::default()) }
+    }
 }
 
 #[async_trait::async_trait]
@@ -102,6 +111,6 @@ pub(crate) mod testing {
     pub fn context() -> (tempfile::TempDir, Context) {
         let dir = tempfile::tempdir().expect("temp");
         let ws = Workspace::open(dir.path(), &[]).expect("workspace");
-        (dir, Context { workspace: Arc::new(ws), shell: None, shell_timeout: Duration::from_secs(30) })
+        (dir, Context::new(Arc::new(ws), None, Duration::from_secs(30)))
     }
 }

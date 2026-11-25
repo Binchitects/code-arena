@@ -59,6 +59,10 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   `description`, `tools`, `model`) are read and listed (the `task` tool that runs them comes in
   0.7). `/NAME` works in `-p` too.
 - `/commands` and `/skills` in the chat.
+- Checkpoints: each turn keeps what every file its tools wrote held before (the last 50 turns, in
+  this run). `/rewind` lists your questions; `/rewind N` goes back to before question N (the files
+  put back, a file a turn made removed, and the conversation cut there), `/rewind N code` or
+  `/rewind N chat` only one of them. What commands changed is not put back.
 - `/mcp` in the chat: each server, connected or not and why.
 - In the chat: `/help`, `/model`, `/mode`, `/thinking`, `/cost`, `/clear`, `/resume`, `/search`,
   `/exit`, and `!command`.

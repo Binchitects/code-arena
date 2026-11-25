@@ -155,6 +155,7 @@ fn help() -> &'static str {
 /compact              summarize the older part of the conversation now\n\
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
+/rewind [N] [code|chat]  your questions; /rewind N goes back to before question N\n\
 /search WORDS         earlier sessions in this folder that said these words\n\
 /commands             your own and the project's commands, sub-agents and skills\n\
 /skills               the skills\n\
@@ -393,6 +394,76 @@ impl BlockingRecv for mpsc::UnboundedReceiver<Event> {
     }
 }
 
+/// The person's questions in this session: (number, its place in the session, its first line).
+fn questions(p: &Prepared) -> anyhow::Result<Vec<(usize, i64, String)>> {
+    let store = p.store.lock().map_err(|_| anyhow::anyhow!("the session's store"))?;
+    let turns = store.summary(&p.session)?.turns;
+    let page = store.page(&p.session, turns.max(1), None)?;
+    let mut out = Vec::new();
+    let mut last_turn = 0;
+    for m in page.messages {
+        if m.turn != last_turn {
+            last_turn = m.turn;
+            out.push((
+                out.len() + 1,
+                m.seq,
+                m.message.content.lines().next().unwrap_or("").chars().take(100).collect(),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// `/rewind`: the questions, with which have a checkpoint; `/rewind N [code|chat]` goes back to before question N:
+/// the files put back (a file a turn made is removed) and the conversation cut there, or only one of them.
+fn rewind(rest: &str, p: &mut Prepared, ui: Ui) -> anyhow::Result<()> {
+    let qs = questions(p)?;
+    let mut words = rest.split_whitespace();
+    let Some(n) = words.next().and_then(|w| w.parse::<usize>().ok()) else {
+        for (n, seq, text) in &qs {
+            let mark =
+                if p.agent.ctx.checkpoints.has(*seq) { "" } else { "  (conversation only: no checkpoint in this run)" };
+            ui.say(&format!("{n:>3}. {text}{}", ui.dim(mark)));
+        }
+        ui.say(&ui.dim("/rewind N goes back to before question N: the code and the conversation; /rewind N code or /rewind N chat for one."));
+        return Ok(());
+    };
+    let Some((_, seq, text)) = qs.iter().find(|(k, _, _)| *k == n).cloned() else {
+        anyhow::bail!("there is no question {n}: /rewind lists them");
+    };
+    let what = words.next().unwrap_or("both");
+    if what == "code" || what == "both" {
+        let r = p.agent.ctx.checkpoints.rewind(seq);
+        let ws = p.agent.ctx.workspace.clone();
+        for f in &r.put_back {
+            ui.say(&format!("  put back {}", ws.display(f)));
+        }
+        for f in &r.removed {
+            ui.say(&format!("  removed {} (a turn made it)", ws.display(f)));
+        }
+        for (f, e) in &r.failed {
+            ui.say(&ui.red(&format!("  {}: {e}", ws.display(f))));
+        }
+        if r.put_back.is_empty() && r.removed.is_empty() {
+            ui.say(&ui.dim("  No file to put back (what commands changed is not put back: git has it)."));
+        }
+    }
+    if what == "chat" || what == "both" {
+        let store = p.store.lock().map_err(|_| anyhow::anyhow!("the session's store"))?;
+        store.truncate(&p.session, seq)?;
+        let (history, _) = session::model_history(&store, &p.session)?;
+        drop(store);
+        p.agent.notes = history
+            .iter()
+            .enumerate()
+            .map(|(i, m)| i == 0 && m.content.starts_with("(Code Arena: the earlier part"))
+            .collect();
+        p.agent.history = history;
+        ui.say(&format!("Back to before question {n}: {text}"));
+    }
+    Ok(())
+}
+
 /// `context 18.2k / 131k (14%), compacts at 80%`
 fn context_line(a: &ca_agent::Agent) -> String {
     let used = a.context_used();
@@ -599,6 +670,7 @@ async fn command(
                 ui.say("None yet: .code-arena/commands/NAME.md is /NAME, .code-arena/skills/NAME/SKILL.md a skill, .code-arena/agents/NAME.md a sub-agent.");
             }
         }
+        "/rewind" => rewind(rest, p, ui)?,
         "/search" => {
             let hits = p.store.lock().map_err(|_| anyhow::anyhow!("the store"))?.search(&p.folder, rest, 20)?;
             if hits.is_empty() {

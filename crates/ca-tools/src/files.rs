@@ -175,6 +175,7 @@ impl Tool for WriteFile {
         {
             return Output::error(format!("{shown}: its folder could not be made: {e}"));
         }
+        ctx.checkpoints.before_write(&real);
         if let Err(e) = std::fs::write(&real, text::encode(&content, enc)) {
             return Output::error(format!("{shown}: {}", io_words(&e)));
         }
@@ -251,6 +252,7 @@ impl Tool for EditFile {
         let at = text.find(&old).unwrap_or(0);
         let first_line = text[..at].matches('\n').count() + 1;
         let changed = if all { text.replace(&old, &new) } else { text.replacen(&old, &new, 1) };
+        ctx.checkpoints.before_write(&real);
         if let Err(e) = std::fs::write(&real, text::encode(&changed, enc)) {
             return Output::error(format!("{shown}: {}", io_words(&e)));
         }
