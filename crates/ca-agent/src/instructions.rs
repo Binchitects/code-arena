@@ -143,8 +143,10 @@ mod tests {
         std::fs::write(root.join("CLAUDE.md"), "claude").expect("w");
         std::fs::write(sub.join("ARENA.md"), "x".repeat(MOST_CHARS + 5)).expect("w");
         let got = read_all(&person_candidates(&cfg, Some(&home)), &root, &sub);
-        let names: Vec<_> =
-            got.iter().map(|i| i.path.strip_prefix(d.path()).expect("in").display().to_string()).collect();
+        let names: Vec<_> = got
+            .iter()
+            .map(|i| i.path.strip_prefix(d.path()).expect("in").display().to_string().replace('\\', "/"))
+            .collect();
         assert_eq!(names, vec!["home/.claude/CLAUDE.md", "repo/AGENTS.md", "repo/pkg/ARENA.md"]);
         assert!(got[2].cut);
         assert_eq!(got[2].text.len(), MOST_CHARS);

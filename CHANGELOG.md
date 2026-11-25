@@ -44,4 +44,12 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   repository root's and the working directory's).
 - Paths resolved as the system resolves them: a link that leads out counts as outside.
 - The project's `.code-arena/` folder, made with its default files the first time.
-- The build image (`docker/builder`), static Linux binaries (musl).
+- The build image (`docker/builder`), static Linux binaries (musl), Windows binaries with the C
+  runtime inside.
+- CI on six systems (Linux x64 and arm64, macOS arm64 and x64, Windows x64 and arm64): format,
+  clippy and the tests; a release workflow that builds, packages and publishes each system's
+  binary with `SHA256SUMS` on a `v*` tag; a workflow that publishes the build image to GHCR.
+
+### Measured
+- The program is 7.1 MB (C# 8.1: 48.8 MB), starts in 0.4 ms (106 ms) and uses 2 MB of memory to
+  say its version (83 MB). See [docs/measurements/0.1.md](docs/measurements/0.1.md).

@@ -1,0 +1,33 @@
+name: Build image
+
+on:
+  push:
+    branches: [main]
+    paths: ["docker/builder/**", "rust-toolchain.toml", ".github/workflows/builder-image.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        run: |
+          toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+          image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/code-arena-builder
+          docker build --build-arg RUST_IMAGE=rust:${toolchain}-slim-bookworm -t "$image:$toolchain" -t "$image:latest" docker/builder
+          docker push "$image:$toolchain"
+          docker push "$image:latest"
+      - name: The image builds and tests Code Arena
+        run: |
+          toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
+          docker run --rm -v "$PWD":/src -w /src ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/code-arena-builder:$toolchain make ci
