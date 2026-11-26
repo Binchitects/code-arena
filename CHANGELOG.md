@@ -38,6 +38,20 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 - `/web` lists your chats in Arena; `/web N` continues one here, in a session of its own (or the
   one this folder already keeps with it), and brings it back to the web's list if it was archived.
 - Leaving the chat waits a few seconds for the last turn's messages to reach Arena.
+- The `plan` tool: a title, a goal and numbered steps, each with what done means (`check`: a
+  command, or what to look at), its files and symbols, the steps it waits for, and notes. A step
+  whose check is a command is done only once that command passed with `run_shell` since the step
+  began (`cd src && cargo test 2>&1 | tail` counts for `cargo test`). One step is doing at a
+  time; steps wait only for steps the plan has, never in a circle. A call is read kindly (steps
+  as a string of JSON, `id`/`description`/`dependsOn`, other agents' status words) and what was
+  read so is said back. The plan is shown whole when it changes, kept with the session, said
+  again after a compaction and when a session is resumed, and kept in Arena on the chat's Plans
+  board.
+- In plan mode a plan is proposed for your review: `/plan approve` (edits then run; `approve ask`
+  asks before each), `/plan change N what`, `/plan another why`, `/plan reject why`.
+  `/plan undo N` puts the files back as they were before step N began (and every step begun
+  after it); those steps are to do again. `/plan resume` and `code-arena --plan` carry on the plan
+  an earlier session of this folder left. `/plan clear`.
 
 ### Fixed
 - The answer being written is kept every two seconds while it comes, so a crash leaves what it

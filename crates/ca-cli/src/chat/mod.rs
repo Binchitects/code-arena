@@ -177,6 +177,8 @@ fn help() -> &'static str {
 /skills               the skills\n\
 /NAME [words]         a command or a skill, with your words\n\
 /mcp                  Arena's, Farzan Graph's and your MCP servers: connected or not, and why\n\
+/plan                 the working plan; /plan approve [ask] | change N what | another why | reject why reviews a proposed one;\n\
+                      /plan undo N puts the files back as before step N; /plan resume carries on the last session's plan\n\
 /sync [on|off]        where this session stands with its chat in Arena; off keeps it here only\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
 /exit                 leave (also Ctrl+D)\n\
@@ -244,6 +246,11 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         let line = if let Some(f) = first.take() {
             ui.say(&format!("{PROMPT}{f}"));
             f
+        } else if let Some(said) = p.said_next.take() {
+            // A command's words to the agent (a plan's review), as the person's next message.
+            carry_on = true;
+            ui.say(&ui.dim(&format!("{PROMPT}{said}")));
+            said
         } else if let Ok(j) = ended.try_recv() {
             carry_on = true;
             job_note(&j, ui)
@@ -319,6 +326,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         let started = Instant::now();
         let mut progress = Progress::new(ui, true);
         progress.show_thinking = true;
+        progress.plan = vec![p.agent.ctx.plan.clone()];
         let mut typed = Editor::default();
         let jobs = p.agent.ctx.jobs.clone();
         let result = {
@@ -739,6 +747,7 @@ async fn command(
                 model: Some(p.agent.model.clone()),
                 thinking: None,
                 interactive: true,
+                carry_plan: false,
             };
             let approver = p.agent.approver.clone();
             let inbox = p.agent.inbox.clone();
@@ -761,6 +770,7 @@ async fn command(
                 model: None,
                 thinking: None,
                 interactive: true,
+                carry_plan: false,
             };
             let approver = p.agent.approver.clone();
             let inbox = p.agent.inbox.clone();
@@ -830,6 +840,34 @@ async fn command(
         }
         "/rewind" => rewind(rest, p, ui)?,
         "/web" => web(rest, p, app, ui).await?,
+        "/plan" if rest.is_empty() => ui.say(&session::render_plan(&p.agent.ctx.plan.get(), ui)),
+        "/plan" => {
+            let (word, more) = rest.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((rest, ""));
+            let said = match word.to_ascii_lowercase().as_str() {
+                "resume" => session::resume_plan(p).map(|s| (s, false)),
+                "clear" => {
+                    p.agent.ctx.plan.set(ca_tools::plan::Plan::default());
+                    Ok(("The plan is cleared.".to_string(), false))
+                }
+                "undo" => match more.trim_start_matches('#').parse::<u32>() {
+                    Ok(n) => session::undo_step(p, n).map(|s| (s, false)),
+                    Err(_) => Err("Say which step to undo: /plan undo 2.".to_string()),
+                },
+                w => session::review_plan(p, w, more).map(|s| (s, true)),
+            };
+            match said {
+                Ok((s, false)) => {
+                    ui.say(&ui.dim(&s));
+                    ui.say(&session::render_plan(&p.agent.ctx.plan.get(), ui));
+                }
+                // A review is said to the agent as the person's next message.
+                Ok((s, true)) => {
+                    ui.say(&ui.dim(&format!("The mode is {}.", p.agent.policy.mode.name())));
+                    p.said_next = Some(s);
+                }
+                Err(e) => ui.say(&ui.red(&e)),
+            }
+        }
         "/sync" => match (&p.sync, rest) {
             (None, _) => ui.say(&ui.dim(
                 "Kept here only: sign in (code-arena login) with arena.syncChats on to keep sessions in Arena's chats.",
@@ -1003,6 +1041,7 @@ async fn web(rest: &str, p: &mut Prepared, app: &mut App, ui: Ui) -> anyhow::Res
         model: chosen.model.clone().or_else(|| Some(p.agent.model.clone())),
         thinking: None,
         interactive: true,
+        carry_plan: false,
     };
     let approver = p.agent.approver.clone();
     let inbox = p.agent.inbox.clone();

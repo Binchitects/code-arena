@@ -496,3 +496,37 @@ async fn a_read_whose_base_the_session_does_not_know_changes_nothing() {
     assert!(!sync.take_in().await.any());
     assert_eq!(store.lock().expect("store").summary(&id).expect("s").messages, 4);
 }
+
+#[tokio::test]
+async fn the_plan_goes_whole_to_the_chats_plans_board() {
+    let (server, _) = arena().await;
+    Mock::given(method("PUT"))
+        .and(path("/api/code-arena/chats/chat-1/plan"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"link": "/plans/p1"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/code-arena/chats/chat-1/plan"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let (id, sync) = sent_session(&server, &store).await;
+    let plan = json!({"title": "Fix it", "steps": [{"number": 1, "title": "test", "status": "todo"}]}).to_string();
+    store.lock().expect("store").set_plan(&id, Some(&plan)).expect("plan");
+    assert_eq!(sync.pending(), 1);
+    assert_eq!(sync.push().await, Pushed::Done);
+    assert_eq!(sync.pending(), 0);
+    let reqs = server.received_requests().await.expect("requests");
+    let put = reqs.iter().find(|r| r.method.as_str() == "PUT").expect("put");
+    let body: Value = serde_json::from_slice(&put.body).expect("json");
+    assert_eq!(body["title"], "Fix it");
+    assert_eq!(body["place"], "/w");
+    assert_eq!(body["steps"][0]["number"], 1);
+    // Cleared: taken off the board.
+    store.lock().expect("store").set_plan(&id, None).expect("cleared");
+    assert_eq!(sync.push().await, Pushed::Done);
+    assert_eq!(sync.pending(), 0);
+}

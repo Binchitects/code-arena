@@ -38,7 +38,9 @@ CREATE TABLE sessions (
   chat TEXT,
   chat_stamp TEXT,
   chat_branch INTEGER NOT NULL DEFAULT 0,
-  chat_off INTEGER NOT NULL DEFAULT 0
+  chat_off INTEGER NOT NULL DEFAULT 0,
+  plan TEXT,
+  plan_sent INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX sessions_by_folder ON sessions(folder, updated DESC);
 CREATE TABLE messages (
@@ -81,6 +83,8 @@ ALTER TABLE sessions ADD COLUMN chat TEXT;
 ALTER TABLE sessions ADD COLUMN chat_stamp TEXT;
 ALTER TABLE sessions ADD COLUMN chat_branch INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE sessions ADD COLUMN chat_off INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN plan TEXT;
+ALTER TABLE sessions ADD COLUMN plan_sent INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE messages ADD COLUMN arena TEXT;
 ALTER TABLE compactions ADD COLUMN sent INTEGER NOT NULL DEFAULT 0;
 "#;
@@ -527,6 +531,45 @@ impl Store {
         Ok(())
     }
 
+    /// The session's working plan changed (JSON; none: cleared): kept, and to be sent to Arena.
+    pub fn set_plan(&self, id: &str, plan: Option<&str>) -> Result<()> {
+        self.db.execute(
+            "UPDATE sessions SET plan = ?2, plan_sent = 0, updated = ?3 WHERE id = ?1",
+            params![id, plan, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn plan(&self, id: &str) -> Result<Option<String>> {
+        Ok(self.db.query_row("SELECT plan FROM sessions WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+    }
+
+    /// The plan, when Arena does not have its latest change: `Some(None)` for a plan cleared.
+    pub fn plan_unsent(&self, id: &str) -> Result<Option<Option<String>>> {
+        Ok(self
+            .db
+            .query_row("SELECT plan FROM sessions WHERE id = ?1 AND plan_sent = 0", [id], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn plan_sent(&self, id: &str, plan: Option<&str>) -> Result<()> {
+        // Only the plan that went: one changed meanwhile goes too.
+        self.db.execute("UPDATE sessions SET plan_sent = 1 WHERE id = ?1 AND plan IS ?2", params![id, plan])?;
+        Ok(())
+    }
+
+    /// The last plan another session of the folder left (with its session and when), for `/plan resume`.
+    pub fn plan_left(&self, folder: &str, except: &str) -> Result<Option<(String, i64, String)>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT id, updated, plan FROM sessions WHERE folder = ?1 AND id <> ?2 AND plan IS NOT NULL ORDER BY updated DESC LIMIT 1",
+                params![folder, except],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?)
+    }
+
     /// The session kept with this chat, if there is one.
     pub fn by_chat(&self, chat: &str) -> Result<Option<String>> {
         Ok(self
@@ -680,6 +723,25 @@ mod tests {
     }
 
     #[test]
+    fn the_plan_is_kept_sent_once_and_left_for_another_session() {
+        let s = Store::in_memory().expect("store");
+        let a = s.create("/w", "m", "ask").expect("a");
+        let b = s.create("/w", "m", "ask").expect("b");
+        assert_eq!(s.plan_unsent(&a).expect("unsent"), None);
+        s.set_plan(&a, Some("{\"title\":\"T\"}")).expect("set");
+        assert_eq!(s.plan(&a).expect("plan").as_deref(), Some("{\"title\":\"T\"}"));
+        let unsent = s.plan_unsent(&a).expect("unsent").expect("one");
+        // Changed while it went: still to send.
+        s.set_plan(&a, Some("{\"title\":\"T2\"}")).expect("set");
+        s.plan_sent(&a, unsent.as_deref()).expect("sent");
+        assert!(s.plan_unsent(&a).expect("unsent").is_some());
+        s.plan_sent(&a, Some("{\"title\":\"T2\"}")).expect("sent");
+        assert!(s.plan_unsent(&a).expect("unsent").is_none());
+        assert_eq!(s.plan_left("/w", &b).expect("left").map(|x| x.0), Some(a.clone()));
+        assert!(s.plan_left("/w", &a).expect("left").is_none());
+    }
+
+    #[test]
     fn a_0_2_store_is_upgraded_and_keeps_its_sessions() {
         let d = tempfile::tempdir().expect("temp");
         let path = d.path().join("sessions.db");
@@ -687,7 +749,7 @@ mod tests {
             let db = Connection::open(&path).expect("open");
             // Schema 1, as 0.2 made it.
             let v1 = CREATE
-                .replace(",\n  chat TEXT,\n  chat_stamp TEXT,\n  chat_branch INTEGER NOT NULL DEFAULT 0,\n  chat_off INTEGER NOT NULL DEFAULT 0", "")
+                .replace(",\n  chat TEXT,\n  chat_stamp TEXT,\n  chat_branch INTEGER NOT NULL DEFAULT 0,\n  chat_off INTEGER NOT NULL DEFAULT 0,\n  plan TEXT,\n  plan_sent INTEGER NOT NULL DEFAULT 1", "")
                 .replace("  arena TEXT,\n", "")
                 .replace("  sent INTEGER NOT NULL DEFAULT 0,\n", "");
             assert!(!v1.contains("chat_off") && !v1.contains("arena TEXT") && !v1.contains("sent INTEGER"));

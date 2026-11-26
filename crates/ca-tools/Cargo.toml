@@ -11,6 +11,7 @@ rust-version.workspace = true
 ca-llm.workspace = true
 ca-workspace.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 futures-util.workspace = true
 globset.workspace = true
 grep-regex.workspace = true

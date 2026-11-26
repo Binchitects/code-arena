@@ -29,6 +29,7 @@ pub struct RunArgs {
     pub thinking: Option<String>,
     pub output: OutputFormat,
     pub resume: Resume,
+    pub carry_plan: bool,
 }
 
 /// The progress of a turn on stderr; the answer's words on stdout as they come (text output).
@@ -44,6 +45,8 @@ pub struct Progress {
     /// The model's thinking, shown dimmed before its answer (the chat; not -p).
     pub show_thinking: bool,
     thinking: bool,
+    /// The session's plan, shown whole when the plan tool changes it.
+    pub plan: Vec<std::sync::Arc<ca_tools::plan::PlanBook>>,
 }
 
 impl Progress {
@@ -56,6 +59,7 @@ impl Progress {
             spoke: false,
             show_thinking: false,
             thinking: false,
+            plan: vec![],
         }
     }
 }
@@ -106,6 +110,11 @@ impl Events for Progress {
         self.thinking = false;
     }
     fn tool_end(&mut self, name: &str, subject: &str, o: &Output) {
+        // The plan, as it stands after the call.
+        if name == "plan" && !o.is_error && !self.plan.is_empty() {
+            self.ui.say(&crate::session::render_plan(&self.plan_now(), self.ui));
+            return;
+        }
         let s: String = subject.lines().next().unwrap_or("").chars().take(100).collect();
         self.ui.say(&format!("{} {name} {}", self.ui.dim("●"), self.ui.dim(&s)));
         // An edit shows its diff (a dozen lines at most); anything else its first line.
@@ -128,6 +137,10 @@ impl Events for Progress {
 }
 
 impl Progress {
+    fn plan_now(&self) -> ca_tools::plan::Plan {
+        self.plan.first().map(|b| b.get()).unwrap_or_default()
+    }
+
     fn write(&mut self, d: &str) {
         ui::out(d);
         self.at_line_start = d.ends_with('\n');
@@ -159,6 +172,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
         model: args.model,
         thinking: args.thinking,
         interactive: false,
+        carry_plan: args.carry_plan,
     };
     let mut p = session::prepare(app, &opts, Arc::new(NoAsking), args.resume).await?;
     let model = p.agent.model.clone();
@@ -169,6 +183,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
         prompt
     };
     let mut progress = Progress::new(ui, args.output == OutputFormat::Text);
+    progress.plan = vec![p.agent.ctx.plan.clone()];
     session::begin_turn(&mut p, ui).await;
     let result = p.agent.turn(&prompt, &mut progress).await;
     // The turn's messages reach the chat in Arena before the run ends (or are sent with the next session's).

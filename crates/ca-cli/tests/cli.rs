@@ -567,3 +567,95 @@ async fn what_the_web_added_is_read_at_the_next_turn() {
     let asked = seen.iter().find(|b| b["messages"][0]["content"] == "second question").expect("the question was sent");
     assert_eq!(asked["parent"], "w2", "{seen:?}");
 }
+
+fn call(id: &str, name: &str, args: Value) -> String {
+    sse(
+        json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": id, "function": {"name": name, "arguments": args.to_string()}}]}, "finish_reason": "tool_calls"}]}),
+    )
+}
+
+#[tokio::test]
+async fn a_plans_checks_are_enforced_kept_sent_and_carried_on() {
+    let gateway = MockServer::start().await;
+    let plan = json!({"title": "Tidy", "steps": [
+        {"title": "Check the tree", "check": "true", "status": "doing"},
+        {"title": "Write the notes", "depends_on": [1]}
+    ]});
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(
+            vec![
+                call("c1", "plan", plan),
+                call("c2", "plan", json!({"steps": [{"number": 1, "status": "done"}]})),
+                call("c3", "run_shell", json!({"command": "true"})),
+                call("c4", "plan", json!({"steps": [{"number": 1, "status": "done"}]})),
+                sse(json!({"choices": [{"delta": {"content": "Step 1 is done."}, "finish_reason": "stop"}]})),
+                sse(json!({"choices": [{"delta": {"content": "Going on with step 2."}, "finish_reason": "stop"}]})),
+            ],
+            AtomicUsize::new(0),
+        ))
+        .mount(&gateway)
+        .await;
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let arena = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "c-1", "created": true})))
+        .mount(&arena)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/c-1/messages"))
+        .respond_with(Chats(heard.clone()))
+        .mount(&arena)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api/code-arena/chats/c-1/plan"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).mount(&arena).await;
+
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let run = |args: &[&str]| {
+        code_arena(home.path())
+            .args(args)
+            .arg("-C")
+            .arg(project.path())
+            .env("ARENA_URL", arena.uri())
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .env("CODE_ARENA_MODE", "yolo")
+            .output()
+            .expect("runs")
+    };
+    let first = run(&["-p", "tidy up"]);
+    let stderr = String::from_utf8_lossy(&first.stderr);
+    assert!(first.status.success(), "{stderr}");
+    // Refused before its check ran, taken after.
+    let requests = gateway.received_requests().await.expect("requests");
+    assert!(
+        requests.iter().any(|r| String::from_utf8_lossy(&r.body).contains("only once its check passed")),
+        "{stderr}"
+    );
+    assert!(stderr.contains("1/2 done"), "{stderr}");
+    let puts: Vec<Value> = arena
+        .received_requests()
+        .await
+        .expect("arena")
+        .iter()
+        .filter(|r| r.method.as_str() == "PUT")
+        .map(|r| serde_json::from_slice(&r.body).expect("json"))
+        .collect();
+    let last = puts.last().expect("the plan was sent");
+    assert_eq!(last["steps"][0]["status"], "done");
+    assert_eq!(last["steps"][0]["checkResult"], "passed");
+
+    let second = run(&["-p", "go on", "--plan"]);
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(second.status.success(), "{stderr}");
+    assert!(stderr.contains("Carried on: \"Tidy\""), "{stderr}");
+    let requests = gateway.received_requests().await.expect("requests");
+    let asked = String::from_utf8_lossy(&requests.last().expect("one").body).to_string();
+    assert!(asked.contains("carried on here, 1 of 2 steps done"), "{asked}");
+}

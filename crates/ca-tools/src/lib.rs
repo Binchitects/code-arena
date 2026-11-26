@@ -4,6 +4,7 @@ pub mod checkpoints;
 mod files;
 mod git;
 pub mod jobs;
+pub mod plan;
 pub mod sandbox;
 mod search;
 mod shell;
@@ -64,6 +65,10 @@ pub struct Context {
     pub jobs: Option<Arc<jobs::Jobs>>,
     /// Where the agent's commands run: `None` runs them as the person.
     pub sandbox: Option<Arc<sandbox::Sandbox>>,
+    /// The session's working plan.
+    pub plan: Arc<plan::PlanBook>,
+    /// The mode is plan: a plan made now is proposed, for the person's review.
+    pub planning: bool,
 }
 
 impl Context {
@@ -83,6 +88,8 @@ impl Context {
             checkpoints: Arc::new(checkpoints::Checkpoints::default()),
             jobs: None,
             sandbox: None,
+            plan: Arc::new(plan::PlanBook::default()),
+            planning: false,
         }
     }
 }
@@ -113,6 +120,7 @@ pub fn builtin() -> Vec<Arc<dyn Tool>> {
         Arc::new(CommandOutput),
         Arc::new(StopCommand),
         Arc::new(Git),
+        Arc::new(plan::PlanTool),
     ]
 }
 

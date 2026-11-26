@@ -185,6 +185,8 @@ impl Tool for RunShell {
             None => "Ended by a signal".to_string(),
         };
         let body = if shown.is_empty() { "(no output)".to_string() } else { shown };
+        // A step's check, when it is one: the plan records how it went.
+        ctx.plan.ran(&command, code == Some(0), &body);
         let o = format!("{head}\n{body}");
         if code == Some(0) { Output::ok(o) } else { Output::error(o) }
     }

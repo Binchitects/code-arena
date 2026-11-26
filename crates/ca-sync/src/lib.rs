@@ -212,7 +212,11 @@ impl ChatSync {
         if s.chat_link(&self.session).map(|l| l.off).unwrap_or(true) {
             return 0;
         }
-        s.unsent(&self.session, BATCH).map(|v| v.len()).unwrap_or(0)
+        let plan = usize::from(
+            s.plan_unsent(&self.session).ok().flatten().is_some()
+                && s.chat_link(&self.session).is_ok_and(|l| l.chat.is_some()),
+        );
+        s.unsent(&self.session, BATCH).map(|v| v.len()).unwrap_or(0) + plan
     }
 
     /// What the web added that this session lacks, as the last refused send said (taken by the take-in).
@@ -399,9 +403,35 @@ impl ChatSync {
         }
     }
 
+    /// The plan, whole, when Arena lacks its latest change.
+    async fn push_plan(&self, chat: &str) -> Pushed {
+        let unsent = self.store.lock().ok().and_then(|s| s.plan_unsent(&self.session).ok().flatten());
+        let Some(json) = unsent else { return Pushed::Done };
+        let plan: Option<ca_tools::plan::Plan> = json.as_deref().and_then(|j| serde_json::from_str(j).ok());
+        let body = plan.filter(|p| !p.is_empty()).map(|p| p.to_arena(&self.place));
+        match self.arena.put_plan(chat, body.as_ref()).await {
+            Ok(_) => {
+                if let Ok(s) = self.store.lock() {
+                    let _ = s.plan_sent(&self.session, json.as_deref());
+                }
+                Pushed::Done
+            }
+            Err(e) if chats::gone(&e) => self.gone(),
+            // Arena refused this plan (its rules): said once, and not sent again until it changes.
+            Err(ca_arena::ArenaError::Status { status: 400, message, .. }) => {
+                if let Ok(s) = self.store.lock() {
+                    let _ = s.plan_sent(&self.session, json.as_deref());
+                }
+                (self.notice)(true, format!("Arena did not take the plan: {message}"));
+                Pushed::Done
+            }
+            Err(e) => self.fail(e.to_string()),
+        }
+    }
+
     async fn push_summary(&self, chat: &str) -> Pushed {
         let unsent = self.store.lock().ok().and_then(|s| s.unsent_summary(&self.session).ok().flatten());
-        let Some(u) = unsent else { return Pushed::Done };
+        let Some(u) = unsent else { return self.push_plan(chat).await };
         let parent = self.store.lock().ok().and_then(|s| s.last_sent(&self.session).ok().flatten()).map(|(_, a)| a);
         let summary = SyncSummary { up_to: u.up_to.clone(), text: Some(u.text.clone()) };
         match self.arena.append(chat, parent.as_deref(), false, &[], Some(&summary)).await {
@@ -409,7 +439,7 @@ impl ChatSync {
                 if let Ok(s) = self.store.lock() {
                     let _ = s.summary_sent(&self.session, u.through);
                 }
-                Pushed::Done
+                self.push_plan(chat).await
             }
             Ok(Append::Behind(read)) => {
                 if let Ok(mut st) = self.state.lock() {

@@ -26,6 +26,8 @@ pub struct Opts {
     pub model: Option<String>,
     pub thinking: Option<String>,
     pub interactive: bool,
+    /// `--plan`: carry on the plan an earlier session of this folder left.
+    pub carry_plan: bool,
 }
 
 /// Which session to work in.
@@ -53,6 +55,8 @@ pub struct Prepared {
     pub sync: Option<Arc<ca_sync::ChatSync>>,
     /// What went on in the background (the chat's sync), said at the next prompt.
     pub notices: Notices,
+    /// Words a command says to the agent as the person's next message (a plan's review).
+    pub said_next: Option<String>,
 }
 
 /// Lines to say at the next prompt: each with whether it is a problem.
@@ -82,6 +86,169 @@ pub fn reload_history(p: &mut Prepared) {
         .map(|(i, m)| i == 0 && m.content.starts_with("(Code Arena: the earlier part"))
         .collect();
     p.agent.history = history;
+}
+
+/// The plan as the terminal shows it.
+pub fn render_plan(plan: &ca_tools::plan::Plan, ui: crate::ui::Ui) -> String {
+    use ca_tools::plan::{BLOCKED, DOING, DONE, PROPOSED};
+    if plan.is_empty() {
+        return ui.dim("(no plan)");
+    }
+    let mut lines = vec![format!(
+        "{}{}{}",
+        ui.bold(&plan.title),
+        ui.dim(&format!("  {}/{} done", plan.done(), plan.steps.len())),
+        if plan.review.as_deref() == Some(PROPOSED) { ui.yellow("  proposed") } else { String::new() }
+    )];
+    if let Some(g) = &plan.goal {
+        lines.push(ui.dim(g));
+    }
+    for s in &plan.steps {
+        let mark = match s.status.as_str() {
+            DONE => ui.green("☒ "),
+            DOING => ui.yellow("◐ "),
+            BLOCKED => ui.red("⊘ "),
+            _ => "☐ ".into(),
+        };
+        let title = match s.status.as_str() {
+            DONE => ui.dim(&s.title),
+            DOING => ui.bold(&s.title),
+            _ => s.title.clone(),
+        };
+        let check = match &s.check {
+            None => String::new(),
+            Some(c) => {
+                let c: String = c.replace('\n', " ").chars().take(60).collect();
+                format!(
+                    "{}{}",
+                    ui.dim(&format!("  ✓ {c}")),
+                    match s.check_result.as_deref() {
+                        Some("passed") => ui.green(" passed"),
+                        Some("failed") => ui.red(" failed"),
+                        _ => String::new(),
+                    }
+                )
+            }
+        };
+        lines.push(format!("{mark}{}. {title}{check}", s.number));
+    }
+    lines.join("\n")
+}
+
+/// `/plan approve | approve ask | change N what | another why | reject why`: the person's review of the plan the agent
+/// proposed in plan mode. The plan and the mode change here; what comes back is said to the agent as the person's next
+/// message.
+pub fn review_plan(p: &mut Prepared, action: &str, rest: &str) -> Result<String, String> {
+    use ca_tools::plan::{APPROVED, PROPOSED};
+    let plan = p.agent.ctx.plan.get();
+    if plan.review.as_deref() != Some(PROPOSED) || plan.is_empty() {
+        return Err("There is no plan waiting for its review: in plan mode (/mode plan) the agent proposes one.".into());
+    }
+    let words = rest.trim();
+    let why = if words.is_empty() {
+        ".".to_string()
+    } else {
+        format!(": {words}{}", if words.ends_with(['.', '!', '?']) { "" } else { "." })
+    };
+    match action {
+        "approve" => {
+            let ask = words.eq_ignore_ascii_case("ask");
+            p.agent.policy.mode = if ask { ca_agent::Mode::Ask } else { ca_agent::Mode::AutoEdit };
+            let mut approved = plan;
+            approved.review = Some(APPROVED.into());
+            p.agent.ctx.plan.set(approved);
+            Ok("I approve the plan. Carry it out now, step by step: mark a step doing as you start it, run its check when it is done, mark it done only once the check passed, and change the plan (saying why) when something turns out otherwise.".into())
+        }
+        "change" => {
+            let (n, what) = words.split_once(char::is_whitespace).unwrap_or((words, ""));
+            let n: u32 = n.trim_start_matches('#').parse().map_err(|_| {
+                let have: Vec<String> = plan.steps.iter().map(|s| s.number.to_string()).collect();
+                format!("Say which step to change: one of {}.", have.join(", "))
+            })?;
+            let step = plan.steps.iter().find(|s| s.number == n).ok_or_else(|| format!("The plan has no step {n}."))?;
+            if what.trim().is_empty() {
+                return Err(format!("Say what should change in step {n}."));
+            }
+            Ok(format!("Change step {n} of the plan ({}): {}\n\nThen propose the plan again.", step.title, what.trim()))
+        }
+        "another" => Ok(format!("Propose another way to do this{why} Make the plan again with the plan tool.")),
+        "reject" => {
+            p.agent.ctx.plan.set(ca_tools::plan::Plan::default());
+            Ok(format!("I reject the plan{why} Do not carry it out; I will say what to do next."))
+        }
+        _ => Err("A plan's review is approve, approve ask, change N, another or reject.".into()),
+    }
+}
+
+/// `/plan undo N`: the files as they were before step N began (and before every step begun after it), those steps to do
+/// again; the agent is told. What commands changed is not undone.
+pub fn undo_step(p: &mut Prepared, n: u32) -> Result<String, String> {
+    let Some((steps, r)) = p.agent.ctx.checkpoints.undo_step(n) else {
+        let begun = p.agent.ctx.checkpoints.steps();
+        return Err(if begun.is_empty() {
+            "No step has begun in this run: there is nothing to undo.".into()
+        } else {
+            let b: Vec<String> = begun.iter().map(u32::to_string).collect();
+            format!("Step {n} has not begun in this run: steps {} have.", b.join(", "))
+        });
+    };
+    let mut plan = p.agent.ctx.plan.get();
+    for s in plan.steps.iter_mut().filter(|s| steps.contains(&s.number)) {
+        s.status = ca_tools::plan::TODO.into();
+        s.check_result = None;
+        s.check_output = None;
+        s.checked_at = None;
+    }
+    p.agent.ctx.plan.set(plan);
+    let ws = &p.agent.ctx.workspace;
+    let files: Vec<String> = r.put_back.iter().chain(&r.removed).map(|f| ws.display(f)).collect();
+    let nums: Vec<String> = steps.iter().map(u32::to_string).collect();
+    let said = format!(
+        "I undid step{} {} of the plan: {}{} What commands changed is not undone. The steps are to do again.",
+        if steps.len() == 1 { "" } else { "s" },
+        nums.join(", "),
+        if files.is_empty() {
+            "no file had been written since it began.".to_string()
+        } else {
+            format!("{} {} as before it began.", files.join(", "), if files.len() == 1 { "is" } else { "are" })
+        },
+        if r.failed.is_empty() {
+            String::new()
+        } else {
+            let f: Vec<String> = r.failed.iter().map(|(p, e)| format!("{} ({e})", ws.display(p))).collect();
+            format!(" Not put back: {}.", f.join(", "))
+        }
+    );
+    p.agent.note(format!("(Code Arena: {said})"));
+    Ok(said)
+}
+
+/// `/plan resume`, `code-arena --plan`: the plan an earlier session of this folder left, carried on here; the agent is
+/// told where it stands and to see what that session changed before going on.
+pub fn resume_plan(p: &mut Prepared) -> Result<String, String> {
+    if !p.agent.ctx.plan.get().is_empty() {
+        return Err("This session has a plan of its own: /plan shows it.".into());
+    }
+    let left = p.store.lock().ok().and_then(|s| s.plan_left(&p.folder, &p.session).ok().flatten());
+    let Some((_from, updated, json)) = left else {
+        return Err("No earlier session of this folder left a plan.".into());
+    };
+    let plan: ca_tools::plan::Plan =
+        serde_json::from_str(&json).map_err(|e| format!("The plan left could not be read: {e}"))?;
+    if plan.is_empty() || plan.done() == plan.steps.len() {
+        return Err("The plan the last session left is done: nothing to carry on.".into());
+    }
+    let when = chrono::DateTime::from_timestamp_millis(updated)
+        .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_default();
+    let (done, total) = (plan.done(), plan.steps.len());
+    p.agent.note(format!(
+        "(Code Arena: the plan an earlier session of this folder left ({when}) is carried on here, {done} of {total} steps done:\n\n{}\n\nBefore going on, see what that session changed (git status, git log, the files of the step that was doing), then carry on from the step that stands next.)",
+        plan.text()
+    ));
+    let title = plan.title.clone();
+    p.agent.ctx.plan.set(plan);
+    Ok(format!("Carried on: \"{title}\" from the session of {when}, {done} of {total} steps done."))
 }
 
 /// Says what waited, as the person reads it between turns.
@@ -347,6 +514,30 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
             }
         }
     }
+    // The session's working plan: as the store has it, every change kept (and sent to Arena with the chat), each step's
+    // writes kept by the checkpoints for /plan undo.
+    if let Some(json) = store.lock().ok().and_then(|s| s.plan(&session).ok().flatten())
+        && let Ok(plan) = serde_json::from_str::<ca_tools::plan::Plan>(&json)
+    {
+        if resumed.is_some() && !plan.is_empty() {
+            agent.note(format!("(Code Arena: your working plan as it stands.)\n{}", plan.text()));
+        }
+        agent.ctx.plan.load(plan);
+    }
+    {
+        let (st, id, sy) = (store.clone(), session.clone(), sync.clone());
+        agent.ctx.plan.on_change(Arc::new(move |plan| {
+            let json = (!plan.is_empty()).then(|| serde_json::to_string(plan).unwrap_or_default());
+            if let Ok(s) = st.lock() {
+                let _ = s.set_plan(&id, json.as_deref());
+            }
+            if let Some(sy) = &sy {
+                sy.poke();
+            }
+        }));
+        let cp = agent.ctx.checkpoints.clone();
+        agent.ctx.plan.on_begin(Arc::new(move |n| cp.begin_step(n)));
+    }
     // A conversation keeps commands with no time limit and in the background; -p ends with its answer.
     if o.interactive {
         agent.ctx.jobs = Some(Arc::new(ca_tools::jobs::Jobs::default()));
@@ -388,7 +579,29 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
             ui.say(&ui.dim(&line));
         }
     }
-    Ok(Prepared { agent, store, session, folder, resumed, servers, sources, disabled: vec![], sync, notices })
+    let mut prepared = Prepared {
+        agent,
+        store,
+        session,
+        folder,
+        resumed,
+        servers,
+        sources,
+        disabled: vec![],
+        sync,
+        notices,
+        said_next: None,
+    };
+    if o.carry_plan {
+        match resume_plan(&mut prepared) {
+            Ok(said) => {
+                ui.say(&ui.dim(&said));
+                ui.say(&render_plan(&prepared.agent.ctx.plan.get(), ui));
+            }
+            Err(why) => ui.say(&ui.yellow(&why)),
+        }
+    }
+    Ok(prepared)
 }
 
 /// The session kept in step with a chat in Arena, when it is signed in and `arena.syncChats` is on.

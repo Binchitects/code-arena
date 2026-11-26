@@ -29,6 +29,9 @@ struct Cli {
     /// Carry on with this folder's last session.
     #[arg(short = 'c', long = "continue", global = true)]
     continue_last: bool,
+    /// A new session that carries on the plan an earlier one of this folder left.
+    #[arg(long = "plan", global = true)]
+    carry_plan: bool,
     /// Take up a saved session: its id, or none to choose from a list.
     #[arg(long, num_args = 0..=1, default_missing_value = "", global = true)]
     resume: Option<String>,
@@ -133,6 +136,7 @@ struct Common {
     output: Output,
     cwd: Option<PathBuf>,
     add_dir: Vec<PathBuf>,
+    carry_plan: bool,
 }
 
 fn cli_opts(c: &Common) -> session::Opts {
@@ -143,6 +147,7 @@ fn cli_opts(c: &Common) -> session::Opts {
         model: c.model.clone(),
         thinking: c.thinking.clone(),
         interactive: c.print.is_none(),
+        carry_plan: c.carry_plan,
     }
 }
 
@@ -180,6 +185,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
         output: cli.output,
         cwd: cli.cwd,
         add_dir: cli.add_dir,
+        carry_plan: cli.carry_plan,
     };
     match cli.command {
         Some(Command::Login { url, user, gateway, ca }) => {
@@ -212,6 +218,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
                         thinking: o.thinking,
                         output,
                         resume,
+                        carry_plan: cli_common.carry_plan,
                     },
                 )
                 .await

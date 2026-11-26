@@ -29,14 +29,17 @@ class H(http.server.BaseHTTPRequestHandler):
         if p == "/api/code-arena/watch":
             self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "close"); self.end_headers()
-            self.wfile.write(b'data: {"type":"watching"}\n\n'); self.wfile.flush()
-            while True:
-                if news.wait(1):
-                    news.clear()
-                    self.wfile.write(b'data: {"type":"chat","id":"c-1","what":"messages"}\n\n'); self.wfile.flush()
-                else:
-                    try: self.wfile.write(b": still here\n\n"); self.wfile.flush()
-                    except OSError: return
+            try:
+                self.wfile.write(b'data: {"type":"watching"}\n\n'); self.wfile.flush()
+                while True:
+                    if news.wait(1):
+                        news.clear()
+                        self.wfile.write(b'data: {"type":"chat","id":"c-1","what":"messages"}\n\n'); self.wfile.flush()
+                    else:
+                        self.wfile.write(b": still here\n\n"); self.wfile.flush()
+            except OSError:
+                # Code Arena went: the stream ends.
+                return
         if p == "/api/code-arena/chats/c-1":
             with lock:
                 given, web[:] = list(web), []

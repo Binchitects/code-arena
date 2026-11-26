@@ -235,6 +235,8 @@ impl Agent {
         let mut overflowed = false;
         loop {
             self.take_joins(events);
+            // A plan made in plan mode is proposed, for the person's review.
+            self.ctx.planning = self.policy.mode == crate::policy::Mode::Plan;
             if out.steps > 0 {
                 let waiting: Vec<String> = match &self.inbox {
                     Some(i) => i.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default(),
@@ -472,7 +474,16 @@ impl Agent {
         };
         self.history.clear();
         self.notes.clear();
-        self.note(format!("(Code Arena: the earlier part of this conversation is summarized here; every message is kept.)\n\n{summary}"));
+        // The plan as it stands goes with the summary: a compaction never loses it.
+        let plan = self.ctx.plan.get();
+        let plan_text = if plan.is_empty() {
+            String::new()
+        } else {
+            format!("\n\nYour working plan as it stands:\n{}", plan.text())
+        };
+        self.note(format!(
+            "(Code Arena: the earlier part of this conversation is summarized here; every message is kept.)\n\n{summary}{plan_text}"
+        ));
         self.history.extend(kept);
         self.notes.extend(kept_notes);
         events.notice(&format!("Compacted: the model now reads about {} tokens.", self.context_used()));

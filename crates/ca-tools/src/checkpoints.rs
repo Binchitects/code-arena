@@ -19,6 +19,8 @@ struct Inner {
     current: Option<i64>,
     /// By the question's place: each file as it was before that turn wrote it (`None`: it was not there).
     turns: BTreeMap<i64, BTreeMap<PathBuf, Option<Vec<u8>>>>,
+    /// The plan's steps in the order they began in this run: each file as it was before that step wrote it.
+    steps: Vec<(u32, BTreeMap<PathBuf, Option<Vec<u8>>>)>,
 }
 
 /// What a rewind of the code did.
@@ -42,15 +44,49 @@ impl Checkpoints {
         }
     }
 
-    /// Before a tool writes `path`: what it holds now is kept, once per turn.
+    /// Before a tool writes `path`: what it holds now is kept, once per turn and once per plan step.
     pub fn before_write(&self, path: &Path) {
         let Ok(mut g) = self.inner.lock() else { return };
+        let before = std::fs::read(path).ok();
+        if let Some((_, step)) = g.steps.last_mut()
+            && !step.contains_key(path)
+        {
+            step.insert(path.to_path_buf(), before.clone());
+        }
         let Some(cur) = g.current else { return };
         let turn = g.turns.entry(cur).or_default();
         if !turn.contains_key(path) {
-            let before = std::fs::read(path).ok();
             turn.insert(path.to_path_buf(), before);
         }
+    }
+
+    /// A step of the plan began: what its writes change is kept from now, for [`undo_step`](Self::undo_step).
+    pub fn begin_step(&self, number: u32) {
+        if let Ok(mut g) = self.inner.lock() {
+            g.steps.retain(|(n, _)| *n != number);
+            g.steps.push((number, BTreeMap::new()));
+        }
+    }
+
+    /// The steps begun in this run, in order.
+    pub fn steps(&self) -> Vec<u32> {
+        self.inner.lock().map(|g| g.steps.iter().map(|(n, _)| *n).collect()).unwrap_or_default()
+    }
+
+    /// Puts the files back as they were before step `number` began, and before every step begun after it. Gives the
+    /// steps undone and what was done; `None` when that step has not begun in this run.
+    pub fn undo_step(&self, number: u32) -> Option<(Vec<u32>, Restored)> {
+        let Ok(mut g) = self.inner.lock() else { return None };
+        let at = g.steps.iter().position(|(n, _)| *n == number)?;
+        let undone: Vec<(u32, BTreeMap<PathBuf, Option<Vec<u8>>>)> = g.steps.drain(at..).collect();
+        drop(g);
+        let mut first_state: BTreeMap<PathBuf, Option<Vec<u8>>> = BTreeMap::new();
+        for (_, files) in undone.iter().rev() {
+            for (p, before) in files {
+                first_state.insert(p.clone(), before.clone());
+            }
+        }
+        Some((undone.iter().map(|(n, _)| *n).collect(), put_back(first_state)))
     }
 
     /// Whether the turn at `seq` (or a later one) has a checkpoint in this run.
@@ -86,22 +122,28 @@ impl Checkpoints {
             g.turns.remove(&k);
         }
         g.current = None;
-        let mut r = Restored::default();
-        for (p, before) in first_state {
-            match before {
-                Some(bytes) => match std::fs::write(&p, bytes) {
-                    Ok(()) => r.put_back.push(p),
-                    Err(e) => r.failed.push((p, e.to_string())),
-                },
-                None => match std::fs::remove_file(&p) {
-                    Ok(()) => r.removed.push(p),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => r.failed.push((p, e.to_string())),
-                },
-            }
-        }
-        r
+        drop(g);
+        put_back(first_state)
     }
+}
+
+/// Each file as it was: written back, or removed when it was not there.
+fn put_back(first_state: BTreeMap<PathBuf, Option<Vec<u8>>>) -> Restored {
+    let mut r = Restored::default();
+    for (p, before) in first_state {
+        match before {
+            Some(bytes) => match std::fs::write(&p, bytes) {
+                Ok(()) => r.put_back.push(p),
+                Err(e) => r.failed.push((p, e.to_string())),
+            },
+            None => match std::fs::remove_file(&p) {
+                Ok(()) => r.removed.push(p),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => r.failed.push((p, e.to_string())),
+            },
+        }
+    }
+    r
 }
 
 #[cfg(test)]
@@ -133,5 +175,32 @@ mod tests {
         assert!(!c.has(4) && c.has(0));
         c.rewind(0);
         assert_eq!(std::fs::read_to_string(&a).expect("r"), "one");
+    }
+
+    #[test]
+    fn a_step_and_those_begun_after_it_are_undone() {
+        let d = tempfile::tempdir().expect("temp");
+        let a = d.path().join("a.txt");
+        std::fs::write(&a, "start").expect("w");
+        let c = Checkpoints::default();
+        c.begin(0);
+        c.begin_step(1);
+        c.before_write(&a);
+        std::fs::write(&a, "step 1").expect("w");
+        c.begin_step(2);
+        let b = d.path().join("b.txt");
+        c.before_write(&b);
+        std::fs::write(&b, "made in step 2").expect("w");
+        c.before_write(&a);
+        std::fs::write(&a, "step 2").expect("w");
+        assert_eq!(c.steps(), vec![1, 2]);
+        let (steps, r) = c.undo_step(2).expect("begun");
+        assert_eq!(steps, vec![2]);
+        assert_eq!(std::fs::read_to_string(&a).expect("r"), "step 1");
+        assert!(!b.exists() && r.removed.len() == 1);
+        let (steps, _) = c.undo_step(1).expect("begun");
+        assert_eq!(steps, vec![1]);
+        assert_eq!(std::fs::read_to_string(&a).expect("r"), "start");
+        assert!(c.undo_step(1).is_none());
     }
 }
