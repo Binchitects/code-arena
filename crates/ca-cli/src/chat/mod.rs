@@ -1235,13 +1235,8 @@ async fn sync_all(p: &mut Prepared, app: &App) -> String {
         if before == 0 {
             continue;
         }
-        loop {
-            match s.push().await {
-                ca_sync::Pushed::Done | ca_sync::Pushed::Off | ca_sync::Pushed::Behind => break,
-                // Out of reach, or the web answering: the rest goes later.
-                ca_sync::Pushed::Retry(_) => break,
-            }
-        }
+        // One send: what it could not send (Arena out of reach, the web answering) goes later.
+        let _ = s.push().await;
         let after = s.pending();
         if after < before {
             sessions += 1;

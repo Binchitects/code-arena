@@ -536,6 +536,9 @@ pub fn is_command(check: &str, root: &std::path::Path) -> bool {
     crate::shell::which(first)
 }
 
+/// What the session does when a step begins: the checkpoints keep what its writes change.
+pub type OnBegin = Arc<dyn Fn(u32) + Send + Sync>;
+
 /// What the session does when the plan changes: keep it, and send it to Arena.
 pub type OnChange = Arc<dyn Fn(&Plan) + Send + Sync>;
 
@@ -545,7 +548,7 @@ pub struct PlanBook {
     plan: Mutex<Plan>,
     on_change: Mutex<Option<OnChange>>,
     /// A step began: the checkpoints keep what its writes change, for `/plan undo N`.
-    on_begin: Mutex<Option<Arc<dyn Fn(u32) + Send + Sync>>>,
+    on_begin: Mutex<Option<OnBegin>>,
 }
 
 impl std::fmt::Debug for PlanBook {
@@ -594,7 +597,7 @@ impl PlanBook {
         }
     }
 
-    pub fn on_begin(&self, f: Arc<dyn Fn(u32) + Send + Sync>) {
+    pub fn on_begin(&self, f: OnBegin) {
         if let Ok(mut g) = self.on_begin.lock() {
             *g = Some(f);
         }
