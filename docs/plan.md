@@ -151,6 +151,20 @@ which an MIT product cannot take; Slint's licences do not fit an MIT product.
    hover, focus and selection states. Agent mode is the chat view in the secondary side bar,
    as VS Code's chat is. Each region is checked against VS Code's own by screenshot. Then the activity bar, the side bars, the panel, the views dragged between them,
    the layout kept per folder, VS Code's keys; the layout's rules shared with the page's.
+   *Changed (2026-11-26), by the person's choice: "I want be able to move panes manually and place
+   them like how Visual Studio handles panes".* The native window's layout is a **dock tree**, not
+   three fixed containers (it no longer mirrors the page's `layout.ts`; the page stays as it is):
+   splits (a row or a column of children) and tab groups (views, the one shown), with the editor a
+   fixed leaf. A view is dragged by its icon, title or tab (5 px before it moves; Escape cancels);
+   Visual Studio's guide shows on the pane under the pointer (left, right, top, bottom, or the
+   centre to join its tabs) and at the window's four edges, the place it would take shaded, and
+   it docks there. Sizes are kept apart from the tree, so a sash only sets a size: in a split the
+   child holding the editor flexes, the others keep their pixels. VS Code's controls mean: the
+   activity bar lists every view (a click shows it, again hides its group); Ctrl+B, Ctrl+Alt+B and
+   Ctrl+J hide or show the group holding the Explorer, the Agent and the Terminal; Reset View
+   Locations gives the default tree, which draws as the three containers did. A layout kept in the
+   old form is read as the default. Floating windows (a view in a window of its own) and auto-hide
+   come after, once a second window and Wayland's limits on placing windows are checked.
 3. The editor: tabs, syntax colours (TextMate grammars), save, the agent's edits and changes
    on disk taken in by changed lines, diffs, find, the outline.
 4. The terminal: `alacritty_terminal`'s emulator (Apache-2.0) on `ca-pty`, drawn by the app.
