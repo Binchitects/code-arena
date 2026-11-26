@@ -37,6 +37,13 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   it (`git.autoCommit.review`, on: shown first). Never during a merge, rebase, cherry-pick or
   revert, nor while the session's commands run; a `PreCommit` hook (or git's own) that refuses
   stops the series. A proposal that leaves a hunk out is asked once more, then made one commit.
+- Steps at once (`run_steps`): 2 to 4 steps of the plan that wait for nothing not done run
+  together. A step with no files to change goes to a read-only sub-agent; one with files to a
+  worker in a git worktree of its own (a copy of the project as it is now, your uncommitted
+  changes in it): it edits there, runs no command but its step's check, and its change is merged
+  into the project (`git apply --3way`, every file kept for `/rewind`) once the check passed.
+  Each step ends done or blocked, with why in its notes; a worktree that did not merge is kept
+  for you to look at. Steps that change files run at once only in auto-edit or yolo mode.
 - Loops: `/loop 30m PROMPT` runs a prompt at once and then every so often as a background
   sub-agent while the session is open, reading only (`--edits`: it edits files too; its commands
   are refused, as nobody is there to allow them); a run never overlaps the one before it; its

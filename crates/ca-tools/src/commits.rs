@@ -19,7 +19,8 @@ pub struct Hunk {
     pub whole_file: bool,
 }
 
-async fn git(dir: &Path, args: &[&str], input: Option<&str>) -> Result<String, String> {
+/// git in a folder, the repository's filters and drivers off, `input` fed to it when given: its output, or why not.
+pub async fn git(dir: &Path, args: &[&str], input: Option<&str>) -> Result<String, String> {
     use tokio::io::AsyncWriteExt;
     let mut cmd = tokio::process::Command::new("git");
     // The repository's own filters and drivers do not run (as for the git tool).

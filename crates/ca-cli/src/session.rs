@@ -895,6 +895,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     // Sub-agents: the task tool, starting from the session as it is at each turn.
     let crew: Arc<Mutex<Option<ca_agent::task::Crew>>> = Arc::new(Mutex::new(None));
     agent.tools.push(Arc::new(ca_agent::task::TaskTool::new(crew.clone())));
+    agent.tools.push(Arc::new(ca_agent::steps::RunSteps { crew: crew.clone() }));
     for line in crate::servers::describe(&servers) {
         if !line.contains("connected,") {
             ui.say(&ui.dim(&line));

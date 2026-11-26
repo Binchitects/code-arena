@@ -1160,3 +1160,83 @@ async fn a_schedule_runs_its_prompt_as_a_session_of_its_own() {
     }
     assert!(run(&["schedule", "remove", "nightly"]).status.success());
 }
+
+#[tokio::test]
+async fn steps_run_at_once_a_worker_in_its_own_worktree_merged_back() {
+    let gateway = MockServer::start().await;
+    struct Model;
+    impl Respond for Model {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+            let text = body.to_string();
+            let tools_done =
+                body["messages"].as_array().map(|m| m.iter().filter(|x| x["role"] == "tool").count()).unwrap_or(0);
+            let ev = if text.contains("# You are a sub-agent") && text.contains("Carry out step 1") {
+                json!({"choices": [{"delta": {"content": "Step 1: the README names b.txt."}, "finish_reason": "stop"}]})
+            } else if text.contains("# You are a sub-agent") {
+                match tools_done {
+                    0 => {
+                        json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "w", "function": {"name": "write_file", "arguments": "{\"path\":\"b.txt\",\"content\":\"made by the worker\\n\"}"}}]}, "finish_reason": "tool_calls"}]})
+                    }
+                    1 => {
+                        json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c", "function": {"name": "run_shell", "arguments": "{\"command\":\"test -f b.txt\"}"}}]}, "finish_reason": "tool_calls"}]})
+                    }
+                    _ => {
+                        json!({"choices": [{"delta": {"content": "Wrote b.txt; its check passed."}, "finish_reason": "stop"}]})
+                    }
+                }
+            } else {
+                match tools_done {
+                    0 => {
+                        json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "p", "function": {"name": "plan", "arguments": "{\"title\":\"Two\",\"steps\":[{\"title\":\"Read the README\"},{\"title\":\"Make b.txt\",\"files\":[\"b.txt\"],\"check\":\"test -f b.txt\"}]}"}}]}, "finish_reason": "tool_calls"}]})
+                    }
+                    1 => {
+                        json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "r", "function": {"name": "run_steps", "arguments": "{\"steps\":[1,2]}"}}]}, "finish_reason": "tool_calls"}]})
+                    }
+                    _ => json!({"choices": [{"delta": {"content": "Both steps are done."}, "finish_reason": "stop"}]}),
+                }
+            };
+            ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(sse(ev))
+        }
+    }
+    Mock::given(path("/v1/chat/completions")).respond_with(Model).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let git = |args: &[&str]| {
+        let o = std::process::Command::new("git").args(args).current_dir(project.path()).output().expect("git");
+        assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "t@example.com"]);
+    git(&["config", "user.name", "T"]);
+    std::fs::write(project.path().join("README.md"), "Make b.txt.\n").expect("w");
+    git(&["add", "."]);
+    git(&["commit", "-qm", "start"]);
+    let out = code_arena(home.path())
+        .args(["-p", "do the two steps", "--mode", "auto-edit", "-C"])
+        .arg(project.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("Both steps are done."), "{stdout}\n{stderr}");
+    assert_eq!(std::fs::read_to_string(project.path().join("b.txt")).expect("merged"), "made by the worker\n");
+    let reqs = gateway.received_requests().await.expect("requests");
+    let told = String::from_utf8_lossy(&reqs.last().expect("last").body).to_string();
+    assert!(
+        told.contains(
+            "Step 2 (Make b.txt): done. Changed in its worktree, its check `test -f b.txt` passed, and merged"
+        ),
+        "{told}"
+    );
+    assert!(told.contains("2 of 2 done"), "{told}");
+    // No worktree is left behind.
+    let wt =
+        std::process::Command::new("git").args(["worktree", "list"]).current_dir(project.path()).output().expect("git");
+    assert_eq!(String::from_utf8_lossy(&wt.stdout).lines().count(), 1, "{}", String::from_utf8_lossy(&wt.stdout));
+}

@@ -62,7 +62,7 @@ impl Events for Steps {
     }
 }
 
-const SUB_TOOLS_LEFT_OUT: &[&str] = &["task", "plan"];
+const SUB_TOOLS_LEFT_OUT: &[&str] = &["task", "plan", "run_steps", "goal_check"];
 
 #[async_trait::async_trait]
 impl Tool for TaskTool {

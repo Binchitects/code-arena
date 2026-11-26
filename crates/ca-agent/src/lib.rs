@@ -12,6 +12,7 @@ pub mod mend;
 pub mod mentions;
 pub mod policy;
 pub mod skill_transfer;
+pub mod steps;
 pub mod task;
 mod turn;
 
