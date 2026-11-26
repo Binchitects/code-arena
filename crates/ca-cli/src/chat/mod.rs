@@ -188,6 +188,7 @@ fn help() -> &'static str {
 /goal [TEXT | pause | resume | cancel | drop N]  goal mode: the agent works until TEXT is met; --check CMD or --when
                       CONDITION says how it is checked; --steps N --minutes N --tokens N or --until-met its budget\n\
 /commit [yes|no]      commits of the working tree's changes, grouped and written by the model; yes makes them\n\
+/loop [EVERY [--edits] PROMPT | stop N]  run PROMPT every 30m (2h, 1d) as a background sub-agent while the session is open\n\
 /hooks [trust]        the hooks that run; trust runs the project's own\n\
 /sync [on|off|all]    where this session stands with its chat in Arena; off keeps it here only; all sends every session here\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
@@ -951,6 +952,10 @@ async fn command(
         "/web" => web(rest, p, app, ui).await?,
         "/checklist" => ui.say(&crate::checklist::command(rest, p).await),
         "/commit" => ui.say(&crate::commit::command(rest, p, ui).await),
+        "/loop" => {
+            session::refresh_crew(p, ui);
+            ui.say(&crate::loops::command(rest, p))
+        }
         "/goal" => {
             ui.say(&crate::goals::command(rest, p));
             // A goal set (or resumed) is worked on at once.

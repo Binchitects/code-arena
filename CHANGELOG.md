@@ -37,6 +37,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   it (`git.autoCommit.review`, on: shown first). Never during a merge, rebase, cherry-pick or
   revert, nor while the session's commands run; a `PreCommit` hook (or git's own) that refuses
   stops the series. A proposal that leaves a hunk out is asked once more, then made one commit.
+- Loops: `/loop 30m PROMPT` runs a prompt at once and then every so often as a background
+  sub-agent while the session is open, reading only (`--edits`: it edits files too; its commands
+  are refused, as nobody is there to allow them); a run never overlaps the one before it; its
+  report reaches the agent with your next message. `/loop` lists them, `/loop stop N`.
+- Schedules: `code-arena schedule add NAME --every 1d --at 02:00 [--mode plan] [--model M]
+  [-C FOLDER] PROMPT` runs a prompt on its own as a session of its own (kept with a chat in Arena
+  as any session is), its output kept in a log; `list`, `run NAME`, `remove NAME`, `due` (runs
+  those due), `install` (a systemd user timer, a launchd agent or a Task Scheduler task running
+  `due` every 5 minutes), `uninstall`.
 
 ## 0.3.0 (2026-11-26)
 

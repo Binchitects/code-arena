@@ -7,8 +7,10 @@ mod checklist;
 mod commit;
 mod edition;
 mod goals;
+mod loops;
 mod projects;
 mod run;
+mod schedules;
 mod servers;
 mod session;
 mod session_tools;
@@ -112,6 +114,12 @@ enum Command {
     Chat {
         /// A message to start with.
         prompt: Option<String>,
+    },
+    /// Prompts Code Arena runs on its own, on a schedule: add NAME --every 2h [--at 09:00] [--mode M] PROMPT…, list,
+    /// run NAME, remove NAME, due (what a timer of the system's calls), install, uninstall.
+    Schedule {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// The version, the licence and the source.
     Version,
@@ -225,6 +233,11 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
         Some(Command::Logout { provider: None }) => account::logout(&app).await.map(|()| 0),
         Some(Command::Models) => account::models(&app).await.map(|()| 0),
         Some(Command::Doctor) => account::doctor(&app).await.map(|()| 0),
+        Some(Command::Schedule { args }) => {
+            let cwd = std::env::current_dir()?;
+            // A timer of the system's goes in the system's own home, whatever CODE_ARENA_HOME says.
+            schedules::command(&app.paths.config, dirs::home_dir().as_deref(), &cwd, &args)
+        }
         Some(Command::Version) => {
             let edition = match app.edition() {
                 ca_settings::Edition::None => String::new(),

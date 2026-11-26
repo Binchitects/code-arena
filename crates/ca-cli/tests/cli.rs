@@ -1108,3 +1108,55 @@ async fn a_goal_is_worked_on_turn_after_turn_until_its_check_passes() {
     let second = requests.iter().filter(|r| r.url.path().ends_with("/chat/completions")).nth(1).expect("a second turn");
     assert!(String::from_utf8_lossy(&second.body).contains("Goal (turn 2): make done.txt"));
 }
+
+#[tokio::test]
+async fn a_schedule_runs_its_prompt_as_a_session_of_its_own() {
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(
+            vec![sse(
+                json!({"choices": [{"delta": {"content": "Nightly report: all well."}, "finish_reason": "stop"}]}),
+            )],
+            AtomicUsize::new(0),
+        ))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let run = |args: &[&str]| {
+        code_arena(home.path())
+            .args(args)
+            .current_dir(project.path())
+            .env("HOME", home.path())
+            .env("ARENA_URL", "https://arena.example")
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .output()
+            .expect("runs")
+    };
+    let add = run(&[
+        "schedule", "add", "nightly", "--every", "1d", "--at", "02:00", "--mode", "plan", "report", "on", "the", "repo",
+    ]);
+    assert!(add.status.success(), "{}", String::from_utf8_lossy(&add.stderr));
+    let list = String::from_utf8_lossy(&run(&["schedule", "list"]).stdout).to_string();
+    assert!(list.contains("nightly  every 1d at 02:00  plan") && list.contains("report on the repo"), "{list}");
+    let ran = run(&["schedule", "run", "nightly"]);
+    assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stdout));
+    let log = std::fs::read_to_string(home.path().join("config/schedules/nightly.log")).expect("log");
+    assert!(log.contains("Nightly report: all well."), "{log}");
+    assert!(String::from_utf8_lossy(&run(&["schedule", "list"]).stdout).contains("(ok;"));
+    // Not due again before its interval.
+    let due = run(&["schedule", "due"]);
+    assert!(String::from_utf8_lossy(&due.stdout).trim().is_empty(), "nothing was due");
+    if cfg!(target_os = "linux") {
+        let inst = run(&["schedule", "install"]);
+        assert!(inst.status.success());
+        let timer = std::fs::read_to_string(home.path().join(".config/systemd/user/code-arena-schedules.timer"))
+            .expect("timer");
+        assert!(timer.contains("OnUnitActiveSec=5min"));
+        assert!(run(&["schedule", "uninstall"]).status.success());
+        assert!(!home.path().join(".config/systemd/user/code-arena-schedules.timer").exists());
+    }
+    assert!(run(&["schedule", "remove", "nightly"]).status.success());
+}

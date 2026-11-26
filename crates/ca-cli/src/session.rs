@@ -69,6 +69,9 @@ pub struct Prepared {
     pub ui: crate::ui::Ui,
     /// Commits the model proposed, waiting for `/commit yes`.
     pub pending_commits: Option<crate::commit::Pending>,
+    /// The session's loops, and their reports for the next message.
+    pub loops: Vec<crate::loops::Loop>,
+    pub loop_reports: crate::loops::Reports,
 }
 
 /// The sub-agents' starting point, as the session is now (its model, mode, tools and instructions).
@@ -251,6 +254,10 @@ async fn keep_arena_skills(arena: ca_arena::ArenaClient, data: std::path::PathBu
 /// Before the person's message: what is remembered that matters to it (a few hundred tokens at most), and after a long
 /// turn the reminder to keep what it worked out.
 pub async fn before_message(p: &mut Prepared, message: &str) {
+    let reports: Vec<String> = p.loop_reports.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
+    for r in reports {
+        p.agent.note(r);
+    }
     if let Some(note) = p.memory.recall(message, 1_500).await {
         p.agent.note(note);
     }
@@ -912,6 +919,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         max_steps,
         ui,
         pending_commits: None,
+        loops: vec![],
+        loop_reports: Arc::new(Mutex::new(Vec::new())),
     };
     refresh_crew(&mut prepared, ui);
     // SessionStart: what the person's hooks say goes to the model first.

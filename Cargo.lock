@@ -225,6 +225,7 @@ dependencies = [
  "dirs",
  "nix",
  "rpassword",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
