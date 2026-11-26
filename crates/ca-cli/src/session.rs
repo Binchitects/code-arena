@@ -182,6 +182,19 @@ fn load_hooks(
     (ca_agent::hooks::Hooks { list, cwd: cwd.to_path_buf(), session: session.to_string() }, said)
 }
 
+/// The folders commands, skills, sub-agents and output styles are read from: the project's, yours, the plugins you
+/// enabled, Arena's and the built-in ones.
+pub fn library_sources(app: &App, root: &std::path::Path) -> Vec<ca_agent::library::Source> {
+    let mut sources = ca_agent::library::sources(root, &app.paths.config, app.home.as_deref(), Some(&app.paths.data));
+    let at = sources.iter().position(|s| s.label == "Arena's").unwrap_or(sources.len());
+    for (n, p) in
+        crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS)).into_iter().enumerate()
+    {
+        sources.insert(at + n, ca_agent::library::Source { label: format!("the plugin {}", p.name), dir: p.root });
+    }
+    sources
+}
+
 /// Built-in skills an Arena admin turned off, as Arena last said.
 fn arena_off(data: &std::path::Path) -> Vec<String> {
     std::fs::read_to_string(ca_agent::library::arena_dir(data).join("off.json"))
@@ -744,14 +757,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         &arena_off(&app.paths.data),
         app.settings.bool(&schema::BUILTIN_SKILLS),
     );
-    let mut sources =
-        ca_agent::library::sources(ws.root(), &app.paths.config, app.home.as_deref(), Some(&app.paths.data));
-    let at = sources.iter().position(|s| s.label == "Arena's").unwrap_or(sources.len());
-    for (n, p) in
-        crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS)).into_iter().enumerate()
-    {
-        sources.insert(at + n, ca_agent::library::Source { label: format!("the plugin {}", p.name), dir: p.root });
-    }
+    let sources = library_sources(app, ws.root());
     let library = ca_agent::library::load(&sources);
     // What the agent remembers: Arena's (else this machine's files), and the project's .remember/.
     let memory = Arc::new(ca_memory::Memory::new(
@@ -800,7 +806,14 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         approver,
         max_steps: app.settings.integer(&schema::MAX_STEPS).max(1) as usize,
         system: {
-            let mut s = instructions::system_prompt(&env, &read);
+            let style_name = app.settings.string(&schema::OUTPUT_STYLE).unwrap_or_else(|| "default".into());
+            let style = ca_agent::output_style::find(&sources, &style_name);
+            if style.is_none() {
+                ui.say(&ui.yellow(&format!(
+                    "There is no output style {style_name:?}: the default is used (/output-style lists them)."
+                )));
+            }
+            let mut s = instructions::system_prompt(&env, &read, style.as_ref());
             if let Some(n) = library.skills_note() {
                 s.push('\n');
                 s.push_str(&n);

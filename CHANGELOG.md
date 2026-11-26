@@ -15,6 +15,16 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or Claude Code's
   (`run_shell` or `Bash`). A project's hooks run only once you trust them as they are
   (`/hooks trust`; a change asks again). `/hooks` lists them.
+- Output styles, in Claude Code's format: `/output-style` lists them and `/output-style NAME`
+  uses one from the next message (kept in the settings, `outputStyle`). Built in: default,
+  explanatory (explains the codebase's choices as it goes) and learning (leaves small pieces,
+  marked `TODO(human)`, for you to write). Your own are `output-styles/NAME.md` (the project's,
+  yours, a plugin's) with `name`, `description` and `keep-coding-instructions`: without it, a
+  style takes the place of Code Arena's coding instructions.
+- A status line of your own: `"statusLine": {"type": "command", "command": "…"}` (or Claude
+  Code's in `~/.claude/settings.json`). The command gets the session as JSON on stdin (model,
+  workspace, tokens so far, output style, mode, edition) and its first line is drawn above the
+  prompt, again after each turn; one that fails or takes over two seconds shows nothing.
 - Session forks: `/fork` carries on in a copy of the session, `/fork N` in a copy of what came
   before question N (as `/rewind` numbers them); `--fork-session` with `--continue` or `--resume`
   does it from the shell. The fork has the messages, summaries, results kept aside and (a whole

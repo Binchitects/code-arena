@@ -16,6 +16,7 @@ mod schedules;
 mod servers;
 mod session;
 mod session_tools;
+mod statusline;
 mod ui;
 
 use std::path::PathBuf;

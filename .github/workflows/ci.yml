@@ -68,6 +68,7 @@ jobs:
           python3 tests/pty/chat_commit.py "$PWD/target/debug/code-arena"
           python3 tests/pty/chat_loop.py "$PWD/target/debug/code-arena"
           python3 tests/pty/chat_fork.py "$PWD/target/debug/code-arena"
+          python3 tests/pty/chat_style.py "$PWD/target/debug/code-arena"
       - name: The sandbox, where the runner can make one
         if: "!startsWith(matrix.name, 'win-')"
         shell: bash

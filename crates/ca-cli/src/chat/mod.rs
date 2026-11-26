@@ -166,6 +166,7 @@ fn help() -> &'static str {
 /compact              summarize the older part of the conversation now\n\
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
+/output-style [NAME]  how the agent talks: default, explanatory, learning, or one of yours\n\
 /fork [N]             carry on in a copy of this session (of before question N); this one stays as it was\n\
 /jobs [stop N]        commands run with no time limit or in the background; stop N stops one\n\
 /tools [on|off NAME]  the tools, by group; turn a tool or a server's tools on or off for this session\n\
@@ -265,6 +266,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     let watching = session::watch_arena_settings(app, &p.notices);
     let mut drawn = Drawn::default();
     let mut interrupted_once = false;
+    let mut status_due = true;
     let mut session_usage = ca_llm::Usage::default();
     let mut shell_output: Option<String> = None;
     let mut first = args.first.clone();
@@ -293,6 +295,16 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
                 listening = Some(s.clone());
             }
             session::say_notices(&p.notices, ui);
+            // The person's status line, after each turn (not each time the prompt is drawn again).
+            if status_due {
+                status_due = false;
+                if let Some(cmd) = crate::statusline::command(app) {
+                    let input = crate::statusline::input(&p, app, &session_usage);
+                    if let Some(l) = crate::statusline::run(&cmd, &input, p.agent.ctx.workspace.cwd()).await {
+                        ui.say(&l);
+                    }
+                }
+            }
             draw(&ed, &mut drawn);
             match read_line(&mut ed, &mut keys, &mut ended, &mut news, &mut drawn, &mut interrupted_once, ui).await {
                 Input::Line(l) => l,
@@ -315,6 +327,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
                 Input::Leave => break,
             }
         };
+        status_due = true;
         if !carry_on {
             hist.add(&line);
             ed.remember(&line);
@@ -838,6 +851,57 @@ async fn command(
             *p = session::prepare(app, &opts, approver, Resume::New).await?;
             p.agent.inbox = inbox;
             ui.say(&ui.dim(&format!("A new session: {}.", p.session)));
+        }
+        "/output-style" => {
+            let root = p.agent.ctx.workspace.root().to_path_buf();
+            let sources = session::library_sources(app, &root);
+            let now = app.settings.string(&ca_settings::schema::OUTPUT_STYLE).unwrap_or_else(|| "default".into());
+            if rest.is_empty() {
+                for s in ca_agent::output_style::all(&sources) {
+                    let on = s.name.eq_ignore_ascii_case(&now);
+                    ui.say(&format!(
+                        "{} {:<14} {}  {}",
+                        if on { "●" } else { "○" },
+                        s.name,
+                        s.description,
+                        ui.dim(&format!("({})", s.from))
+                    ));
+                }
+                ui.say(&ui.dim("/output-style NAME uses one from the next message; output-styles/NAME.md makes one."));
+            } else {
+                let Some(style) = ca_agent::output_style::find(&sources, rest) else {
+                    anyhow::bail!("there is no output style {rest}: /output-style lists them");
+                };
+                // Kept where the style in force was given: the project's settings when they name one, else yours.
+                let file = match app.settings.resolve(&ca_settings::schema::OUTPUT_STYLE).1 {
+                    ca_settings::settings::Source::Project(f) => f,
+                    _ => app.paths.settings_file(),
+                };
+                ca_settings::settings::keep(
+                    &file,
+                    ca_settings::schema::OUTPUT_STYLE.key,
+                    &serde_json::json!(style.name),
+                )?;
+                let opts = Opts {
+                    cwd: Some(p.agent.ctx.workspace.cwd().to_path_buf()),
+                    add_dirs: vec![],
+                    mode: Some(p.agent.policy.mode.name().into()),
+                    model: Some(p.agent.model.clone()),
+                    thinking: None,
+                    interactive: true,
+                    carry_plan: false,
+                };
+                let approver = p.agent.approver.clone();
+                let inbox = p.agent.inbox.clone();
+                let id = p.session.clone();
+                *p = session::prepare(app, &opts, approver, Resume::Id(id)).await?;
+                p.agent.inbox = inbox;
+                ui.say(&ui.dim(&format!(
+                    "The output style is {} from the next message (kept in {}).",
+                    style.name,
+                    file.display()
+                )));
+            }
         }
         "/fork" => {
             // All of it, or what came before question N (as /rewind numbers them).

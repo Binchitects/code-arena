@@ -10,6 +10,7 @@ pub mod instructions;
 pub mod library;
 pub mod mend;
 pub mod mentions;
+pub mod output_style;
 pub mod policy;
 pub mod skill_transfer;
 pub mod steps;

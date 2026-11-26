@@ -310,6 +310,26 @@ pub static HOOKS: Setting = Setting {
     section: "Hooks",
 };
 
+pub static OUTPUT_STYLE: Setting = Setting {
+    key: "outputStyle",
+    kind: Kind::String,
+    default: "\"default\"",
+    description: "How the agent talks: default, explanatory (explains the codebase's choices as it goes), learning (leaves small pieces for you to write), or one of output-styles/NAME.md (the project's, yours, a plugin's). /output-style lists them.",
+    scope: Scope::Project,
+    env: None,
+    section: "Output",
+};
+
+pub static STATUS_LINE: Setting = Setting {
+    key: "statusLine",
+    kind: Kind::Object,
+    default: "{}",
+    description: "A line of your own above the prompt, in Claude Code's shape: {\"type\": \"command\", \"command\": \"~/.code-arena/statusline.sh\"}. The command gets the session as JSON on stdin (model, workspace, cost, output style, mode, context) and its first line is shown, drawn again after each turn. Claude Code's ~/.claude/settings.json statusLine is used when this is not set.",
+    scope: Scope::User,
+    env: None,
+    section: "Output",
+};
+
 pub static PLUGINS: Setting = Setting {
     key: "plugins.enabled",
     kind: Kind::StringList,
@@ -409,6 +429,8 @@ pub static ALL: &[&Setting] = &[
     &PLAN_SECOND_READING,
     &HOOKS,
     &PLUGINS,
+    &OUTPUT_STYLE,
+    &STATUS_LINE,
     &SANDBOX,
     &SANDBOX_NETWORK,
     &SANDBOX_WRITABLE,

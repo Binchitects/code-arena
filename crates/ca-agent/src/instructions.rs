@@ -72,8 +72,13 @@ pub struct Environment {
 }
 
 /// The system prompt: who it is, how it works, the instructions and where it is.
-pub fn system_prompt(env: &Environment, instructions: &[Instruction]) -> String {
-    let mut s = String::from(
+/// With an output style: its text added to the coding instructions, or (one that does not keep them) in their place.
+pub fn system_prompt(
+    env: &Environment,
+    instructions: &[Instruction],
+    style: Option<&crate::output_style::Style>,
+) -> String {
+    let coding = String::from(
         "You are Code Arena, Farzan Arena's coding agent. You work in the person's project on their machine: you read and change \
 its code, and run commands, with the tools given.\n\n\
 How to work:\n\
@@ -85,6 +90,14 @@ only for new files or a whole rewrite.\n\
 - When a tool is refused, do not try to get around it: say what you would have done, or find another way.\n\
 - Cite code as path:line. Be brief: say what you did and what is left, not every step.\n",
     );
+    let mut s = match style.filter(|st| !st.text.is_empty()) {
+        Some(st) if st.keep_coding => format!("{coding}\n# Output style: {}\n{}\n", st.name, st.text),
+        Some(st) => format!(
+            "You are Code Arena, an agent in the person's project on their machine, with the tools given.\n\n# Output style: {}\n{}\n",
+            st.name, st.text
+        ),
+        None => coding,
+    };
     if !env.interactive {
         s.push_str("- Nobody can answer a question in this run: do the task as asked, and end with the answer.\n");
     }
@@ -166,10 +179,39 @@ mod tests {
         let s = system_prompt(
             &env,
             &[Instruction { path: "/w/ARENA.md".into(), text: "Run make test.".into(), cut: false }],
+            None,
         );
         assert!(s.contains("<instructions from=\"/w/ARENA.md\">\nRun make test.\n</instructions>"));
         assert!(s.contains("Git branch: main\n"));
         assert!(s.contains("Nobody can answer"));
+    }
+
+    #[test]
+    fn a_style_adds_to_the_coding_instructions_or_takes_their_place() {
+        let env = Environment {
+            os: "linux".into(),
+            shell: "bash".into(),
+            cwd: "/w".into(),
+            branch: None,
+            date: "2026-11-26".into(),
+            mode: "ask".into(),
+            interactive: true,
+        };
+        let style = |keep: bool| crate::output_style::Style {
+            name: "Terse".into(),
+            description: String::new(),
+            text: "One line.".into(),
+            keep_coding: keep,
+            from: "yours".into(),
+            file: None,
+        };
+        let kept = system_prompt(&env, &[], Some(&style(true)));
+        assert!(kept.contains("Read before you change") && kept.contains("# Output style: Terse\nOne line."));
+        let instead = system_prompt(&env, &[], Some(&style(false)));
+        assert!(!instead.contains("Read before you change") && instead.contains("# Output style: Terse\nOne line."));
+        assert!(instead.contains("<environment>"));
+        let default = crate::output_style::builtin().into_iter().next().expect("default");
+        assert_eq!(system_prompt(&env, &[], Some(&default)), system_prompt(&env, &[], None));
     }
 
     #[test]

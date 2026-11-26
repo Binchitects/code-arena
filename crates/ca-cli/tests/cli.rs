@@ -1537,3 +1537,58 @@ async fn a_fork_carries_on_a_session_that_stays_as_it_was() {
     let back = last(&seen);
     assert!(back.contains("the first way") && !back.contains("zebra branch"), "{back}");
 }
+
+#[tokio::test]
+async fn a_projects_output_style_takes_the_place_of_the_coding_instructions() {
+    let gateway = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    struct Heard(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+    impl Respond for Heard {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            self.0.lock().expect("lock").push(serde_json::from_slice(&r.body).unwrap_or_default());
+            let ev = json!({"choices": [{"delta": {"content": "Done."}, "finish_reason": "stop"}]});
+            ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(sse(ev))
+        }
+    }
+    Mock::given(path("/v1/chat/completions")).respond_with(Heard(seen.clone())).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let project = tempfile::tempdir().expect("project");
+    std::fs::create_dir_all(project.path().join(".code-arena/output-styles")).expect("styles");
+    std::fs::write(
+        project.path().join(".code-arena/output-styles/reviewer.md"),
+        "---\nname: Reviewer\ndescription: Reviews, never changes.\n---\nYou review writing: say what is unclear, change nothing.\n",
+    )
+    .expect("style");
+    std::fs::write(project.path().join(".code-arena/settings.json"), json!({"outputStyle": "reviewer"}).to_string())
+        .expect("project settings");
+    let run = |style_dir: &std::path::Path| {
+        let out = code_arena(home.path())
+            .args(["-p", "look at the README", "-C"])
+            .arg(style_dir)
+            .env("ARENA_URL", "https://arena.example")
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .output()
+            .expect("runs");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    run(project.path());
+    let system = seen.lock().expect("lock")[0]["messages"][0]["content"].as_str().unwrap_or_default().to_string();
+    assert!(system.contains("# Output style: Reviewer\nYou review writing"), "{system}");
+    assert!(!system.contains("Read before you change"), "{system}");
+    // A style that is not there: said, and the default used.
+    std::fs::write(project.path().join(".code-arena/settings.json"), json!({"outputStyle": "gone"}).to_string())
+        .expect("project settings");
+    let said = run(project.path());
+    assert!(said.contains("There is no output style \"gone\""), "{said}");
+    let system = seen.lock().expect("lock")[1]["messages"][0]["content"].as_str().unwrap_or_default().to_string();
+    assert!(system.contains("Read before you change") && !system.contains("Output style"), "{system}");
+}
