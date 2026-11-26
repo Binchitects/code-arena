@@ -124,6 +124,8 @@ pub struct Dock {
     pub root: Node,
     /// The next part's number.
     pub next: u32,
+    /// The views in windows of their own (Visual Studio's floating tool windows), out of the tree.
+    pub floating: Vec<View>,
 }
 
 /// The parts' first sizes (by number): the default tree's side bar, panel and secondary side bar, as VS Code's.
@@ -156,6 +158,7 @@ impl Default for Dock {
                 ],
             },
             next: 6,
+            floating: Vec::new(),
         }
     }
 }
@@ -211,8 +214,36 @@ impl Dock {
         d.tidied(false)
     }
 
+    /// `v` taken out of the tree into a window of its own.
+    pub fn floated(&self, v: View) -> Dock {
+        if self.floating.contains(&v) {
+            return self.clone();
+        }
+        let mut d = self.without(v);
+        d.floating.push(v);
+        d.normalized()
+    }
+
     /// `v` docked against the part `target` (`ROOT`: the window's edge): beside it, or into its tabs.
     pub fn docked(&self, v: View, target: u32, side: Side) -> Dock {
+        if self.floating.contains(&v) {
+            let mut d = self.clone();
+            d.floating.retain(|x| *x != v);
+            // Put back into the tree beside the target (a group's tabs are joined the same way as from the tree).
+            let id = d.next;
+            d.next += 1;
+            let lone = Node::Tabs { id, views: vec![v], active: v };
+            d.root = match d.root {
+                Node::Split { id: rid, dir, mut kids } => {
+                    kids.push(lone);
+                    Node::Split { id: rid, dir, kids }
+                }
+                other => Node::Split { id: id + 1, dir: Dir::Row, kids: vec![other, lone] },
+            };
+            d.next += 1;
+            let d = d.tidied(false);
+            return if target == id { d } else { d.docked(v, target, side) };
+        }
         let from = self.group_of(v);
         // Its group's only view, docked against its own group: nothing to do.
         if from == Some(target) && matches!(self.find(target), Some(Node::Tabs { views, .. }) if views.len() == 1) {
@@ -316,7 +347,10 @@ impl Dock {
                 }
             }
         }
-        let mut seen = Vec::new();
+        // A floating view is out of the tree: a copy of it there goes, and it is not missing.
+        let mut floating = self.floating.clone();
+        floating.dedup();
+        let mut seen = floating.clone();
         let mut editor = false;
         let mut root = clean(self.root.clone(), &mut seen, &mut editor).unwrap_or(Node::Editor);
         let mut next = self.next;
@@ -325,7 +359,7 @@ impl Dock {
             next += 1;
         }
         let missing: Vec<View> = VIEWS.into_iter().filter(|v| fill && !seen.contains(v)).collect();
-        let mut d = Dock { root, next };
+        let mut d = Dock { root, next, floating };
         if let Some(first) = missing.first() {
             let group = Node::Tabs { id: d.next, views: missing.clone(), active: *first };
             d.next += 1;
@@ -368,7 +402,7 @@ impl Dock {
                 }),
             }
         }
-        json!({"root": node(&self.root), "next": self.next})
+        json!({"root": node(&self.root), "next": self.next, "floating": self.floating.iter().map(|v| v.id()).collect::<Vec<_>>()})
     }
 
     /// A dock kept before, read kindly: what it lacks put right; one kept in another form (or none) is the default.
@@ -391,7 +425,15 @@ impl Dock {
             Some(Node::Split { id, dir, kids: v["kids"].as_array()?.iter().filter_map(node).collect() })
         }
         match node(&v["root"]) {
-            Some(root) => Dock { root, next: v["next"].as_u64().unwrap_or(0) as u32 }.normalized(),
+            Some(root) => {
+                let floating = v["floating"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|x| x.as_str().and_then(View::from_id))
+                    .collect();
+                Dock { root, next: v["next"].as_u64().unwrap_or(0) as u32, floating }.normalized()
+            }
             None => Dock::default(),
         }
     }
@@ -460,7 +502,7 @@ mod tests {
         sorted.sort_by_key(|v| v.id());
         sorted.dedup();
         assert_eq!(sorted.len(), views.len(), "each view once: {d:?}");
-        assert_eq!(views.len(), VIEWS.len(), "every view: {d:?}");
+        assert_eq!(views.len() + d.floating.len(), VIEWS.len(), "every view: {d:?}");
         fn walk(n: &Node, parent: Option<Dir>, editors: &mut usize) {
             match n {
                 Node::Editor => *editors += 1,
@@ -540,10 +582,27 @@ mod tests {
             let mut targets = vec![EDITOR, ROOT];
             d.root.groups(&mut targets);
             let target = targets[(n >> 40) as usize % targets.len()];
-            d = d.docked(v, target, sides[(n >> 50) as usize % sides.len()]);
+            d = if (n >> 20).is_multiple_of(9) {
+                d.floated(v)
+            } else {
+                d.docked(v, target, sides[(n >> 50) as usize % sides.len()])
+            };
             ok(&d);
             assert_eq!(Dock::from_json(&d.to_json()), d, "kept and read back as it was");
         }
+    }
+
+    #[test]
+    fn a_view_floated_and_docked_back() {
+        let d = Dock::default().floated(Terminal);
+        assert_eq!(d.floating, [Terminal]);
+        assert_eq!(d.group_of(Terminal), None, "out of the tree");
+        assert_eq!(Dock::from_json(&d.to_json()), d);
+        let back = d.docked(Terminal, EDITOR, Side::Bottom);
+        ok(&back);
+        assert!(back.floating.is_empty());
+        let Node::Split { kids, .. } = &back.root else { panic!() };
+        assert!(matches!(&kids[1], Node::Split { dir: Dir::Column, kids, .. } if kids[0] == Node::Editor));
     }
 
     #[test]

@@ -67,6 +67,10 @@ Sections used:
   each part keeps its size, the editor takes the rest. Right-click a view to dock it beside the
   editor or with another group. Where everything is, what is hidden and each part's size are kept
   per folder; Reset View Locations gives VS Code's layout back.
+- **Floating views, as Visual Studio's floating tool windows.** Release a dragged view away from
+  every guide, or right-click it and Float: it opens in a window of its own (in the theme, with a
+  button that docks it back). Closing that window docks the view back beside the editor; floating
+  views open again with the folder.
 - **Development builds optimise their dependencies**, so the native window built for trying it is
   as quick as the released one (Floem's layout, text and drawing are far too slow unoptimised).
 - **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,

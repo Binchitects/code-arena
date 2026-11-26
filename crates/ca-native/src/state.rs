@@ -325,6 +325,7 @@ impl Ui {
                 .collect(),
         );
         self.dock.set(dock);
+        self.open_floating();
         for (id, size) in v["sizes"].as_object().into_iter().flatten() {
             if let (Ok(id), Some(x)) = (id.parse::<u32>(), size.as_f64().filter(|x| x.is_finite())) {
                 self.size(id).set(x.clamp(77.0, 4000.0));

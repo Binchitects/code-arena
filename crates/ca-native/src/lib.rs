@@ -121,6 +121,7 @@ fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_chan
         });
     }
     send(json!({"type": "hello"}));
+    docking::set_send(send.clone());
     keep_view_state(ui, send.clone());
     workbench::view(ui, send)
 }

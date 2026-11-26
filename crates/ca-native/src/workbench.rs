@@ -356,6 +356,7 @@ fn view_menu(ui: Ui) -> impl IntoView {
                     ));
                 }
             }
+            items.push(("Float".into(), Box::new(move || ui.float(v))));
             items.push((format!("Hide {}", v.title()), Box::new(move || ui.toggle_group_of(v))));
             items.push(("Reset View Locations".into(), Box::new(move || ui.reset_dock())));
             let items: Vec<ViewMenuItem> =

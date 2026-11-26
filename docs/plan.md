@@ -164,8 +164,8 @@ which an MIT product cannot take; Slint's licences do not fit an MIT product.
    there is none), a click shows one and again hides its group; Ctrl+B, Ctrl+Alt+B and
    Ctrl+J hide or show the group holding the Explorer, the Agent and the Terminal; Reset View
    Locations gives the default tree, which draws as the three containers did. A layout kept in the
-   old form is read as the default. Floating windows (a view in a window of its own) and auto-hide
-   come after, once a second window and Wayland's limits on placing windows are checked.
+   old form is read as the default. Floating windows came next (a view in a window of its own, opened
+   where the system puts it: Wayland lets no program place its windows); auto-hide after.
 3. The editor: tabs, syntax colours (TextMate grammars), save, the agent's edits and changes
    on disk taken in by changed lines, diffs, find, the outline.
 4. The terminal: `alacritty_terminal`'s emulator (Apache-2.0) on `ca-pty`, drawn by the app.

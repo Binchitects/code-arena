@@ -25,6 +25,14 @@ use crate::widgets::{action, caps, line};
 thread_local! {
     /// Each drawn part's view, by its number (the window's dock area is `ROOT`), to find what the pointer is over.
     static PARTS: RefCell<HashMap<u32, ViewId>> = RefCell::new(HashMap::new());
+    /// The floating views' windows.
+    static WINDOWS: RefCell<HashMap<View, floem::window::WindowId>> = RefCell::new(HashMap::new());
+    /// How the window speaks to the session (a floating view's window draws its view with it).
+    static SEND: RefCell<Option<Send>> = const { RefCell::new(None) };
+}
+
+pub fn set_send(send: Send) {
+    SEND.with(|s| *s.borrow_mut() = Some(send));
 }
 
 fn rect_of(id: u32) -> Option<Rect> {
@@ -124,11 +132,31 @@ impl Ui {
     pub fn dock_view(&self, v: View, target: u32, side: Side) {
         self.dock.update(|d| *d = d.docked(v, target, side));
         self.reveal(v);
+        // Docked from a window of its own: the window goes.
+        if let Some(w) = WINDOWS.with(|w| w.borrow_mut().remove(&v)) {
+            floem::close_window(w);
+        }
+    }
+
+    /// The view in a window of its own, as Visual Studio floats a tool window.
+    pub fn float(&self, v: View) {
+        self.dock.update(|d| *d = d.floated(v));
+        open_window(*self, v);
+    }
+
+    /// The floating views' windows opened (after the layout is read back).
+    pub fn open_floating(&self) {
+        for v in self.dock.with_untracked(|d| d.floating.clone()) {
+            open_window(*self, v);
+        }
     }
 
     pub fn reset_dock(&self) {
         self.dock.set(Dock::default());
         self.hidden.update(|h| h.clear());
+        for (_, w) in WINDOWS.with(|w| std::mem::take(&mut *w.borrow_mut())) {
+            floem::close_window(w);
+        }
     }
 }
 
@@ -375,12 +403,7 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     let body = dyn_container(
         move || views().1,
         move |v| match v {
-            Some(View::Files) => crate::explorer::view(ui, send.clone()).into_any(),
-            Some(View::Agent) => crate::agent::view(ui, send.clone()).into_any(),
-            Some(View::Search) => crate::search::view(ui, send.clone()).into_any(),
-            Some(View::Changes) => crate::changes::view(ui, send.clone()).into_any(),
-            Some(View::Terminal) => crate::terminal::view(ui, send.clone()).into_any(),
-            Some(v) => crate::workbench::not_yet(ui, v).into_any(),
+            Some(v) => view_body(ui, send.clone(), v).into_any(),
             None => empty().into_any(),
         },
     )
@@ -399,6 +422,59 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     });
     keep(id, view.id());
     view
+}
+
+/// A view's own content.
+fn view_body(ui: Ui, send: Send, v: View) -> floem::AnyView {
+    match v {
+        View::Files => crate::explorer::view(ui, send).into_any(),
+        View::Agent => crate::agent::view(ui, send).into_any(),
+        View::Search => crate::search::view(ui, send).into_any(),
+        View::Changes => crate::changes::view(ui, send).into_any(),
+        View::Terminal => crate::terminal::view(ui, send).into_any(),
+        v => crate::workbench::not_yet(ui, v).into_any(),
+    }
+}
+
+/// A floating view's window: its title with a button that docks it back, and the view, in the theme; closed, the
+/// view docks back beside the editor.
+fn open_window(ui: Ui, v: View) {
+    let Some(send) = SEND.with(|s| s.borrow().clone()) else { return };
+    if WINDOWS.with(|w| w.borrow().contains_key(&v)) {
+        return;
+    }
+    let config =
+        floem::window::WindowConfig::default().title(format!("{} — Code Arena", v.title())).size((460.0, 620.0));
+    floem::new_window(
+        move |wid| {
+            WINDOWS.with(|w| w.borrow_mut().insert(v, wid));
+            let t = ui.colors;
+            let title = h_stack((
+                label(move || v.title().to_uppercase())
+                    .style(move |s| caps(s).padding_left(20.0).color(t.get().side_title)),
+                empty().style(|s| s.flex_grow(1.0_f32)),
+                action(t, "layout-sidebar-right", move || ui.dock_view(v, EDITOR, Side::Right)),
+            ))
+            .style(|s| s.height(35.0).width_full().items_center().padding_right(8.0).selectable(false));
+            v_stack((title, view_body(ui, send, v).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0))))
+                .on_event_cont(EventListener::WindowClosed, move |_| {
+                    // Closed by its frame: back in the tree (unless docked already, which closed it).
+                    if WINDOWS.with(|w| w.borrow_mut().remove(&v)).is_some() {
+                        ui.dock.update(|d| *d = d.docked(v, EDITOR, Side::Right));
+                        ui.reveal(v);
+                    }
+                })
+                .style(move |s| {
+                    let c = t.get();
+                    s.size_full()
+                        .font_family(crate::widgets::UI_FONT.clone())
+                        .font_size(13.0)
+                        .background(c.side_bg)
+                        .color(c.side_fg)
+                })
+        },
+        Some(config),
+    );
 }
 
 /// What a view is dragged by (its icon, title or tab): a click (no move past 5 px) does `click`; a drag docks it.
@@ -437,8 +513,11 @@ pub fn handle<V: IntoView + 'static>(ui: Ui, v: View, view: V, click: impl Fn() 
         match ui.drag.get_untracked() {
             Some(d) => {
                 ui.drag.set(None);
-                if let Some((target, side)) = d.drop {
-                    ui.dock_view(d.view, target, side);
+                match d.drop {
+                    Some((target, side)) => ui.dock_view(d.view, target, side),
+                    // Released away from every guide, as in Visual Studio: in a window of its own.
+                    None if was.is_some_and(|w| (d.at - w).hypot() > 60.0) => ui.float(d.view),
+                    None => {}
                 }
             }
             None if was.is_some() => click(),
