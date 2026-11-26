@@ -97,11 +97,108 @@ pub async fn take_up(p: &mut Prepared, said: bool) -> Option<Work> {
     work
 }
 
+/// `/project new NAME [: DESCRIPTION]`: a project of the person's in Arena with this repository in it, and this session
+/// in it.
+async fn make(
+    p: &mut Prepared,
+    arena: &ca_arena::ArenaClient,
+    sync: &Arc<ca_sync::ChatSync>,
+    key: &str,
+    words: &str,
+) -> String {
+    let (name, description) = match words.split_once(':') {
+        Some((n, d)) => (n.trim(), Some(d.trim()).filter(|d| !d.is_empty())),
+        None => (words, None),
+    };
+    let repo = ca_arena::projects::repository_of(key);
+    let id = match arena.make_project(name, description, repo.as_ref().map(|(a, b)| (a.as_str(), b.as_str()))).await {
+        Ok(id) => id,
+        Err(e) => return format!("Arena did not make it: {e}"),
+    };
+    let mut said = vec![format!(
+        "Made the project {name}{} in Arena.",
+        repo.as_ref().map(|(path, _)| format!(" with {path} in it")).unwrap_or_default()
+    )];
+    match sync.ensure_chat().await {
+        Some(chat) => match arena.move_chat(&chat, Some(&id)).await {
+            Ok(()) => {
+                take_up(p, true).await;
+                said.push("This session is in it now: /project show shows it.".into());
+            }
+            Err(e) => said.push(format!("This session could not go in it: {e}")),
+        },
+        None => said.push("Say something first, then /project N puts this session in it.".into()),
+    }
+    said.join(" ")
+}
+
+/// A project as its page has it, in lines.
+fn shown(v: &ca_arena::projects::ProjectView) -> String {
+    let mut out = vec![format!(
+        "{}{}{}",
+        v.name,
+        v.status.as_ref().map(|s| format!(" ({s})")).unwrap_or_default(),
+        v.due_on.as_ref().map(|d| format!(", due {d}")).unwrap_or_default()
+    )];
+    if let Some(d) = v.description.as_ref().filter(|d| !d.is_empty()) {
+        out.push(format!("  {d}"));
+    }
+    let repos: Vec<String> =
+        v.repositories.iter().filter_map(|r| r.get("path").and_then(Value::as_str).map(str::to_string)).collect();
+    if !repos.is_empty() {
+        out.push(format!("  Repositories: {}", repos.join(", ")));
+    }
+    if !v.members.is_empty() {
+        out.push(format!("  {} people in it, you as {}", v.members.len(), v.role.clone().unwrap_or_default()));
+    }
+    out.push(format!("  Goals ({}):", v.goals.len()));
+    for g in &v.goals {
+        let done = g.status.as_deref() == Some("done");
+        out.push(format!("    {} {}", if done { "✓" } else { "○" }, g.title));
+        for t in v.tasks.iter().filter(|t| t.goal_id.as_deref() == Some(g.id.as_str())) {
+            out.push(task_line(t));
+        }
+    }
+    let loose: Vec<String> = v.tasks.iter().filter(|t| t.goal_id.is_none()).map(task_line).collect();
+    if !loose.is_empty() {
+        out.push("  Tasks of no goal:".into());
+        out.extend(loose);
+    }
+    out.join("\n")
+}
+
+fn task_line(t: &ca_arena::projects::ViewTask) -> String {
+    format!(
+        "      {} {}{}",
+        if t.done { "✓" } else { "·" },
+        t.title,
+        t.assignee.as_ref().map(|a| format!(" ({a})")).unwrap_or_default()
+    )
+}
+
 /// `/projects`, `/project`, `/project N|NAME`, `/project off`.
 pub async fn command(name: &str, rest: &str, p: &mut Prepared) -> String {
     let Some(sync) = p.sync.clone() else { return "Projects are Arena's: sign in to it first.".into() };
     let arena = sync.arena().clone();
     let key = ca_memory::keys::project_key(p.agent.ctx.workspace.root());
+    if name == "/project"
+        && let Some(words) = rest.strip_prefix("new ").map(str::trim).filter(|w| !w.is_empty())
+    {
+        return make(p, &arena, &sync, &key, words).await;
+    }
+    if name == "/project" && rest == "show" {
+        let Some(chat) = sync.chat_id() else {
+            return "This session is in no project (it has no chat in Arena yet).".into();
+        };
+        return match arena.project_work(&chat).await {
+            Ok(Some(w)) => match arena.project_view(&w.project.id).await {
+                Ok(v) => shown(&v),
+                Err(e) => e.to_string(),
+            },
+            Ok(None) => "This session is in no project: /projects lists them, /project new NAME makes one.".into(),
+            Err(e) => e.to_string(),
+        };
+    }
     let list = match arena.projects(Some(&key)).await {
         Ok(l) => l.projects,
         Err(e) => return e.to_string(),
@@ -155,6 +252,35 @@ pub async fn command(name: &str, rest: &str, p: &mut Prepared) -> String {
     }
 }
 
+type Tools = Vec<Arc<dyn Tool>>;
+
+/// The tools kept, and Arena's of other groups than these; Code Arena's own and other servers' are always kept.
+fn outside_groups(tools: Tools, groups: &[String]) -> (Tools, Tools) {
+    let (aside, keep): (Tools, Tools) =
+        tools.into_iter().partition(|t| t.arena_tool().is_some_and(|g| !groups.contains(&g)));
+    (keep, aside)
+}
+
+/// An assistant's tool groups: Arena's tools of other groups set aside (with `/tools`' own), the last assistant's put
+/// back first; `None` puts them all back. How many were put back.
+pub fn tool_groups(p: &mut Prepared, groups: Option<&Vec<String>>) -> usize {
+    let names = std::mem::take(&mut p.assistant_off);
+    let (back, keep): (Vec<_>, Vec<_>) = p.disabled.drain(..).partition(|t| names.contains(&t.def().name));
+    p.disabled = keep;
+    let n = back.len();
+    p.agent.tools.extend(back);
+    let Some(groups) = groups else { return n };
+    let (tools, aside) = outside_groups(std::mem::take(&mut p.agent.tools), groups);
+    p.agent.tools = tools;
+    let (deferred, aside_later) = outside_groups(std::mem::take(&mut p.agent.deferred), groups);
+    p.agent.deferred = deferred;
+    for t in aside.into_iter().chain(aside_later) {
+        p.assistant_off.push(t.def().name);
+        p.disabled.push(t);
+    }
+    n
+}
+
 /// `/assistant`: the person's assistants; `/assistant N|NAME` works as one (its instructions, model, thinking and
 /// skills) from the next message; `/assistant off` as Code Arena's own again.
 pub async fn assistant(rest: &str, p: &mut Prepared) -> String {
@@ -183,8 +309,13 @@ pub async fn assistant(rest: &str, p: &mut Prepared) -> String {
         return out.join("\n");
     }
     if rest == "off" {
+        let back = tool_groups(p, None);
         p.agent.note("(Code Arena: the person stopped the assistant: work as Code Arena's own from now on.)".into());
-        return "Working as Code Arena's own again.".into();
+        return if back > 0 {
+            format!("Working as Code Arena's own again, with all of Arena's tools ({back} back).")
+        } else {
+            "Working as Code Arena's own again.".into()
+        };
     }
     let chosen = match rest.parse::<usize>() {
         Ok(n) if (1..=list.len()).contains(&n) => list[n - 1].clone(),
@@ -194,6 +325,16 @@ pub async fn assistant(rest: &str, p: &mut Prepared) -> String {
         },
     };
     let mut said = vec![format!("Working as {}.", chosen.name)];
+    if let Some(groups) = &chosen.tools {
+        tool_groups(p, Some(groups));
+        said.push(if groups.is_empty() {
+            "It uses none of Arena's tools.".to_string()
+        } else {
+            format!("Arena's tools it uses: {}.", groups.join(", "))
+        });
+    } else {
+        tool_groups(p, None);
+    }
     if let Some(m) = chosen.model.clone().filter(|m| !m.is_empty()) {
         p.agent.model = m.clone();
         sync.set_model(&m);
@@ -219,4 +360,53 @@ pub async fn assistant(rest: &str, p: &mut Prepared) -> String {
         }
     ));
     said.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Fake(&'static str, Option<&'static str>);
+    #[async_trait::async_trait]
+    impl Tool for Fake {
+        fn def(&self) -> ToolDef {
+            ToolDef { name: self.0.into(), description: String::new(), parameters: json!({}) }
+        }
+        fn kind(&self) -> Kind {
+            Kind::Read
+        }
+        fn subject(&self, _args: &Value) -> String {
+            String::new()
+        }
+        async fn run(&self, _args: Value, _ctx: &Context) -> Output {
+            Output::ok("")
+        }
+        fn arena_tool(&self) -> Option<String> {
+            self.1.map(str::to_string)
+        }
+    }
+
+    #[test]
+    fn an_assistants_groups_keep_its_arena_tools_and_all_others() {
+        let tools: Tools = vec![
+            Arc::new(Fake("read_file", None)),
+            Arc::new(Fake("mcp__arena__web_search", Some("web"))),
+            Arc::new(Fake("mcp__arena__run_python", Some("python"))),
+            Arc::new(Fake("mcp__mine__thing", None)),
+        ];
+        let (keep, aside) = outside_groups(tools, &["web".to_string()]);
+        let names = |t: &Tools| t.iter().map(|x| x.def().name).collect::<Vec<_>>();
+        assert_eq!(names(&keep), ["read_file", "mcp__arena__web_search", "mcp__mine__thing"]);
+        assert_eq!(names(&aside), ["mcp__arena__run_python"]);
+        let (keep, aside) = outside_groups(keep, &[]);
+        assert_eq!(
+            (names(&keep), names(&aside)),
+            (vec!["read_file".to_string(), "mcp__mine__thing".to_string()], vec!["mcp__arena__web_search".to_string()])
+        );
+        assert_eq!(
+            ca_arena::projects::repository_of("gitlab.corp/payments/api"),
+            Some(("payments/api".into(), "gitlab.corp".into()))
+        );
+        assert_eq!(ca_arena::projects::repository_of("local/abc123"), None);
+    }
 }

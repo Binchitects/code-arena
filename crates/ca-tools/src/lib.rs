@@ -106,6 +106,10 @@ pub trait Tool: Send + Sync {
     fn group(&self) -> String {
         "Code Arena's own".into()
     }
+    /// Which of Arena's chat tools it is a function of (an assistant's tool groups name these); none for the rest.
+    fn arena_tool(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Every built-in tool.

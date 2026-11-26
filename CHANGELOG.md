@@ -28,6 +28,13 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   a long file), and a call cut twice in the same place ends the turn.
 - On Windows, a file another program holds open (an editor, a build, a virus scan) is written
   again for up to two seconds, then said so: "held open by another program…: close it there".
+- An assistant's tool groups: working as one (`/assistant N`) keeps only Arena's tools of the
+  groups it has on (web, python…, as Arena's MCP server marks each function); `/assistant off`
+  puts the others back.
+- Making a project: `/project new NAME[: WHAT]` makes one of yours in Arena with this repository
+  in it and puts the session in it (as your role allows: Arena's words say why not);
+  `/project show` shows the session's project as its page does: repositories, people, goals
+  with their tasks, and tasks of no goal.
 - An error with no body says so ("Internal Server Error (it gave no reason)").
 - Output styles, in Claude Code's format: `/output-style` lists them and `/output-style NAME`
   uses one from the next message (kept in the settings, `outputStyle`). Built in: default,

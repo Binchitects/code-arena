@@ -556,7 +556,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 - [x] 0.3 Tab skips thinking
 - [x] 0.2 Tool lines with results (a diff for an edit, the first line otherwise); tokens and cache share per turn; the window's use; room kept for the answer
 - [x] 0.2 Answers cut at the output limit carried on (eight times a turn at most)
-- [ ] 0.4 A cut tool call redone in parts; cuts that repeat the same words end the turn (moved from 0.3)
+- [x] 0.4 A cut tool call redone in parts; cuts that repeat the same words end the turn (moved from 0.3)
 - [x] 0.2 Ctrl+C semantics; typing while a turn runs (read at the next step, or after the turn); a question reads only what is typed after it
 - [x] 0.3 ↑ takes back a pending line; commands typed meanwhile run when the turn ends
 - [x] 0.2 Ctrl+Z and `fg`; a trailing `\` continues the line; the line editor's keys; history per folder shared with the IDE (1,000 kept); multi-line editing; plain lines without a TTY
@@ -656,7 +656,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 - [ ] 0.7 `ask_agent` and `/agent` (Claude Code, Codex, Gemini CLI by their own sign-ins)
 - [x] 0.1 Read-only calls at once, changing calls in order
 - [x] 0.1 Encodings (UTF-8, UTF-16, UTF-32 by BOM); Git bash paths on Windows
-- [ ] 0.4 Files held open by others on Windows (moved from 0.3)
+- [x] 0.4 Files held open by others on Windows (moved from 0.3)
 - [x] 0.2 Arena's tools over MCP: names, `arena_` prefix, instructions passed on, media saved under `.code-arena/media/` (git-ignored), deadlines, progress, cancellation, keep-alive
 - [x] 0.2 Farzan Graph's tools (dedup with Arena's), background connection, retry with backoff, `/mcp`, address validation
 - [x] 0.2 Per-session tool choice (`/tools on|off`); tools on demand (`load_tools`, `tools.onDemandChars`)
@@ -675,6 +675,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 - [ ] 0.7 Loops (`/loop`)
 - [ ] 0.7 Schedules (`schedule add/list/run/off/remove/install/due`, OS timers); Arena's agents and scheduled tasks (on servers that have them)
 - [x] 0.3 Assistants (instructions, model, thinking, skills; their tool groups: 0.4; for sub-agents: 0.7)
+- [x] 0.4 Assistants' tool groups (Arena's MCP functions by their `arena/tool`); making a project (`/project new`) and its view (`/project show`)
 - [ ] 0.7 Code mode (`run_code`): kernel, plots, `import arena` calling tools, checks per call, tool mode direct, code or both
 
 ### Sessions, window, memory
@@ -686,7 +687,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 - [x] 0.3 `/context` counted with Arena's tokenizer when it has one
 - [x] 0.2 Never stuck on the window: summary failures and loops, refusals of the window (compact and ask again), measured token size
 - [x] 0.3 One long turn compacting its own steps
-- [ ] 0.4 llama.cpp's shared cache asked again after two seconds; the engine's own window learned (moved from 0.3)
+- [x] 0.4 llama.cpp's shared cache asked again after two seconds; the engine's own window learned (moved from 0.3)
 - [x] 0.2 `/compact-at` for the session, `agent.compactAt` and `agent.compactTarget` in settings
 - [x] 0.3 `/compact-at` kept in settings; the Arena account's threshold
 - [x] 0.3 Memory: Arena's (`remember`, `recall`, per project by origin, person, company), local fallback and import, denied by `feature.memory`

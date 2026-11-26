@@ -58,6 +58,8 @@ pub struct ToolInfo {
     pub read_only: bool,
     /// How long it may take, when it says (`_meta`'s `arena/timeoutSeconds` or `timeoutSeconds`).
     pub timeout: Option<Duration>,
+    /// Which of Arena's chat tools it is a function of (`_meta`'s `arena/tool`: web, python, code-intel…).
+    pub arena_tool: Option<String>,
 }
 
 /// What a call gave: its text, and the pictures, sounds and files it returned.
@@ -177,6 +179,7 @@ impl Client {
                     input_schema: t.get("inputSchema").cloned().unwrap_or_else(|| json!({"type": "object"})),
                     read_only: t.pointer("/annotations/readOnlyHint").and_then(Value::as_bool).unwrap_or(false),
                     timeout,
+                    arena_tool: meta.and_then(|m| m.get("arena/tool")).and_then(Value::as_str).map(str::to_string),
                 });
             }
             cursor = page.get("nextCursor").and_then(Value::as_str).map(str::to_string);
@@ -278,7 +281,7 @@ mod tests {
                 _ if !with_session => ResponseTemplate::new(400),
                 Some("notifications/initialized") => ResponseTemplate::new(202),
                 Some("tools/list") if body["params"].get("cursor").is_none() => sse(json!({"jsonrpc": "2.0", "id": id, "result": {"tools": [
-                    {"name": "web_search", "annotations": {"readOnlyHint": true}, "_meta": {"arena/timeoutSeconds": 900}}
+                    {"name": "web_search", "annotations": {"readOnlyHint": true}, "_meta": {"arena/timeoutSeconds": 900, "arena/tool": "web"}}
                 ], "nextCursor": "p2"}})),
                 Some("tools/list") => ResponseTemplate::new(200)
                     .set_body_json(json!({"jsonrpc": "2.0", "id": id, "result": {"tools": [{"name": "make_image", "description": "Pictures"}]}})),
@@ -310,6 +313,7 @@ mod tests {
         assert_eq!(tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["web_search", "make_image"]);
         assert!(tools[0].read_only && !tools[1].read_only);
         assert_eq!(tools[0].timeout, Some(Duration::from_secs(900)));
+        assert_eq!(tools[0].arena_tool.as_deref(), Some("web"));
         let mut said = Vec::new();
         let r = m
             .call_tool("web_search", json!({"q": "x"}), DEADLINE, &mut |p| said.push(p.to_string()))

@@ -53,6 +53,8 @@ pub struct Prepared {
     pub sources: Vec<ca_agent::library::Source>,
     /// Tools turned off for this session (`/tools off`).
     pub disabled: Vec<Arc<dyn ca_tools::Tool>>,
+    /// The tools an assistant's tool groups set aside (in `disabled`), by name: back with `/assistant off`.
+    pub assistant_off: Vec<String>,
     /// The chat in Arena this session is kept with, when there is an Arena to keep it with.
     pub sync: Option<Arc<ca_sync::ChatSync>>,
     /// What went on in the background (the chat's sync), said at the next prompt.
@@ -986,6 +988,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         }
     }
     let mut prepared = Prepared {
+        assistant_off: vec![],
         window_said,
         agent,
         store,

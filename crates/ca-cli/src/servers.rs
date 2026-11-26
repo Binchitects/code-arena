@@ -220,6 +220,7 @@ pub struct McpTool {
     kind: Kind,
     idle: Duration,
     media_dir: PathBuf,
+    arena_tool: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -236,6 +237,9 @@ impl Tool for McpTool {
     }
     fn group(&self) -> String {
         self.server.name.clone()
+    }
+    fn arena_tool(&self) -> Option<String> {
+        self.arena_tool.clone()
     }
     async fn run(&self, args: Value, _ctx: &Context) -> Output {
         match self.server.call(&self.remote, args, self.idle).await {
@@ -419,7 +423,10 @@ fn make_tools(
         // What a server says changes nothing never asks; the rest ask as commands do (a trusted server's run
         // without asking by a kept rule, and plan mode still refuses them).
         let kind = if t.read_only { Kind::Read } else { Kind::Shell };
+        // Only Arena's own server says which of its chat tools a function is of.
+        let arena_tool = if s.name == "arena" { t.arena_tool.clone() } else { None };
         out.push(Arc::new(McpTool {
+            arena_tool,
             server: s.clone(),
             remote: t.name,
             def: ToolDef { name, description: t.description, parameters: t.input_schema },

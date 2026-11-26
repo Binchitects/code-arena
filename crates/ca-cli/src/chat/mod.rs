@@ -186,6 +186,8 @@ fn help() -> &'static str {
 /memory [forget N]    what is remembered (Arena's, else this machine's); forget N forgets one\n\
 /remember [--person] TEXT  keep a memory for this project (or, with --person, for every project)\n\
 /projects             your projects in Arena; /project N puts this session in one (off: none)\n\
+/project new NAME[: WHAT]  makes a project in Arena with this repository, and puts this session in it\n\
+/project show         the session's project: its repositories, goals and tasks\n\
 /assistant [N|off]    your assistants in Arena; work as one\n\
 /arena-agents [run N] your agents in Arena (Agent Studio); run one, told when it ends\n\
 /arena-tasks [run N|runs N] your scheduled tasks in Arena; run one now, or its last runs\n\
