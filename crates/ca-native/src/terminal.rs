@@ -369,6 +369,16 @@ pub fn key_bytes(key: &Key, text: Option<&str>, m: Modifiers, mode: TermMode) ->
     Some(if alt && !s.starts_with('\x1b') { format!("\x1b{s}") } else { s })
 }
 
+/// The session's messages of a terminal (what it wrote, that it ended), taken in. Never taken away (false).
+pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
+    match m["type"].as_str().unwrap_or("") {
+        "term_out" => output(ui, m["id"].as_u64().unwrap_or(0), m["data"].as_str().unwrap_or(""), send),
+        "term_exit" => ended(ui, m["id"].as_u64().unwrap_or(0), m["code"].as_i64()),
+        _ => {}
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,10 +8,10 @@ use floem::peniko::Color;
 use floem::reactive::{SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::style::CursorStyle;
 use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, scroll, text_input, v_stack};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::icons::icon;
-use crate::state::{Hit, Send, Ui};
+use crate::state::{Found, Hit, Send, Ui};
 use crate::widgets::{bold, toggle};
 
 /// The hits by file, in the order the search found them.
@@ -215,6 +215,33 @@ fn file_group(ui: Ui, send: Send, path: String, hits: Vec<Hit>) -> impl IntoView
     )
     .style(|s| s.flex_col().width_full());
     v_stack((head, lines)).style(move |s| s.width_full().color(t.get().side_fg))
+}
+
+/// The session's messages that are the Search view's, taken in. Never taken away from the
+/// rest of the window (false).
+pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
+    let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
+    if m["type"] == "search" {
+        if m["query"].as_str() != Some(ui.search_query.get_untracked().as_str()) {
+            return false; // an answer to what was typed before
+        }
+        if ui.search_query.with_untracked(|q| q.is_empty()) {
+            ui.search.set(None);
+            return false;
+        }
+        let hits = m["hits"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|h| Hit {
+                path: h["path"].as_str().unwrap_or("").into(),
+                line: h["line"].as_u64().unwrap_or(1) as usize,
+                text: h["text"].as_str().unwrap_or("").into(),
+            })
+            .collect();
+        ui.search.set(Some(Found { hits, more: m["more"] == true, error: s("error") }));
+    }
+    false
 }
 
 #[cfg(test)]

@@ -5,7 +5,6 @@ use std::rc::Rc;
 
 use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_rw_signal};
 use floem::views::editor::Editor;
-use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::core::editor::EditType;
 use floem::views::editor::core::selection::Selection;
 use floem::views::editor::text::Document;
@@ -14,14 +13,10 @@ use serde_json::{Value, json};
 
 use crate::colors::Colors;
 use crate::dock::Dock;
-use crate::model::{Item, Kind, Tool};
+use crate::model::{Item, Kind};
 use crate::outline::Symbol;
 
 pub type Send = Rc<dyn Fn(Value)>;
-
-fn s_of(v: &Value, k: &str) -> String {
-    v[k].as_str().unwrap_or("").to_string()
-}
 
 /// Where a path is once `from` has become `to`: `from` itself, or anything in it; none when it is neither.
 pub fn moved_path(path: &str, from: &str, to: &str) -> Option<String> {
@@ -316,19 +311,19 @@ impl Ui {
         }
     }
 
-    fn id(&self) -> u64 {
+    pub(crate) fn id(&self) -> u64 {
         let n = self.next.get_untracked();
         self.next.set(n + 1);
         n
     }
 
-    fn push(&self, kind: Kind) {
+    pub(crate) fn push(&self, kind: Kind) {
         let id = self.id();
         self.items.update(|l| l.push(Item { id, kind }));
     }
 
     /// The answer being written: the last item when it is one, else a new one.
-    fn current(&self) -> Item {
+    pub(crate) fn current(&self) -> Item {
         if let Some(last) = self.items.with_untracked(|l| l.last().cloned())
             && matches!(last.kind, Kind::Assistant { .. })
         {
@@ -468,7 +463,7 @@ impl Ui {
 
     /// A tab's text made what is on disk, by the part that differs only (what is before and after it stands, and is
     /// not coloured again); the caret stays on its line.
-    fn replace(&self, tab: &Tab, text: &str) {
+    pub(crate) fn replace(&self, tab: &Tab, text: &str) {
         let old = tab.text();
         let Some((from, to, with)) = changed(&old, text) else { return };
         let live = self.live.with_untracked(|l| l.as_ref().filter(|(p, _)| *p == tab.path).map(|(_, e)| e.clone()));
@@ -587,8 +582,20 @@ impl Ui {
         self.tree.update(|t| t.retain(|p, _| !inside(p)));
     }
 
-    /// One message from the session, as the page takes it.
+    /// One message from the session, as the page takes it: the window's parts are given it first (`ext::take`), then
+    /// what is the whole window's is taken in here (the session's state, the theme).
     pub fn take(&self, m: &Value, send: &Send) {
+        if crate::agent::stream::take(*self, m, send)
+            || crate::save::take(*self, m, send)
+            || crate::editor::take(*self, m, send)
+            || crate::explorer::take(*self, m, send)
+            || crate::search::take(*self, m, send)
+            || crate::changes::take(*self, m, send)
+            || crate::terminal::take(*self, m, send)
+            || crate::palette::take(*self, m, send)
+        {
+            return;
+        }
         let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
         match m["type"].as_str().unwrap_or("") {
             "state" => {
@@ -610,7 +617,7 @@ impl Ui {
                 self.shell.set(s("shell"));
                 self.choice.set(s("theme"));
                 self.apply_theme();
-                self.items.set(self.thread_of(m));
+                self.items.set(crate::agent::stream::thread_of(*self, m));
                 if !self.loaded.get_untracked() {
                     self.restore(&m["view_state"], send);
                     self.loaded.set(true);
@@ -643,353 +650,9 @@ impl Ui {
                 self.themes.set(all);
                 self.apply_theme();
             }
-            "ls" => {
-                if m["error"].is_string() {
-                    return;
-                }
-                let entries = m["entries"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|e| Entry { name: e["name"].as_str().unwrap_or("").into(), dir: e["dir"] == true })
-                    .collect();
-                self.tree.update(|t| {
-                    t.insert(s("path"), entries);
-                });
-            }
-            // The Explorer's own. Every face is told, so what another face moved or deleted is followed here too;
-            // but a file is opened only in the window that asked for it.
-            "created" => {
-                let path = s("path");
-                if !self.explorer_asked.with_untracked(|a| a.as_deref() == Some(path.as_str())) {
-                    return;
-                }
-                self.explorer_asked.set(None);
-                match m["error"].as_str() {
-                    Some(e) => self.message.set(format!("Could not create {path}: {e}")),
-                    None => {
-                        self.message.set(String::new());
-                        if m["dir"] == true {
-                            self.selected.set(path);
-                        } else {
-                            self.open(&path, send);
-                        }
-                    }
-                }
-            }
-            "renamed" => {
-                let (path, to) = (s("path"), s("to"));
-                match m["error"].as_str() {
-                    Some(e) => self.message.set(format!("Could not rename {path}: {e}")),
-                    None => {
-                        self.message.set(String::new());
-                        self.moved(&path, &to);
-                    }
-                }
-            }
-            "deleted" => {
-                let path = s("path");
-                match m["error"].as_str() {
-                    Some(e) => self.message.set(format!("Could not delete {path}: {e}")),
-                    None => {
-                        self.gone(&path);
-                        self.message.set(match m["kept"].as_str() {
-                            Some(kept) => format!("Deleted {path}: it is kept in {kept}"),
-                            None => String::new(),
-                        });
-                    }
-                }
-            }
-            "file" => {
-                let path = s("path");
-                // Read again because it changed on disk: its text is taken, its tab is not shown for it.
-                let again = self.reloading.with_untracked(|r| r.contains(&path));
-                if again {
-                    self.reloading.update(|r| {
-                        r.remove(&path);
-                    });
-                }
-                if let Some(e) = m["error"].as_str() {
-                    self.message.set(format!("Could not open {path}: {e}"));
-                    return;
-                }
-                if let Some(at) = m["modified"].as_u64() {
-                    self.modified.update(|k| {
-                        k.insert(path.clone(), at);
-                    });
-                }
-                self.forget_on_disk(&path);
-                match self.tab(&path) {
-                    // Taken in only when the tab has no changes of its own.
-                    Some(tab) => {
-                        if !tab.dirty.get_untracked() {
-                            self.replace(&tab, &s("text"));
-                        }
-                    }
-                    None if again => return, // closed meanwhile
-                    None => {
-                        let text = s("text");
-                        let doc = Rc::new(TextDocument::new(self.scope, text));
-                        let dirty = self.scope.create_rw_signal(false);
-                        let colours = crate::highlight::Colours::new(doc.clone(), &path);
-                        {
-                            let (colours, d, edited) = (colours.clone(), doc.clone(), self.edited);
-                            doc.add_on_update(move |u| {
-                                dirty.set(true);
-                                edited.update(|n| *n += 1);
-                                // Parsed again from the first line an edit touched.
-                                let first = u.deltas().map(|x| x.summary().0.start()).min().unwrap_or(0);
-                                colours.changed_from(d.rope_text().line_of_offset(first));
-                            });
-                        }
-                        self.tabs.update(|t| {
-                            t.push(Tab { path: path.clone(), file: path.clone(), doc, dirty, diff: None, colours })
-                        });
-                    }
-                }
-                if !again {
-                    self.active.set(Some(path));
-                }
-            }
-            "files" => {
-                let paths = || m["paths"].as_array().into_iter().flatten().filter_map(Value::as_str);
-                let more = m["more"] == true;
-                // Listed again as they were: what is shown stays (the row chosen with it).
-                if !self.quick_files.with_untracked(|f| f.holds(paths(), more)) {
-                    self.quick_files.set(Rc::new(crate::palette::Files::of(paths(), more)));
-                }
-            }
-            "search" => {
-                if m["query"].as_str() != Some(self.search_query.get_untracked().as_str()) {
-                    return; // an answer to what was typed before
-                }
-                if self.search_query.with_untracked(|q| q.is_empty()) {
-                    self.search.set(None);
-                    return;
-                }
-                let hits = m["hits"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|h| Hit {
-                        path: h["path"].as_str().unwrap_or("").into(),
-                        line: h["line"].as_u64().unwrap_or(1) as usize,
-                        text: h["text"].as_str().unwrap_or("").into(),
-                    })
-                    .collect();
-                self.search.set(Some(Found { hits, more: m["more"] == true, error: s("error") }));
-            }
-            "changes" => {
-                let text = |v: &Value| v.as_str().map(str::to_string);
-                self.changes.set(
-                    m["files"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .map(|f| Change { path: s_of(f, "path"), before: text(&f["before"]), after: text(&f["after"]) })
-                        .collect(),
-                );
-            }
-            "saved" => {
-                let path = s("path");
-                match m["error"].as_str() {
-                    Some(e) => {
-                        if self.close_saved.with_untracked(|c| c.as_deref() == Some(path.as_str())) {
-                            self.close_saved.set(None);
-                        }
-                        self.message.set(format!("Could not save {path}: {e}"))
-                    }
-                    None => {
-                        if let Some(t) = self.tab(&path) {
-                            t.dirty.set(false);
-                        }
-                        if let Some(at) = m["modified"].as_u64() {
-                            self.modified.update(|k| {
-                                k.insert(path.clone(), at);
-                            });
-                        }
-                        self.forget_on_disk(&path);
-                        self.message.set(String::new());
-                        if self.close_saved.with_untracked(|c| c.as_deref() == Some(path.as_str())) {
-                            self.close_saved.set(None);
-                            self.close_now(&path);
-                        }
-                    }
-                }
-            }
-            // What is watched changed on disk (the agent wrote it, or another program): a tab with no changes of
-            // its own reads it again, one with changes says so and leaves the choice to the person.
-            "stats" => {
-                for it in m["items"].as_array().into_iter().flatten() {
-                    let path = s_of(it, "path");
-                    let Some(tab) = self.tab(&path).filter(|t| t.diff.is_none()) else { continue };
-                    let dirty = tab.dirty.get_untracked();
-                    if it["gone"] == true {
-                        self.on_disk.update(|d| {
-                            d.insert(path, OnDisk::Gone);
-                        });
-                    } else if let Some(now) = it["modified"].as_u64()
-                        && self.modified.with_untracked(|k| k.get(&path).is_some_and(|known| *known != now))
-                    {
-                        if dirty {
-                            self.on_disk.update(|d| {
-                                d.insert(path, OnDisk::Changed);
-                            });
-                        } else {
-                            self.reload(&path, send);
-                        }
-                    }
-                }
-            }
-            "term_out" => {
-                crate::terminal::output(*self, m["id"].as_u64().unwrap_or(0), m["data"].as_str().unwrap_or(""), send)
-            }
-            "term_exit" => crate::terminal::ended(*self, m["id"].as_u64().unwrap_or(0), m["code"].as_i64()),
-            "user" => self.push(Kind::User(s("text"))),
-            "turn_start" => self.running.set(true),
-            "text" => {
-                if let Kind::Assistant { text, .. } = self.current().kind {
-                    text.update(|t| t.push_str(m["delta"].as_str().unwrap_or("")));
-                }
-            }
-            "tool_start" => {
-                if let Kind::Assistant { tools, .. } = self.current().kind {
-                    tools.update(|t| {
-                        t.push(Tool {
-                            name: s("name"),
-                            subject: s("subject"),
-                            done: false,
-                            ok: true,
-                            text: String::new(),
-                        })
-                    });
-                }
-            }
-            "tool_end" => {
-                if let Kind::Assistant { tools, .. } = self.current().kind {
-                    tools.update(|ts| {
-                        let (name, subject) = (s("name"), s("subject"));
-                        match ts.iter_mut().rev().find(|t| !t.done && t.name == name && t.subject == subject) {
-                            Some(t) => {
-                                t.done = true;
-                                t.ok = m["ok"] == true;
-                                t.text = s("text");
-                            }
-                            None => ts.push(Tool { name, subject, done: true, ok: m["ok"] == true, text: s("text") }),
-                        }
-                    });
-                }
-            }
-            "notice" => {
-                let t = s("text");
-                if !(t.starts_with("› ") && t.ends_with("(sent while it worked)")) {
-                    self.push(Kind::Notice(t));
-                }
-            }
-            "ask" => self.push(Kind::Ask {
-                id: m["id"].as_u64().unwrap_or(0),
-                tool: s("tool"),
-                subject: s("subject"),
-                answer: self.scope.create_rw_signal(None),
-            }),
-            "answered" => {
-                let id = m["id"].as_u64().unwrap_or(0);
-                self.items.with_untracked(|l| {
-                    for i in l {
-                        if let Kind::Ask { id: a, answer, .. } = &i.kind
-                            && *a == id
-                        {
-                            answer.set(Some(s("answer")));
-                        }
-                    }
-                });
-            }
-            "queued" => self.push(Kind::Queued(s("text"))),
-            "turn_end" => {
-                self.running.set(false);
-                send(json!({"type": "changes"}));
-                self.items.with_untracked(|l| {
-                    for i in l {
-                        if let Kind::Ask { answer, .. } = &i.kind
-                            && answer.get_untracked().is_none()
-                        {
-                            answer.set(Some("gone".into()));
-                        }
-                    }
-                });
-                if m["ok"] != true {
-                    if m["stopped"] == true {
-                        self.push(Kind::Notice("Stopped.".into()));
-                    } else {
-                        self.push(Kind::Error(m["error"].as_str().unwrap_or("The turn failed.").to_string()));
-                    }
-                }
-            }
-            "tasks" => {
-                self.plan.set(m["plan"]["steps"].as_array().map(|steps| {
-                    let done = steps.iter().filter(|st| st["status"] == "done").count();
-                    (m["plan"]["title"].as_str().unwrap_or("").to_string(), done, steps.len())
-                }));
-                self.goal.set(
-                    m["goal"]["text"].as_str().map(|g| format!("{g} · {}", m["goal"]["status"].as_str().unwrap_or(""))),
-                );
-                self.jobs.set(
-                    m["jobs"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|j| j["running"] == true)
-                        .map(|j| (j["id"].as_u64().unwrap_or(0), j["command"].as_str().unwrap_or("").to_string()))
-                        .collect(),
-                );
-            }
             "behind" => send(json!({"type": "state"})),
             _ => {}
         }
-    }
-
-    /// The thread the session kept, as items.
-    fn thread_of(&self, m: &Value) -> Vec<Item> {
-        let mut items = Vec::new();
-        for msg in m["messages"].as_array().into_iter().flatten() {
-            let text = msg["text"].as_str().unwrap_or("").to_string();
-            match msg["role"].as_str() {
-                Some("user") if !text.starts_with("(Code Arena") => {
-                    items.push(Item { id: self.id(), kind: Kind::User(text) })
-                }
-                Some("assistant") => {
-                    let tools: Vec<Tool> = msg["tools"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|t| t.as_str())
-                        .map(|n| Tool {
-                            name: n.into(),
-                            subject: String::new(),
-                            done: true,
-                            ok: true,
-                            text: String::new(),
-                        })
-                        .collect();
-                    if !matches!(items.last(), Some(Item { kind: Kind::Assistant { .. }, .. })) {
-                        items.push(Item { id: self.id(), kind: Kind::assistant(self.scope) });
-                    }
-                    if let Some(Item { kind: Kind::Assistant { text: t, tools: ts, .. }, .. }) = items.last() {
-                        if !text.is_empty() {
-                            t.update(|x| {
-                                if !x.is_empty() {
-                                    x.push_str("\n\n");
-                                }
-                                x.push_str(&text)
-                            });
-                        }
-                        ts.update(|x| x.extend(tools));
-                    }
-                }
-                _ => {}
-            }
-        }
-        items
     }
 }
 

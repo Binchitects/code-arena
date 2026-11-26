@@ -26,6 +26,7 @@ mod model;
 mod outline;
 mod palette;
 mod prose;
+mod save;
 mod search;
 mod state;
 mod terminal;

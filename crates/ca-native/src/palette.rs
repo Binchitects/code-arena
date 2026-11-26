@@ -21,7 +21,7 @@ use floem::views::{
     v_stack,
 };
 use floem::{AnyView, IntoView, View};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::colors::Colors;
 use crate::state::{Send, Ui};
@@ -746,6 +746,20 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             .z_index(200)
             .apply_if(ui.quick.get().is_none(), |s| s.hide())
     })
+}
+
+/// The session's messages that are Quick Open's, taken in. Never taken away from the
+/// rest of the window (false).
+pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
+    if m["type"] == "files" {
+        let paths = || m["paths"].as_array().into_iter().flatten().filter_map(Value::as_str);
+        let more = m["more"] == true;
+        // Listed again as they were: what is shown stays (the row chosen with it).
+        if !ui.quick_files.with_untracked(|f| f.holds(paths(), more)) {
+            ui.quick_files.set(Rc::new(crate::palette::Files::of(paths(), more)));
+        }
+    }
+    false
 }
 
 #[cfg(test)]
