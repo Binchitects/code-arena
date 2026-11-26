@@ -123,6 +123,6 @@ pub fn diff_view(ui: Ui, lines: Rc<Vec<Line>>) -> impl IntoView {
     )
     .style(move |s| {
         let c = t.get();
-        s.size_full().font_family(MONO_FONT.to_string()).font_size(14.0).background(c.editor_bg).selectable(false)
+        s.size_full().font_family(MONO_FONT.clone()).font_size(14.0).background(c.editor_bg).selectable(false)
     })
 }

@@ -12,8 +12,20 @@ use floem::{IntoView, View};
 use crate::colors::Colors;
 use crate::icons::icon;
 
-pub const UI_FONT: &str = "Ubuntu Sans, Ubuntu, Segoe UI, Noto Sans, DejaVu Sans, sans-serif";
-pub const MONO_FONT: &str = "Droid Sans Mono, DejaVu Sans Mono, Ubuntu Mono, Consolas, monospace";
+/// VS Code's fonts on each system, the first of them this machine has (the text drawn takes one family only).
+const UI_FONTS: &[&str] =
+    &["Segoe UI", "SF Pro Text", "Ubuntu Sans", "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans"];
+const MONO_FONTS: &[&str] =
+    &["Consolas", "Menlo", "Droid Sans Mono", "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono"];
+
+fn installed(names: &[&str], or: &str) -> String {
+    let fonts = floem::text::FONT_SYSTEM.lock();
+    let has = |n: &str| fonts.db().faces().any(|f| f.families.iter().any(|(name, _)| name == n));
+    names.iter().find(|n| has(n)).map(|n| n.to_string()).unwrap_or_else(|| or.to_string())
+}
+
+pub static UI_FONT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| installed(UI_FONTS, "sans-serif"));
+pub static MONO_FONT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| installed(MONO_FONTS, "monospace"));
 
 pub type Theme = RwSignal<Colors>;
 

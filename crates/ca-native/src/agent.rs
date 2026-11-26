@@ -111,14 +111,13 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
                                 let c = t.get();
                                 s.color(if failed { c.error } else { c.desc })
                             }),
-                            label(move || format!("{}  {}", tool.name, tool.subject)).style(move |s| {
-                                s.font_family(MONO_FONT.to_string()).font_size(12.0).color(t.get().desc)
-                            }),
+                            label(move || format!("{}  {}", tool.name, tool.subject))
+                                .style(move |s| s.font_family(MONO_FONT.clone()).font_size(12.0).color(t.get().desc)),
                         ))
                         .style(|s| s.gap(6.0).items_center()),
                         label(move || out.clone()).style(move |s| {
                             let c = t.get();
-                            s.font_family(MONO_FONT.to_string())
+                            s.font_family(MONO_FONT.clone())
                                 .font_size(12.0)
                                 .padding(8.0)
                                 .border_radius(4.0)
@@ -158,7 +157,7 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
                 label(move || format!("Run {tool}?")).style(move |s| bold(s).color(t.get().fg)),
                 label(move || subject.clone()).style(move |s| {
                     let c = t.get();
-                    s.font_family(MONO_FONT.to_string())
+                    s.font_family(MONO_FONT.clone())
                         .font_size(12.0)
                         .padding(8.0)
                         .border_radius(4.0)
@@ -219,7 +218,7 @@ fn bars(ui: Ui, send: Send) -> impl IntoView {
                 let send = send.clone();
                 h_stack((
                     icon("terminal", 16.0),
-                    label(move || cmd.clone()).style(|s| s.flex_grow(1.0_f32).font_family(MONO_FONT.to_string())),
+                    label(move || cmd.clone()).style(|s| s.flex_grow(1.0_f32).font_family(MONO_FONT.clone())),
                     action(t, "debug-stop", move || send(json!({"type": "stop_job", "id": id}))),
                 ))
                 .style(move |s| bar(s).gap(6.0).items_center())

@@ -62,7 +62,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     .style(move |s| {
         let c = t.get();
         s.size_full()
-            .font_family(UI_FONT.to_string())
+            .font_family(UI_FONT.clone())
             .font_size(13.0)
             .color(c.fg)
             .background(c.editor_bg)
@@ -649,6 +649,8 @@ fn status_bar(ui: Ui) -> impl IntoView {
         })
         .style(move |s| item(s).apply_if(ui.active.with(|a| a.is_none()), |s| s.hide())),
         label(|| "UTF-8").style(move |s| item(s).apply_if(ui.active.with(|a| a.is_none()), |s| s.hide())),
+        label(move || ui.active.get().and_then(|p| ui.tab(&p)).map(|t| t.colours.language()).unwrap_or_default())
+            .style(move |s| item(s).apply_if(ui.active.with(|a| a.is_none()), |s| s.hide())),
         h_stack((
             dyn_container(move || ui.running.get(), |r| icon(if r { "loading" } else { "sparkle" }, 16.0)),
             label(move || ui.model.get()),

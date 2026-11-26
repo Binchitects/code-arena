@@ -39,6 +39,13 @@ Sections used:
   changed this session with its letter (M, A, D) in VS Code's colours, read again after each
   turn; a click opens the file's changes as an inline diff (removed lines red, added green, the
   numbers before and after).
+- **Syntax colours in the native editor, from the theme's own token colours.** Each file's grammar
+  (TextMate's, as VS Code's are) names its runs of text, and the theme's `tokenColors` colour them
+  by VS Code's rules; an edit parses again from its line only. The status bar names the language.
+  Dark+, Dark Modern, Light+ and Light Modern now carry VS Code's fuller token rules (macros,
+  namespaces, constants, parameters, escapes and more), in the browser face too. The editor takes
+  VS Code's font for the system (the first of them installed), and the files open in it are
+  opened again the next time.
 - **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,
   the editor, the panel and a secondary side bar, with VS Code's sizes and the theme's colours.
   Six views (Explorer, Search, Changes, Outline, Agent, Terminal) start where VS Code puts them:

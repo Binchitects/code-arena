@@ -5,13 +5,11 @@
 use floem::IntoView;
 use floem::reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal};
 use floem::style::CursorStyle;
-use floem::text::FamilyOwned;
-use floem::views::editor::text::SimpleStyling;
 use floem::views::{Decorators, dyn_container, dyn_stack, empty, h_stack, label, scroll, text_editor, v_stack};
 
 use crate::icons::icon;
 use crate::state::{Tab, Ui};
-use crate::widgets::{MONO_FONT, action, line};
+use crate::widgets::{action, line};
 
 pub fn view(ui: Ui) -> impl IntoView {
     v_stack((tabs(ui), breadcrumbs(ui), body(ui))).style(|s| s.size_full().min_width(0.0).min_height(0.0))
@@ -140,15 +138,11 @@ fn body(ui: Ui) -> impl IntoView {
             None => watermark(ui).into_any(),
             Some(Tab { diff: Some(lines), .. }) => crate::changes::diff_view(ui, lines).into_any(),
             Some(tab) => {
-                let styling = SimpleStyling::builder()
-                    .font_size(14)
-                    .line_height(19.0)
-                    .font_family(FamilyOwned::parse_list(MONO_FONT).collect())
-                    .build();
+                tab.colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
                 let caret = ui.caret;
                 let ed = text_editor("")
                     .use_doc(tab.doc.clone())
-                    .styling(styling)
+                    .styling_rc(tab.colours.clone())
                     .editor_style(move |s| {
                         s.gutter_dim_color(c.line_number)
                             .gutter_accent_color(c.line_number_active)

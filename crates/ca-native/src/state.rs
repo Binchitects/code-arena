@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_rw_signal};
+use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::text::Document;
 use floem::views::editor::text_document::TextDocument;
 use serde_json::{Value, json};
@@ -67,6 +68,8 @@ pub struct Tab {
     pub doc: Rc<TextDocument>,
     pub dirty: RwSignal<bool>,
     pub diff: Option<Rc<Vec<crate::diff::Line>>>,
+    /// Its syntax colours (and the editor's font), kept with it so a tab shown again is not parsed again.
+    pub colours: Rc<crate::highlight::Colours>,
 }
 
 impl Tab {
@@ -198,6 +201,11 @@ impl Ui {
         item
     }
 
+    /// The theme in force, as its JSON (for the editor's syntax colours).
+    pub fn theme_json(&self) -> Value {
+        ca_themes::chosen(&self.themes.get_untracked(), &self.choice.get_untracked(), true).json
+    }
+
     fn apply_theme(&self) {
         let t = ca_themes::chosen(&self.themes.get_untracked(), &self.choice.get_untracked(), true);
         self.colors.set(Colors::of(&t));
@@ -224,6 +232,7 @@ impl Ui {
         let tab = Tab {
             path: id.clone(),
             file: c.path.clone(),
+            colours: crate::highlight::Colours::new(Rc::new(TextDocument::new(self.scope, "")), ""),
             doc: Rc::new(TextDocument::new(self.scope, "")),
             dirty: self.scope.create_rw_signal(false),
             diff: Some(Rc::new(lines)),
@@ -265,7 +274,12 @@ impl Ui {
 
     /// The look kept for this folder: where its views are, its parts' sizes.
     pub fn view_state(&self) -> Value {
+        let editors: Vec<String> =
+            self.tabs.with_untracked(|t| t.iter().filter(|t| t.diff.is_none()).map(|t| t.path.clone()).collect());
+        let active = self.active.get_untracked().filter(|a| editors.contains(a));
         json!({
+            "editors": editors,
+            "active": active,
             "layout": self.layout.get_untracked().to_json(),
             "sizes": {
                 "primary": self.primary_width.get_untracked(),
@@ -275,9 +289,17 @@ impl Ui {
         })
     }
 
-    fn restore(&self, v: &Value) {
+    fn restore(&self, v: &Value, send: &Send) {
         if !v.is_object() {
             return;
+        }
+        // The files that were open, opened again in their order; the one shown last asked once more (the answers
+        // come in the order asked, each shown as it comes), so it is the one shown.
+        for p in v["editors"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            send(json!({"type": "open", "path": p}));
+        }
+        if let Some(a) = v["active"].as_str() {
+            send(json!({"type": "open", "path": a}));
         }
         self.layout.set(Layout::normalize(&v["layout"]));
         let size = |k: &str, lo: f64, hi: f64| v["sizes"][k].as_f64().map(|x| x.clamp(lo, hi));
@@ -321,7 +343,7 @@ impl Ui {
                 self.apply_theme();
                 self.items.set(self.thread_of(m));
                 if !self.loaded.get_untracked() {
-                    self.restore(&m["view_state"]);
+                    self.restore(&m["view_state"], send);
                     self.loaded.set(true);
                 }
                 send(json!({"type": "themes"}));
@@ -373,9 +395,19 @@ impl Ui {
                     let text = s("text");
                     let doc = Rc::new(TextDocument::new(self.scope, text));
                     let dirty = self.scope.create_rw_signal(false);
-                    doc.add_on_update(move |_| dirty.set(true));
-                    self.tabs
-                        .update(|t| t.push(Tab { path: path.clone(), file: path.clone(), doc, dirty, diff: None }));
+                    let colours = crate::highlight::Colours::new(doc.clone(), &path);
+                    {
+                        let (colours, d) = (colours.clone(), doc.clone());
+                        doc.add_on_update(move |u| {
+                            dirty.set(true);
+                            // Parsed again from the first line an edit touched.
+                            let first = u.deltas().map(|x| x.summary().0.start()).min().unwrap_or(0);
+                            colours.changed_from(d.rope_text().line_of_offset(first));
+                        });
+                    }
+                    self.tabs.update(|t| {
+                        t.push(Tab { path: path.clone(), file: path.clone(), doc, dirty, diff: None, colours })
+                    });
                 }
                 self.active.set(Some(path));
             }
@@ -582,10 +614,21 @@ mod tests {
         ui.primary_width.set(333.0);
         let kept = ui.view_state();
         let again = Ui::new();
-        again.restore(&kept);
+        let asked = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let send: Send = {
+            let asked = asked.clone();
+            Rc::new(move |v: Value| asked.borrow_mut().push(v))
+        };
+        again.restore(&kept, &send);
         assert_eq!(again.layout.get_untracked(), ui.layout.get_untracked());
         assert_eq!(again.primary_width.get_untracked(), 333.0);
-        again.restore(&json!({"layout": {}, "sizes": {"panel": 5.0}}));
+        again.restore(
+            &json!({"editors": ["a.rs", "b.rs"], "active": "a.rs", "layout": {}, "sizes": {"panel": 5.0}}),
+            &send,
+        );
+        // In their order, then the one shown last once more, so it is the one shown.
+        let opened: Vec<_> = asked.borrow().iter().filter_map(|v| v["path"].as_str().map(str::to_string)).collect();
+        assert_eq!(opened, ["a.rs", "b.rs", "a.rs"]);
         assert_eq!(again.panel_height.get_untracked(), 100.0);
         assert_eq!(again.layout.get_untracked(), Layout::default());
     }

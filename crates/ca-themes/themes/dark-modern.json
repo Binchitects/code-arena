@@ -238,6 +238,102 @@
       "settings": {
         "foreground": "#F44747"
       }
+    },
+    {
+      "scope": "support.macro, entity.name.function.macro, entity.name.operator.custom-literal",
+      "settings": {
+        "foreground": "#DCDCAA"
+      }
+    },
+    {
+      "scope": "entity.name.namespace, entity.name.scope-resolution, entity.other.inherited-class, support.class, entity.name.type.module",
+      "settings": {
+        "foreground": "#4EC9B0"
+      }
+    },
+    {
+      "scope": "variable.other.constant, variable.other.enummember",
+      "settings": {
+        "foreground": "#4FC1FF"
+      }
+    },
+    {
+      "scope": "meta.definition.variable.name, support.variable, entity.name.variable, variable.parameter",
+      "settings": {
+        "foreground": "#9CDCFE"
+      }
+    },
+    {
+      "scope": "constant.character.escape",
+      "settings": {
+        "foreground": "#D7BA7D"
+      }
+    },
+    {
+      "scope": "storage.type, storage.modifier, keyword.other, keyword.declaration, meta.preprocessor",
+      "settings": {
+        "foreground": "#569CD6"
+      }
+    },
+    {
+      "scope": "keyword.control, keyword.other.directive, keyword.operator.new, keyword.operator.expression, keyword.other.operator, keyword.other.using",
+      "settings": {
+        "foreground": "#C586C0"
+      }
+    },
+    {
+      "scope": "punctuation.definition.tag",
+      "settings": {
+        "foreground": "#808080"
+      }
+    },
+    {
+      "scope": "punctuation.definition.template-expression.begin, punctuation.definition.template-expression.end",
+      "settings": {
+        "foreground": "#569CD6"
+      }
+    },
+    {
+      "scope": "support.type.property-name",
+      "settings": {
+        "foreground": "#9CDCFE"
+      }
+    },
+    {
+      "scope": "support.constant.property-value, support.constant.color, markup.inline.raw",
+      "settings": {
+        "foreground": "#CE9178"
+      }
+    },
+    {
+      "scope": "constant.regexp",
+      "settings": {
+        "foreground": "#646695"
+      }
+    },
+    {
+      "scope": "entity.name.label",
+      "settings": {
+        "foreground": "#C8C8C8"
+      }
+    },
+    {
+      "scope": "markup.bold",
+      "settings": {
+        "fontStyle": "bold"
+      }
+    },
+    {
+      "scope": "markup.italic",
+      "settings": {
+        "fontStyle": "italic"
+      }
+    },
+    {
+      "scope": "markup.underline",
+      "settings": {
+        "fontStyle": "underline"
+      }
     }
   ]
 }

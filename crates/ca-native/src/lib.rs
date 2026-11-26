@@ -16,6 +16,7 @@ mod colors;
 mod diff;
 mod editor;
 mod explorer;
+mod highlight;
 mod icons;
 mod layout;
 mod model;
@@ -61,6 +62,9 @@ pub fn launch(hub: Hub) {
         }
     });
     icons::load();
+    // Which fonts this machine has, found before the first view is drawn (the font system is busy then).
+    std::sync::LazyLock::force(&widgets::UI_FONT);
+    std::sync::LazyLock::force(&widgets::MONO_FONT);
     // VS Code's own title bar, drawn by the app (the system's frame is off), as VS Code's "custom" title bar.
     let config = WindowConfig::default().title("Code Arena").size((1280.0, 800.0)).undecorated(true);
     floem::Application::new().window(move |_| app(out, rx), Some(config)).run();
@@ -76,6 +80,8 @@ fn keep_view_state(ui: Ui, send: Send) {
         ui.primary_width.track();
         ui.secondary_width.track();
         ui.panel_height.track();
+        ui.tabs.track();
+        ui.active.track();
         if ui.loaded.get_untracked() {
             generation.update(|g| *g += 1);
             waiting.set(true);
