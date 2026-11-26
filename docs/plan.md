@@ -112,34 +112,53 @@ before the turn goes on). That gives:
 
 ## The UI: two modes
 
-### The stack, and why not a native GPU UI
+### The stack: a native app first, the browser second
 
-The IDE's page is **TypeScript with SolidJS, Monaco and xterm.js**, served by the Rust
-binary. It opens in a window of its own: Chrome, Edge, Chromium or Brave in app mode, as
-today, or a system web view through an optional `code-arena-desktop` launcher (WebView2
-on Windows, WKWebView on macOS, WebKitGTK on Linux).
+> **Changed (2026-11-26), by the person's choice.** The IDE is first a **native app drawn by
+> Code Arena itself on the GPU**, as Zed is, with no web view. The browser page built in 0.5
+> stays as its second face (`code-arena ide --browser`, and later Code Studio), not the main
+> one.
 
-I considered a native GPU UI (Zed's GPUI, egui, iced, Slint) and chose the web view.
+**One engine, two faces, one protocol.** The session is driven by one driver (`ide.rs` today):
+it takes the face's messages (send, answer, stop, open, save, the terminals', the layout's) and
+says what the turn does as messages (text, tool_start, tool_end, ask, tasks, file, …). The
+browser page gets them over its WebSocket; the native app gets the very same messages
+in-process, over a channel, with no network and no page. Everything heavy stays in the engine,
+so both faces stay thin, and a feature is made once in the engine and drawn twice.
 
-- **"Exactly VS Code" means Monaco.** Monaco is VS Code's editor. It brings the same
-  multi-cursor editing, IntelliSense widgets, diff editor, command ids, keybinding model
-  and theme tokens. Rebuilding that natively would take years and would still differ in
-  a thousand small ways. Zed's own editor crates are GPL-3, which an MIT product cannot
-  take.
-- **Code Studio needs a page.** Arena's Code Studio opens a folder's IDE in the browser
-  from any computer. A native UI cannot be relayed there.
-- **VS Code's ecosystem is web-shaped**: colour themes, icon themes, TextMate grammars,
-  snippets, notebook HTML outputs, Markdown preview.
-- **The speed comes from the design, not the toolkit.** The engine does all heavy work in
-  Rust (search, index, diff, git, watching, storage), off the page's thread. The page
-  renders only what is on screen, and SolidJS updates the exact DOM node that changed,
-  with no virtual DOM diff per streamed token.
+**The toolkit: Floem** (MIT), Lapce's UI. Lapce is a native editor laid out as VS Code is
+(activity bar, panels left, right and bottom, views dragged between them), built on Floem, so
+Floem has what Code Arena's native app needs: fine-grained reactive signals (the same model as
+the page's SolidJS: a streamed token changes one text run), wgpu drawing (Vulkan, Metal,
+DirectX 12, OpenGL), cosmic-text for shaping and fonts, and a code editor view. iced (MIT; it
+also builds for the browser as WebAssembly) and egui (MIT; simpler, less of an editor's look)
+were the others weighed; Zed's GPUI is not published as a crate and Zed's editor is GPL-3,
+which an MIT product cannot take; Slint's licences do not fit an MIT product.
 
-Why SolidJS over React: fine-grained updates suit streaming. One token changes one text
-node. Long threads and trees stay cheap without memo plumbing.
+**What the native app draws, in order** (each slice usable on its own):
 
-TypeScript is checked by `tsc --noEmit` and linted by Biome's linter. Prettier is not
-used.
+1. A native window with Agent mode: the thread (streamed answers, tool lines that open,
+   approval cards), the box, the bars (plan, goal, jobs), the status line with its pickers, the
+   theme in force. `code-arena ide` opens it; `--browser` serves the page instead.
+2. The workbench: the activity bar, the side bars, the panel, the views dragged between them,
+   the layout kept per folder, VS Code's keys; the layout's rules shared with the page's.
+3. The editor: tabs, syntax colours (TextMate grammars), save, the agent's edits and changes
+   on disk taken in by changed lines, diffs, find, the outline.
+4. The terminal: `alacritty_terminal`'s emulator (Apache-2.0) on `ca-pty`, drawn by the app.
+5. Search, quick open, the command palette, the Context panel, the Settings editor.
+
+**Themes are one format for both faces**: VS Code's JSON. The built-in themes move to a shared
+crate (`ca-themes`), read by the native app and served to the page, so a theme of one's own
+works in both. The page's layout rules (`layout.ts`) are written again in Rust for the native
+app, with the same tests.
+
+**What the native app costs.** About 60 MB of crates to fetch once (Floem and what it needs:
+wgpu, winit, cosmic-text, and each system's bindings), and a larger binary. Nothing extra to
+install to build on Linux (the display and GPU libraries are opened at run time); the person's
+machine needs a GPU driver with Vulkan, Metal, DirectX 12 or OpenGL 3.3, as Zed does.
+
+The page's stack stays as it is for the browser face: TypeScript with SolidJS, Monaco and
+xterm.js, checked by `tsc --noEmit`; no Prettier.
 
 ### Coder mode
 
