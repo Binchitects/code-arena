@@ -32,6 +32,59 @@ pub trait Events: Send {
 /// How often the answer being written is kept as a draft (the session's store; the web chat).
 const DRAFT_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// How many symbols a plan's impact looks up.
+const MOST_GROUNDED: usize = 8;
+
+/// What a second reading answers when the plan holds as it is.
+const PLAN_HOLDS: &str = "The plan holds.";
+
+/// What `change_impact` said of a symbol, in a line: which lines use it, where, who depends on the repository, which
+/// tests name it.
+fn impact_line(symbol: &str, found: &Value) -> String {
+    if let Some(e) = found["error"].as_str() {
+        return format!("{symbol}: {e}");
+    }
+    let uses: Vec<&Value> =
+        found["references"].as_array().into_iter().flatten().filter(|r| r["is_definition"] != true).collect();
+    let mut repos: Vec<(String, usize)> = Vec::new();
+    for r in &uses {
+        let name = r["repo"].as_str().unwrap_or("").to_string();
+        match repos.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, c)) => *c += 1,
+            None => repos.push((name, 1)),
+        }
+    }
+    let by: Vec<String> = repos.iter().take(4).map(|(n, c)| format!("{n} ({c})")).collect();
+    let mut tests: Vec<&str> = uses
+        .iter()
+        .filter_map(|r| r["path"].as_str())
+        .filter(|p| p.to_ascii_lowercase().contains("test") || p.to_ascii_lowercase().contains("spec"))
+        .collect();
+    tests.dedup();
+    let dependents = found["dependents"].as_u64().unwrap_or(0);
+    let mut t = if uses.is_empty() {
+        format!("{symbol}: no line found that uses it")
+    } else {
+        format!(
+            "{symbol}: {}{} lines use it, in {}",
+            uses.len(),
+            if found["references_truncated"] == true { "+" } else { "" },
+            by.join(", ")
+        )
+    };
+    t.push_str(&match dependents {
+        0 => "; no other repository depends on this one".to_string(),
+        1 => "; 1 repository depends on this one".to_string(),
+        n => format!("; {n} repositories depend on this one"),
+    });
+    if tests.is_empty() {
+        t.push_str("; no test names it.");
+    } else {
+        t.push_str(&format!("; tests that name it: {}.", tests.into_iter().take(5).collect::<Vec<_>>().join(", ")));
+    }
+    t
+}
+
 /// "Skip thinking" for the turn running (Tab in the terminal, the web's "Answer now"): the thinking stops and the model
 /// answers at once, and the rest of the turn does not think.
 #[derive(Debug, Default)]
@@ -167,6 +220,10 @@ pub struct Agent {
     pub tags: Vec<String>,
     /// The person's "skip thinking" for the turn running.
     pub skip: Arc<Skip>,
+    /// A proposed plan is read again with fresh eyes before the person's review (`plan.secondReading`).
+    pub second_reading: bool,
+    /// The repository's key (`host/group/name`), for Farzan Graph's impact of a plan's symbols.
+    pub repo_key: Option<String>,
 }
 
 /// Keeps a result aside and names it (`r1`), for `read_result`.
@@ -270,6 +327,7 @@ impl Agent {
         let mut carried = 0;
         let mut overflowed = false;
         self.skip.reset();
+        let plan_at_start = self.ctx.plan.get();
         loop {
             self.take_joins(events);
             // A plan made in plan mode is proposed, for the person's review.
@@ -372,8 +430,92 @@ impl Agent {
                 continue;
             }
             out.answer.push_str(&words);
+            // A plan proposed in this turn: grounded in Farzan Graph, and read again before the person's review.
+            if self.read_plan_again(&plan_at_start, events).await {
+                continue;
+            }
             return Ok(out);
         }
+    }
+
+    /// A plan the turn proposed: what each step's symbols reach (Farzan Graph's `change_impact`), and a second reading
+    /// with fresh eyes. `true` when the reading has notes: the model hears them and changes the plan before it ends.
+    async fn read_plan_again(&mut self, before: &ca_tools::plan::Plan, events: &mut dyn Events) -> bool {
+        let mut plan = self.ctx.plan.get();
+        if plan.review.as_deref() != Some(ca_tools::plan::PROPOSED)
+            || plan.is_empty()
+            || plan.critique.is_some()
+            || &plan == before
+        {
+            return false;
+        }
+        if let (Some(tool), Some(key)) =
+            (self.tools.iter().find(|t| t.def().name.ends_with("change_impact")).cloned(), self.repo_key.clone())
+            && let Some((_, repo)) = key.split_once('/')
+        {
+            let mut looked = 0;
+            for step in plan.steps.iter_mut() {
+                if step.symbols.is_empty() || step.impact.is_some() || looked >= MOST_GROUNDED {
+                    continue;
+                }
+                let mut said = Vec::new();
+                for symbol in step.symbols.iter().take(MOST_GROUNDED - looked) {
+                    looked += 1;
+                    let o = tool.run(serde_json::json!({"repo": repo, "symbol": symbol, "depth": 2}), &self.ctx).await;
+                    if !o.is_error
+                        && let Ok(found) = serde_json::from_str::<Value>(&o.text)
+                    {
+                        said.push(impact_line(symbol, &found));
+                    }
+                }
+                if !said.is_empty() {
+                    step.impact = Some(said.join("\n"));
+                }
+            }
+        }
+        let mut notes = String::new();
+        if self.second_reading {
+            events.notice("Reading the plan again with fresh eyes before your review.");
+            let asked =
+                (0..self.history.len()).rev().find(|&i| self.is_persons(i)).map(|i| self.history[i].content.clone());
+            let ask = Request {
+                model: self.model.clone(),
+                messages: vec![
+                    Message::system(
+                        "You read a plan for a coding task with fresh eyes, before it is carried out. You change nothing.",
+                    ),
+                    Message::user(format!(
+                        "{}{}\n\nAnswer with short notes only, a line each: what is missing, what is risky, which step has no check or a check that would not show it is done, what is in the wrong order. If the plan holds as it is, answer exactly: {PLAN_HOLDS}",
+                        asked
+                            .map(|a| format!(
+                                "What the person asked:\n{}\n\n",
+                                a.chars().take(2000).collect::<String>()
+                            ))
+                            .unwrap_or_default(),
+                        plan.text()
+                    )),
+                ],
+                max_tokens: Some(1500),
+                tags: self.tags.clone(),
+                ..Default::default()
+            };
+            if let Ok(c) = self.gateway.complete(&ask, &mut ca_llm::Quiet).await {
+                let t = c.message.content.trim().to_string();
+                if !t.is_empty() && !t.to_ascii_lowercase().starts_with(&PLAN_HOLDS.to_ascii_lowercase()) {
+                    notes = t.chars().take(4000).collect();
+                }
+            }
+        }
+        plan.critique = Some(notes.clone());
+        self.ctx.plan.set(plan);
+        if notes.is_empty() {
+            return false;
+        }
+        events.notice("The second reading has notes: the model looks at them.");
+        self.note(format!(
+            "(Code Arena: a second reading of your plan, with fresh eyes, says:\n{notes}\n\nChange the plan where they hold (the plan tool), then end your answer as before.)"
+        ));
+        true
     }
 
     fn request(&self, tools: Vec<ToolDef>, tool_choice: Option<&str>) -> Request {
@@ -909,6 +1051,8 @@ mod tests {
             notes: vec![],
             tags: vec![],
             skip: Arc::default(),
+            second_reading: false,
+            repo_key: None,
         };
         (server, a, dir, seen)
     }
@@ -1250,5 +1394,71 @@ mod tests {
         assert!(last.contains("what do the notes say?"), "the question is kept");
         assert!(last.contains("the earlier steps of this turn are summarized"), "{last}");
         assert!(last.contains("it says 42"), "{last}");
+    }
+
+    /// Farzan Graph's `change_impact`, as a fake: two lines use the symbol, one a test.
+    struct Impact;
+    #[async_trait::async_trait]
+    impl Tool for Impact {
+        fn def(&self) -> ToolDef {
+            ToolDef {
+                name: "mcp__graph__change_impact".into(),
+                description: "impact".into(),
+                parameters: serde_json::json!({"type": "object"}),
+            }
+        }
+        fn kind(&self) -> Kind {
+            Kind::Read
+        }
+        fn subject(&self, _a: &Value) -> String {
+            String::new()
+        }
+        async fn run(&self, args: Value, _ctx: &Context) -> Output {
+            assert_eq!(args["repo"], "payments/api");
+            Output::ok(
+                serde_json::json!({"dependents": 2, "references": [
+                    {"repo": "payments/api", "path": "src/pay.rs", "is_definition": true},
+                    {"repo": "payments/api", "path": "src/use.rs"},
+                    {"repo": "payments/web", "path": "tests/pay_test.rs"}
+                ]})
+                .to_string(),
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn a_proposed_plan_is_grounded_and_read_again_once() {
+        let plan = r#"{"title":"Pay","steps":[{"title":"Change parse","symbols":["parse_amount"]}]}"#;
+        let call = |args: &str| {
+            let ev = serde_json::json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "p1", "function": {"name": "plan", "arguments": args}}]}, "finish_reason": "tool_calls"}]});
+            format!("data: {ev}\n\ndata: [DONE]\n\n")
+        };
+        let (_s, mut a, _d, seen) = agent(
+            vec![
+                call(plan),
+                say("Here is the plan.", "stop"),
+                say("Step 1 has no check.", "stop"),
+                say("Noted: I would add a check.", "stop"),
+            ],
+            Mode::Plan,
+        )
+        .await;
+        a.second_reading = true;
+        a.repo_key = Some("gitlab.corp/payments/api".into());
+        a.tools.push(Arc::new(Impact));
+        let out = a.turn("change how amounts parse", &mut Quiet).await.expect("turn");
+        assert!(out.answer.ends_with("Noted: I would add a check."), "{}", out.answer);
+        let p = a.ctx.plan.get();
+        assert_eq!(p.critique.as_deref(), Some("Step 1 has no check."));
+        let impact = p.steps[0].impact.clone().expect("impact");
+        assert!(
+            impact.contains("2 lines use it")
+                && impact.contains("2 repositories depend")
+                && impact.contains("tests/pay_test.rs"),
+            "{impact}"
+        );
+        let seen = seen.lock().expect("seen");
+        assert_eq!(seen.len(), 4, "the reading once, then one more step");
+        assert!(seen[3].to_string().contains("a second reading of your plan"));
     }
 }

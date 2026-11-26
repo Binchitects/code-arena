@@ -185,7 +185,7 @@ fn help() -> &'static str {
 /remember [--person] TEXT  keep a memory for this project (or, with --person, for every project)\n\
 /projects             your projects in Arena; /project N puts this session in one (off: none)\n\
 /assistant [N|off]    your assistants in Arena; work as one\n\
-/sync [on|off]        where this session stands with its chat in Arena; off keeps it here only\n\
+/sync [on|off|all]    where this session stands with its chat in Arena; off keeps it here only; all sends every session here\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
 /exit                 leave (also Ctrl+D)\n\
 !command              run a command yourself; its output goes with your next message\n\
@@ -242,6 +242,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     // The web's news while the prompt waits: taken in at once.
     let (news_tx, mut news) = mpsc::unbounded_channel::<()>();
     let mut listening: Option<Arc<ca_sync::ChatSync>> = None;
+    let watching = session::watch_arena_settings(app, &p.notices);
     let mut drawn = Drawn::default();
     let mut interrupted_once = false;
     let mut session_usage = ca_llm::Usage::default();
@@ -430,6 +431,9 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     }
     if let Some(j) = &p.agent.ctx.jobs {
         j.stop_all();
+    }
+    if let Some(w) = watching {
+        w.abort();
     }
     // What the last turn said reaches the chat in Arena before Code Arena goes (at most a few seconds).
     if let Some(s) = &p.sync {
@@ -941,6 +945,7 @@ async fn command(
             (None, _) => ui.say(&ui.dim(
                 "Kept here only: sign in (code-arena login) with arena.syncChats on to keep sessions in Arena's chats.",
             )),
+            (Some(_), "all") => ui.say(&sync_all(p, app).await),
             (Some(s), "off") => {
                 s.set_on(false);
                 ui.say("This session is kept here only from now on (/sync on sends it again).");
@@ -1186,6 +1191,65 @@ async fn skills_transfer(rest: &str, p: &mut Prepared, app: &App) -> String {
         }
         other => format!("--to is project, mine or arena, not {other}."),
     }
+}
+
+/// `/sync all`: every session of this folder that Arena lacks (made before chats were kept, or while it was out of
+/// reach) sent now, each to its own chat.
+async fn sync_all(p: &mut Prepared, app: &App) -> String {
+    let Ok(arena) = app.arena() else { return "Not signed in to Arena.".into() };
+    let list = match p.store.lock() {
+        Ok(s) => s.list(&p.folder, 500).unwrap_or_default(),
+        Err(_) => return "The session store could not be read.".into(),
+    };
+    let key = ca_memory::keys::project_key(p.agent.ctx.workspace.root());
+    let (mut sessions, mut messages, mut waiting) = (0, 0, 0);
+    for summary in list {
+        if summary.id == p.session {
+            continue;
+        }
+        let off = p.store.lock().ok().and_then(|s| s.chat_link(&summary.id).ok()).is_none_or(|l| l.off);
+        if off {
+            continue;
+        }
+        let notice: ca_sync::Notice = Arc::new(|_, _| {});
+        let s = ca_sync::ChatSync::new(
+            arena.clone(),
+            p.store.clone(),
+            summary.id.clone(),
+            p.folder.clone(),
+            Some(key.clone()),
+            summary.model.clone(),
+            notice,
+        );
+        let before = s.pending();
+        if before == 0 {
+            continue;
+        }
+        loop {
+            match s.push().await {
+                ca_sync::Pushed::Done | ca_sync::Pushed::Off | ca_sync::Pushed::Behind => break,
+                // Out of reach, or the web answering: the rest goes later.
+                ca_sync::Pushed::Retry(_) => break,
+            }
+        }
+        let after = s.pending();
+        if after < before {
+            sessions += 1;
+            messages += before - after;
+        }
+        waiting += after;
+    }
+    if sessions == 0 && waiting == 0 {
+        return "Arena has every session of this folder.".into();
+    }
+    format!(
+        "Sent {messages} message(s) of {sessions} session(s) to their chats in Arena{}.",
+        if waiting > 0 {
+            format!("; {waiting} wait (Arena out of reach, or the web answering: /sync all again later)")
+        } else {
+            String::new()
+        }
+    )
 }
 
 /// `/web`: the person's chats in Arena; `/web N` (or its id) continues one here, in a session of its own.

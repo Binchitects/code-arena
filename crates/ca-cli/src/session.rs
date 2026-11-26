@@ -100,7 +100,43 @@ fn refresh_arena_skills(app: &App, notices: &Notices) {
     let data = app.paths.data.clone();
     let builtin = app.settings.bool(&schema::BUILTIN_SKILLS);
     let notices = notices.clone();
-    tokio::spawn(async move {
+    tokio::spawn(async move { keep_arena_skills(arena, data, builtin, notices).await });
+}
+
+/// Arena's settings as they change while a session runs: its stamp (`GET /settings`) asked every 30 s, and when it
+/// moved, Arena's skills read again (they are used from the next message) and the person told.
+pub fn watch_arena_settings(app: &App, notices: &Notices) -> Option<tokio::task::JoinHandle<()>> {
+    if app.edition() != ca_settings::Edition::Managed {
+        return None;
+    }
+    let arena = app.arena().ok()?;
+    let data = app.paths.data.clone();
+    let builtin = app.settings.bool(&schema::BUILTIN_SKILLS);
+    let notices = notices.clone();
+    Some(tokio::spawn(async move {
+        let mut last = arena.settings_stamp().await;
+        loop {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            let now = arena.settings_stamp().await;
+            if now.is_some() && now != last {
+                if last.is_some() {
+                    if let Ok(mut n) = notices.lock() {
+                        n.push((
+                            false,
+                            "Arena's settings changed: its skills are read again, and used from your next message."
+                                .into(),
+                        ));
+                    }
+                    keep_arena_skills(arena.clone(), data.clone(), builtin, notices.clone()).await;
+                }
+                last = now;
+            }
+        }
+    }))
+}
+
+async fn keep_arena_skills(arena: ca_arena::ArenaClient, data: std::path::PathBuf, builtin: bool, notices: Notices) {
+    {
         let Ok(Ok(got)) = tokio::time::timeout(Duration::from_secs(15), arena.skills()).await else { return };
         let skills: Vec<(String, std::collections::BTreeMap<String, String>)> =
             got.skills.into_iter().map(|k| (k.name, k.files)).collect();
@@ -121,7 +157,7 @@ fn refresh_arena_skills(app: &App, notices: &Notices) {
             serde_json::to_string(&got.off).unwrap_or_default(),
         );
         let _ = ca_agent::library::keep_builtin(&data, &got.off, builtin);
-    });
+    }
 }
 
 /// Before the person's message: what is remembered that matters to it (a few hundred tokens at most), and after a long
@@ -233,6 +269,17 @@ pub fn render_plan(plan: &ca_tools::plan::Plan, ui: crate::ui::Ui) -> String {
             }
         };
         lines.push(format!("{mark}{}. {title}{check}", s.number));
+        if let Some(i) = &s.impact {
+            for l in i.lines() {
+                lines.push(ui.dim(&format!("     impact: {l}")));
+            }
+        }
+    }
+    if let Some(c) = plan.critique.as_deref().filter(|c| !c.is_empty()) {
+        lines.push(ui.yellow("A second reading said:"));
+        for l in c.lines() {
+            lines.push(ui.dim(&format!("  {l}")));
+        }
     }
     lines.join("\n")
 }
@@ -640,6 +687,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         notes: vec![],
         tags: vec![],
         skip: Arc::default(),
+        second_reading: app.settings.bool(&schema::PLAN_SECOND_READING),
+        repo_key: Some(ca_memory::keys::project_key(&ws_root)).filter(|k| !k.starts_with("local/")),
     };
     // The sandbox, as the settings and this system allow.
     let sandbox_mode = app.settings.string(&schema::SANDBOX).unwrap_or_else(|| "auto".into());

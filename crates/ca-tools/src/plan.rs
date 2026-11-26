@@ -50,6 +50,9 @@ pub struct Step {
     pub check_output: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked_at: Option<String>,
+    /// What a change to its symbols reaches, as Farzan Graph found it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact: Option<String>,
 }
 
 impl Step {
@@ -66,6 +69,7 @@ impl Step {
             check_result: None,
             check_output: None,
             checked_at: None,
+            impact: None,
         }
     }
 
@@ -87,6 +91,9 @@ pub struct Plan {
     /// [`PROPOSED`], [`APPROVED`], or none (made outside plan mode).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review: Option<String>,
+    /// What a second reading said of it before the person's review (empty: it held); none: not read again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critique: Option<String>,
 }
 
 /// A plan refused: the words say what to change.
@@ -297,7 +304,11 @@ impl Plan {
                 step.files = strings(f, MOST_FILES, 300);
             }
             if let Some(f) = change.get("symbols") {
-                step.symbols = strings(f, MOST_SYMBOLS, 200);
+                let named = strings(f, MOST_SYMBOLS, 200);
+                if named != step.symbols {
+                    step.impact = None;
+                }
+                step.symbols = named;
             }
             if let Some(Value::Array(d)) = change.get("depends_on") {
                 let mut deps: Vec<u32> = d
@@ -334,6 +345,7 @@ impl Plan {
             goal,
             steps,
             review: base.review.clone(),
+            critique: base.critique.clone(),
         };
         made.validate()?;
         Ok((made, mended))
@@ -452,6 +464,9 @@ impl Plan {
             }
             if !s.symbols.is_empty() {
                 line.push_str(&format!("\n   symbols: {}", s.symbols.join(", ")));
+            }
+            if let Some(i) = &s.impact {
+                line.push_str(&format!("\n   impact: {}", i.replace('\n', "\n           ")));
             }
             if let Some(n) = &s.notes {
                 line.push_str(&format!("\n   notes: {}", cut(&n.replace('\n', " "), 300)));

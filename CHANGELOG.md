@@ -133,6 +133,16 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   model reads it), and it waits at the prompt; a `/command` or `!command` typed meanwhile runs
   when the turn ends, in order, instead of going to the model.
 
+- A plan proposed in plan mode is grounded before your review: each step's symbols are looked up
+  in Farzan Graph (`change_impact`: the lines that use them, the repositories that depend on this
+  one, the tests that name them), and the plan is read again with fresh eyes (`plan.secondReading`,
+  on): what is missing, risky, unchecked or in the wrong order; the agent changes the plan where
+  the notes hold, once. `/plan` shows both.
+- `/sync all`: every session of this folder that Arena lacks (from before chats were kept, or
+  while it was out of reach) sent now, each to its own chat.
+- Arena's settings as they change: the chat asks for their stamp every 30 s, and when they moved,
+  Arena's skills are read again (used from your next message).
+
 ### Fixed
 - The agent's git ran the repository's own filters and merge drivers (commands its settings name,
   such as a clean filter in `.gitattributes`): they are switched off for every git call now.

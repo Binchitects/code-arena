@@ -280,6 +280,16 @@ pub static BUILTIN_SKILLS: Setting = Setting {
     section: "Skills",
 };
 
+pub static PLAN_SECOND_READING: Setting = Setting {
+    key: "plan.secondReading",
+    kind: Kind::Bool,
+    default: "true",
+    description: "A plan the agent proposes in plan mode is read again with fresh eyes before your review (one more request to the model): what is missing, risky, unchecked or in the wrong order, and the agent changes the plan where the notes hold.",
+    scope: Scope::User,
+    env: None,
+    section: "Agent",
+};
+
 pub static SERVER_WAIT: Setting = Setting {
     key: "mcp.startWait",
     kind: Kind::Integer { min: 0, max: 120 },
@@ -365,6 +375,7 @@ pub static ALL: &[&Setting] = &[
     &SYNC_CHATS,
     &PROJECT_MEMORY,
     &BUILTIN_SKILLS,
+    &PLAN_SECOND_READING,
     &SANDBOX,
     &SANDBOX_NETWORK,
     &SANDBOX_WRITABLE,
