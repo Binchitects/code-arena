@@ -593,11 +593,7 @@ button.small {
   place-items: center;
 }
 
-.coder {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-}
+
 
 .side {
   border-right: 1px solid var(--line);
@@ -792,16 +788,6 @@ button.small {
   background: var(--accent);
 }
 
-@media (max-width: 1000px) {
-  .coder {
-    grid-template-columns: 200px 4px minmax(0, 1fr) !important;
-  }
-
-  .agent-split,
-  .agent-side {
-    display: none;
-  }
-}
 
 .views {
   display: flex;
@@ -1130,3 +1116,366 @@ button.small {
   color: var(--muted);
   padding: 6px 14px 2px;
 }
+
+/* Coder mode: VS Code's workbench. */
+body {
+  font-size: 13px;
+}
+
+.workbench {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  background: var(--bg);
+}
+
+.workbench.side-right {
+  flex-direction: row-reverse;
+}
+
+.activity {
+  width: 48px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: var(--activity);
+  border-right: 1px solid var(--line);
+}
+
+.side-right .activity {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+
+.activity-item {
+  height: 48px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--activity-fg);
+  opacity: 0.55;
+  position: relative;
+  padding: 0;
+}
+
+.activity-item .codicon {
+  font-size: 24px;
+}
+
+.activity-item:hover,
+.activity-item.on {
+  opacity: 1;
+}
+
+.activity-item.on::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--activity-border);
+}
+
+.side-right .activity-item.on::before {
+  left: auto;
+  right: 0;
+}
+
+.pane {
+  flex: none;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.main.panel-right {
+  flex-direction: row;
+}
+
+.main.panel-left {
+  flex-direction: row-reverse;
+}
+
+.editor-col {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+
+.container.primary {
+  border-right: 1px solid var(--line);
+}
+
+.side-right .container.primary {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+
+.container.secondary {
+  border-left: 1px solid var(--line);
+}
+
+.container.panel {
+  border-top: 1px solid var(--line);
+}
+
+.panel-left .container.panel,
+.panel-right .container.panel {
+  border-top: 0;
+  border-left: 1px solid var(--line);
+}
+
+.container-head {
+  height: 35px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 12px;
+  gap: 4px;
+}
+
+.container-title {
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: grab;
+}
+
+.container-tabs {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  height: 100%;
+}
+
+.container-tab {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 0 10px;
+  color: var(--muted);
+  border-bottom: 1px solid transparent;
+  cursor: pointer;
+}
+
+.container-tab:hover {
+  color: var(--text);
+}
+
+.container-tab.on {
+  color: var(--text);
+  border-bottom-color: var(--activity-border);
+}
+
+.icon-button {
+  border: 0;
+  background: none;
+  padding: 3px;
+  border-radius: 5px;
+  color: var(--text);
+  opacity: 0.7;
+  display: inline-flex;
+}
+
+.icon-button:hover {
+  opacity: 1;
+  background: var(--user);
+}
+
+.view-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.view-body > * {
+  flex: 1;
+  min-height: 0;
+}
+
+.view-body > .tree,
+.view-body > .search-view,
+.view-body > .changes-view,
+.view-body > .outline-view {
+  flex: 1;
+  overflow: auto;
+}
+
+.agent-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.agent-view .column {
+  padding: 0 12px;
+}
+
+.agent-view .thread {
+  padding-top: 8px;
+}
+
+.terminals {
+  flex: 1;
+  min-height: 0;
+  background: var(--terminal);
+}
+
+.tree-row {
+  height: 22px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.tree-row.active {
+  background: var(--selection);
+  color: var(--text);
+}
+
+.tabs {
+  height: 35px;
+  background: var(--tab);
+}
+
+.tab {
+  background: var(--tab);
+}
+
+.tab.active {
+  background: var(--tab-active);
+  box-shadow: inset 0 1px 0 var(--tab-border-top);
+}
+
+.tab-name,
+.tab-close {
+  height: 35px;
+}
+
+/* While a view is dragged: where it may go lights up. */
+.workbench.dragging .activity,
+.workbench.dragging .container {
+  outline: 1px dashed transparent;
+}
+
+.workbench.dragging .activity:hover,
+.workbench.dragging .container:hover {
+  outline-color: var(--accent);
+  outline-offset: -2px;
+  background-image: linear-gradient(color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent) 12%, transparent));
+}
+
+.drop-edges {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.drop-edge {
+  position: absolute;
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px dashed var(--accent);
+}
+
+.drop-edge:hover {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--text);
+}
+
+.drop-edge.left {
+  left: 48px;
+  top: 0;
+  bottom: 0;
+  width: 120px;
+}
+
+.side-right .drop-edge.left {
+  left: 0;
+}
+
+.drop-edge.right {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 120px;
+}
+
+.side-right .drop-edge.right {
+  right: 48px;
+}
+
+.drop-edge.bottom {
+  left: 48px;
+  right: 0;
+  bottom: 0;
+  height: 90px;
+}
+
+.menu {
+  position: fixed;
+  z-index: 20;
+  min-width: 220px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  padding: 4px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.menu-title {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 12px;
+}
+
+.menu button {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  text-align: left;
+  padding: 4px 12px;
+  font-size: 13px;
+}
+
+.menu button:hover {
+  background: var(--selection);
+}
+

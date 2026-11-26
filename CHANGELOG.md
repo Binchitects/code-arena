@@ -18,6 +18,17 @@ Sections used:
 
 ### :sparkles: New features & Enhancements
 
+- **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,
+  the editor, the panel and a secondary side bar, with VS Code's sizes and the theme's colours.
+  Six views (Explorer, Search, Changes, Outline, Agent, Terminal) start where VS Code puts them:
+  the four first in the side bar, the agent in the secondary side bar, the terminal in the panel.
+- **Views move as in VS Code and Visual Studio.** Drag a view's icon or tab to another container
+  (where it may go lights up; a hidden one takes it at the window's edge), or right-click it:
+  Move to Primary Side Bar, Secondary Side Bar or Panel. The side bar goes left or right, the panel
+  to the bottom, left or right; Ctrl+B, Ctrl+Alt+B and Ctrl+J show and hide them, Ctrl+Shift+E,
+  Ctrl+Shift+F, Ctrl+Alt+I and Ctrl+` show a view; Reset View Locations puts them back. Kept per
+  folder, with the panes' sizes.
+
 - **Colour themes in VS Code's own format.** Nine built in: Dark Modern, Light Modern, Dark+,
   Light+, Dark and Light High Contrast, Monokai, Solarized Dark and Light. Yours from `themes/` in
   the config folder, `~/.code-arena/themes` or the project's `.code-arena/themes`: a theme's JSON

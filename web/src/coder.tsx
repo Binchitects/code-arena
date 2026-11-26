@@ -7,8 +7,9 @@ import * as monaco from "monaco-editor/editor/editor.api";
 import "./monaco-features";
 import "monaco-editor/basic-languages/monaco.contribution";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
-import { For, type JSX, Show, createEffect, createRoot, createSignal, on, onCleanup, onMount } from "solid-js";
-import { createStore, produce } from "solid-js/store";
+import { For, type JSX, Match, Show, Switch, createEffect, createRoot, createSignal, on, onCleanup, onMount } from "solid-js";
+import { createStore, produce, reconcile, unwrap } from "solid-js/store";
+import { type Layout as Workbench, type ViewId, VIEWS, type Where, defaults, move, normalize, reveal, toggle, toggleView } from "./layout";
 import { setEditorStatus } from "./editor-status";
 import { current, setPickerOpen } from "./theme-store";
 import { base, monacoColors, monacoRules, terminalColors } from "./themes";
@@ -54,7 +55,16 @@ const [tree, setTree] = createStore<Record<string, Entry[] | { error: string }>>
 const [open, setOpen] = createStore<Record<string, boolean>>({ "": true });
 const [tabs, setTabs] = createStore<Tab[]>([]);
 const [active, setActive] = createSignal("");
-const [view, setView] = createSignal<"files" | "search" | "changes" | "outline">("files");
+/** Where each view is, which is shown, and where the side bar and the panel are (VS Code's layout). */
+const [workbench, setWorkbenchStore] = createStore<Workbench>(defaults());
+function setWorkbench(l: Workbench) {
+  setWorkbenchStore(reconcile(l));
+  keepLayout();
+}
+const plain = () => structuredClone(unwrap(workbench)) as Workbench;
+const setView = (v: ViewId) => setWorkbench(reveal(plain(), v));
+/** Whether a view is on screen: its container shown, and it the one shown there. */
+const isShown = (v: ViewId) => (["primary", "secondary", "panel"] as Where[]).some((w) => workbench.shown[w] && workbench.active[w] === v);
 const [found, setFound] = createStore<{ query: string; hits: Hit[]; files: number; more: boolean; error?: string; busy: boolean }>(
   { query: "", hits: [], files: 0, more: false, busy: false },
 );
@@ -76,10 +86,21 @@ const cursors = new Map<string, { lineNumber: number; column: number }>();
 /** Each model's timer that keeps its unsaved changes aside a second after typing stops. */
 const backupTimers = new Map<string, number>();
 
-type Layout = { tabs: string[]; active: string; folders: string[]; view: string; panel: boolean; cursors: Record<string, { lineNumber: number; column: number }>; sizes: Sizes };
-type Sizes = { side: number; agent: number; term: number };
-export const [sizes, setSizes] = createStore<Sizes>({ side: 240, agent: 380, term: 240 });
-export const [panelOpen, setPanelOpen] = createSignal(true);
+type Layout = {
+  tabs: string[];
+  active: string;
+  folders: string[];
+  cursors: Record<string, { lineNumber: number; column: number }>;
+  sizes: Sizes;
+  workbench?: Workbench;
+};
+/** The primary side bar's width, the secondary's, the panel's height (at the bottom) and width (at a side). */
+type Sizes = { side: number; agent: number; term: number; panelWidth: number };
+export const [sizes, setSizes] = createStore<Sizes>({ side: 260, agent: 400, term: 260, panelWidth: 440 });
+export const panelOpen = () => workbench.shown.panel;
+export const setPanelOpen = (v: boolean) => {
+  if (v !== workbench.shown.panel) setWorkbench(toggle(plain(), "panel"));
+};
 
 const layoutKey = () => `code-arena.coder:${session.folder}`;
 
@@ -101,10 +122,9 @@ function keepLayout() {
       tabs: tabs.filter((t) => !t.diff).map((t) => t.path),
       active: active().startsWith("Δ ") ? "" : active(),
       folders: Object.entries(open).filter(([p, o]) => o && p).map(([p]) => p),
-      view: view(),
-      panel: panelOpen(),
       cursors: Object.fromEntries(cursors),
       sizes: { ...sizes },
+      workbench: plain(),
     };
     try {
       localStorage.setItem(layoutKey(), JSON.stringify(layout));
@@ -295,7 +315,7 @@ listen((m) => {
       }
       break;
     case "turn_end":
-      if (view() === "changes") send({ type: "changes" });
+      if (isShown("changes")) send({ type: "changes" });
       break;
     case "saved": {
       const had = models.get(m.path);
@@ -562,7 +582,7 @@ function Terminals() {
   });
   onCleanup(stop);
   return (
-    <div class="terminals" style={{ height: `${sizes.term}px` }}>
+    <div class="terminals">
       <div class="term-tabs">
         <For each={ids()}>
           {(id) => (
@@ -775,11 +795,24 @@ function commands(): Command[] {
     { id: "fold.all", label: "Fold All", run: ed("editor.foldAll") },
     { id: "unfold.all", label: "Unfold All", run: ed("editor.unfoldAll") },
     { id: "comment", label: "Toggle Line Comment", keys: "Ctrl+/", run: ed("editor.action.commentLine") },
-    { id: "view.files", label: "View: Show Files", run: () => setView("files") },
-    { id: "view.search", label: "View: Search the Files", keys: "Ctrl+Shift+F", run: () => setView("search") },
+    { id: "view.files", label: "View: Show Explorer", keys: "Ctrl+Shift+E", run: () => setView("files") },
+    { id: "view.search", label: "View: Show Search", keys: "Ctrl+Shift+F", run: () => setView("search") },
     { id: "view.changes", label: "View: Show the Agent's Changes", run: () => setView("changes") },
-    { id: "view.outline", label: "View: Show the Outline", run: () => setView("outline") },
-    { id: "view.terminal", label: "View: Toggle Terminal", keys: "Ctrl+`", run: () => setPanelOpen(!panelOpen()) },
+    { id: "view.outline", label: "View: Show Outline", run: () => setView("outline") },
+    { id: "view.agent", label: "View: Show Agent", keys: "Ctrl+Alt+I", run: () => setView("agent") },
+    { id: "view.terminal", label: "View: Toggle Terminal", keys: "Ctrl+`", run: () => setWorkbench(toggleView(plain(), "terminal")) },
+    { id: "layout.primary", label: "View: Toggle Primary Side Bar Visibility", keys: "Ctrl+B", run: () => setWorkbench(toggle(plain(), "primary")) },
+    { id: "layout.secondary", label: "View: Toggle Secondary Side Bar Visibility", keys: "Ctrl+Alt+B", run: () => setWorkbench(toggle(plain(), "secondary")) },
+    { id: "layout.panel", label: "View: Toggle Panel Visibility", keys: "Ctrl+J", run: () => setWorkbench(toggle(plain(), "panel")) },
+    {
+      id: "layout.side",
+      label: "View: Toggle Primary Side Bar Position",
+      run: () => setWorkbench({ ...plain(), side: workbench.side === "left" ? "right" : "left" }),
+    },
+    { id: "layout.panelBottom", label: "View: Move Panel to the Bottom", run: () => setWorkbench({ ...plain(), panelAt: "bottom" }) },
+    { id: "layout.panelLeft", label: "View: Move Panel Left", run: () => setWorkbench({ ...plain(), panelAt: "left" }) },
+    { id: "layout.panelRight", label: "View: Move Panel Right", run: () => setWorkbench({ ...plain(), panelAt: "right" }) },
+    { id: "layout.reset", label: "View: Reset View Locations", run: () => setWorkbench(defaults()) },
     {
       id: "editor.minimap",
       label: "View: Toggle Minimap",
@@ -1005,21 +1038,241 @@ function Splitter(props: {
   );
 }
 
-export default function Coder(props: { agent: () => JSX.Element }) {
-  const panel = panelOpen;
-  const setPanel = (v: boolean) => {
-    setPanelOpen(v);
-    keepLayout();
+const DRAG_TYPE = "text/x-code-arena-view";
+const [dragging, setDragging] = createSignal<ViewId | null>(null);
+const [menu, setMenu] = createStore<{ view: ViewId | null; x: number; y: number }>({ view: null, x: 0, y: 0 });
+
+const WHERE_NAME: Record<Where, string> = { primary: "Primary Side Bar", secondary: "Secondary Side Bar", panel: "Panel" };
+
+/** What a view's icon or tab does: it drags to another container, and its menu moves it. */
+function viewHandle(v: ViewId) {
+  return {
+    draggable: true,
+    onDragStart: (e: DragEvent) => {
+      e.dataTransfer?.setData(DRAG_TYPE, v);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+      setDragging(v);
+    },
+    onDragEnd: () => setDragging(null),
+    onContextMenu: (e: MouseEvent) => {
+      e.preventDefault();
+      setMenu({ view: v, x: e.clientX, y: e.clientY });
+    },
   };
+}
+
+/** Where a view dropped goes: `to`, before the view at `index` when one is given. */
+function dropTarget(to: Where, index?: () => number | undefined) {
+  return {
+    onDragOver: (e: DragEvent) => {
+      if (!dragging()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    },
+    onDrop: (e: DragEvent) => {
+      const v = dragging() ?? (e.dataTransfer?.getData(DRAG_TYPE) as ViewId | undefined);
+      if (!v || !(v in VIEWS)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setDragging(null);
+      setWorkbench(move(plain(), v, to, index?.()));
+    },
+  };
+}
+
+function Icon(props: { name: string }) {
+  return <span class={`codicon codicon-${props.name}`} aria-hidden="true" />;
+}
+
+function ViewBody(props: { v: ViewId; agent: () => JSX.Element }) {
+  return (
+    <Switch>
+      <Match when={props.v === "files"}>
+        <div class="tree">
+          <Folder path="" depth={0} />
+        </div>
+      </Match>
+      <Match when={props.v === "search"}>
+        <SearchView />
+      </Match>
+      <Match when={props.v === "changes"}>
+        <ChangesView />
+      </Match>
+      <Match when={props.v === "outline"}>
+        <OutlineView />
+      </Match>
+      <Match when={props.v === "agent"}>
+        <div class="agent-view">{props.agent()}</div>
+      </Match>
+      <Match when={props.v === "terminal"}>
+        <Terminals />
+      </Match>
+    </Switch>
+  );
+}
+
+/** The activity bar: the primary side bar's views as icons (VS Code's), each to show, hide or drag. */
+function ActivityBar() {
+  return (
+    <nav class="activity" aria-label="Views" {...dropTarget("primary")}>
+      <For each={workbench.primary}>
+        {(v, i) => (
+          <button
+            class="activity-item"
+            classList={{ on: workbench.shown.primary && workbench.active.primary === v }}
+            title={`${VIEWS[v].title}${VIEWS[v].keys ? ` (${VIEWS[v].keys})` : ""}`}
+            aria-label={VIEWS[v].title}
+            aria-pressed={workbench.shown.primary && workbench.active.primary === v}
+            onClick={() => setWorkbench(toggleView(plain(), v))}
+            {...viewHandle(v)}
+            {...dropTarget("primary", () => i())}
+          >
+            <Icon name={VIEWS[v].icon} />
+          </button>
+        )}
+      </For>
+    </nav>
+  );
+}
+
+/** A container (side bar or panel): its header (the view's title, or its views as tabs), and its views. */
+function Container(props: { where: Where; agent: () => JSX.Element }) {
+  const views = () => workbench[props.where];
+  const active = () => workbench.active[props.where];
+  return (
+    <section class={`container ${props.where}`} aria-label={WHERE_NAME[props.where]} {...dropTarget(props.where)}>
+      <header class="container-head">
+        <Show
+          when={props.where !== "primary"}
+          fallback={
+            <span class="container-title" {...(active() ? viewHandle(active() as ViewId) : {})}>
+              {active() ? VIEWS[active() as ViewId].title.toUpperCase() : ""}
+              <Show when={active() === "files"}>
+                <span class="muted">: {session.root || "Project"}</span>
+              </Show>
+            </span>
+          }
+        >
+          <div class="container-tabs" role="tablist">
+            <For each={views()}>
+              {(v, i) => (
+                <button
+                  class="container-tab"
+                  role="tab"
+                  classList={{ on: active() === v }}
+                  aria-selected={active() === v}
+                  onClick={() => setWorkbench(reveal(plain(), v))}
+                  {...viewHandle(v)}
+                  {...dropTarget(props.where, () => i())}
+                >
+                  {VIEWS[v].title.toUpperCase()}
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+        <span class="grow" />
+        <button
+          class="icon-button"
+          title={`Hide ${WHERE_NAME[props.where]}`}
+          aria-label={`Hide ${WHERE_NAME[props.where]}`}
+          onClick={() => setWorkbench(toggle(plain(), props.where))}
+        >
+          <Icon name="close" />
+        </button>
+      </header>
+      <For each={views()}>
+        {(v) => (
+          <div class="view-body" classList={{ hidden: active() !== v }}>
+            <ViewBody v={v} agent={props.agent} />
+          </div>
+        )}
+      </For>
+    </section>
+  );
+}
+
+/** While a view is dragged: the edges where a hidden or empty container would take it. */
+function DropEdges() {
+  const edge = (w: Where) => !workbench.shown[w] || !workbench[w].length;
+  return (
+    <Show when={dragging()}>
+      <div class="drop-edges">
+        <Show when={edge("primary")}>
+          <div class={`drop-edge ${workbench.side === "left" ? "left" : "right"}`} {...dropTarget("primary")}>
+            {WHERE_NAME.primary}
+          </div>
+        </Show>
+        <Show when={edge("secondary")}>
+          <div class={`drop-edge ${workbench.side === "left" ? "right" : "left"}`} {...dropTarget("secondary")}>
+            {WHERE_NAME.secondary}
+          </div>
+        </Show>
+        <Show when={edge("panel")}>
+          <div class={`drop-edge ${workbench.panelAt}`} {...dropTarget("panel")}>
+            {WHERE_NAME.panel}
+          </div>
+        </Show>
+      </div>
+    </Show>
+  );
+}
+
+/** A view's menu (a right click on its icon or tab): move it to another container. */
+function MoveMenu() {
+  const close = () => setMenu("view", null);
+  onMount(() => {
+    const away = () => close();
+    window.addEventListener("pointerdown", away);
+    window.addEventListener("blur", away);
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", away);
+      window.removeEventListener("blur", away);
+    });
+  });
+  return (
+    <Show when={menu.view}>
+      {(v) => (
+        <div class="menu" role="menu" style={{ left: `${menu.x}px`, top: `${menu.y}px` }} onPointerDown={(e) => e.stopPropagation()}>
+          <div class="menu-title">{VIEWS[v()].title}</div>
+          <For each={(["primary", "secondary", "panel"] as Where[]).filter((w) => !workbench[w].includes(v()))}>
+            {(w) => (
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setWorkbench(move(plain(), v(), w));
+                  close();
+                }}
+              >
+                Move to {WHERE_NAME[w]}
+              </button>
+            )}
+          </For>
+          <button
+            role="menuitem"
+            onClick={() => {
+              setWorkbench(defaults());
+              close();
+            }}
+          >
+            Reset View Locations
+          </button>
+        </div>
+      )}
+    </Show>
+  );
+}
+
+export default function Coder(props: { agent: () => JSX.Element }) {
   // Restored as it was left: the folders, the view, the panel, the sizes, the tabs and their cursors, and the
   // changes not saved.
   const restore = () => {
     const l = loadLayout();
     if (!l) return;
     for (const f of l.folders) setOpen(f, true);
-    if (l.view === "search" || l.view === "changes" || l.view === "files" || l.view === "outline") setView(l.view);
-    setPanelOpen(l.panel);
-    if (l.sizes) setSizes(l.sizes);
+    setWorkbenchStore(reconcile(normalize(l.workbench)));
+    if (l.sizes) setSizes({ ...sizes, ...l.sizes });
     for (const [p, c] of Object.entries(l.cursors ?? {})) cursors.set(p, c);
     for (const t of l.tabs) openFile(t);
     if (l.active && l.tabs.includes(l.active)) setActive(l.active);
@@ -1044,7 +1297,7 @@ export default function Coder(props: { agent: () => JSX.Element }) {
     if (session.connected) send({ type: "watch", files, folders });
     keepLayout();
   });
-  createEffect(on(view, keepLayout, { defer: true }));
+
   onMount(() => {
     const keys = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && e.shiftKey) {
@@ -1055,10 +1308,27 @@ export default function Coder(props: { agent: () => JSX.Element }) {
         openQuick();
       } else if (e.ctrlKey && e.key === "`") {
         e.preventDefault();
-        setPanelOpen(!panelOpen());
+        setWorkbench(toggleView(plain(), "terminal"));
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         setView("search");
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "e") {
+        e.preventDefault();
+        setView("files");
+      } else if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setWorkbench(toggle(plain(), "secondary"));
+      } else if ((e.ctrlKey || e.metaKey) && e.altKey && e.key.toLowerCase() === "i") {
+        e.preventDefault();
+        setWorkbench(toggleView(plain(), "agent"));
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setWorkbench(toggle(plain(), "primary"));
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setWorkbench(toggle(plain(), "panel"));
+      } else if (e.key === "Escape" && dragging()) {
+        setDragging(null);
       }
     };
     window.addEventListener("keydown", keys);
@@ -1068,64 +1338,54 @@ export default function Coder(props: { agent: () => JSX.Element }) {
       window.removeEventListener("focus", checkDisk);
     });
   });
+  const shown = (w: Where) => workbench.shown[w] && workbench[w].length > 0;
+  const panelSide = () => workbench.panelAt !== "bottom";
   return (
-    <div class="coder" style={{ "grid-template-columns": `${sizes.side}px 4px minmax(0, 1fr) 4px ${sizes.agent}px` }}>
-      <nav class="side" aria-label="Side bar">
-        <div class="views" role="tablist">
-          <button role="tab" aria-selected={view() === "files"} classList={{ on: view() === "files" }} onClick={() => setView("files")}>
-            Files
-          </button>
-          <button role="tab" aria-selected={view() === "search"} classList={{ on: view() === "search" }} onClick={() => setView("search")}>
-            Search
-          </button>
-          <button role="tab" aria-selected={view() === "changes"} classList={{ on: view() === "changes" }} onClick={() => setView("changes")}>
-            Changes
-          </button>
-          <button role="tab" aria-selected={view() === "outline"} classList={{ on: view() === "outline" }} onClick={() => setView("outline")}>
-            Outline
-          </button>
+    <div class="workbench" classList={{ "side-right": workbench.side === "right", dragging: !!dragging() }}>
+      <ActivityBar />
+      <Show when={shown("primary")}>
+        <div class="pane" style={{ width: `${sizes.side}px` }}>
+          <Container where="primary" agent={props.agent} />
         </div>
-        <Show when={view() === "files"}>
-          <div class="side-head">{session.root || "Project"}</div>
-          <div class="tree">
-            <Folder path="" depth={0} />
+        <Splitter dir="col" get={() => sizes.side} set={(n) => setSizes("side", n)} min={170} max={700} invert={workbench.side === "right"} />
+      </Show>
+      <div class="main" classList={{ [`panel-${workbench.panelAt}`]: true }}>
+        <div class="editor-col">
+          <Editor />
+        </div>
+        <Show when={shown("panel")}>
+          <Show
+            when={panelSide()}
+            fallback={<Splitter dir="row" get={() => sizes.term} set={(n) => setSizes("term", n)} min={80} max={900} invert />}
+          >
+            <Splitter
+              dir="col"
+              get={() => sizes.panelWidth}
+              set={(n) => setSizes("panelWidth", n)}
+              min={200}
+              max={1000}
+              invert={workbench.panelAt === "right"}
+            />
+          </Show>
+          <div class="pane" style={panelSide() ? { width: `${sizes.panelWidth}px` } : { height: `${sizes.term}px` }}>
+            <Container where="panel" agent={props.agent} />
           </div>
         </Show>
-        <Show when={view() === "search"}>
-          <SearchView />
-        </Show>
-        <Show when={view() === "changes"}>
-          <ChangesView />
-        </Show>
-        <Show when={view() === "outline"}>
-          <OutlineView />
-        </Show>
-      </nav>
-      <Splitter dir="col" get={() => sizes.side} set={(n) => setSizes("side", n)} min={140} max={600} />
+      </div>
+      <Show when={shown("secondary")}>
+        <Splitter dir="col" get={() => sizes.agent} set={(n) => setSizes("agent", n)} min={260} max={1000} invert={workbench.side === "left"} />
+        <div class="pane" style={{ width: `${sizes.agent}px` }}>
+          <Container where="secondary" agent={props.agent} />
+        </div>
+      </Show>
+      <DropEdges />
+      <MoveMenu />
       <Show when={quick.open}>
         <QuickOpen />
       </Show>
       <Show when={palette.open}>
         <Palette />
       </Show>
-      <div class="center">
-        <Editor />
-        <Show when={panel()}>
-          <Splitter dir="row" get={() => sizes.term} set={(n) => setSizes("term", n)} min={80} max={800} invert />
-        </Show>
-        <div class="panel-bar">
-          <button class="quiet small" aria-expanded={panel()} onClick={() => setPanel(!panel())}>
-            {panel() ? "▾" : "▸"} Terminal
-          </button>
-        </div>
-        <Show when={panel()}>
-          <Terminals />
-        </Show>
-      </div>
-      <Splitter dir="col" class="agent-split" get={() => sizes.agent} set={(n) => setSizes("agent", n)} min={260} max={900} invert />
-      <aside class="agent-side" aria-label="Agent">
-        {props.agent()}
-      </aside>
     </div>
   );
 }
