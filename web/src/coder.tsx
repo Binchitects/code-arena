@@ -4,13 +4,44 @@ import "@xterm/xterm/css/xterm.css";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import * as monaco from "monaco-editor/editor/editor.api";
+import "./monaco-features";
 import "monaco-editor/basic-languages/monaco.contribution";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import { For, type JSX, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { createStore, produce } from "solid-js/store";
-import { listen, send, session } from "./stream";
+import { setEditorStatus } from "./editor-status";
+import { type Symbol as OutlineSymbol, outline } from "./outline";
+import { listen, send, session, setDetail } from "./stream";
 
 (self as any).MonacoEnvironment = { getWorker: () => new EditorWorker() };
+
+const SYMBOL_KIND: Record<OutlineSymbol["kind"], monaco.languages.SymbolKind> = {
+  function: monaco.languages.SymbolKind.Function,
+  method: monaco.languages.SymbolKind.Method,
+  class: monaco.languages.SymbolKind.Class,
+  struct: monaco.languages.SymbolKind.Struct,
+  enum: monaco.languages.SymbolKind.Enum,
+  interface: monaco.languages.SymbolKind.Interface,
+  type: monaco.languages.SymbolKind.TypeParameter,
+  module: monaco.languages.SymbolKind.Module,
+  constant: monaco.languages.SymbolKind.Constant,
+  heading: monaco.languages.SymbolKind.String,
+};
+
+// The outline as Monaco's symbols: Go to Symbol (Ctrl+Shift+O) and the breadcrumbs read them.
+for (const lang of ["rust", "typescript", "javascript", "python", "go", "java", "csharp", "cpp", "c", "kotlin", "swift", "markdown"]) {
+  monaco.languages.registerDocumentSymbolProvider(lang, {
+    provideDocumentSymbols(model) {
+      return outline(model.getValue(), lang).map((s) => {
+        const range = new monaco.Range(s.line, 1, s.line, model.getLineMaxColumn(s.line));
+        return { name: s.name, detail: "", kind: SYMBOL_KIND[s.kind], tags: [], range, selectionRange: range };
+      });
+    },
+  });
+}
+
+const [symbols, setSymbols] = createSignal<OutlineSymbol[]>([]);
+const [cursorLine, setCursorLine] = createSignal(1);
 
 type Entry = { name: string; dir: boolean; link: boolean };
 type Tab = { path: string; dirty: boolean; error?: string; diff?: boolean; onDisk?: "changed" | "gone" };
@@ -21,7 +52,7 @@ const [tree, setTree] = createStore<Record<string, Entry[] | { error: string }>>
 const [open, setOpen] = createStore<Record<string, boolean>>({ "": true });
 const [tabs, setTabs] = createStore<Tab[]>([]);
 const [active, setActive] = createSignal("");
-const [view, setView] = createSignal<"files" | "search" | "changes">("files");
+const [view, setView] = createSignal<"files" | "search" | "changes" | "outline">("files");
 const [found, setFound] = createStore<{ query: string; hits: Hit[]; files: number; more: boolean; error?: string; busy: boolean }>(
   { query: "", hits: [], files: 0, more: false, busy: false },
 );
@@ -368,6 +399,42 @@ function Editor() {
       if (active()) save(active());
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => openQuick());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => setPalette({ open: true, text: "", at: 0 }));
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyF, () => setView("search"));
+    const report = () => {
+      const model = editor?.getModel();
+      if (!model) {
+        setEditorStatus("shown", false);
+        return;
+      }
+      const o = model.getOptions();
+      const pos = editor?.getPosition();
+      setEditorStatus({
+        shown: true,
+        line: pos?.lineNumber ?? 1,
+        column: pos?.column ?? 1,
+        language: model.getLanguageId(),
+        indent: o.insertSpaces ? `Spaces: ${o.tabSize}` : `Tab size: ${o.tabSize}`,
+        eol: model.getEOL() === "\r\n" ? "CRLF" : "LF",
+      });
+      setCursorLine(pos?.lineNumber ?? 1);
+    };
+    let outlineTimer = 0;
+    const reoutline = () => {
+      clearTimeout(outlineTimer);
+      outlineTimer = window.setTimeout(() => {
+        const model = editor?.getModel();
+        setSymbols(model ? outline(model.getValue(), model.getLanguageId()) : []);
+      }, 300);
+    };
+    editor.onDidChangeModel(() => {
+      report();
+      reoutline();
+    });
+    editor.onDidChangeModelContent(reoutline);
+    editor.onDidChangeModelOptions(report);
+    editor.onDidChangeCursorPosition(report);
+    onCleanup(() => setEditorStatus("shown", false));
     editor.onDidChangeCursorPosition((e) => {
       const path = active();
       if (path && !path.startsWith("Δ ")) {
@@ -643,6 +710,157 @@ function SearchView() {
   );
 }
 
+function OutlineView() {
+  const current = () => {
+    let at = -1;
+    symbols().forEach((s, i) => {
+      if (s.line <= cursorLine()) at = i;
+    });
+    return at;
+  };
+  return (
+    <div class="outline-view">
+      <Show when={symbols().length} fallback={<div class="muted small-pad">No outline for this file.</div>}>
+        <For each={symbols()}>
+          {(s, i) => (
+            <button
+              class="tree-row"
+              classList={{ active: i() === current() }}
+              style={{ "padding-left": `${s.depth * 12 + 8}px` }}
+              onClick={() => {
+                editor?.setPosition({ lineNumber: s.line, column: 1 });
+                editor?.revealLineInCenter(s.line);
+                editor?.focus();
+              }}
+            >
+              <span class={`sym ${s.kind}`}>{s.kind.slice(0, 2)}</span>
+              <span class="name">{s.name}</span>
+            </button>
+          )}
+        </For>
+      </Show>
+    </div>
+  );
+}
+
+type Command = { id: string; label: string; keys?: string; run: () => void };
+
+/** What the palette offers: Coder mode's, the editor's own, and the agent's. */
+function commands(): Command[] {
+  const ed = (id: string) => () => {
+    editor?.focus();
+    editor?.trigger("palette", id, null);
+  };
+  const list: Command[] = [
+    { id: "file.save", label: "File: Save", keys: "Ctrl+S", run: () => active() && save(active()) },
+    { id: "file.saveAll", label: "File: Save All", run: () => tabs.filter((t) => t.dirty && !t.diff).forEach((t) => save(t.path)) },
+    { id: "file.close", label: "View: Close Editor", run: () => active() && closeTab(active()) },
+    { id: "go.file", label: "Go to File…", keys: "Ctrl+P", run: openQuick },
+    { id: "go.symbol", label: "Go to Symbol in Editor…", keys: "Ctrl+Shift+O", run: ed("editor.action.quickOutline") },
+    { id: "go.line", label: "Go to Line…", keys: "Ctrl+G", run: ed("editor.action.gotoLine") },
+    { id: "find", label: "Find", keys: "Ctrl+F", run: ed("actions.find") },
+    { id: "replace", label: "Replace", keys: "Ctrl+H", run: ed("editor.action.startFindReplaceAction") },
+    { id: "fold.all", label: "Fold All", run: ed("editor.foldAll") },
+    { id: "unfold.all", label: "Unfold All", run: ed("editor.unfoldAll") },
+    { id: "comment", label: "Toggle Line Comment", keys: "Ctrl+/", run: ed("editor.action.commentLine") },
+    { id: "view.files", label: "View: Show Files", run: () => setView("files") },
+    { id: "view.search", label: "View: Search the Files", keys: "Ctrl+Shift+F", run: () => setView("search") },
+    { id: "view.changes", label: "View: Show the Agent's Changes", run: () => setView("changes") },
+    { id: "view.outline", label: "View: Show the Outline", run: () => setView("outline") },
+    { id: "view.terminal", label: "View: Toggle Terminal", keys: "Ctrl+`", run: () => setPanelOpen(!panelOpen()) },
+    {
+      id: "editor.minimap",
+      label: "View: Toggle Minimap",
+      run: () => editor?.updateOptions({ minimap: { enabled: !editor.getOption(monaco.editor.EditorOption.minimap).enabled } }),
+    },
+    {
+      id: "editor.wrap",
+      label: "View: Toggle Word Wrap",
+      keys: "Alt+Z",
+      run: () => editor?.updateOptions({ wordWrap: editor.getOption(monaco.editor.EditorOption.wordWrap) === "on" ? "off" : "on" }),
+    },
+    { id: "agent.context", label: "Agent: Show the Context", run: () => (setDetail("open", true), send({ type: "context" })) },
+    { id: "agent.compact", label: "Agent: Compact Now", run: () => send({ type: "compact" }) },
+    { id: "agent.stop", label: "Agent: Stop the Turn", keys: "Esc", run: () => send({ type: "stop" }) },
+  ];
+  for (const m of ["ask", "auto-edit", "plan", "yolo"]) list.push({ id: `mode.${m}`, label: `Agent: Mode ${m}`, run: () => send({ type: "mode", mode: m }) });
+  return list;
+}
+
+const RECENT_KEY = "code-arena.palette.recent";
+
+function recent(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+const [palette, setPalette] = createStore({ open: false, text: "", at: 0 });
+
+function Palette() {
+  let input!: HTMLInputElement;
+  const list = () => {
+    const all = commands();
+    const r = recent();
+    if (!palette.text.trim()) {
+      return [...r.map((id) => all.find((c) => c.id === id)).filter((c): c is Command => !!c), ...all.filter((c) => !r.includes(c.id))];
+    }
+    return all
+      .map((c) => ({ c, s: score(c.label, palette.text) }))
+      .filter((x) => x.s >= 0)
+      .sort((a, b) => b.s - a.s)
+      .map((x) => x.c);
+  };
+  const run = (c?: Command) => {
+    setPalette("open", false);
+    if (!c) return;
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify([c.id, ...recent().filter((x) => x !== c.id)].slice(0, 8)));
+    } catch {
+      // Not kept: the palette lists by name only.
+    }
+    queueMicrotask(c.run);
+  };
+  onMount(() => input.focus());
+  return (
+    <div class="quick-back" onClick={() => setPalette("open", false)}>
+      <div class="quick" role="dialog" aria-label="Commands" onClick={(e) => e.stopPropagation()}>
+        <input
+          ref={input}
+          placeholder="Type a command"
+          value={palette.text}
+          aria-label="Command"
+          onInput={(e) => setPalette({ text: e.currentTarget.value, at: 0 })}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setPalette("open", false);
+            else if (e.key === "ArrowDown") setPalette("at", Math.min(palette.at + 1, list().length - 1));
+            else if (e.key === "ArrowUp") setPalette("at", Math.max(palette.at - 1, 0));
+            else if (e.key === "Enter") run(list()[palette.at]);
+            else return;
+            e.preventDefault();
+          }}
+        />
+        <ul class="quick-list">
+          <For each={list()}>
+            {(c, i) => (
+              <li>
+                <button classList={{ at: i() === palette.at }} onClick={() => run(c)}>
+                  <span class="name">{c.label}</span>
+                  <Show when={c.keys}>
+                    <span class="keys">{c.keys}</span>
+                  </Show>
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function ChangesView() {
   onMount(() => send({ type: "changes" }));
   return (
@@ -786,7 +1004,7 @@ export default function Coder(props: { agent: () => JSX.Element }) {
     const l = loadLayout();
     if (!l) return;
     for (const f of l.folders) setOpen(f, true);
-    if (l.view === "search" || l.view === "changes" || l.view === "files") setView(l.view);
+    if (l.view === "search" || l.view === "changes" || l.view === "files" || l.view === "outline") setView(l.view);
     setPanelOpen(l.panel);
     if (l.sizes) setSizes(l.sizes);
     for (const [p, c] of Object.entries(l.cursors ?? {})) cursors.set(p, c);
@@ -816,9 +1034,15 @@ export default function Coder(props: { agent: () => JSX.Element }) {
   createEffect(on(view, keepLayout, { defer: true }));
   onMount(() => {
     const keys = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && !e.shiftKey) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && e.shiftKey) {
+        e.preventDefault();
+        setPalette({ open: true, text: "", at: 0 });
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") {
         e.preventDefault();
         openQuick();
+      } else if (e.ctrlKey && e.key === "`") {
+        e.preventDefault();
+        setPanelOpen(!panelOpen());
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") {
         e.preventDefault();
         setView("search");
@@ -844,6 +1068,9 @@ export default function Coder(props: { agent: () => JSX.Element }) {
           <button role="tab" aria-selected={view() === "changes"} classList={{ on: view() === "changes" }} onClick={() => setView("changes")}>
             Changes
           </button>
+          <button role="tab" aria-selected={view() === "outline"} classList={{ on: view() === "outline" }} onClick={() => setView("outline")}>
+            Outline
+          </button>
         </div>
         <Show when={view() === "files"}>
           <div class="side-head">{session.root || "Project"}</div>
@@ -857,10 +1084,16 @@ export default function Coder(props: { agent: () => JSX.Element }) {
         <Show when={view() === "changes"}>
           <ChangesView />
         </Show>
+        <Show when={view() === "outline"}>
+          <OutlineView />
+        </Show>
       </nav>
       <Splitter dir="col" get={() => sizes.side} set={(n) => setSizes("side", n)} min={140} max={600} />
       <Show when={quick.open}>
         <QuickOpen />
+      </Show>
+      <Show when={palette.open}>
+        <Palette />
       </Show>
       <div class="center">
         <Editor />

@@ -32,6 +32,7 @@ export type Session = {
   session: string;
   root: string;
   terminals: boolean;
+  branch?: string | null;
   edition: string;
   version: string;
   lastTurn?: { ms: number; prompt: number; cached: number; completion: number };
@@ -119,6 +120,7 @@ function onMessage(m: any): void {
         folder: m.folder,
         session: m.session,
         root: m.root ?? "",
+        branch: m.branch,
         terminals: !!m.terminals,
         edition: m.edition,
         version: m.version,
@@ -130,7 +132,7 @@ function onMessage(m: any): void {
       setItems(fromStored(m.messages ?? []));
       break;
     case "status":
-      setSession({ model: m.model, mode: m.mode, running: m.running, thinking: m.thinking, context: m.context });
+      setSession({ model: m.model, mode: m.mode, running: m.running, thinking: m.thinking, context: m.context, branch: m.branch });
       if (detail.open) send({ type: "context" });
       break;
     case "tasks":

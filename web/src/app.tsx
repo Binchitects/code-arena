@@ -2,6 +2,7 @@
 // the questions the agent asks are cards in the thread.
 import { For, Match, Show, Suspense, Switch, createEffect, createSignal, lazy, onMount } from "solid-js";
 import { produce } from "solid-js/store";
+import { editorStatus } from "./editor-status";
 import { type Item, type Tool, detail, items, send, session, setDetail, setItems, tasks } from "./stream";
 
 const MODES = ["ask", "auto-edit", "plan", "yolo"];
@@ -371,6 +372,20 @@ function Status() {
       </label>
       <Ring />
       <span class="folder" title={session.folder}>{session.folder.split("/").pop()}</span>
+      <Show when={session.branch}>
+        {(b) => <span title="The git branch">⎇ {b()}</span>}
+      </Show>
+      <Show when={editorStatus.shown}>
+        <span class="editor-status">
+          <span>
+            Ln {editorStatus.line}, Col {editorStatus.column}
+          </span>
+          <span>{editorStatus.indent}</span>
+          <span>UTF-8</span>
+          <span>{editorStatus.eol}</span>
+          <span>{editorStatus.language}</span>
+        </span>
+      </Show>
       <Show when={session.lastTurn}>
         {(t) => (
           <span class="last">

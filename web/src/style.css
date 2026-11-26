@@ -1078,3 +1078,41 @@ button.small {
   color: var(--muted);
   padding: 2px 4px;
 }
+
+.editor-status {
+  display: inline-flex;
+  gap: 12px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.editor-status + .last {
+  margin-left: 12px;
+}
+
+.keys {
+  float: right;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sym {
+  font: 10px var(--mono);
+  width: 18px;
+  flex: none;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.sym.function,
+.sym.method {
+  color: #b180d7;
+}
+
+.sym.class,
+.sym.struct,
+.sym.interface,
+.sym.enum,
+.sym.type {
+  color: #e2a03f;
+}

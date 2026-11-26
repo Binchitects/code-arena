@@ -28,9 +28,9 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: Types and build
+      - name: Types, tests and build
         working-directory: web
-        run: npm ci && npm run build
+        run: npm ci && npm test && npm run build
 
   lint:
     name: Lint

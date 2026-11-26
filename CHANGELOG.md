@@ -25,6 +25,17 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   as a diff of before and now. Ctrl+P finds a file by the letters of its name. Back in the
   window, open files changed on disk are read again; one with changes of yours asks first (Take
   the disk's, Keep mine), and one gone says so.
+- Monaco's own editor features in Coder mode: Find and Replace (Ctrl+F, Ctrl+H), folding, Go to
+  Line (Ctrl+G), comments (Ctrl+/), hover, sticky scroll, multiple cursors and the rest of what
+  VS Code's editor does without a language server.
+- An outline of the file shown, for Rust, TypeScript and JavaScript, Python, Go, Java, C#, C and
+  C++, Kotlin, Swift and Markdown: the Outline view (the symbol at the cursor marked), Go to
+  Symbol (Ctrl+Shift+O) and the breadcrumbs. It reads by pattern, line by line.
+- The command palette (Ctrl+Shift+P): saving, going to a file, a symbol or a line, finding,
+  folding, the views, the terminal (Ctrl+`), minimap and word wrap, and the agent's mode,
+  context, compaction and Stop; the ones used last come first.
+- The status line in Coder mode: the git branch, the cursor's line and column, indentation, the
+  encoding, the line ends and the language.
 - Above the box, while there is something to show: the plan as a bar (its title, how many steps
   are done; it opens on the steps and their marks), the goal being worked on (and how many wait
   their turn), and each job still running, with Stop. They change as the turn goes.

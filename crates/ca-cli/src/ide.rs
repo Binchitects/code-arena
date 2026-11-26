@@ -148,6 +148,7 @@ fn state(p: &Prepared, app: &App, models: &[String], running: bool) -> Value {
         "folder": p.folder,
         "root": p.agent.ctx.workspace.root().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
         "terminals": cfg!(unix),
+        "branch": ca_agent::instructions::git_branch(p.agent.ctx.workspace.root()),
         "model": p.agent.model,
         "mode": p.agent.policy.mode.name(),
         "thinking": thinking_name(&p.agent.thinking),
@@ -197,7 +198,8 @@ fn context_detail(p: &Prepared) -> Value {
 /// What the status line shows, without the thread (after a turn, or a change: the page keeps its thread).
 fn status(p: &Prepared) -> Value {
     json!({"type": "status", "model": p.agent.model, "mode": p.agent.policy.mode.name(),
-           "thinking": thinking_name(&p.agent.thinking), "context": context(p), "running": false})
+           "thinking": thinking_name(&p.agent.thinking), "context": context(p), "running": false,
+           "branch": ca_agent::instructions::git_branch(p.agent.ctx.workspace.root())})
 }
 
 /// A browser in app mode (a window of its own, its own profile), else the system's way to open an address.

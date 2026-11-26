@@ -17,7 +17,7 @@ test:
 
 # The IDE's page (web/dist), built into the binary: npm ci when its packages are not there yet.
 web:
-	cd web && { [ -d node_modules ] || npm ci; } && npm run build
+	cd web && { [ -d node_modules ] || npm ci; } && npm test && npm run build
 
 build: web
 	$(CARGO) build --release --locked
