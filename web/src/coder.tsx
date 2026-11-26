@@ -453,6 +453,8 @@ function Editor() {
 }
 
 let nextTerm = 1;
+/** What a terminal taken up after a reload showed: drawn again before what comes next. */
+const screens = new Map<number, string>();
 
 function Terminals() {
   const [ids, setIds] = createSignal<number[]>([]);
@@ -462,22 +464,49 @@ function Terminals() {
     setIds([...ids(), id]);
     setShown(id);
   };
-  // The first terminal opens once Code Arena says it has terminals (its state may come after the panel).
-  let first = true;
+  // Terminals still running (the page was reloaded) are taken up with their screens; else one is opened, once
+  // Code Arena says it has terminals.
+  let asked = false;
   createEffect(() => {
-    if (session.terminals && first) {
-      first = false;
-      add();
+    if (session.connected && session.terminals && !asked) {
+      asked = true;
+      send({ type: "terms" });
     }
   });
+  const stop = listen((m) => {
+    if (m.type !== "terms") return;
+    stop();
+    const running: { id: number; screen: string }[] = m.terms ?? [];
+    for (const t of running) screens.set(t.id, t.screen);
+    if (running.length) {
+      nextTerm = Math.max(nextTerm, ...running.map((t) => t.id + 1));
+      setIds(running.map((t) => t.id));
+      setShown(running[running.length - 1].id);
+    } else add();
+  });
+  onCleanup(stop);
   return (
     <div class="terminals" style={{ height: `${sizes.term}px` }}>
       <div class="term-tabs">
         <For each={ids()}>
           {(id) => (
-            <button class="term-tab" classList={{ active: shown() === id }} onClick={() => setShown(id)}>
-              Terminal {id}
-            </button>
+            <span class="term-tab" classList={{ active: shown() === id }}>
+              <button class="term-name" onClick={() => setShown(id)}>
+                Terminal {id}
+              </button>
+              <button
+                class="term-close"
+                aria-label={`Close terminal ${id}`}
+                onClick={() => {
+                  send({ type: "term_close", id });
+                  const rest = ids().filter((x) => x !== id);
+                  setIds(rest);
+                  if (shown() === id) setShown(rest[rest.length - 1] ?? 0);
+                }}
+              >
+                ×
+              </button>
+            </span>
           )}
         </For>
         <Show when={session.terminals} fallback={<span class="muted">Terminals are not on Windows yet.</span>}>
@@ -517,7 +546,14 @@ function Term(props: { id: number; visible: boolean; onExit: () => void }) {
     term.loadAddon(fit);
     term.open(host);
     fit.fit();
-    send({ type: "term_open", id: props.id, cols: term.cols, rows: term.rows });
+    const kept = screens.get(props.id);
+    if (kept !== undefined) {
+      screens.delete(props.id);
+      term.write(kept);
+      send({ type: "term_resize", id: props.id, cols: term.cols, rows: term.rows });
+    } else {
+      send({ type: "term_open", id: props.id, cols: term.cols, rows: term.rows });
+    }
     term.onData((data) => send({ type: "term_in", id: props.id, data }));
     term.onResize(({ cols, rows }) => send({ type: "term_resize", id: props.id, cols, rows }));
     const stop = listen((m) => {
@@ -532,10 +568,10 @@ function Term(props: { id: number; visible: boolean; onExit: () => void }) {
       if (host.offsetParent) fit.fit();
     });
     ro.observe(host);
+    // Leaving Coder mode (or the page) leaves the terminal running: it is taken up again on return.
     onCleanup(() => {
       stop();
       ro.disconnect();
-      send({ type: "term_close", id: props.id });
       term.dispose();
     });
   });

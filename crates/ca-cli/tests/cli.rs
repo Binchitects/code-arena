@@ -1753,7 +1753,9 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
             break;
         }
     }
-    let kinds: Vec<&str> = seen.iter().filter_map(|v| v["type"].as_str()).collect();
+    // The session's tasks come on connecting and after each turn; the turn's own messages in their order.
+    assert!(seen.iter().any(|v| v["type"] == "tasks" && v["jobs"].is_array()), "{seen:?}");
+    let kinds: Vec<&str> = seen.iter().filter_map(|v| v["type"].as_str()).filter(|k| *k != "tasks").collect();
     assert!(kinds.starts_with(&["user", "turn_start"]), "{kinds:?}");
     let text: String = seen.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
     assert_eq!(text, "Hello from the IDE.");

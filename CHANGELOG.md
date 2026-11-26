@@ -25,6 +25,12 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   as a diff of before and now. Ctrl+P finds a file by the letters of its name. Back in the
   window, open files changed on disk are read again; one with changes of yours asks first (Take
   the disk's, Keep mine), and one gone says so.
+- Above the box, while there is something to show: the plan as a bar (its title, how many steps
+  are done; it opens on the steps and their marks), the goal being worked on (and how many wait
+  their turn), and each job still running, with Stop. They change as the turn goes.
+- The IDE's terminals outlive the page: a reload, or going to Agent mode and back, takes up the
+  same terminals and draws their last 256 KB again. A terminal closes with its tab's ×, or when
+  its shell ends.
 - What Coder mode shows is watched: an open file changed from outside shows at once (one with
   changes of yours asks first), and an open folder lists a file made or removed in it. Only what
   is on screen is looked at, once a second, so it costs little whatever the project's size.

@@ -974,3 +974,107 @@ button.small {
 .quick-list button.at {
   background: var(--user);
 }
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.bars:empty {
+  display: none;
+}
+
+.bar {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.bar-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 6px 10px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bar-line.static {
+  cursor: default;
+}
+
+.progress {
+  margin-left: auto;
+  width: 80px;
+  height: 4px;
+  background: var(--code);
+  border-radius: 2px;
+  overflow: hidden;
+  flex: none;
+}
+
+.progress span {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.steps {
+  margin: 0;
+  padding: 0 12px 8px 34px;
+  list-style: none;
+}
+
+.steps li {
+  margin: 3px 0;
+}
+
+.steps .mark {
+  display: inline-block;
+  width: 16px;
+  color: var(--muted);
+}
+
+.steps li.done {
+  color: var(--muted);
+}
+
+.steps li.done .mark {
+  color: var(--ok);
+}
+
+.steps li.doing .mark {
+  color: var(--accent);
+}
+
+.steps li.blocked .mark {
+  color: var(--danger);
+}
+
+.term-tab {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.term-name,
+.term-close {
+  border: 0;
+  background: none;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.term-close {
+  color: var(--muted);
+  padding: 2px 4px;
+}

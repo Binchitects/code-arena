@@ -58,6 +58,17 @@ export const [items, setItems] = createStore<Item[]>([]);
 
 export const [detail, setDetail] = createStore<{ open: boolean; data?: Detail }>({ open: false });
 
+export type PlanStep = { number: number; title: string; status: string; check?: string };
+export type Tasks = {
+  plan?: { title: string; steps: PlanStep[]; review?: string } | null;
+  goal?: { text: string; status: string; turns: number } | null;
+  waiting: number;
+  jobs: { id: number; command: string; running: boolean; exit?: number | null; background: boolean }[];
+};
+
+/** What the session works through: its plan, its goal and its jobs, as Code Arena last said. */
+export const [tasks, setTasks] = createStore<Tasks>({ waiting: 0, jobs: [] });
+
 let socket: WebSocket | undefined;
 let wait = 500;
 
@@ -121,6 +132,9 @@ function onMessage(m: any): void {
     case "status":
       setSession({ model: m.model, mode: m.mode, running: m.running, thinking: m.thinking, context: m.context });
       if (detail.open) send({ type: "context" });
+      break;
+    case "tasks":
+      setTasks({ plan: m.plan ?? null, goal: m.goal ?? null, waiting: m.waiting ?? 0, jobs: m.jobs ?? [] });
       break;
     case "context_detail":
       setDetail("data", m);

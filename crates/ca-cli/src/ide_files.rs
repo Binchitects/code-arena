@@ -20,6 +20,24 @@ const MOST_ENTRIES: usize = 5000;
 struct Term {
     pty: ca_pty::Pty,
     writer: Box<dyn Write + Send>,
+    /// Its last output, for a page that comes back (a reload) to draw it again.
+    screen: Arc<Mutex<String>>,
+}
+
+/// How much of a terminal's output is kept for a page that comes back.
+const SCREEN_KEPT: usize = 256 * 1024;
+
+fn keep_screen(screen: &Mutex<String>, text: &str) {
+    if let Ok(mut s) = screen.lock() {
+        s.push_str(text);
+        if s.len() > SCREEN_KEPT {
+            let mut cut = s.len() - SCREEN_KEPT;
+            while !s.is_char_boundary(cut) {
+                cut += 1;
+            }
+            s.drain(..cut);
+        }
+    }
 }
 
 /// What Coder mode needs, apart from the session: the workspace, the terminals, the stream.
@@ -177,6 +195,21 @@ impl Side {
                         .pty
                         .resize(m["cols"].as_u64().unwrap_or(80) as u16, m["rows"].as_u64().unwrap_or(24) as u16);
                 }
+            }
+            // The terminals running, with what they last showed: a page that comes back takes them up.
+            "terms" => {
+                let list: Vec<Value> = self
+                    .terms
+                    .lock()
+                    .map(|t| {
+                        let mut ids: Vec<&u64> = t.keys().collect();
+                        ids.sort();
+                        ids.into_iter()
+                            .map(|id| json!({"id": id, "screen": t[id].screen.lock().map(|s| s.clone()).unwrap_or_default()}))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                send(&self.out, json!({"type": "terms", "terms": list}));
             }
             "term_close" => {
                 let id = m["id"].as_u64().unwrap_or(0);
@@ -452,8 +485,13 @@ impl Side {
             send(&self.out, json!({"type": "term_exit", "id": id, "error": "the terminal could not be read"}));
             return;
         };
+        let screen: Arc<Mutex<String>> = Arc::default();
         if let Ok(mut t) = self.terms.lock() {
-            t.insert(id, Term { pty, writer });
+            if t.contains_key(&id) {
+                // Already running (the page came back and asked again): left as it is.
+                return;
+            }
+            t.insert(id, Term { pty, writer, screen: screen.clone() });
         }
         let out = self.out.clone();
         let terms = self.terms.clone();
@@ -466,6 +504,7 @@ impl Side {
                     Ok(n) => {
                         let text = ca_pty::utf8_text(&mut carry, &buf[..n]);
                         if !text.is_empty() {
+                            keep_screen(&screen, &text);
                             send(&out, json!({"type": "term_out", "id": id, "data": text}));
                         }
                     }
@@ -746,5 +785,39 @@ mod tests {
             }
         }
         assert!(text.contains("hello-42"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_terminal_outlives_its_page_and_shows_its_screen_again() {
+        let (_d, s, mut rx) = side();
+        s.handle(&json!({"type": "term_open", "id": 7, "cols": 80, "rows": 24}));
+        s.handle(&json!({"type": "term_in", "id": 7, "data": "echo kept-$((2*21))\n"}));
+        loop {
+            let v: Value = serde_json::from_str(&rx.blocking_recv().expect("message")).expect("json");
+            if v["type"] == "term_out" && v["data"].as_str().is_some_and(|d| d.contains("kept-42")) {
+                break;
+            }
+        }
+        // The page goes (a reload) and comes back: the terminal is still there, with its screen.
+        s.handle(&json!({"type": "terms"}));
+        let listed = loop {
+            let v: Value = serde_json::from_str(&rx.blocking_recv().expect("message")).expect("json");
+            if v["type"] == "terms" {
+                break v;
+            }
+        };
+        assert_eq!(listed["terms"][0]["id"], 7);
+        assert!(listed["terms"][0]["screen"].as_str().is_some_and(|t| t.contains("kept-42")), "{listed}");
+        s.handle(&json!({"type": "term_close", "id": 7}));
+    }
+
+    #[test]
+    fn a_kept_screen_holds_its_last_part_whole() {
+        let screen = Mutex::new(String::new());
+        keep_screen(&screen, &"é".repeat(SCREEN_KEPT));
+        keep_screen(&screen, "end");
+        let s = screen.lock().expect("lock");
+        assert!(s.len() <= SCREEN_KEPT && s.ends_with("end"));
     }
 }

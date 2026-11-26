@@ -2,7 +2,7 @@
 // the questions the agent asks are cards in the thread.
 import { For, Match, Show, Suspense, Switch, createEffect, createSignal, lazy, onMount } from "solid-js";
 import { produce } from "solid-js/store";
-import { type Item, type Tool, detail, items, send, session, setDetail, setItems } from "./stream";
+import { type Item, type Tool, detail, items, send, session, setDetail, setItems, tasks } from "./stream";
 
 const MODES = ["ask", "auto-edit", "plan", "yolo"];
 const THINKING = ["default", "off", "low", "medium", "high", "xhigh"];
@@ -435,6 +435,74 @@ function Thread() {
   );
 }
 
+const STEP_MARK: Record<string, string> = { done: "✓", doing: "◐", blocked: "✗", todo: "○" };
+
+/** Slim bars above the box while there is something to show: the plan, the goal, the jobs. */
+function Bars() {
+  const [planOpen, setPlanOpen] = createSignal(false);
+  const done = () => tasks.plan?.steps.filter((s) => s.status === "done").length ?? 0;
+  const running = () => tasks.jobs.filter((j) => j.running);
+  return (
+    <div class="bars">
+      <Show when={tasks.plan}>
+        {(plan) => (
+          <div class="bar">
+            <button class="bar-line" aria-expanded={planOpen()} onClick={() => setPlanOpen(!planOpen())}>
+              <span class="chevron">{planOpen() ? "▾" : "▸"}</span>
+              <strong>Plan</strong> {plan().title}
+              <span class="muted">
+                {" "}
+                · {done()} of {plan().steps.length} done{plan().review === "proposed" ? " · waiting for your review" : ""}
+              </span>
+              <span class="progress" aria-hidden="true">
+                <span style={{ width: `${(100 * done()) / Math.max(1, plan().steps.length)}%` }} />
+              </span>
+            </button>
+            <Show when={planOpen()}>
+              <ol class="steps">
+                <For each={plan().steps}>
+                  {(s) => (
+                    <li classList={{ [s.status]: true }}>
+                      <span class="mark">{STEP_MARK[s.status] ?? "○"}</span> {s.title}
+                    </li>
+                  )}
+                </For>
+              </ol>
+            </Show>
+          </div>
+        )}
+      </Show>
+      <Show when={tasks.goal}>
+        {(g) => (
+          <div class="bar">
+            <div class="bar-line static">
+              <strong>Goal</strong> {g().text}
+              <span class="muted">
+                {" "}
+                · {g().status}, {g().turns} turn{g().turns === 1 ? "" : "s"}
+                {tasks.waiting ? ` · ${tasks.waiting} more waiting` : ""}
+              </span>
+            </div>
+          </div>
+        )}
+      </Show>
+      <For each={running()}>
+        {(j) => (
+          <div class="bar">
+            <div class="bar-line static">
+              <span class="spinner" /> <strong>Job {j.id}</strong> <code class="subject">{j.command}</code>
+              <span class="grow" />
+              <button class="small" onClick={() => send({ type: "stop_job", id: j.id })}>
+                Stop
+              </button>
+            </div>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
 /** The agent: its thread, then the Context panel when open and the box. */
 function Agent() {
   return (
@@ -442,6 +510,7 @@ function Agent() {
       <Thread />
       <div class="bottom">
         <div class="column">
+          <Bars />
           <Show when={detail.open}>
             <ContextPanel />
           </Show>

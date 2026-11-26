@@ -45,9 +45,44 @@ impl Approver for PageApprover {
     }
 }
 
+/// What the session is working through: its plan, its goal, its jobs (the bars above the box).
+#[derive(Clone)]
+struct Tasks {
+    plan: Arc<ca_tools::plan::PlanBook>,
+    goals: Arc<ca_agent::goal::GoalBook>,
+    jobs: Option<Arc<ca_tools::jobs::Jobs>>,
+}
+
+impl Tasks {
+    fn of(p: &Prepared) -> Tasks {
+        Tasks { plan: p.agent.ctx.plan.clone(), goals: p.goals.clone(), jobs: p.agent.ctx.jobs.clone() }
+    }
+
+    fn said(&self) -> Value {
+        let plan = self.plan.get();
+        let goals = self.goals.get();
+        let jobs: Vec<Value> = self
+            .jobs
+            .as_ref()
+            .map(|j| j.list())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|j| json!({"id": j.id, "command": j.command, "running": j.running, "exit": j.exit, "background": j.background}))
+            .collect();
+        json!({
+            "type": "tasks",
+            "plan": if plan.steps.is_empty() { Value::Null } else { serde_json::to_value(&plan).unwrap_or(Value::Null) },
+            "goal": goals.current.as_ref().map(|g| json!({"text": g.text, "status": g.status, "turns": g.turns})),
+            "waiting": goals.next.len(),
+            "jobs": jobs,
+        })
+    }
+}
+
 /// What the turn does, as the page reads it.
 struct PageEvents {
     out: broadcast::Sender<String>,
+    tasks: Option<Tasks>,
 }
 
 impl Events for PageEvents {
@@ -70,6 +105,12 @@ impl Events for PageEvents {
             &self.out,
             json!({"type": "tool_end", "name": name, "subject": subject, "ok": !output.is_error, "text": text, "cut": cut}),
         );
+        // The plan, a goal's check or a job changed with it: the bars are told at once.
+        if matches!(name, "plan" | "goal_check" | "run_shell" | "command_output" | "stop_command")
+            && let Some(t) = &self.tasks
+        {
+            send(&self.out, t.said());
+        }
     }
     fn step_end(&mut self) {
         send(&self.out, json!({"type": "step_end"}));
@@ -280,7 +321,16 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             continue;
         }
         match msg["type"].as_str().unwrap_or("") {
-            "hello" | "state" => send(&out, state(&p, app, &models, false)),
+            "hello" | "state" => {
+                send(&out, state(&p, app, &models, false));
+                send(&out, Tasks::of(&p).said());
+            }
+            "stop_job" => {
+                if let Some(j) = &p.agent.ctx.jobs {
+                    j.stop(msg["id"].as_u64().unwrap_or(0) as u32);
+                }
+                send(&out, Tasks::of(&p).said());
+            }
             "model" => {
                 if let Some(m) = msg["model"].as_str().filter(|m| !m.is_empty()) {
                     p.agent.model = m.to_string();
@@ -297,7 +347,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             }
             "context" => send(&out, context_detail(&p)),
             "compact" => {
-                let mut events = PageEvents { out: out.clone() };
+                let mut events = PageEvents { out: out.clone(), tasks: None };
                 let said = match p.agent.compact(&mut events, true).await {
                     Ok(Some(_)) => "Compacted: the model reads a summary of the earlier part from now on.".to_string(),
                     Ok(None) => "Nothing older to summarize.".to_string(),
@@ -391,7 +441,8 @@ async fn turn(
     let started = std::time::Instant::now();
     let jobs = p.agent.ctx.jobs.clone();
     let skip = p.agent.skip.clone();
-    let mut events = PageEvents { out: out.clone() };
+    let tasks = Tasks::of(p);
+    let mut events = PageEvents { out: out.clone(), tasks: Some(tasks.clone()) };
     let result = {
         let running = p.agent.turn(&message, &mut events);
         tokio::pin!(running);
@@ -425,7 +476,16 @@ async fn turn(
                             send(out, json!({"type": "queued", "text": t}));
                         }
                     }
-                    "hello" | "state" => send(out, json!({"type": "busy"})),
+                    "hello" | "state" => {
+                        send(out, json!({"type": "busy"}));
+                        send(out, tasks.said());
+                    }
+                    "stop_job" => {
+                        if let Some(j) = &tasks.jobs {
+                            j.stop(m["id"].as_u64().unwrap_or(0) as u32);
+                        }
+                        send(out, tasks.said());
+                    }
                     "context" => {}
                     _ => {}
                 } },
@@ -435,6 +495,7 @@ async fn turn(
     if let Ok(mut g) = pending.lock() {
         g.clear();
     }
+    send(out, tasks.said());
     let ms = started.elapsed().as_millis() as u64;
     match result {
         Some(Ok(o)) => send(
