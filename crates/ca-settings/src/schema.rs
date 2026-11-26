@@ -310,6 +310,16 @@ pub static HOOKS: Setting = Setting {
     section: "Hooks",
 };
 
+pub static PLUGINS: Setting = Setting {
+    key: "plugins.enabled",
+    kind: Kind::StringList,
+    default: "[]",
+    description: "The plugins in use, by name (code-arena plugin list shows those installed): their commands, sub-agents, skills, hooks and MCP servers. A project's settings may enable more of those installed.",
+    scope: Scope::User,
+    env: None,
+    section: "Plugins",
+};
+
 pub static SERVER_WAIT: Setting = Setting {
     key: "mcp.startWait",
     kind: Kind::Integer { min: 0, max: 120 },
@@ -398,6 +408,7 @@ pub static ALL: &[&Setting] = &[
     &BUILTIN_SKILLS,
     &PLAN_SECOND_READING,
     &HOOKS,
+    &PLUGINS,
     &SANDBOX,
     &SANDBOX_NETWORK,
     &SANDBOX_WRITABLE,

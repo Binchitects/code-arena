@@ -1240,3 +1240,87 @@ async fn steps_run_at_once_a_worker_in_its_own_worktree_merged_back() {
         std::process::Command::new("git").args(["worktree", "list"]).current_dir(project.path()).output().expect("git");
     assert_eq!(String::from_utf8_lossy(&wt.stdout).lines().count(), 1, "{}", String::from_utf8_lossy(&wt.stdout));
 }
+
+#[tokio::test]
+async fn a_plugin_installed_and_enabled_brings_its_skill_hook_and_server() {
+    let gateway = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    struct Heard(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+    impl Respond for Heard {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            self.0.lock().expect("lock").push(serde_json::from_slice(&r.body).unwrap_or_default());
+            let ev = json!({"choices": [{"delta": {"content": "Hi."}, "finish_reason": "stop"}]});
+            ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(sse(ev))
+        }
+    }
+    Mock::given(path("/v1/chat/completions")).respond_with(Heard(seen.clone())).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false}).to_string(),
+    )
+    .expect("settings");
+    // A plugin in Claude Code's layout.
+    let src = tempfile::tempdir().expect("src");
+    let p = src.path();
+    for d in [".claude-plugin", "skills/greet", "hooks"] {
+        std::fs::create_dir_all(p.join(d)).expect("dir");
+    }
+    std::fs::write(
+        p.join(".claude-plugin/plugin.json"),
+        r#"{"name": "kit", "version": "1.2.0", "description": "A kit."}"#,
+    )
+    .expect("manifest");
+    std::fs::write(
+        p.join("skills/greet/SKILL.md"),
+        "---\nname: greet\ndescription: Greets in the kit's way.\n---\nSay hi.\n",
+    )
+    .expect("skill");
+    std::fs::write(p.join("note.txt"), "The kit's note.").expect("note");
+    std::fs::write(
+        p.join("hooks/hooks.json"),
+        json!({"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "cat ${CLAUDE_PLUGIN_ROOT}/note.txt"}]}]}})
+            .to_string(),
+    )
+    .expect("hooks");
+    std::fs::write(
+        p.join(".mcp.json"),
+        json!({"mcpServers": {"echo": {"command": "sh", "args": ["-c", ECHO_SERVER]}}}).to_string(),
+    )
+    .expect("mcp");
+    let run = |args: &[&str]| {
+        let out = code_arena(home.path()).args(args).output().expect("runs");
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let said = run(&["plugin", "install", &p.display().to_string()]);
+    assert!(said.contains("Installed kit (skills, hooks, MCP servers)"), "{said}");
+    assert!(run(&["plugin", "list"]).contains("○ kit 1.2.0 A kit."));
+    // Installed, not enabled: nothing of it is used.
+    let folder = tempfile::tempdir().expect("folder");
+    let ask = |seen: &std::sync::Arc<std::sync::Mutex<Vec<Value>>>| {
+        let out = code_arena(home.path())
+            .args(["-p", "hello", "--mode", "yolo", "-C"])
+            .arg(folder.path())
+            .env("ARENA_URL", "https://arena.example")
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .output()
+            .expect("runs");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        seen.lock().expect("lock").last().expect("a request").to_string()
+    };
+    let before = ask(&seen);
+    assert!(!before.contains("Greets in the kit's way") && !before.contains("The kit's note."), "{before}");
+    assert!(run(&["plugin", "enable", "kit"]).contains("kit is enabled"));
+    assert!(run(&["plugin", "list"]).contains("● kit"));
+    let after = ask(&seen);
+    assert!(after.contains("Greets in the kit's way"), "the plugin's skill: {after}");
+    assert!(after.contains("The kit's note."), "the plugin's hook, its folder put in: {after}");
+    assert!(after.contains("kit-echo") && after.contains("shout"), "the plugin's server: {after}");
+    run(&["plugin", "remove", "kit"]);
+    assert!(run(&["plugin", "list"]).contains("No plugins yet"));
+    assert!(!std::fs::read_to_string(home.path().join("config/settings.json")).expect("s").contains("\"kit\""));
+}

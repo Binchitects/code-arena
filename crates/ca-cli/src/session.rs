@@ -161,6 +161,12 @@ fn load_hooks(
     {
         add(&h, "your ~/.claude/settings.json");
     }
+    // Plugins you enabled: yours, as your own settings are.
+    for p in crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS)) {
+        if let Some(h) = crate::plugins::hooks(&p) {
+            add(&h, &format!("the plugin {}", p.name));
+        }
+    }
     let project = project_hooks(root);
     if project.as_object().is_some_and(|o| !o.is_empty()) {
         if ca_agent::hooks::trusted(&app.paths.data, root, &project) {
@@ -715,7 +721,14 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         &arena_off(&app.paths.data),
         app.settings.bool(&schema::BUILTIN_SKILLS),
     );
-    let sources = ca_agent::library::sources(ws.root(), &app.paths.config, app.home.as_deref(), Some(&app.paths.data));
+    let mut sources =
+        ca_agent::library::sources(ws.root(), &app.paths.config, app.home.as_deref(), Some(&app.paths.data));
+    let at = sources.iter().position(|s| s.label == "Arena's").unwrap_or(sources.len());
+    for (n, p) in
+        crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS)).into_iter().enumerate()
+    {
+        sources.insert(at + n, ca_agent::library::Source { label: format!("the plugin {}", p.name), dir: p.root });
+    }
     let library = ca_agent::library::load(&sources);
     // What the agent remembers: Arena's (else this machine's files), and the project's .remember/.
     let memory = Arc::new(ca_memory::Memory::new(

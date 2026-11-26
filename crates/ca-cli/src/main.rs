@@ -8,6 +8,7 @@ mod commit;
 mod edition;
 mod goals;
 mod loops;
+mod plugins;
 mod projects;
 mod run;
 mod schedules;
@@ -118,6 +119,12 @@ enum Command {
     /// Prompts Code Arena runs on its own, on a schedule: add NAME --every 2h [--at 09:00] [--mode M] PROMPT…, list,
     /// run NAME, remove NAME, due (what a timer of the system's calls), install, uninstall.
     Schedule {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Plugins (commands, sub-agents, skills, hooks and MCP servers in Claude Code's layout): list, install PATH|GIT_URL,
+    /// enable NAME, disable NAME, remove NAME.
+    Plugin {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -237,6 +244,13 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
             let cwd = std::env::current_dir()?;
             // A timer of the system's goes in the system's own home, whatever CODE_ARENA_HOME says.
             schedules::command(&app.paths.config, dirs::home_dir().as_deref(), &cwd, &args)
+        }
+        Some(Command::Plugin { args }) => {
+            let file = app.paths.settings_file();
+            // Only your own list: a project's is its own.
+            let yours = ca_settings::settings::Settings::load(&file, None, Default::default())
+                .strings(&ca_settings::schema::PLUGINS);
+            plugins::command(&app.paths.data, &file, &yours, &args)
         }
         Some(Command::Version) => {
             let edition = match app.edition() {

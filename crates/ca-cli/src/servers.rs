@@ -141,12 +141,23 @@ pub fn configured(app: &App, reserved: &[String]) -> (Vec<Server>, Vec<String>) 
             false,
         ));
     }
-    let own = app.settings.value(&schema::MCP_SERVERS);
-    for (name, v) in own.as_object().into_iter().flatten() {
+    let mut own: Vec<(String, Value)> = app
+        .settings
+        .value(&schema::MCP_SERVERS)
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for p in crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS)) {
+        own.extend(crate::plugins::servers(&p));
+    }
+    for (name, v) in &own {
+        let name = name.as_str();
         if v.get("disabled").and_then(Value::as_bool) == Some(true) {
             continue;
         }
-        if reserved.contains(name) || name == "arena" || name == "code-intel" {
+        if reserved.iter().any(|r| r == name) || name == "arena" || name == "code-intel" {
             notes.push(format!("The MCP server {name:?} has a name Code Arena keeps for its own: give it another."));
             continue;
         }
@@ -188,7 +199,7 @@ pub fn configured(app: &App, reserved: &[String]) -> (Vec<Server>, Vec<String>) 
                 })
                 .collect();
             let cwd = v.get("cwd").and_then(Value::as_str).map(PathBuf::from);
-            Spec::Stdio(StdioSpec { name: name.clone(), command: cmd.into(), args, env, cwd })
+            Spec::Stdio(StdioSpec { name: name.to_string(), command: cmd.into(), args, env, cwd })
         } else {
             notes.push(format!("The MCP server {name:?} has neither a command nor a url: it is skipped."));
             continue;

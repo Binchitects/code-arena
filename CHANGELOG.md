@@ -15,6 +15,12 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or Claude Code's
   (`run_shell` or `Bash`). A project's hooks run only once you trust them as they are
   (`/hooks trust`; a change asks again). `/hooks` lists them.
+- Plugins, in Claude Code's layout (`.claude-plugin/plugin.json`, `commands/`, `agents/`, `skills/`,
+  `hooks/hooks.json`, `.mcp.json`): `code-arena plugin install PATH|GIT_URL`, `list`, `enable NAME`,
+  `disable NAME`, `remove NAME`. An enabled plugin's commands, sub-agents and skills join yours
+  (yours and the project's win by name), its hooks run as yours do, and its MCP servers are
+  named `PLUGIN-SERVER`; `${CLAUDE_PLUGIN_ROOT}` is its folder. `plugins.enabled` in a project's
+  settings enables more of those installed.
 - The `task` tool: the model hands a piece of work to a sub-agent (one of the project's or your
   `agents/NAME.md`, with its instructions, model and tools, or a general one), which works in a
   context of its own and reports back; several in one answer run at once (four at most). Its

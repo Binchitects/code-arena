@@ -161,6 +161,16 @@ impl Settings {
 /// A project's value of a setting both may set. Permissions: the project's `deny` is added to the person's, and its
 /// `allow` is never read, so a cloned repository cannot let itself run commands unasked.
 fn merge_project(setting: &Setting, user: Option<Value>, project: Value) -> Value {
+    if setting.key == schema::PLUGINS.key {
+        // A project enables more of the plugins installed; it does not take yours away.
+        let mut names: Vec<Value> = user.and_then(|u| u.as_array().cloned()).unwrap_or_default();
+        for p in project.as_array().into_iter().flatten() {
+            if !names.contains(p) {
+                names.push(p.clone());
+            }
+        }
+        return Value::Array(names);
+    }
     if setting.key != schema::PERMISSIONS.key {
         return project;
     }
