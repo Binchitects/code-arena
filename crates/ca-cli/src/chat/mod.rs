@@ -247,10 +247,12 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     let mut session_usage = ca_llm::Usage::default();
     let mut shell_output: Option<String> = None;
     let mut first = args.first.clone();
+    // Commands typed while a turn ran: they run when it ends, in order.
+    let mut after_turn: std::collections::VecDeque<String> = std::collections::VecDeque::new();
 
     loop {
         let mut carry_on = false;
-        let line = if let Some(f) = first.take() {
+        let line = if let Some(f) = first.take().or_else(|| after_turn.pop_front()) {
             ui.say(&format!("{PROMPT}{f}"));
             f
         } else if let Some(said) = p.said_next.take() {
@@ -370,11 +372,24 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
                             let _ = tx.send(answer);
                             continue;
                         }
-                        // Typed while it works: kept, and read at the turn's next step.
-                        if let Action::Submit(text) = typed.key(k)
-                            && let Ok(mut q) = inbox.lock()
-                        {
-                            q.push(text);
+                        // ↑ with nothing typed: the last line sent meanwhile, taken back before the model reads it.
+                        if k.code == KeyCode::Up && typed.text().is_empty() {
+                            let back = inbox.lock().ok().and_then(|mut q| q.pop());
+                            if let Some(t) = back {
+                                ui.say(&ui.dim(&format!("Took back \"{t}\": it waits at the prompt.")));
+                                typed.set(&t);
+                            }
+                            continue;
+                        }
+                        // Typed while it works: kept, and read at the turn's next step; a command runs when it ends.
+                        if let Action::Submit(text) = typed.key(k) {
+                            let t = text.trim_start();
+                            if t.starts_with('/') || t.starts_with('!') {
+                                ui.say(&ui.dim(&format!("{} runs when the turn ends.", t.split_whitespace().next().unwrap_or(t))));
+                                after_turn.push_back(text);
+                            } else if let Ok(mut q) = inbox.lock() {
+                                q.push(text);
+                            }
                         }
                     }
                 }

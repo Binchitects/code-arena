@@ -138,8 +138,13 @@ impl Tool for Git {
         if let Err(why) = self.check(&list, ctx) {
             return Output::error(why);
         }
+        // The repository's own filters and merge drivers (commands its settings name) do not run.
+        let off = match filters_off(ctx.workspace.cwd()).await {
+            Ok(o) => o,
+            Err(why) => return Output::error(why),
+        };
         let mut cmd = tokio::process::Command::new("git");
-        for c in SAFE_CONFIG {
+        for c in SAFE_CONFIG.iter().map(|c| c.to_string()).chain(off) {
             cmd.arg("-c").arg(c);
         }
         cmd.arg("--no-pager").arg("--no-optional-locks");
@@ -172,8 +177,99 @@ impl Tool for Git {
     }
 }
 
+/// The repository's filters and merge drivers, switched off (git config reads them and runs nothing): every
+/// `filter.NAME.clean`, `smudge` and `process` and every `merge.NAME.driver` emptied, an empty name too (which
+/// `filter=` or `merge=` in .gitattributes picks).
+pub(crate) async fn filters_off(dir: &std::path::Path) -> Result<Vec<String>, String> {
+    let out = tokio::process::Command::new("git")
+        .args(["config", "-z", "--get-regexp", r"^(filter|merge)\."])
+        .current_dir(dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("git could not start: {e}"))?;
+    Ok(off_from(&String::from_utf8_lossy(&out.stdout))?)
+}
+
+/// What [`filters_off`] gives, from `git config -z --get-regexp` (KEY\nVALUE entries, or KEY alone).
+pub(crate) fn off_from(output: &str) -> Result<Vec<String>, String> {
+    let mut off = Vec::new();
+    let mut names = std::collections::HashSet::new();
+    for entry in output.split('\0').filter(|e| !e.is_empty()) {
+        let key = entry.split('\n').next().unwrap_or("");
+        let section = if key.starts_with("filter.") { "filter." } else { "merge." };
+        let Some(dot) = key.rfind('.') else { continue };
+        if dot < section.len() || !names.insert(key[..dot].to_string()) {
+            continue;
+        }
+        let name = &key[section.len()..dot];
+        if name.contains('=') || name.contains('\n') {
+            return Err(format!(
+                "The repository's settings name a {} that cannot be switched off from git's command line ({name}): git does not run here.",
+                section.trim_end_matches('.')
+            ));
+        }
+        if section == "filter." {
+            for v in ["clean=", "smudge=", "process=", "required=false"] {
+                off.push(format!("filter.{name}.{v}"));
+            }
+        } else {
+            off.push(format!("merge.{name}.driver="));
+        }
+    }
+    Ok(off)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_repositorys_filters_and_merge_drivers_are_switched_off() {
+        let out = "filter.lfs.clean\ngit-lfs clean -- %f\0filter.lfs.smudge\ngit-lfs smudge -- %f\0filter.lfs.required\0merge.ours.driver\ntrue\0merge.renormalize\0";
+        let off = super::off_from(out).expect("off");
+        assert_eq!(
+            off,
+            vec![
+                "filter.lfs.clean=",
+                "filter.lfs.smudge=",
+                "filter.lfs.process=",
+                "filter.lfs.required=false",
+                "merge.ours.driver="
+            ]
+        );
+        assert!(super::off_from("filter.a=b.clean\nx\0").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_filter_the_repository_names_does_not_run() {
+        let d = tempfile::tempdir().expect("temp");
+        let git =
+            |args: &[&str]| std::process::Command::new("git").args(args).current_dir(d.path()).output().expect("git");
+        if !git(&["init", "-q"]).status.success() {
+            return;
+        }
+        let marker = d.path().join("ran");
+        std::fs::write(d.path().join("a.txt"), "x\n").expect("w");
+        git(&["add", "a.txt"]);
+        git(&["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "a"]);
+        git(&["config", "filter.evil.clean", &format!("touch {}; cat", marker.display())]);
+        std::fs::write(d.path().join(".gitattributes"), "*.txt filter=evil\n").expect("w");
+        std::fs::write(d.path().join("a.txt"), "changed\n").expect("w");
+        let ws = ca_workspace::Workspace::open(d.path(), &[]).expect("ws");
+        let ctx = crate::Context::new(std::sync::Arc::new(ws), None, std::time::Duration::from_secs(30));
+        // diff and status run clean filters on what changed.
+        let o = crate::Tool::run(&super::Git, serde_json::json!({"args": ["status", "--short"]}), &ctx).await;
+        assert!(!o.is_error, "{}", o.text);
+        let _ = crate::Tool::run(&super::Git, serde_json::json!({"args": ["diff"]}), &ctx).await;
+        assert!(!marker.exists(), "the repository's filter ran");
+        // Git on its own runs it: the test would see it.
+        git(&["diff"]);
+        assert!(marker.exists(), "plain git runs the filter");
+    }
+}
+
+#[cfg(test)]
+mod tests_more {
     use super::*;
     use crate::testing::context;
 

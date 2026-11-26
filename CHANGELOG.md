@@ -129,7 +129,13 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   a summary of the work so far follows it, the last steps stay whole (no result parted from its
   call). The session keeps every step.
 
+- While a turn works: ↑ with nothing typed takes back the last line you sent meanwhile (before the
+  model reads it), and it waits at the prompt; a `/command` or `!command` typed meanwhile runs
+  when the turn ends, in order, instead of going to the model.
+
 ### Fixed
+- The agent's git ran the repository's own filters and merge drivers (commands its settings name,
+  such as a clean filter in `.gitattributes`): they are switched off for every git call now.
 - A send Arena kept but whose answer was lost: the next take-in would have added the session's
   own messages again as the web's, and sent them twice. They are known by their ref now.
 - `doctor` would have said Arena 8.1 lacks `checklists.edit`: its probe asked to change an unknown
