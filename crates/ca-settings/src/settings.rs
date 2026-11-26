@@ -188,6 +188,33 @@ fn merge_project(setting: &Setting, user: Option<Value>, project: Value) -> Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_value_over_several_lines_is_kept_and_forgotten_whole() {
+        let d = tempfile::tempdir().expect("temp");
+        let f = d.path().join("settings.json");
+        std::fs::write(
+            &f,
+            "{\n  // mine\n  \"agent.mode\": \"ask\",\n  \"hooks\": {\n    \"Stop\": [{\"hooks\": [{\"command\": \"echo } done\"}]}]\n  },\n  \"agent.maxSteps\": 40 // enough\n}\n",
+        )
+        .expect("w");
+        keep(&f, "hooks", &serde_json::json!({})).expect("keep");
+        let t = std::fs::read_to_string(&f).expect("r");
+        assert!(t.contains("\"hooks\": {},\n  \"agent.maxSteps\": 40"), "{t}");
+        assert!(serde_json::from_str::<Value>(&strip(&t)).is_ok(), "{t}");
+        forget(&f, "agent.maxSteps").expect("forget");
+        let t = std::fs::read_to_string(&f).expect("r");
+        assert!(!t.contains("maxSteps") && t.contains("\"hooks\": {}\n}"), "the comma before goes too: {t}");
+        assert!(t.contains("// mine"), "comments stay: {t}");
+        forget(&f, "agent.mode").expect("forget");
+        forget(&f, "not.there").expect("nothing");
+        assert!(serde_json::from_str::<Value>(&strip(&std::fs::read_to_string(&f).expect("r"))).is_ok());
+    }
+
+    /// The file without its comments, as JSON.
+    fn strip(t: &str) -> String {
+        t.lines().map(|l| if l.trim_start().starts_with("//") { "" } else { l.split(" //").next().unwrap_or(l) }).collect::<Vec<_>>().join("\n")
+    }
     use crate::schema::{MODE, PERMISSIONS, SHELL_TIMEOUT};
     use serde_json::json;
 
@@ -250,6 +277,68 @@ mod tests {
     }
 }
 
+/// The line a value that starts on line `i` ends on: its brackets and braces counted outside strings and comments
+/// (a value written over several lines, an object by hand).
+fn value_end(lines: &[&str], i: usize) -> usize {
+    let mut depth: i64 = 0;
+    let mut in_string = false;
+    for (n, line) in lines.iter().enumerate().skip(i) {
+        let mut chars = line.chars().peekable();
+        // On the key's line, what comes after the key's colon.
+        let mut seen_colon = n > i;
+        let mut escaped = false;
+        while let Some(c) = chars.next() {
+            if in_string {
+                match (escaped, c) {
+                    (true, _) => escaped = false,
+                    (false, '\\') => escaped = true,
+                    (false, '"') => in_string = false,
+                    _ => {}
+                }
+                continue;
+            }
+            match c {
+                '"' => in_string = true,
+                ':' => seen_colon = true,
+                '/' if chars.peek() == Some(&'/') => break,
+                '{' | '[' if seen_colon => depth += 1,
+                '}' | ']' if seen_colon => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth <= 0 && !in_string {
+            return n;
+        }
+    }
+    lines.len().saturating_sub(1)
+}
+
+/// Takes one setting out of a settings file, the rest as it is (its comments, its order). A setting not there is no
+/// change.
+pub fn forget(file: &Path, key: &str) -> std::io::Result<()> {
+    let Ok(text) = std::fs::read_to_string(file) else { return Ok(()) };
+    let quoted = format!("\"{key}\"");
+    let lines: Vec<&str> = text.lines().collect();
+    let Some(i) = lines.iter().position(|l| l.trim_start().starts_with(&format!("{quoted}:"))) else { return Ok(()) };
+    let end = value_end(&lines, i);
+    let had_comma = lines[end].split("//").next().unwrap_or("").trim_end().ends_with(',');
+    let mut out: Vec<String> = lines[..i].iter().map(|l| l.to_string()).collect();
+    // It was the last setting: the one before it loses its comma.
+    if !had_comma
+        && let Some(prev) = out.iter_mut().rev().find(|l| !l.trim().is_empty() && !l.trim_start().starts_with("//"))
+    {
+        let (code, comment) = match prev.find("//") {
+            Some(at) if !prev.trim_start().starts_with("//") => (prev[..at].to_string(), prev[at..].to_string()),
+            _ => (prev.clone(), String::new()),
+        };
+        if let Some(stripped) = code.trim_end().strip_suffix(',') {
+            *prev = if comment.is_empty() { stripped.to_string() } else { format!("{stripped} {comment}") };
+        }
+    }
+    out.extend(lines[end + 1..].iter().map(|l| l.to_string()));
+    std::fs::write(file, out.join("\n") + "\n")
+}
+
 /// Keeps one setting in a settings file (the person's `settings.json`), the rest of it as it is: its comments, its
 /// order, its other settings. A file not there yet is made.
 pub fn keep(file: &Path, key: &str, value: &Value) -> std::io::Result<()> {
@@ -259,19 +348,14 @@ pub fn keep(file: &Path, key: &str, value: &Value) -> std::io::Result<()> {
     let out = if text.trim().is_empty() {
         format!("{{\n  {quoted}: {val}\n}}\n")
     } else if let Some(i) = text.lines().position(|l| l.trim_start().starts_with(&format!("{quoted}:"))) {
-        // In place: its line, its comma kept.
-        let lines: Vec<String> = text
-            .lines()
-            .enumerate()
-            .map(|(n, l)| {
-                if n != i {
-                    return l.to_string();
-                }
-                let indent: String = l.chars().take_while(|c| c.is_whitespace()).collect();
-                let comma = if l.trim_end().ends_with(',') { "," } else { "" };
-                format!("{indent}{quoted}: {val}{comma}")
-            })
-            .collect();
+        // In place: its lines (a value written over several), its comma kept.
+        let all: Vec<&str> = text.lines().collect();
+        let end = value_end(&all, i);
+        let indent: String = all[i].chars().take_while(|c| c.is_whitespace()).collect();
+        let comma = if all[end].split("//").next().unwrap_or("").trim_end().ends_with(',') { "," } else { "" };
+        let mut lines: Vec<String> = all[..i].iter().map(|l| l.to_string()).collect();
+        lines.push(format!("{indent}{quoted}: {val}{comma}"));
+        lines.extend(all[end + 1..].iter().map(|l| l.to_string()));
         lines.join("\n") + "\n"
     } else {
         // Before the closing brace, with a comma after the setting before it.
