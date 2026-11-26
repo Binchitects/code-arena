@@ -9,6 +9,7 @@ pub mod checklists;
 mod client;
 pub mod memory;
 pub mod signin;
+pub mod skills;
 pub mod types;
 
 pub use capabilities::{Capabilities, Feature, Kept, State};

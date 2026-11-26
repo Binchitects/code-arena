@@ -18,8 +18,9 @@ pub struct Source {
     pub dir: PathBuf,
 }
 
-/// The folders read, best first.
-pub fn sources(repo_root: &Path, config_dir: &Path, home: Option<&Path>) -> Vec<Source> {
+/// The folders read, best first: the project's, yours, then (with `data_dir`) Arena's skills as it last gave them and
+/// the built-in ones, so a skill of the project's or yours wins by name.
+pub fn sources(repo_root: &Path, config_dir: &Path, home: Option<&Path>, data_dir: Option<&Path>) -> Vec<Source> {
     let mut s = Vec::new();
     for name in [".code-arena", ".arena", ".claude", ".qwen"] {
         s.push(Source { label: format!("this project ({name})"), dir: repo_root.join(name) });
@@ -29,7 +30,88 @@ pub fn sources(repo_root: &Path, config_dir: &Path, home: Option<&Path>) -> Vec<
         s.push(Source { label: "yours (~/.code-arena)".into(), dir: h.join(".code-arena") });
         s.push(Source { label: "yours (~/.claude)".into(), dir: h.join(".claude") });
     }
+    if let Some(d) = data_dir {
+        s.push(Source { label: "Arena's".into(), dir: arena_dir(d) });
+        s.push(Source { label: "built in".into(), dir: builtin_dir(d) });
+    }
     s
+}
+
+/// Where Arena's skills are kept, as it last gave them (`skills/NAME/…` inside).
+pub fn arena_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("arena-skills")
+}
+
+/// Where the built-in skills are written at each start.
+pub fn builtin_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("builtin-skills")
+}
+
+/// A skill's name as a folder may be called: letters, digits, `-` and `_`, from a letter or digit.
+pub fn good_skill_name(name: &str) -> bool {
+    name.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// Writes the built-in skills (but those `off`: an Arena admin turned them off), and takes away the folders of those
+/// no longer built in or turned off; `on` false (`skills.builtIn` off) writes none.
+pub fn keep_builtin(data_dir: &Path, off: &[String], on: bool) -> std::io::Result<()> {
+    let root = builtin_dir(data_dir).join("skills");
+    std::fs::create_dir_all(&root)?;
+    for (name, text) in crate::builtin_skills::ALL {
+        if !on || off.iter().any(|o| o == name) {
+            continue;
+        }
+        let file = root.join(name).join("SKILL.md");
+        if std::fs::read_to_string(&file).ok().as_deref() != Some(*text) {
+            std::fs::create_dir_all(root.join(name))?;
+            std::fs::write(&file, text)?;
+        }
+    }
+    for e in std::fs::read_dir(&root)?.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let built_in = crate::builtin_skills::ALL.iter().any(|(n, _)| *n == name);
+        if !on || !built_in || off.contains(&name) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+    Ok(())
+}
+
+/// Writes Arena's skills as it gave them (each its folder of files), replacing what was kept; a file outside its
+/// skill's folder, or a name a folder may not have, is left out. Gives what was left out.
+pub fn keep_arena(data_dir: &Path, skills: &[(String, BTreeMap<String, String>)]) -> std::io::Result<Vec<String>> {
+    let root = arena_dir(data_dir);
+    let staging = data_dir.join("arena-skills.new");
+    let _ = std::fs::remove_dir_all(&staging);
+    let mut problems = Vec::new();
+    for (name, files) in skills {
+        if !good_skill_name(name) {
+            problems.push(format!("Arena's skill \"{name}\" has a name Code Arena does not take: left out."));
+            continue;
+        }
+        let folder = staging.join("skills").join(name);
+        for (path, text) in files {
+            let parts: Vec<&str> = path.split(['/', '\\']).collect();
+            if path.is_empty()
+                || Path::new(path).is_absolute()
+                || parts.iter().any(|p| p.is_empty() || *p == "." || *p == "..")
+            {
+                problems.push(format!("The skill {name}'s file {path} is outside its folder: left out."));
+                continue;
+            }
+            let full = folder.join(path);
+            if let Some(d) = full.parent() {
+                std::fs::create_dir_all(d)?;
+            }
+            std::fs::write(full, text)?;
+        }
+    }
+    std::fs::create_dir_all(&staging)?;
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::rename(&staging, &root)?;
+    Ok(problems)
 }
 
 /// A file's front matter (`---` lines) as keys, and the text after it.
@@ -317,6 +399,60 @@ pub fn skill_tool(sources: Vec<Source>) -> Arc<dyn Tool> {
 }
 
 #[cfg(test)]
+mod builtin_tests {
+    use super::*;
+
+    #[test]
+    fn the_list_names_every_skill_folder() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
+        let mut folders: Vec<String> = std::fs::read_dir(&dir)
+            .expect("skills")
+            .flatten()
+            .filter(|e| e.path().join("SKILL.md").is_file())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        folders.sort();
+        let listed: Vec<String> = crate::builtin_skills::ALL.iter().map(|(n, _)| n.to_string()).collect();
+        assert_eq!(listed, folders, "run python3 scripts/builtin-skills.py");
+    }
+
+    #[test]
+    fn built_in_skills_are_read_last_and_those_turned_off_left_out() {
+        let d = tempfile::tempdir().expect("temp");
+        let (repo, config, data) = (d.path().join("repo"), d.path().join("config"), d.path().join("data"));
+        keep_builtin(&data, &["translate".to_string()], true).expect("kept");
+        std::fs::create_dir_all(repo.join(".code-arena/skills/code-review")).expect("mkdir");
+        std::fs::write(
+            repo.join(".code-arena/skills/code-review/SKILL.md"),
+            "---\nname: code-review\ndescription: ours\n---\nOur way.",
+        )
+        .expect("w");
+        keep_arena(
+            &data,
+            &[
+                (
+                    "from-arena".into(),
+                    BTreeMap::from([("SKILL.md".into(), "---\nname: from-arena\ndescription: Arena's\n---\nx".into())]),
+                ),
+                ("sneaky".into(), BTreeMap::from([("../../escape.md".into(), "no".into())])),
+                ("Bad Name".into(), BTreeMap::new()),
+            ],
+        )
+        .expect("arena");
+        let lib = load(&sources(&repo, &config, None, Some(&data)));
+        let review = lib.skills.iter().find(|k| k.name == "code-review").expect("review");
+        assert_eq!(review.description, "ours");
+        assert!(lib.skills.iter().any(|k| k.name == "debug" && k.source == "built in"));
+        assert!(lib.skills.iter().any(|k| k.name == "from-arena" && k.source == "Arena's"));
+        assert!(!lib.skills.iter().any(|k| k.name == "translate"));
+        assert!(!data.join("escape.md").exists() && !d.path().join("escape.md").exists());
+        // Built-in skills off: none.
+        keep_builtin(&data, &[], false).expect("none");
+        assert!(!load(&sources(&repo, &config, None, Some(&data))).skills.iter().any(|k| k.source == "built in"));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -365,7 +501,7 @@ mod tests {
             &cfg.join("agents/reviewer.md"),
             "---\nname: reviewer\ntools: read_file, grep\nmodel: qwen-small\n---\nYou review.",
         );
-        let lib = load(&sources(&repo, &cfg, None));
+        let lib = load(&sources(&repo, &cfg, None, None));
         let names: Vec<&str> = lib.commands.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["review", "git:commit"]);
         assert_eq!(lib.commands[0].description, "the project's");
@@ -382,7 +518,7 @@ mod tests {
         let d = tempfile::tempdir().expect("temp");
         write(&d.path().join(".code-arena/skills/release/SKILL.md"), "---\nname: release\n---\nTag it.");
         write(&d.path().join(".code-arena/skills/release/notes.md"), "Notes.");
-        let t = SkillTool { sources: sources(d.path(), &d.path().join("cfg"), None) };
+        let t = SkillTool { sources: sources(d.path(), &d.path().join("cfg"), None, None) };
         let ws = ca_workspace::Workspace::open(d.path(), &[]).expect("ws");
         let ctx = Context::new(Arc::new(ws), None, std::time::Duration::from_secs(5));
         let o = t.run(json!({"name": "release"}), &ctx).await;

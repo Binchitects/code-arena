@@ -270,6 +270,16 @@ pub static PROJECT_MEMORY: Setting = Setting {
     section: "Memory",
 };
 
+pub static BUILTIN_SKILLS: Setting = Setting {
+    key: "skills.builtIn",
+    kind: Kind::Bool,
+    default: "true",
+    description: "The skills that come with Code Arena (code-review, debug, release-notes and the others Arena has), read after yours, the project's and Arena's, which win by name. Off: none of them.",
+    scope: Scope::User,
+    env: None,
+    section: "Skills",
+};
+
 pub static SERVER_WAIT: Setting = Setting {
     key: "mcp.startWait",
     kind: Kind::Integer { min: 0, max: 120 },
@@ -354,6 +364,7 @@ pub static ALL: &[&Setting] = &[
     &SERVER_WAIT,
     &SYNC_CHATS,
     &PROJECT_MEMORY,
+    &BUILTIN_SKILLS,
     &SANDBOX,
     &SANDBOX_NETWORK,
     &SANDBOX_WRITABLE,

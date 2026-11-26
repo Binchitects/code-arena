@@ -80,6 +80,13 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   were about.
 - A session's chat in Arena names its project by the same key.
 
+- Built-in skills: the 35 that come with Arena (code-review, debug, release-notes, security-review
+  and the rest), read after the project's, yours and Arena's, which win by name; those an Arena
+  admin turned off are left out (`skills.builtIn`, on).
+- Arena's skills: those made there that you may use (yours, your groups', the company's) and your
+  plugins', kept for the next session (`arena-skills/` in the data folder) and refreshed at each
+  start; a file outside its skill's folder is left out.
+
 ### Fixed
 - `doctor` would have said Arena 8.1 lacks `checklists.edit`: its probe asked to change an unknown
   checklist, which 8.1 answers with the same plain 404 as 8.0's missing route. It now asks to

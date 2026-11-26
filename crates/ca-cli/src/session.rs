@@ -78,6 +78,47 @@ pub async fn begin_turn(p: &mut Prepared, ui: crate::ui::Ui) {
     }
 }
 
+/// Built-in skills an Arena admin turned off, as Arena last said.
+fn arena_off(data: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(ca_agent::library::arena_dir(data).join("off.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// Arena's skills, kept for this session and the next (read at each message, so they are used as soon as they come).
+fn refresh_arena_skills(app: &App, notices: &Notices) {
+    if !app.connection.signed_in() {
+        return;
+    }
+    let Ok(arena) = app.arena() else { return };
+    let data = app.paths.data.clone();
+    let builtin = app.settings.bool(&schema::BUILTIN_SKILLS);
+    let notices = notices.clone();
+    tokio::spawn(async move {
+        let Ok(Ok(got)) = tokio::time::timeout(Duration::from_secs(15), arena.skills()).await else { return };
+        let skills: Vec<(String, std::collections::BTreeMap<String, String>)> =
+            got.skills.into_iter().map(|k| (k.name, k.files)).collect();
+        match ca_agent::library::keep_arena(&data, &skills) {
+            Ok(problems) => {
+                if let Ok(mut n) = notices.lock() {
+                    n.extend(problems.into_iter().map(|p| (true, p)));
+                }
+            }
+            Err(e) => {
+                if let Ok(mut n) = notices.lock() {
+                    n.push((true, format!("Arena's skills could not be kept: {e}")));
+                }
+            }
+        }
+        let _ = std::fs::write(
+            ca_agent::library::arena_dir(&data).join("off.json"),
+            serde_json::to_string(&got.off).unwrap_or_default(),
+        );
+        let _ = ca_agent::library::keep_builtin(&data, &got.off, builtin);
+    });
+}
+
 /// Before the person's message: what is remembered that matters to it (a few hundred tokens at most), and after a long
 /// turn the reminder to keep what it worked out.
 pub async fn before_message(p: &mut Prepared, message: &str) {
@@ -486,6 +527,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     store.set_model(&session, &model, mode.name())?;
     let store = Arc::new(Mutex::new(store));
     let notices: Notices = Arc::new(Mutex::new(Vec::new()));
+    refresh_arena_skills(app, &notices);
     let sync = start_sync(app, &store, &session, &folder, &model, &notices, ca_memory::keys::project_key(ws.root()));
 
     let thinking =
@@ -494,7 +536,13 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     let (shell, _) = ca_tools::shell_for(shell_setting.as_deref());
     let person = instructions::person_candidates(&app.paths.config, app.home.as_deref());
     let read = instructions::read_all(&person, ws.root(), ws.cwd());
-    let sources = ca_agent::library::sources(ws.root(), &app.paths.config, app.home.as_deref());
+    // The built-in skills, as this version has them; Arena's, as it last gave them (refreshed below).
+    let _ = ca_agent::library::keep_builtin(
+        &app.paths.data,
+        &arena_off(&app.paths.data),
+        app.settings.bool(&schema::BUILTIN_SKILLS),
+    );
+    let sources = ca_agent::library::sources(ws.root(), &app.paths.config, app.home.as_deref(), Some(&app.paths.data));
     let library = ca_agent::library::load(&sources);
     // What the agent remembers: Arena's (else this machine's files), and the project's .remember/.
     let memory = Arc::new(ca_memory::Memory::new(

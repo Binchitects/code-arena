@@ -1,6 +1,7 @@
 //! The agent: a turn's loop of requests and tool calls, what runs without asking (the mode and the kept rules),
 //! calls mended before they run, and the instructions it reads.
 
+pub mod builtin_skills;
 pub mod context;
 pub mod instructions;
 pub mod library;
