@@ -148,6 +148,21 @@ colors! {
     menu_border: ["menu.border", "widget.border"], "#454545", "#CECECE";
     menu_separator: ["menu.separatorBackground"], "#606060", "#D4D4D4";
 
+    symbol_class: ["symbolIcon.classForeground"], "#EE9D28", "#D67E00";
+    symbol_enum: ["symbolIcon.enumeratorForeground"], "#EE9D28", "#D67E00";
+    symbol_function: ["symbolIcon.functionForeground"], "#B180D7", "#652D90";
+    symbol_method: ["symbolIcon.methodForeground"], "#B180D7", "#652D90";
+    symbol_interface: ["symbolIcon.interfaceForeground"], "#75BEFF", "#007ACC";
+    symbol_variable: ["symbolIcon.variableForeground"], "#75BEFF", "#007ACC";
+    symbol_field: ["symbolIcon.fieldForeground"], "#75BEFF", "#007ACC";
+    symbol_struct: ["symbolIcon.structForeground", "foreground"], "#CCCCCC", "#616161";
+    symbol_namespace: ["symbolIcon.namespaceForeground", "foreground"], "#CCCCCC", "#616161";
+    symbol_constant: ["symbolIcon.constantForeground", "foreground"], "#CCCCCC", "#616161";
+    symbol_string: ["symbolIcon.stringForeground", "foreground"], "#CCCCCC", "#616161";
+
+    notice_bg: ["inputValidation.warningBackground"], "#352A05", "#F6F5D2";
+    notice_border: ["inputValidation.warningBorder"], "#B89500", "#B89500";
+
     chat_request: ["chat.requestBubbleBackground", "chat.requestBackground", "list.hoverBackground"], "#2A2D2E", "#F2F2F2";
     terminal_bg: ["terminal.background", "panel.background"], "#1E1E1E", "#FFFFFF";
     terminal_fg: ["terminal.foreground"], "#CCCCCC", "#333333";

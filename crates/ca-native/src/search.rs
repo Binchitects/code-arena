@@ -12,7 +12,7 @@ use serde_json::json;
 
 use crate::icons::icon;
 use crate::state::{Hit, Send, Ui};
-use crate::widgets::bold;
+use crate::widgets::{bold, toggle};
 
 /// The hits by file, in the order the search found them.
 pub fn by_file(hits: &[Hit]) -> Vec<(String, Vec<Hit>)> {
@@ -64,26 +64,6 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             });
         });
     }
-    let toggle = move |name: &'static str, on: floem::reactive::RwSignal<bool>, tip: &'static str| {
-        let button = container(icon(name, 16.0)).on_click_stop(move |_| on.update(|b| *b = !*b)).style(move |s| {
-            let c = t.get();
-            let lit = on.get();
-            s.width(20.0)
-                .height(20.0)
-                .items_center()
-                .justify_center()
-                .border(1.0)
-                .border_radius(3.0)
-                .font_size(12.0)
-                .cursor(CursorStyle::Pointer)
-                .selectable(false)
-                .border_color(if lit { c.focus } else { Color::TRANSPARENT })
-                .background(if lit { c.focus.multiply_alpha(0.35) } else { Color::TRANSPARENT })
-                .color(c.input_fg)
-                .hover(|s| s.background(c.toolbar_hover))
-        });
-        floem::views::tooltip(button, move || label(move || tip))
-    };
     let go = send.clone();
     let field = h_stack((
         text_input(ui.search_query)
@@ -102,8 +82,8 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
                     .color(c.input_fg)
                     .cursor_color(floem::peniko::Brush::Solid(c.cursor))
             }),
-        toggle("case-sensitive", ui.search_case, "Match Case"),
-        toggle("regex", ui.search_regex, "Use Regular Expression"),
+        toggle(t, "case-sensitive", ui.search_case, "Match Case"),
+        toggle(t, "regex", ui.search_regex, "Use Regular Expression"),
     ))
     .style(move |s| {
         let c = t.get();

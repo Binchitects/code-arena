@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use floem::IntoView;
-use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, create_effect, create_rw_signal};
+use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::window::WindowConfig;
 use serde_json::{Value, json};
 
@@ -20,6 +20,7 @@ mod highlight;
 mod icons;
 mod layout;
 mod model;
+mod outline;
 mod search;
 mod state;
 mod terminal;
@@ -104,6 +105,21 @@ fn keep_view_state(ui: Ui, send: Send) {
     });
 }
 
+/// What is on screen is watched on disk, as the page has it watched: the open files and the Explorer's open folders
+/// (the session says when one changes, and lists a changed folder again).
+fn watch_disk(ui: Ui, send: Send) {
+    create_effect(move |_| {
+        let files: Vec<String> =
+            ui.tabs.with(|t| t.iter().filter(|t| t.diff.is_none()).map(|t| t.path.clone()).collect());
+        let mut folders: Vec<String> = ui.expanded.with(|e| e.iter().cloned().collect());
+        folders.sort();
+        folders.insert(0, String::new());
+        if ui.loaded.get() {
+            send(json!({"type": "watch", "files": files, "folders": folders}));
+        }
+    });
+}
+
 fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_channel::Receiver<Value>) -> impl IntoView {
     let ui = Ui::new();
     let send: Send = Rc::new(move |v: Value| {
@@ -119,7 +135,9 @@ fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_chan
             }
         });
     }
+    ui.out.set(Some(send.clone()));
     send(json!({"type": "hello"}));
     keep_view_state(ui, send.clone());
+    watch_disk(ui, send.clone());
     workbench::view(ui, send)
 }

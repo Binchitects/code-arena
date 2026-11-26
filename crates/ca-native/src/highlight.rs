@@ -24,7 +24,7 @@ use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
 
 use crate::widgets::MONO_FONT;
 
-static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+pub static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 
 /// A theme's `tokenColors` as syntect's theme (the rules without a scope are the editor's own colours).
 pub fn theme_of(json: &Value) -> Theme {

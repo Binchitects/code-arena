@@ -4,7 +4,10 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_rw_signal};
+use floem::views::editor::Editor;
 use floem::views::editor::core::buffer::rope_text::RopeText;
+use floem::views::editor::core::editor::EditType;
+use floem::views::editor::core::selection::Selection;
 use floem::views::editor::text::Document;
 use floem::views::editor::text_document::TextDocument;
 use serde_json::{Value, json};
@@ -12,6 +15,7 @@ use serde_json::{Value, json};
 use crate::colors::Colors;
 use crate::layout::Layout;
 use crate::model::{Item, Kind, Tool};
+use crate::outline::Symbol;
 
 pub type Send = Rc<dyn Fn(Value)>;
 
@@ -57,6 +61,13 @@ impl Change {
             _ => "M",
         }
     }
+}
+
+/// What became of an open file on disk while it has changes not saved.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnDisk {
+    Changed,
+    Gone,
 }
 
 /// An open editor: its file, its text (kept while another tab is shown), whether it has changes not saved; or a
@@ -139,6 +150,35 @@ pub struct Ui {
     pub message: RwSignal<String>,
     /// The scope open editors' documents live in (not an effect's, which goes when the effect runs again).
     pub scope: Scope,
+
+    /// The way to the session's driver, for the parts that are not handed it (the editor group's own keys).
+    pub out: RwSignal<Option<Send>>,
+    /// The editor drawn, and its tab: where the find widget and a file read again move the caret.
+    pub live: RwSignal<Option<(String, Editor)>>,
+    /// Counted up at each edit of an open file (the Outline and the find widget read the text again after it).
+    pub edited: RwSignal<u64>,
+    /// The Outline: the file it is of, and its symbols.
+    pub symbols: RwSignal<(String, Rc<Vec<Symbol>>)>,
+    /// The find widget: shown, what it looks for and how, where each match is in the text (from, to), and whether
+    /// what it looks for cannot be read (a regular expression that is not one).
+    pub find: RwSignal<bool>,
+    pub find_query: RwSignal<String>,
+    pub find_case: RwSignal<bool>,
+    pub find_regex: RwSignal<bool>,
+    pub find_hits: RwSignal<Rc<Vec<(usize, usize)>>>,
+    pub find_error: RwSignal<bool>,
+    /// Counted up when the find widget is asked for: its box takes the keys, with the editor's selection in it.
+    pub find_asked: RwSignal<u64>,
+    /// When each open file was last changed on disk, as the session said last.
+    pub modified: RwSignal<HashMap<String, u64>>,
+    /// The open files with changes not saved that changed on disk, or are gone from it.
+    pub on_disk: RwSignal<HashMap<String, OnDisk>>,
+    /// The files asked for again because they changed on disk (their text is taken, their tab is not shown).
+    pub reloading: RwSignal<HashSet<String>>,
+    /// The tab with changes not saved that is being closed: asked about first.
+    pub closing: RwSignal<Option<String>>,
+    /// The tab to close once it is saved (Save, in that question).
+    pub close_saved: RwSignal<Option<String>>,
 }
 
 impl Ui {
@@ -187,6 +227,22 @@ impl Ui {
             caret: create_rw_signal((1, 1)),
             message: create_rw_signal(String::new()),
             scope: Scope::new(),
+            out: create_rw_signal(None),
+            live: create_rw_signal(None),
+            edited: create_rw_signal(0),
+            symbols: create_rw_signal((String::new(), Rc::new(Vec::new()))),
+            find: create_rw_signal(false),
+            find_query: create_rw_signal(String::new()),
+            find_case: create_rw_signal(false),
+            find_regex: create_rw_signal(false),
+            find_hits: create_rw_signal(Rc::new(Vec::new())),
+            find_error: create_rw_signal(false),
+            find_asked: create_rw_signal(0),
+            modified: create_rw_signal(HashMap::new()),
+            on_disk: create_rw_signal(HashMap::new()),
+            reloading: create_rw_signal(HashSet::new()),
+            closing: create_rw_signal(None),
+            close_saved: create_rw_signal(None),
         }
     }
 
@@ -264,12 +320,30 @@ impl Ui {
         self.open(path, send);
     }
 
+    /// A tab closed; one with changes not saved is shown and asked about first (Save, Don't Save, Cancel).
     pub fn close(&self, path: &str) {
+        if self.tab(path).is_some_and(|t| t.diff.is_none() && t.dirty.get_untracked()) {
+            self.active.set(Some(path.to_string()));
+            self.closing.set(Some(path.to_string()));
+        } else {
+            self.close_now(path);
+        }
+    }
+
+    /// A tab closed whatever is in it.
+    pub fn close_now(&self, path: &str) {
+        if self.closing.with_untracked(|c| c.as_deref() == Some(path)) {
+            self.closing.set(None);
+        }
         let tabs = self.tabs.get_untracked();
         let Some(at) = tabs.iter().position(|t| t.path == path) else { return };
         self.tabs.update(|t| {
             t.remove(at);
         });
+        self.modified.update(|m| {
+            m.remove(path);
+        });
+        self.forget_on_disk(path);
         if self.active.get_untracked().as_deref() == Some(path) {
             let rest = self.tabs.get_untracked();
             self.active.set(rest.get(at.min(rest.len().saturating_sub(1))).map(|t| t.path.clone()));
@@ -277,12 +351,60 @@ impl Ui {
     }
 
     pub fn save(&self, send: &Send) {
-        if let Some(path) = self.active.get_untracked()
-            && let Some(tab) = self.tab(&path)
+        if let Some(path) = self.active.get_untracked() {
+            self.save_tab(&path, send);
+        }
+    }
+
+    pub fn save_tab(&self, path: &str, send: &Send) {
+        if let Some(tab) = self.tab(path)
             && tab.diff.is_none()
         {
             send(json!({"type": "save", "path": path, "text": tab.text()}));
         }
+    }
+
+    /// A file read again from disk: its text is taken when it comes, its tab left where it is.
+    pub fn reload(&self, path: &str, send: &Send) {
+        self.reloading.update(|r| {
+            r.insert(path.to_string());
+        });
+        send(json!({"type": "open", "path": path}));
+    }
+
+    /// What is on disk taken in place of a tab's changes not saved.
+    pub fn take_disk(&self, path: &str, send: &Send) {
+        if let Some(tab) = self.tab(path) {
+            tab.dirty.set(false);
+            self.reload(path, send);
+        }
+    }
+
+    /// A tab's own changes kept though the file changed on disk: no more said of it.
+    pub fn forget_on_disk(&self, path: &str) {
+        if self.on_disk.with_untracked(|d| d.contains_key(path)) {
+            self.on_disk.update(|d| {
+                d.remove(path);
+            });
+        }
+    }
+
+    /// A tab's text made what is on disk, by the part that differs only (what is before and after it stands, and is
+    /// not coloured again); the caret stays on its line.
+    fn replace(&self, tab: &Tab, text: &str) {
+        let old = tab.text();
+        let Some((from, to, with)) = changed(&old, text) else { return };
+        let live = self.live.with_untracked(|l| l.as_ref().filter(|(p, _)| *p == tab.path).map(|(_, e)| e.clone()));
+        floem::reactive::batch(|| {
+            let caret = live.as_ref().map(|e| e.offset_to_line_col(e.cursor.with_untracked(|c| c.offset())));
+            tab.doc.edit_single(Selection::region(from, to), with, EditType::Other);
+            tab.dirty.set(false);
+            if let (Some(e), Some((line, col))) = (live, caret) {
+                let line = line.min(e.last_line());
+                let at = e.offset_of_line_col(line, col.min(e.line_end_col(line, true)));
+                e.cursor.update(|c| c.set_insert(Selection::caret(at)));
+            }
+        });
     }
 
     /// The look kept for this folder: where its views are, its parts' sizes.
@@ -401,29 +523,54 @@ impl Ui {
             }
             "file" => {
                 let path = s("path");
+                // Read again because it changed on disk: its text is taken, its tab is not shown for it.
+                let again = self.reloading.with_untracked(|r| r.contains(&path));
+                if again {
+                    self.reloading.update(|r| {
+                        r.remove(&path);
+                    });
+                }
                 if let Some(e) = m["error"].as_str() {
                     self.message.set(format!("Could not open {path}: {e}"));
                     return;
                 }
-                if self.tab(&path).is_none() {
-                    let text = s("text");
-                    let doc = Rc::new(TextDocument::new(self.scope, text));
-                    let dirty = self.scope.create_rw_signal(false);
-                    let colours = crate::highlight::Colours::new(doc.clone(), &path);
-                    {
-                        let (colours, d) = (colours.clone(), doc.clone());
-                        doc.add_on_update(move |u| {
-                            dirty.set(true);
-                            // Parsed again from the first line an edit touched.
-                            let first = u.deltas().map(|x| x.summary().0.start()).min().unwrap_or(0);
-                            colours.changed_from(d.rope_text().line_of_offset(first));
-                        });
-                    }
-                    self.tabs.update(|t| {
-                        t.push(Tab { path: path.clone(), file: path.clone(), doc, dirty, diff: None, colours })
+                if let Some(at) = m["modified"].as_u64() {
+                    self.modified.update(|k| {
+                        k.insert(path.clone(), at);
                     });
                 }
-                self.active.set(Some(path));
+                self.forget_on_disk(&path);
+                match self.tab(&path) {
+                    // Taken in only when the tab has no changes of its own.
+                    Some(tab) => {
+                        if !tab.dirty.get_untracked() {
+                            self.replace(&tab, &s("text"));
+                        }
+                    }
+                    None if again => return, // closed meanwhile
+                    None => {
+                        let text = s("text");
+                        let doc = Rc::new(TextDocument::new(self.scope, text));
+                        let dirty = self.scope.create_rw_signal(false);
+                        let colours = crate::highlight::Colours::new(doc.clone(), &path);
+                        {
+                            let (colours, d, edited) = (colours.clone(), doc.clone(), self.edited);
+                            doc.add_on_update(move |u| {
+                                dirty.set(true);
+                                edited.update(|n| *n += 1);
+                                // Parsed again from the first line an edit touched.
+                                let first = u.deltas().map(|x| x.summary().0.start()).min().unwrap_or(0);
+                                colours.changed_from(d.rope_text().line_of_offset(first));
+                            });
+                        }
+                        self.tabs.update(|t| {
+                            t.push(Tab { path: path.clone(), file: path.clone(), doc, dirty, diff: None, colours })
+                        });
+                    }
+                }
+                if !again {
+                    self.active.set(Some(path));
+                }
             }
             "search" => {
                 if m["query"].as_str() != Some(self.search_query.get_untracked().as_str()) {
@@ -459,12 +606,51 @@ impl Ui {
             "saved" => {
                 let path = s("path");
                 match m["error"].as_str() {
-                    Some(e) => self.message.set(format!("Could not save {path}: {e}")),
+                    Some(e) => {
+                        if self.close_saved.with_untracked(|c| c.as_deref() == Some(path.as_str())) {
+                            self.close_saved.set(None);
+                        }
+                        self.message.set(format!("Could not save {path}: {e}"))
+                    }
                     None => {
                         if let Some(t) = self.tab(&path) {
                             t.dirty.set(false);
                         }
+                        if let Some(at) = m["modified"].as_u64() {
+                            self.modified.update(|k| {
+                                k.insert(path.clone(), at);
+                            });
+                        }
+                        self.forget_on_disk(&path);
                         self.message.set(String::new());
+                        if self.close_saved.with_untracked(|c| c.as_deref() == Some(path.as_str())) {
+                            self.close_saved.set(None);
+                            self.close_now(&path);
+                        }
+                    }
+                }
+            }
+            // What is watched changed on disk (the agent wrote it, or another program): a tab with no changes of
+            // its own reads it again, one with changes says so and leaves the choice to the person.
+            "stats" => {
+                for it in m["items"].as_array().into_iter().flatten() {
+                    let path = s_of(it, "path");
+                    let Some(tab) = self.tab(&path).filter(|t| t.diff.is_none()) else { continue };
+                    let dirty = tab.dirty.get_untracked();
+                    if it["gone"] == true {
+                        self.on_disk.update(|d| {
+                            d.insert(path, OnDisk::Gone);
+                        });
+                    } else if let Some(now) = it["modified"].as_u64()
+                        && self.modified.with_untracked(|k| k.get(&path).is_some_and(|known| *known != now))
+                    {
+                        if dirty {
+                            self.on_disk.update(|d| {
+                                d.insert(path, OnDisk::Changed);
+                            });
+                        } else {
+                            self.reload(&path, send);
+                        }
                     }
                 }
             }
@@ -620,10 +806,114 @@ impl Ui {
     }
 }
 
+/// Where two texts differ: the part of the old one to replace (from, to) and what to put there; none when they are
+/// the same.
+pub fn changed<'a>(old: &str, new: &'a str) -> Option<(usize, usize, &'a str)> {
+    if old == new {
+        return None;
+    }
+    let (a, b) = (old.as_bytes(), new.as_bytes());
+    let mut start = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    while !old.is_char_boundary(start) {
+        start -= 1;
+    }
+    let most = a.len().min(b.len()) - start;
+    let mut end = a.iter().rev().zip(b.iter().rev()).take(most).take_while(|(x, y)| x == y).count();
+    while !old.is_char_boundary(old.len() - end) {
+        end -= 1;
+    }
+    Some((start, old.len() - end, &new[start..new.len() - end]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::layout::{View, Where};
+
+    fn asked() -> (Send, Rc<std::cell::RefCell<Vec<Value>>>) {
+        let asked = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let to = asked.clone();
+        (Rc::new(move |v: Value| to.borrow_mut().push(v)), asked)
+    }
+
+    #[test]
+    fn two_texts_differ_by_their_changed_part_only() {
+        assert_eq!(changed("abc", "abc"), None);
+        assert_eq!(changed("one\ntwo\nthree\n", "one\n2\nthree\n"), Some((4, 7, "2")));
+        assert_eq!(changed("aaa", "aa"), Some((2, 3, "")));
+        assert_eq!(changed("aa", "aaa"), Some((2, 2, "a")));
+        assert_eq!(changed("", "x"), Some((0, 0, "x")));
+        // Never cut inside a character.
+        assert_eq!(changed("é", "è"), Some((0, 2, "è")));
+    }
+
+    #[test]
+    fn a_file_changed_on_disk_is_read_again_or_said_to_have_changed() {
+        let ui = Ui::new();
+        let (send, asked) = asked();
+        ui.take(&json!({"type": "file", "path": "a.rs", "text": "one\ntwo\n", "modified": 5}), &send);
+        ui.take(&json!({"type": "file", "path": "b.rs", "text": "b\n", "modified": 5}), &send);
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("b.rs"));
+        // The same stamp: nothing to do.
+        ui.take(&json!({"type": "stats", "items": [{"path": "a.rs", "modified": 5}]}), &send);
+        assert!(asked.borrow().is_empty());
+        // No changes of its own: read again, and its text taken without its tab being shown for it.
+        ui.take(&json!({"type": "stats", "items": [{"path": "a.rs", "modified": 9}]}), &send);
+        assert_eq!(*asked.borrow(), [json!({"type": "open", "path": "a.rs"})]);
+        ui.take(&json!({"type": "file", "path": "a.rs", "text": "one\n2\n", "modified": 9}), &send);
+        let a = ui.tab("a.rs").expect("open");
+        assert_eq!(a.text(), "one\n2\n");
+        assert!(!a.dirty.get_untracked());
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("b.rs"));
+        // With changes of its own: said, its text left alone, until the person takes the disk's.
+        a.doc.edit_single(Selection::caret(0), "mine ", EditType::InsertChars);
+        assert!(a.dirty.get_untracked());
+        ui.take(&json!({"type": "stats", "items": [{"path": "a.rs", "modified": 12}]}), &send);
+        assert_eq!(ui.on_disk.get_untracked().get("a.rs"), Some(&OnDisk::Changed));
+        assert_eq!(asked.borrow().len(), 1);
+        ui.take_disk("a.rs", &send);
+        ui.take(&json!({"type": "file", "path": "a.rs", "text": "theirs\n", "modified": 12}), &send);
+        assert_eq!(a.text(), "theirs\n");
+        assert!(ui.on_disk.get_untracked().is_empty());
+        // Gone from the disk: said too.
+        ui.take(&json!({"type": "stats", "items": [{"path": "b.rs", "gone": true}]}), &send);
+        assert_eq!(ui.on_disk.get_untracked().get("b.rs"), Some(&OnDisk::Gone));
+        // One's own save is not a change: its stamp is the one known.
+        ui.take(&json!({"type": "saved", "path": "b.rs", "modified": 20}), &send);
+        assert!(ui.on_disk.get_untracked().is_empty());
+        ui.take(&json!({"type": "stats", "items": [{"path": "b.rs", "modified": 20}]}), &send);
+        assert_eq!(asked.borrow().len(), 2);
+        // Read again and not readable: said, and the file opens as any other the next time it is asked for.
+        ui.take(&json!({"type": "stats", "items": [{"path": "b.rs", "modified": 30}]}), &send);
+        ui.take(&json!({"type": "file", "path": "b.rs", "error": "not text"}), &send);
+        assert!(ui.reloading.get_untracked().is_empty());
+        ui.close("b.rs");
+        ui.take(&json!({"type": "file", "path": "b.rs", "text": "b again\n", "modified": 30}), &send);
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("b.rs"));
+    }
+
+    #[test]
+    fn a_tab_with_changes_not_saved_is_asked_about_before_it_closes() {
+        let ui = Ui::new();
+        let (send, asked) = asked();
+        ui.take(&json!({"type": "file", "path": "a.rs", "text": "one\n", "modified": 5}), &send);
+        ui.take(&json!({"type": "file", "path": "b.rs", "text": "b\n", "modified": 5}), &send);
+        ui.close("b.rs");
+        assert!(ui.tab("b.rs").is_none(), "nothing to lose: closed");
+        let a = ui.tab("a.rs").expect("open");
+        a.doc.edit_single(Selection::caret(0), "mine ", EditType::InsertChars);
+        ui.close("a.rs");
+        assert_eq!(ui.closing.get_untracked().as_deref(), Some("a.rs"));
+        assert!(ui.tab("a.rs").is_some());
+        // Save: closed once the session says it is saved.
+        ui.close_saved.set(ui.closing.get_untracked());
+        ui.closing.set(None);
+        ui.save_tab("a.rs", &send);
+        assert_eq!(asked.borrow().last(), Some(&json!({"type": "save", "path": "a.rs", "text": "mine one\n"})));
+        ui.take(&json!({"type": "saved", "path": "a.rs", "modified": 6}), &send);
+        assert!(ui.tab("a.rs").is_none());
+        assert_eq!(ui.active.get_untracked(), None);
+    }
 
     #[test]
     fn the_look_kept_comes_back_as_it_was_and_sizes_within_bounds() {
@@ -632,11 +922,7 @@ mod tests {
         ui.primary_width.set(333.0);
         let kept = ui.view_state();
         let again = Ui::new();
-        let asked = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let send: Send = {
-            let asked = asked.clone();
-            Rc::new(move |v: Value| asked.borrow_mut().push(v))
-        };
+        let (send, asked) = asked();
         again.restore(&kept, &send);
         assert_eq!(again.layout.get_untracked(), ui.layout.get_untracked());
         assert_eq!(again.primary_width.get_untracked(), 333.0);
