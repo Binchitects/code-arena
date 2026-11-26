@@ -130,8 +130,17 @@ pub struct Ui {
     /// A view's own menu (Move to…), open where it was right-clicked (in the window).
     pub context: RwSignal<Option<(crate::layout::View, f64, f64)>>,
     pub changes: RwSignal<Vec<Change>>,
+    /// The terminal the panel shows, and its screen.
     pub term: RwSignal<crate::terminal::State>,
     pub term_screen: RwSignal<crate::terminal::Screen>,
+    /// The window's terminals, as the tabs list shows them.
+    pub terms: RwSignal<Vec<crate::terminal::Shell>>,
+    /// The number the next terminal takes (none is taken twice).
+    pub term_next: RwSignal<u64>,
+    /// The size the panel gives a terminal, in columns and lines (0: it has not been laid out yet).
+    pub term_size: RwSignal<(usize, usize)>,
+    /// Counts each time the terminal is to be given the keys (one made, one chosen in the list).
+    pub term_focus: RwSignal<u64>,
     pub search_query: RwSignal<String>,
     pub search_case: RwSignal<bool>,
     pub search_regex: RwSignal<bool>,
@@ -203,6 +212,10 @@ impl Ui {
             changes: create_rw_signal(Vec::new()),
             term: create_rw_signal(crate::terminal::State::None),
             term_screen: create_rw_signal(crate::terminal::Screen::default()),
+            terms: create_rw_signal(Vec::new()),
+            term_next: create_rw_signal(crate::terminal::FIRST_ID),
+            term_size: create_rw_signal((0, 0)),
+            term_focus: create_rw_signal(0),
             search_query: create_rw_signal(String::new()),
             search_case: create_rw_signal(false),
             search_regex: create_rw_signal(false),
