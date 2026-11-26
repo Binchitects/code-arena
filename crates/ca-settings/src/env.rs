@@ -22,6 +22,22 @@ pub const CONNECTION_VARS: &[(&str, &str)] = &[
     ("XDG_DATA_HOME", "where data goes on Linux, as the system says"),
     ("XDG_RUNTIME_DIR", "where the person's sockets are (Podman's, Docker's), kept out of the sandbox"),
     ("NO_COLOR", "no colours in the terminal"),
+    ("ANTHROPIC_API_KEY", "Anthropic's key, for the provider anthropic; never printed"),
+    ("OPENAI_API_KEY", "OpenAI's key, for the provider openai; never printed"),
+    ("DEEPSEEK_API_KEY", "DeepSeek's key, for the provider deepseek; never printed"),
+    ("OPENROUTER_API_KEY", "OpenRouter's key, for the provider openrouter; never printed"),
+    ("MISTRAL_API_KEY", "Mistral's key, for the provider mistral; never printed"),
+    ("OLLAMA_API_KEY", "a key for an Ollama that asks for one (most do not)"),
+];
+
+/// The providers known by name and the variable that holds each one's key (the same as `ca_llm::providers::KNOWN`).
+pub const PROVIDER_KEYS: &[(&str, &str)] = &[
+    ("anthropic", "ANTHROPIC_API_KEY"),
+    ("openai", "OPENAI_API_KEY"),
+    ("deepseek", "DEEPSEEK_API_KEY"),
+    ("openrouter", "OPENROUTER_API_KEY"),
+    ("mistral", "MISTRAL_API_KEY"),
+    ("ollama", "OLLAMA_API_KEY"),
 ];
 
 impl Env {

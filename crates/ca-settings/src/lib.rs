@@ -11,7 +11,7 @@ pub mod jsonc;
 pub mod schema;
 mod settings;
 
-pub use connection::Connection;
+pub use connection::{Connection, Edition, ProviderEntry};
 pub use env::Env;
 pub use schema::{Kind, Scope, Setting};
 pub use settings::{Layer, Problem, Settings, Source};

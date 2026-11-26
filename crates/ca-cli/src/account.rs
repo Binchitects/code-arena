@@ -13,6 +13,11 @@ use crate::app::App;
 use crate::ui::{self, Ui};
 
 pub struct LoginArgs {
+    /// A provider of one's own instead of an Arena: anthropic, openai, deepseek, openrouter, mistral, ollama, or a
+    /// name of one's own with `url` (any OpenAI-compatible API).
+    pub provider: Option<String>,
+    /// `openai` or `anthropic`, for a provider of one's own.
+    pub kind: Option<String>,
     pub url: Option<String>,
     pub user: Option<String>,
     pub gateway: Option<String>,
@@ -30,8 +35,82 @@ fn machine_name() -> String {
         .unwrap_or_else(|| "this machine".into())
 }
 
+/// `login --provider NAME`: a provider kept with the person's key (asked without showing it, or its variable's), its
+/// models listed to check it. The standalone edition when there is no Arena; beside Arena's models when there is.
+pub async fn login_provider(app: &App, name: &str, args: &LoginArgs) -> anyhow::Result<()> {
+    let ui = app.ui;
+    let known = ca_llm::providers::known(name);
+    let mut entry = app.connection.providers.get(name).cloned().unwrap_or_default();
+    if args.url.is_some() {
+        entry.url = args.url.clone();
+    }
+    if args.kind.is_some() {
+        entry.kind = args.kind.clone();
+    }
+    // Its settings must hold before a key is asked for.
+    let provider = ca_llm::providers::Provider::parse(name, &entry.settings())
+        .map_err(|e| anyhow::anyhow!("{e} (known: anthropic, openai, deepseek, openrouter, mistral, ollama)"))?;
+    let env_var = known.map(|k| k.key_env);
+    let from_env = env_var.and_then(|v| app.settings.env().get(v).map(|k| (v, k.to_string())));
+    let key = match &from_env {
+        Some((var, k)) => {
+            ui.say(&ui.dim(&format!("Using {var} from the environment: it is read at each run, never written down.")));
+            Secret::new(k)
+        }
+        None => {
+            let ask = match known {
+                Some(k) => format!("{}'s API key (from {}; Enter for none): ", name, k.about),
+                None => format!("{name}'s API key (Enter for none): "),
+            };
+            let typed = rpassword::prompt_password(ask)?;
+            Secret::new(typed.trim())
+        }
+    };
+    if key.is_empty() && name != "ollama" && !provider.url.starts_with("http://") {
+        bail!("{name} needs a key: give it when asked, or set {}", env_var.unwrap_or("its key"));
+    }
+    let g = ca_llm::Gateway::standalone(vec![(provider.clone(), key.clone())], app.ca())?;
+    let models = g.models().await.with_context(|| format!("{name} did not list its models with that key"))?;
+    let mut conn = Connection::load(&app.paths.credentials_file(), &ca_settings::Env::default())?;
+    entry.api_key = if from_env.is_some() || key.is_empty() { None } else { Some(key) };
+    entry.key_from_env = false;
+    entry.from_env = false;
+    conn.providers.insert(name.to_string(), entry);
+    conn.save(&app.paths.credentials_file())?;
+    let shown: Vec<&str> = models.iter().take(8).map(|m| m.id.as_str()).collect();
+    ui.say(&format!(
+        "{} {name}: {} models ({}{}).",
+        ui.green("Kept"),
+        models.len(),
+        shown.join(", "),
+        if models.len() > shown.len() { ", …" } else { "" }
+    ));
+    let edition = if conn.signed_in() {
+        "beside Arena's models (where Arena's admins allow it)"
+    } else {
+        "the standalone edition: no Arena"
+    };
+    ui.say(&ui.dim(&format!("Its models are named {name}:MODEL, {edition}. Choose one with --model or /model.")));
+    Ok(())
+}
+
+/// `logout --provider NAME`: the provider and its key forgotten here.
+pub fn logout_provider(app: &App, name: &str) -> anyhow::Result<()> {
+    let mut conn = Connection::load(&app.paths.credentials_file(), &ca_settings::Env::default())?;
+    if conn.providers.remove(name).is_none() {
+        app.ui.say(&format!("No provider {name} is kept here."));
+        return Ok(());
+    }
+    conn.save(&app.paths.credentials_file())?;
+    app.ui.say(&format!("{name} and its key are forgotten here."));
+    Ok(())
+}
+
 pub async fn login(app: &App, args: LoginArgs) -> anyhow::Result<()> {
     let ui = app.ui;
+    if let Some(name) = args.provider.clone() {
+        return login_provider(app, &name, &args).await;
+    }
     let url = match args.url.or_else(|| app.connection.url.clone()) {
         Some(u) => u,
         None => ui::ask_line("The Arena's address (https://…): ")?,
@@ -45,6 +124,8 @@ pub async fn login(app: &App, args: LoginArgs) -> anyhow::Result<()> {
         url: Some(url.clone()),
         gateway: args.gateway.or_else(|| app.connection.gateway.clone()),
         ca,
+        // The person's own providers stay (those of the environment are not written).
+        providers: app.connection.providers.clone(),
         ..Default::default()
     };
 
@@ -192,9 +273,31 @@ pub async fn doctor(app: &App) -> anyhow::Result<()> {
     println!("{}", ui.bold(&format!("{} {}", ca_core::PRODUCT, ca_core::VERSION)));
     println!("  settings  {}", app.paths.config.display());
     println!("  data      {}", app.paths.data.display());
+    println!("  edition   {}", app.edition().name());
     let c = &app.connection;
+    let providers = app.providers();
+    if !providers.is_empty() {
+        println!("\n{}", ui.bold("Your providers"));
+        for (p, _) in &providers {
+            let key = providers.iter().find(|x| x.0.name == p.name).map(|x| x.1.clone()).unwrap_or_default();
+            let one = ca_llm::Gateway::standalone(vec![(p.clone(), key)], app.ca())?;
+            match one.models().await {
+                Ok(m) => println!("  {:<10}{} ({} models)", p.name, p.url, m.len()),
+                Err(e) => println!("  {:<10}{}", p.name, ui.red(&e.to_string())),
+            }
+        }
+    }
     let Some(url) = &c.url else {
-        println!("\nNot signed in: code-arena login --url https://YOUR-ARENA");
+        if providers.is_empty() {
+            println!(
+                "\nNothing to ask a model of yet: code-arena login --url https://YOUR-ARENA (the managed edition), or code-arena login --provider NAME (standalone: your own key)."
+            );
+        } else {
+            println!(
+                "\n{}",
+                ui.dim("Standalone: what needs Farzan Arena (chats on the web, its memory, skills, checklists, projects, its tools) is off. code-arena login --url https://YOUR-ARENA turns it on.")
+            );
+        }
         return Ok(());
     };
     println!("\n{}", ui.bold("Arena"));

@@ -44,9 +44,31 @@ impl App {
         Ok(ca_arena::ArenaClient::new(url, self.connection.api_key.clone(), self.ca())?)
     }
 
+    pub fn edition(&self) -> ca_settings::Edition {
+        self.connection.edition()
+    }
+
+    /// The person's providers that can be asked, each with its key; one whose settings do not hold is said.
+    pub fn providers(&self) -> Vec<(ca_llm::providers::Provider, ca_core::Secret)> {
+        let mut out = Vec::new();
+        for (name, entry) in self.connection.usable_providers() {
+            match ca_llm::providers::Provider::parse(name, &entry.settings()) {
+                Ok(p) => out.push((p, entry.api_key.clone().unwrap_or_default())),
+                Err(e) => self.ui.say(&self.ui.yellow(&format!("The provider {e}: left out."))),
+            }
+        }
+        out
+    }
+
+    /// The models: Arena's gateway (managed, with the person's providers beside it) or the providers alone
+    /// (standalone).
     pub fn gateway(&self) -> anyhow::Result<ca_llm::Gateway> {
-        if !self.connection.signed_in() {
-            bail!("not signed in: run code-arena login --url https://YOUR-ARENA (or set ARENA_URL and ARENA_API_KEY)");
+        match self.edition() {
+            ca_settings::Edition::Standalone => return Ok(ca_llm::Gateway::standalone(self.providers(), self.ca())?),
+            ca_settings::Edition::None => bail!(
+                "nothing to ask a model of yet: code-arena login --url https://YOUR-ARENA (Farzan Arena, the managed edition), or code-arena login --provider NAME (your own key: anthropic, openai, deepseek, openrouter, mistral, ollama, or any OpenAI-compatible API with --url)"
+            ),
+            ca_settings::Edition::Managed => {}
         }
         let Some(gw) = self.connection.gateway_url() else {
             bail!(
@@ -54,6 +76,8 @@ impl App {
             );
         };
         let key = self.connection.api_key.clone().unwrap_or_default();
-        Ok(ca_llm::Gateway::new(&gw, key, self.ca())?)
+        let mut g = ca_llm::Gateway::new(&gw, key, self.ca())?;
+        g.set_providers(self.providers());
+        Ok(g)
     }
 }

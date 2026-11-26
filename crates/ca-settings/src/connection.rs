@@ -31,6 +31,75 @@ pub struct Connection {
     /// Whose key it is, as Arena said at sign-in (shown, never used to sign in).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// Providers of models with the person's own keys, by name: `{"anthropic": {"apiKey": …}, "gpu": {"kind":
+    /// "openai", "url": "http://gpu:8000", "models": ["qwen3"]}}`. A known one's key may come from its variable.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub providers: std::collections::BTreeMap<String, ProviderEntry>,
+}
+
+/// One provider, as `credentials.json` keeps it (only its owner may read the file).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderEntry {
+    /// `openai` or `anthropic`; a known provider's own when not given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<Secret>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
+    /// Its key came from the environment for this run: never written to the file.
+    #[serde(skip)]
+    pub key_from_env: bool,
+    /// It is there only for the environment's key: not written either.
+    #[serde(skip)]
+    pub from_env: bool,
+}
+
+impl ProviderEntry {
+    /// Its settings as `ca_llm::providers::Provider::parse` reads them (the key apart).
+    pub fn settings(&self) -> serde_json::Value {
+        let mut o = serde_json::Map::new();
+        if let Some(k) = &self.kind {
+            o.insert("kind".into(), serde_json::json!(k));
+        }
+        if let Some(u) = &self.url {
+            o.insert("url".into(), serde_json::json!(u));
+        }
+        if !self.models.is_empty() {
+            o.insert("models".into(), serde_json::json!(self.models));
+        }
+        if let Some(c) = self.context {
+            o.insert("context".into(), serde_json::json!(c));
+        }
+        serde_json::Value::Object(o)
+    }
+}
+
+/// Which Code Arena this is, by what it is connected to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edition {
+    /// Signed in to Farzan Arena: everything (Arena's gateway, its tools, chats kept on the web, memory, skills,
+    /// checklists, projects), and the person's own providers where Arena's admins allow them.
+    Managed,
+    /// No Arena: the person's own providers' models, and everything that needs no Arena.
+    Standalone,
+    /// Neither yet.
+    None,
+}
+
+impl Edition {
+    pub fn name(self) -> &'static str {
+        match self {
+            Edition::Managed => "managed",
+            Edition::Standalone => "standalone",
+            Edition::None => "not set up",
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,7 +144,52 @@ impl Connection {
         if let Some(u) = &c.url {
             c.url = Some(normalize_url(u)?);
         }
+        // A known provider's key from its variable. Without Arena, a key in the environment is enough to use one.
+        let arena = c.signed_in();
+        for (name, var) in crate::env::PROVIDER_KEYS {
+            let Some(key) = env.get(var) else { continue };
+            match c.providers.get_mut(*name) {
+                Some(p) if p.api_key.is_none() => {
+                    p.api_key = Some(Secret::new(key));
+                    p.key_from_env = true;
+                }
+                Some(_) => {}
+                None if !arena && *name != "ollama" => {
+                    c.providers.insert(
+                        name.to_string(),
+                        ProviderEntry {
+                            api_key: Some(Secret::new(key)),
+                            key_from_env: true,
+                            from_env: true,
+                            ..Default::default()
+                        },
+                    );
+                }
+                None => {}
+            }
+        }
         Ok(c)
+    }
+
+    /// Which edition this is: managed when signed in to Arena, standalone with a provider of one's own.
+    pub fn edition(&self) -> Edition {
+        if self.signed_in() {
+            Edition::Managed
+        } else if self.usable_providers().next().is_some() {
+            Edition::Standalone
+        } else {
+            Edition::None
+        }
+    }
+
+    /// The providers that can be asked: with a key, or one that needs none (a URL on this machine or the network the
+    /// person named, such as Ollama).
+    pub fn usable_providers(&self) -> impl Iterator<Item = (&String, &ProviderEntry)> {
+        self.providers.iter().filter(|(name, p)| {
+            p.api_key.as_ref().is_some_and(|k| !k.is_empty())
+                || name.as_str() == "ollama"
+                || p.url.as_deref().is_some_and(|u| u.starts_with("http://"))
+        })
     }
 
     /// Writes it, readable by its owner only (0600 in a 0700 folder on Linux and macOS).
@@ -85,7 +199,15 @@ impl Connection {
             std::fs::create_dir_all(dir).map_err(err)?;
             restrict_dir(dir).map_err(err)?;
         }
-        let text = serde_json::to_string_pretty(self)
+        // What the environment gave for this run stays out of the file.
+        let mut kept = self.clone();
+        kept.providers.retain(|_, p| !p.from_env);
+        for p in kept.providers.values_mut() {
+            if p.key_from_env {
+                p.api_key = None;
+            }
+        }
+        let text = serde_json::to_string_pretty(&kept)
             .map_err(|e| ConnectionError::File { path: file.to_path_buf(), message: e.to_string() })?;
         let tmp = file.with_extension("json.tmp");
         {
@@ -182,6 +304,42 @@ fn restrict_dir(_dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_edition_by_what_it_is_connected_to() {
+        let none = Connection::load(Path::new("/nonexistent/credentials.json"), &Env::from_pairs([])).expect("load");
+        assert_eq!(none.edition(), Edition::None);
+        let mine = Connection::load(
+            Path::new("/nonexistent/credentials.json"),
+            &Env::from_pairs([("DEEPSEEK_API_KEY", "sk-d")]),
+        )
+        .expect("load");
+        assert_eq!(mine.edition(), Edition::Standalone);
+        assert_eq!(mine.providers["deepseek"].api_key.as_ref().map(|k| k.expose().to_string()), Some("sk-d".into()));
+        // Signed in to Arena: managed, and a key in the environment alone adds no provider.
+        let arena = Connection::load(
+            Path::new("/nonexistent/credentials.json"),
+            &Env::from_pairs([
+                ("ARENA_URL", "https://arena.example"),
+                ("ARENA_API_KEY", "sk-a"),
+                ("OPENAI_API_KEY", "sk-o"),
+            ]),
+        )
+        .expect("load");
+        assert_eq!(arena.edition(), Edition::Managed);
+        assert!(arena.providers.is_empty());
+        // The key is never in Debug, and what the environment gave is not written.
+        assert!(!format!("{mine:?}").contains("sk-d"));
+        let d = tempfile::tempdir().expect("temp");
+        let f = d.path().join("credentials.json");
+        let mut saved = mine.clone();
+        saved
+            .providers
+            .insert("gpu".into(), ProviderEntry { url: Some("http://gpu:8000".into()), ..Default::default() });
+        saved.save(&f).expect("save");
+        let text = std::fs::read_to_string(&f).expect("read");
+        assert!(!text.contains("sk-d") && !text.contains("deepseek") && text.contains("gpu"), "{text}");
+    }
 
     #[test]
     fn addresses_are_normalized() {

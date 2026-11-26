@@ -502,7 +502,24 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         _ => (String::new(), history, None),
     };
 
-    let gateway = app.gateway()?;
+    let mut gateway = app.gateway()?;
+    // Managed: Arena's admins decide whether the person's own providers are used (its chat config's
+    // codeArenaProviders; not said: they are).
+    if app.edition() == ca_settings::Edition::Managed && gateway.providers().next().is_some() {
+        let allowed = match app.arena() {
+            Ok(a) => tokio::time::timeout(Duration::from_secs(8), a.config())
+                .await
+                .ok()
+                .and_then(|c| c.ok())
+                .and_then(|c| c.get("codeArenaProviders").and_then(serde_json::Value::as_bool))
+                .unwrap_or(true),
+            Err(_) => true,
+        };
+        if !allowed {
+            gateway.set_providers(vec![]);
+            ui.say(&ui.yellow("Arena's admins do not let Code Arena use other providers (Admin → Settings → Code Arena): only Arena's models are offered."));
+        }
+    }
     let listed = gateway.models().await.unwrap_or_default();
     let stored_model =
         if session.is_empty() { None } else { store.summary(&session).ok().map(|s| s.model).filter(|m| !m.is_empty()) };

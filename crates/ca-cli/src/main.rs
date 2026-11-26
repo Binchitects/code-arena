@@ -4,6 +4,7 @@ mod account;
 mod app;
 mod chat;
 mod checklist;
+mod edition;
 mod run;
 mod servers;
 mod session;
@@ -64,8 +65,17 @@ enum Output {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Sign in to an Arena with your API key (or your user name and password).
+    /// Sign in to an Arena with your API key (or your user name and password), or keep a provider of your own
+    /// (--provider): the standalone edition, with no Arena.
     Login {
+        /// A provider instead of an Arena: anthropic, openai, deepseek, openrouter, mistral, ollama, or your own name
+        /// with --url (any OpenAI-compatible API). The key is asked without showing it, or read from its variable.
+        #[arg(long)]
+        provider: Option<String>,
+        /// openai or anthropic, for a provider of your own.
+        #[arg(long)]
+        kind: Option<String>,
+        /// The Arena's address; with --provider, the provider's API (without /v1).
         #[arg(long)]
         url: Option<String>,
         /// Sign in with this user name and its password instead of a key.
@@ -78,8 +88,11 @@ enum Command {
         #[arg(long)]
         ca: Option<PathBuf>,
     },
-    /// Forget the API key (Arena revokes it when Code Arena made it).
-    Logout,
+    /// Forget the API key (Arena revokes it when Code Arena made it), or with --provider a provider's.
+    Logout {
+        #[arg(long)]
+        provider: Option<String>,
+    },
     /// The models your key may use, with their windows.
     Models,
     /// What Code Arena sees: its folders, the Arena, and what that Arena has, feature by feature.
@@ -189,14 +202,19 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
         carry_plan: cli.carry_plan,
     };
     match cli.command {
-        Some(Command::Login { url, user, gateway, ca }) => {
-            account::login(&app, account::LoginArgs { url, user, gateway, ca }).await.map(|()| 0)
+        Some(Command::Login { provider, kind, url, user, gateway, ca }) => {
+            account::login(&app, account::LoginArgs { provider, kind, url, user, gateway, ca }).await.map(|()| 0)
         }
-        Some(Command::Logout) => account::logout(&app).await.map(|()| 0),
+        Some(Command::Logout { provider: Some(p) }) => account::logout_provider(&app, &p).map(|()| 0),
+        Some(Command::Logout { provider: None }) => account::logout(&app).await.map(|()| 0),
         Some(Command::Models) => account::models(&app).await.map(|()| 0),
         Some(Command::Doctor) => account::doctor(&app).await.map(|()| 0),
         Some(Command::Version) => {
-            println!("{} {} (MIT licence) {}", ca_core::PRODUCT, ca_core::VERSION, ca_core::SOURCE);
+            let edition = match app.edition() {
+                ca_settings::Edition::None => String::new(),
+                e => format!(", {} edition", e.name()),
+            };
+            println!("{} {}{edition} (MIT licence) {}", ca_core::PRODUCT, ca_core::VERSION, ca_core::SOURCE);
             Ok(0)
         }
         Some(Command::Chat { prompt }) => chat(&mut app, &cli_opts(&cli_common), prompt, &cli_common).await,

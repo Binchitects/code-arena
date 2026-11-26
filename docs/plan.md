@@ -201,6 +201,25 @@ thinking, typing while a turn runs, ↑ history shared with the IDE, Ctrl+Z, app
 job lines that never break into a question. It is built on `ratatui` with an inline
 viewport, not the alternate screen, so the scrollback stays the terminal's.
 
+## Two editions: managed and standalone
+
+One product, one binary; the edition is what it is connected to, and `version`, `doctor` and the chat's banner name it.
+
+- **Managed** (the enterprise edition): signed in to Farzan Arena. Everything: Arena's gateway and models, its MCP
+  tools and Farzan Graph, chats kept on the web both ways, Arena's memory, skills and checklists, projects, assistants,
+  automation. And everything of the standalone edition, the person's own providers included, where Arena's admins
+  allow them (its chat config's `codeArenaProviders`; not said: allowed).
+- **Standalone** (the home edition): no Arena, the person's own provider: Anthropic (its Messages API), OpenAI,
+  DeepSeek, OpenRouter, Mistral, a local Ollama, or any OpenAI-compatible API (`code-arena login --provider NAME
+  [--url URL]`, or the provider's key variable, `OPENAI_API_KEY` and so on). Its models are `NAME:MODEL`. Everything
+  that needs no Arena: the tools, sessions, compaction, the plan, local memory files and `.remember/`, skills (the
+  project's, the person's, the built-in ones), commands and sub-agents, the person's MCP servers, the sandbox, jobs.
+- **What needs Arena** is marked once (`ca-cli/src/edition.rs`): in the standalone edition it is hidden from `/help`,
+  its tools are not offered, and a command for it says which edition has it and how to turn it on. The settings
+  editor (0.4) shows the same marks as locks.
+- A provider's key is asked without showing it, or read from its variable at each run (never written then), and kept
+  in `credentials.json` (its owner's only), never printed.
+
 ## Arena servers 8.0 and later
 
 ### What each server has

@@ -87,6 +87,18 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   plugins', kept for the next session (`arena-skills/` in the data folder) and refreshed at each
   start; a file outside its skill's folder is left out.
 
+- Two editions in one product. **Managed**: signed in to Farzan Arena, everything. **Standalone**: no
+  Arena, your own provider's key: `code-arena login --provider anthropic` (or openai, deepseek,
+  openrouter, mistral, ollama, or your own name with `--url` for any OpenAI-compatible API), or
+  just its variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`…). Its models are `NAME:MODEL`; an
+  OpenAI-compatible provider is sent only what its API takes (none of Arena's own fields), and
+  Anthropic is spoken through its Messages API (the instructions cached). In the standalone
+  edition what needs Arena (`/web`, `/sync`, `/checklist`, Arena's memory, skills and past
+  chats, its tools) is hidden and says how to turn it on; local memory, `.remember/`, skills,
+  the plan and your MCP servers work as in the managed one. Managed, your providers' models sit
+  beside Arena's where Arena's admins allow them. `version`, `doctor` and the chat name the
+  edition; `logout --provider NAME` forgets one. Tested against fake providers only so far.
+
 ### Fixed
 - `doctor` would have said Arena 8.1 lacks `checklists.edit`: its probe asked to change an unknown
   checklist, which 8.1 answers with the same plain 404 as 8.0's missing route. It now asks to

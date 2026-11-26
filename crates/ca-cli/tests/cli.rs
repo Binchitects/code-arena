@@ -172,14 +172,6 @@ fn version_names_the_licence_and_the_source() {
     assert!(s.starts_with(&format!("Code Arena {} (MIT licence)", env!("CARGO_PKG_VERSION"))), "{s}");
 }
 
-#[test]
-fn print_without_signing_in_says_what_to_do() {
-    let home = tempfile::tempdir().expect("home");
-    let out = code_arena(home.path()).args(["-p", "hi"]).output().expect("runs");
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("not signed in: run code-arena login"));
-}
-
 /// A model that answers every request the same, and keeps what each request held.
 struct Echo(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
 
@@ -793,4 +785,59 @@ async fn arenas_memory_starts_the_session_and_what_matters_comes_with_a_message(
     ] {
         assert!(tools.iter().any(|x| x == t), "{t} in {tools:?}");
     }
+}
+
+/// A provider of OpenAI's kind that refuses any field it does not know.
+struct StrictProvider(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+
+impl Respond for StrictProvider {
+    fn respond(&self, r: &Request) -> ResponseTemplate {
+        let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+        let known = ["model", "messages", "stream", "stream_options", "tools", "max_tokens", "tool_choice"];
+        if let Some(extra) = body.as_object().and_then(|o| o.keys().find(|k| !known.contains(&k.as_str()))) {
+            return ResponseTemplate::new(422)
+                .set_body_json(json!({"error": {"message": format!("unknown field {extra}")}}));
+        }
+        self.0.lock().expect("seen").push(body.clone());
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "text/event-stream")
+            .set_body_string(sse(json!({"choices": [{"delta": {"content": format!("{} answers.", body["model"].as_str().unwrap_or(""))}, "finish_reason": "stop"}]})))
+    }
+}
+
+#[tokio::test]
+async fn the_standalone_edition_answers_with_a_provider_of_ones_own_and_locks_what_needs_arena() {
+    let provider = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(path("/v1/chat/completions")).respond_with(StrictProvider(seen.clone())).mount(&provider).await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/credentials.json"),
+        json!({"providers": {"gpu": {"url": provider.uri(), "models": ["qwen3-coder"]}}}).to_string(),
+    )
+    .expect("credentials");
+    let project = tempfile::tempdir().expect("project");
+    let run = |args: &[&str]| code_arena(home.path()).args(args).arg("-C").arg(project.path()).output().expect("runs");
+    let out = run(&["-p", "hello"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("qwen3-coder answers."), "{stdout}\n{stderr}");
+    assert_eq!(seen.lock().expect("seen").len(), 1, "one request, taken as it was");
+    // Nothing of Arena's tools in the request.
+    let tools = seen.lock().expect("seen")[0]["tools"].to_string();
+    assert!(!tools.contains("checklist_check") && !tools.contains("search_history"), "{tools}");
+    assert!(tools.contains("\"remember\"") && tools.contains("\"plan\""), "{tools}");
+    let v = code_arena(home.path()).arg("version").output().expect("version");
+    assert!(String::from_utf8_lossy(&v.stdout).contains(", standalone edition (MIT licence)"));
+}
+
+#[test]
+fn with_nothing_set_up_both_editions_are_named() {
+    let home = tempfile::tempdir().expect("home");
+    let out = code_arena(home.path()).args(["-p", "hi"]).output().expect("runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert!(stderr.contains("login --provider NAME") && stderr.contains("managed edition"), "{stderr}");
 }

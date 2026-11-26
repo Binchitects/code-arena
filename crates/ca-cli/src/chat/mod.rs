@@ -217,9 +217,10 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     let mut ed = Editor::new(hist.load());
 
     ui.say(&format!(
-        "{} {} · {} · {} · {}",
+        "{} {} {} · {} · {} · {}",
         ui.bold(ca_core::PRODUCT),
         ca_core::VERSION,
+        ui.dim(app.edition().name()),
         p.agent.model,
         p.agent.policy.mode.name(),
         ui.dim(&p.folder)
@@ -702,8 +703,12 @@ async fn command(
     usage: &mut ca_llm::Usage,
 ) -> anyhow::Result<bool> {
     let (name, rest) = line.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((line, ""));
+    if let Some(why) = crate::edition::locked(app.edition(), name) {
+        ui.say(&ui.yellow(&why));
+        return Ok(true);
+    }
     match name {
-        "/help" => ui.say(help()),
+        "/help" => ui.say(&crate::edition::help(app.edition(), help())),
         "/model" if rest.is_empty() => match p.agent.gateway.models().await {
             Ok(ms) => {
                 for m in ms {
