@@ -1,7 +1,8 @@
 //! Coder mode's side of the IDE's stream: the project's files (a folder listed, a file opened and saved) and its
 //! terminals. They answer while a turn runs too. Paths come relative to the project only, each part resolved as the
 //! system resolves it (a link that leads out is refused); only plain files are read or written, never a pipe or a
-//! device, and not a binary file or one over 5 MB.
+//! device, and not a binary file or one over 5 MB. The Explorer's own operations are here too: a file or a folder
+//! made, moved, or deleted (what is deleted is first kept aside, where the person can get it back).
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -65,6 +66,73 @@ const WATCH_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 /// The unsaved changes kept per file, and per project, at most.
 const MOST_BACKUP: usize = 5 * 1024 * 1024;
 const MOST_BACKUPS: u64 = 50 * 1024 * 1024;
+
+/// The biggest folder that is deleted (it is kept aside first, and a bigger one is not worth keeping twice).
+const MOST_DELETED: u64 = 50 * 1024 * 1024;
+
+/// How big a file or a folder's tree is; a link counts as itself, never as what it leads to. Counted no further
+/// than past `most` (a huge folder is not walked whole to be refused).
+fn tree_size(p: &Path, most: u64) -> u64 {
+    let Ok(meta) = std::fs::symlink_metadata(p) else { return 0 };
+    if !meta.is_dir() {
+        return meta.len();
+    }
+    let mut total = 0;
+    for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+        total += tree_size(&e.path(), most.saturating_sub(total));
+        if total > most {
+            break;
+        }
+    }
+    total
+}
+
+/// A file or a folder's tree copied; a link is copied as a link (never what it leads to).
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(from)?;
+    if meta.file_type().is_symlink() {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(std::fs::read_link(from)?, to)?;
+        return Ok(());
+    }
+    if !meta.is_dir() {
+        return std::fs::copy(from, to).map(|_| ());
+    }
+    std::fs::create_dir(to)?;
+    for e in std::fs::read_dir(from)? {
+        let e = e?;
+        copy_tree(&e.path(), &to.join(e.file_name()))?;
+    }
+    Ok(())
+}
+
+/// Takes a file, a link or a folder's tree away (a link itself, not what it leads to).
+fn remove_tree(p: &Path) -> std::io::Result<()> {
+    if std::fs::symlink_metadata(p)?.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) }
+}
+
+/// Moves a file or a folder's tree to another place: renamed when both are on one disk, else copied and then taken
+/// away.
+fn move_aside(from: &Path, to: &Path) -> std::io::Result<()> {
+    if std::fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    copy_then_remove(from, to)
+}
+
+/// Nothing is taken away unless the whole copy was made, and no half of a copy is left.
+fn copy_then_remove(from: &Path, to: &Path) -> std::io::Result<()> {
+    if let Err(e) = copy_tree(from, to) {
+        let _ = remove_tree(to);
+        return Err(e);
+    }
+    remove_tree(from)
+}
+
+/// The folder a path is in, as the page names it (the project's top: empty).
+fn parent_of(shown: &str) -> String {
+    shown.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default()
+}
 
 /// A short, stable name for a text (FNV-1a): a backup's file name, a project's folder.
 fn name_of(text: &str) -> String {
@@ -139,6 +207,164 @@ impl Side {
         Ok(real)
     }
 
+    /// The real place of an entry itself, for making, moving or deleting it: its folder resolved as the system
+    /// resolves it and inside the project, its own name kept as it is (a link is the link, not where it leads).
+    /// Never the project's top, and never git's own folder.
+    fn entry(&self, rel: &str) -> Result<PathBuf, String> {
+        let rel = rel.trim_start_matches("./").trim_end_matches('/');
+        if rel.starts_with(['/', '\\']) || rel.contains(':') {
+            return Err("only a path inside the project, from its top".into());
+        }
+        let (dir, name) = rel.rsplit_once('/').unwrap_or(("", rel));
+        if name.is_empty() || name == "." || name == ".." || name.contains(['\\', '\0']) {
+            return Err("not the name of a file or a folder".into());
+        }
+        let real = self.real(dir)?.join(name);
+        if real.strip_prefix(self.ws.root()).is_ok_and(|r| r.components().any(|c| c.as_os_str() == ".git")) {
+            return Err("git's own folder is left as it is".into());
+        }
+        Ok(real)
+    }
+
+    /// The message, then each folder changed listed again (every face's tree shows it).
+    fn answer(&self, (v, folders): (Value, Vec<String>)) {
+        send(&self.out, v);
+        for f in folders {
+            send(&self.out, self.ls(&f));
+        }
+    }
+
+    /// An empty file, or a folder, made (with the folders on the way to it); not over what is there.
+    fn create(&self, path: &str, dir: bool) -> (Value, Vec<String>) {
+        let fail = |e: String| (json!({"type": "created", "path": path, "dir": dir, "error": e}), Vec::new());
+        let real = match self.entry(path) {
+            Ok(r) => r,
+            Err(e) => return fail(e),
+        };
+        let Some(parent) = real.parent() else { return fail("no folder above it".into()) };
+        // The first folder on the way that is there already: the one whose listing changes when folders are made.
+        let mut top = parent;
+        while !top.exists() {
+            match top.parent() {
+                Some(p) => top = p,
+                None => break,
+            }
+        }
+        let made = std::fs::create_dir_all(parent).and_then(|()| {
+            if dir {
+                std::fs::create_dir(&real)
+            } else {
+                std::fs::OpenOptions::new().write(true).create_new(true).open(&real).map(|_| ())
+            }
+        });
+        if let Err(e) = made {
+            return fail(match e.kind() {
+                std::io::ErrorKind::AlreadyExists => "a file or folder of that name is already there".into(),
+                _ => e.to_string(),
+            });
+        }
+        let shown = self.shown(&real);
+        let mut folders = vec![self.shown(top), parent_of(&shown)];
+        folders.dedup();
+        (json!({"type": "created", "path": shown, "dir": dir}), folders)
+    }
+
+    /// A file or a folder moved inside the project; not over what is there.
+    fn rename(&self, path: &str, to: &str) -> (Value, Vec<String>) {
+        let fail = |e: String| (json!({"type": "renamed", "path": path, "to": to, "error": e}), Vec::new());
+        let (from, dest) = match (self.entry(path), self.entry(to)) {
+            (Ok(f), Ok(d)) => (f, d),
+            (Err(e), _) | (_, Err(e)) => return fail(e),
+        };
+        if std::fs::symlink_metadata(&from).is_err() {
+            return fail("not there".into());
+        }
+        if std::fs::symlink_metadata(&dest).is_ok() {
+            return fail("a file or folder of that name is already there".into());
+        }
+        if dest.starts_with(&from) {
+            return fail("a folder is not moved into itself".into());
+        }
+        let moved = match dest.parent() {
+            Some(p) => std::fs::create_dir_all(p).and_then(|()| std::fs::rename(&from, &dest)),
+            None => std::fs::rename(&from, &dest),
+        };
+        if let Err(e) = moved {
+            return fail(e.to_string());
+        }
+        let (was, now) = (self.shown(&from), self.shown(&dest));
+        // Its unsaved changes are kept under its name, and say it: they follow it, under its new one.
+        let old = self.backups.join(format!("{}.json", name_of(&was)));
+        if let Some(mut kept) = std::fs::read_to_string(&old).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        {
+            kept["path"] = json!(now);
+            let new = self.backups.join(format!("{}.json", name_of(&now)));
+            if write_private(&new, &kept.to_string()).is_ok() {
+                let _ = std::fs::remove_file(&old);
+            }
+        }
+        let mut folders = vec![parent_of(&was), parent_of(&now)];
+        folders.dedup();
+        (json!({"type": "renamed", "path": was, "to": now}), folders)
+    }
+
+    /// Where deleted files are kept: a folder of their own among the backups (the unsaved changes are the files at
+    /// its top), only the person's to read.
+    fn deleted(&self) -> PathBuf {
+        self.backups.join("deleted")
+    }
+
+    /// A file, a link or a folder's tree deleted: moved out of the project into the backups, under the moment it
+    /// was deleted and its own path, so the person can get it back. A folder over 50 MB is refused.
+    fn delete(&self, path: &str) -> (Value, Vec<String>) {
+        let fail = |e: String| (json!({"type": "deleted", "path": path, "error": e}), Vec::new());
+        let real = match self.entry(path) {
+            Ok(r) => r,
+            Err(e) => return fail(e),
+        };
+        let Ok(meta) = std::fs::symlink_metadata(&real) else { return fail("not there".into()) };
+        if meta.is_dir() && tree_size(&real, MOST_DELETED) > MOST_DELETED {
+            return fail("a folder bigger than 50 MB is not kept aside: delete it outside the editor".into());
+        }
+        let shown = self.shown(&real);
+        let kept = match self.keep_aside(&real, &shown) {
+            Ok(k) => k,
+            Err(e) => return fail(format!("it could not be kept aside, so it was not deleted: {e}")),
+        };
+        let _ = std::fs::remove_file(self.backups.join(format!("{}.json", name_of(&shown))));
+        (json!({"type": "deleted", "path": shown, "kept": kept.to_string_lossy()}), vec![parent_of(&shown)])
+    }
+
+    /// Moves what is deleted into the backups; says where it is now.
+    fn keep_aside(&self, real: &Path, shown: &str) -> std::io::Result<PathBuf> {
+        let all = self.deleted();
+        std::fs::create_dir_all(&all)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&all, std::fs::Permissions::from_mode(0o700))?;
+        }
+        let mut at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        // A folder of its own for each deletion: made anew, so two at one moment do not meet.
+        let dir = loop {
+            let dir = all.join(at.to_string());
+            match std::fs::create_dir(&dir) {
+                Ok(()) => break dir,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => at += 1,
+                Err(e) => return Err(e),
+            }
+        };
+        let kept = dir.join(shown);
+        if let Some(p) = kept.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        move_aside(real, &kept)?;
+        Ok(kept)
+    }
+
     fn shown(&self, real: &Path) -> String {
         real.strip_prefix(self.ws.root()).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default()
     }
@@ -150,6 +376,9 @@ impl Side {
             "ls" => send(&self.out, self.ls(path)),
             "open" => send(&self.out, self.open(path)),
             "save" => send(&self.out, self.save(path, m["text"].as_str().unwrap_or(""))),
+            "create" => self.answer(self.create(path, m["dir"] == true)),
+            "rename" => self.answer(self.rename(path, m["to"].as_str().unwrap_or(""))),
+            "delete" => self.answer(self.delete(path)),
             "stat" => send(&self.out, self.stat(m)),
             "watch" => self.set_watch(m),
             "backup" => {
@@ -767,6 +996,218 @@ mod tests {
         );
         assert!(s.handle(&json!({"type": "backup", "path": "../x.txt", "text": "x"})));
         assert!(drain(&mut rx).iter().any(|v| v["type"] == "notice"), "a path outside is refused");
+    }
+
+    /// A project and a data folder of its own (what is deleted is kept in it).
+    fn side_with_data() -> (tempfile::TempDir, tempfile::TempDir, Side, broadcast::Receiver<String>) {
+        let d = tempfile::tempdir().expect("temp");
+        std::fs::create_dir_all(d.path().join("src")).expect("dir");
+        std::fs::write(d.path().join("src/main.rs"), "fn main() {}\n").expect("w");
+        let data = tempfile::tempdir().expect("data");
+        let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
+        let (out, rx) = broadcast::channel(64);
+        let s = Side::new(ws, Arc::default(), out, None, data.path());
+        (d, data, s, rx)
+    }
+
+    fn listed(got: &[Value]) -> Vec<&str> {
+        got.iter().filter(|v| v["type"] == "ls").filter_map(|v| v["path"].as_str()).collect()
+    }
+
+    #[test]
+    fn a_file_or_a_folder_is_made_once_and_its_folder_listed_again() {
+        let (d, _data, s, mut rx) = side_with_data();
+        assert!(s.handle(&json!({"type": "create", "path": "src/new.rs", "dir": false})));
+        let got = drain(&mut rx);
+        assert_eq!((got[0]["type"].as_str(), got[0]["path"].as_str()), (Some("created"), Some("src/new.rs")));
+        assert!(got[0]["dir"] == false && got[0]["error"].is_null());
+        assert_eq!(listed(&got), ["src"]);
+        assert_eq!(std::fs::read(d.path().join("src/new.rs")).expect("made"), b"");
+        // Not over what is there: the file stays as it is.
+        std::fs::write(d.path().join("src/new.rs"), "kept").expect("w");
+        s.handle(&json!({"type": "create", "path": "src/new.rs", "dir": false}));
+        s.handle(&json!({"type": "create", "path": "src", "dir": true}));
+        let got = drain(&mut rx);
+        assert_eq!(got.len(), 2, "no listing after a failure: {got:?}");
+        assert!(got.iter().all(|v| v["error"].as_str().is_some_and(|e| e.contains("already there"))), "{got:?}");
+        assert_eq!(std::fs::read_to_string(d.path().join("src/new.rs")).expect("r"), "kept");
+        // A folder, with the folders on the way: the first one that was there is listed, and the one it is in.
+        s.handle(&json!({"type": "create", "path": "a/b/c", "dir": true}));
+        let got = drain(&mut rx);
+        assert!(d.path().join("a/b/c").is_dir());
+        assert_eq!(listed(&got), ["", "a/b"]);
+    }
+
+    #[test]
+    fn nothing_is_made_moved_or_deleted_out_of_the_project_nor_its_top_nor_gits_folder() {
+        let (d, _data, s, mut rx) = side_with_data();
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("theirs.txt"), "theirs").expect("w");
+        std::fs::create_dir_all(d.path().join(".git")).expect("git");
+        let out = outside.path().to_string_lossy().into_owned();
+        #[allow(unused_mut)]
+        let mut asked = vec![
+            json!({"type": "create", "path": "../x.txt"}),
+            json!({"type": "create", "path": "/tmp/x.txt"}),
+            json!({"type": "create", "path": format!("{out}/x.txt")}),
+            json!({"type": "create", "path": ".git/hooks/x"}),
+            json!({"type": "rename", "path": "src/main.rs", "to": "../main.rs"}),
+            json!({"type": "rename", "path": "src/main.rs", "to": format!("{out}/main.rs")}),
+            json!({"type": "rename", "path": "../x", "to": "x"}),
+            json!({"type": "rename", "path": "", "to": "x"}),
+            json!({"type": "rename", "path": "src/..", "to": "x"}),
+            json!({"type": "rename", "path": "src", "to": "src/inner"}),
+            json!({"type": "delete", "path": ""}),
+            json!({"type": "delete", "path": "./"}),
+            json!({"type": "delete", "path": "."}),
+            json!({"type": "delete", "path": "src/.."}),
+            json!({"type": "delete", "path": "../"}),
+            json!({"type": "delete", "path": ".git"}),
+            json!({"type": "delete", "path": format!("{out}/theirs.txt")}),
+        ];
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outside.path(), d.path().join("out")).expect("link");
+            asked.push(json!({"type": "create", "path": "out/x.txt"}));
+            asked.push(json!({"type": "rename", "path": "src/main.rs", "to": "out/main.rs"}));
+            asked.push(json!({"type": "delete", "path": "out/theirs.txt"}));
+        }
+        for m in &asked {
+            assert!(s.handle(m));
+            let got = drain(&mut rx);
+            assert_eq!(got.len(), 1, "{m}: {got:?}");
+            assert!(got[0]["error"].is_string(), "{m} was not refused: {got:?}");
+        }
+        assert!(d.path().join("src/main.rs").is_file() && d.path().join(".git").is_dir());
+        assert_eq!(std::fs::read_dir(outside.path()).expect("dir").count(), 1, "nothing made outside");
+        assert_eq!(std::fs::read_to_string(outside.path().join("theirs.txt")).expect("r"), "theirs");
+    }
+
+    #[test]
+    fn a_file_is_moved_but_not_over_another_and_both_folders_are_listed_again() {
+        let (d, _data, s, mut rx) = side_with_data();
+        std::fs::write(d.path().join("other.rs"), "other").expect("w");
+        s.handle(&json!({"type": "rename", "path": "src/main.rs", "to": "other.rs"}));
+        let got = drain(&mut rx);
+        assert!(got.len() == 1 && got[0]["error"].as_str().is_some_and(|e| e.contains("already there")), "{got:?}");
+        assert_eq!(std::fs::read_to_string(d.path().join("other.rs")).expect("r"), "other");
+        s.handle(&json!({"type": "rename", "path": "missing.rs", "to": "x.rs"}));
+        assert!(drain(&mut rx)[0]["error"].is_string());
+        // Its unsaved changes follow it.
+        s.handle(&json!({"type": "backup", "path": "src/main.rs", "text": "unsaved"}));
+        s.handle(&json!({"type": "rename", "path": "src/main.rs", "to": "main.rs"}));
+        let got = drain(&mut rx);
+        assert_eq!(
+            (got[0]["type"].as_str(), got[0]["path"].as_str(), got[0]["to"].as_str()),
+            (Some("renamed"), Some("src/main.rs"), Some("main.rs"))
+        );
+        assert_eq!(listed(&got), ["src", ""]);
+        assert!(d.path().join("main.rs").is_file() && !d.path().join("src/main.rs").exists());
+        s.handle(&json!({"type": "backups"}));
+        let items = drain(&mut rx)[0]["items"].clone();
+        assert_eq!(items.as_array().map(Vec::len), Some(1));
+        assert_eq!((items[0]["path"].as_str(), items[0]["text"].as_str()), (Some("main.rs"), Some("unsaved")));
+        assert!(s.backups.join(format!("{}.json", name_of("main.rs"))).is_file());
+        // A folder, with what is in it.
+        s.handle(&json!({"type": "rename", "path": "src", "to": "lib"}));
+        let got = drain(&mut rx);
+        assert!(got[0]["error"].is_null() && d.path().join("lib").is_dir(), "{got:?}");
+        assert_eq!(listed(&got), [""]);
+    }
+
+    #[test]
+    fn what_is_deleted_is_kept_aside_first_and_does_not_show_as_unsaved_changes() {
+        let (d, data, s, mut rx) = side_with_data();
+        std::fs::write(d.path().join("src/package.json"), "{\"path\": \"x\"}").expect("w");
+        s.handle(&json!({"type": "backup", "path": "src/main.rs", "text": "unsaved"}));
+        s.handle(&json!({"type": "delete", "path": "src/main.rs"}));
+        let got = drain(&mut rx);
+        assert_eq!((got[0]["type"].as_str(), got[0]["path"].as_str()), (Some("deleted"), Some("src/main.rs")));
+        assert_eq!(listed(&got), ["src"]);
+        assert!(!d.path().join("src/main.rs").exists());
+        let kept = PathBuf::from(got[0]["kept"].as_str().expect("where it is kept"));
+        assert!(kept.starts_with(data.path()) && kept.ends_with("src/main.rs"), "{kept:?}");
+        assert_eq!(std::fs::read_to_string(&kept).expect("kept"), "fn main() {}\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(s.deleted()).expect("m").permissions().mode() & 0o777, 0o700);
+        }
+        // A folder's tree, whole; and none of it is taken for unsaved changes (nor the file's own, now gone).
+        s.handle(&json!({"type": "delete", "path": "src"}));
+        let got = drain(&mut rx);
+        assert!(got[0]["error"].is_null() && !d.path().join("src").exists(), "{got:?}");
+        let kept = PathBuf::from(got[0]["kept"].as_str().expect("kept"));
+        assert!(kept.join("package.json").is_file());
+        s.handle(&json!({"type": "backups"}));
+        assert_eq!(drain(&mut rx)[0]["items"].as_array().map(Vec::len), Some(0));
+        s.handle(&json!({"type": "delete", "path": "src"}));
+        assert!(drain(&mut rx)[0]["error"].as_str().is_some_and(|e| e.contains("not there")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_is_deleted_as_a_link_and_one_in_a_folder_never_brings_what_it_leads_to() {
+        let (d, _data, s, mut rx) = side_with_data();
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("theirs.txt"), "theirs").expect("w");
+        // A link to a file of the project: the link goes, the file stays.
+        std::os::unix::fs::symlink(d.path().join("src/main.rs"), d.path().join("main-link")).expect("link");
+        s.handle(&json!({"type": "delete", "path": "main-link"}));
+        let got = drain(&mut rx);
+        assert!(got[0]["error"].is_null(), "{got:?}");
+        assert!(d.path().join("src/main.rs").is_file());
+        assert!(std::fs::symlink_metadata(d.path().join("main-link")).is_err());
+        // A link out of the project, alone and inside a folder that is deleted: what it leads to is not touched.
+        std::os::unix::fs::symlink(outside.path(), d.path().join("out")).expect("link");
+        std::os::unix::fs::symlink(outside.path(), d.path().join("src/out")).expect("link");
+        s.handle(&json!({"type": "delete", "path": "out"}));
+        s.handle(&json!({"type": "delete", "path": "src"}));
+        let got = drain(&mut rx);
+        assert!(got.iter().all(|v| v["error"].is_null()), "{got:?}");
+        assert!(!d.path().join("src").exists());
+        assert_eq!(std::fs::read_to_string(outside.path().join("theirs.txt")).expect("r"), "theirs");
+        let kept = got.iter().filter_map(|v| v["kept"].as_str()).nth(1).map(PathBuf::from).expect("kept");
+        assert!(std::fs::symlink_metadata(kept.join("out")).expect("m").file_type().is_symlink());
+    }
+
+    #[test]
+    fn a_folder_over_fifty_megabytes_is_not_deleted() {
+        let (d, _data, s, mut rx) = side_with_data();
+        // A file with a hole in it: its length, without the bytes written.
+        std::fs::File::create(d.path().join("src/big.bin")).expect("f").set_len(MOST_DELETED + 1).expect("len");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/", d.path().join("src/everything")).expect("link");
+        #[cfg(unix)]
+        assert!(tree_size(&d.path().join("src/everything"), u64::MAX) < 4096, "a link counts as itself");
+        assert!(tree_size(&d.path().join("src"), u64::MAX) < MOST_DELETED + 4096);
+        s.handle(&json!({"type": "delete", "path": "src"}));
+        let got = drain(&mut rx);
+        assert!(got.len() == 1 && got[0]["error"].as_str().is_some_and(|e| e.contains("50 MB")), "{got:?}");
+        assert!(d.path().join("src/main.rs").is_file());
+    }
+
+    #[test]
+    fn what_cannot_be_renamed_aside_is_copied_whole_and_only_then_taken_away() {
+        let d = tempfile::tempdir().expect("temp");
+        std::fs::create_dir_all(d.path().join("from/in")).expect("dir");
+        std::fs::write(d.path().join("from/a.txt"), "a").expect("w");
+        std::fs::write(d.path().join("from/in/b.txt"), "b").expect("w");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("theirs.txt"), "theirs").expect("w");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(outside.path(), d.path().join("from/out")).expect("link");
+        copy_then_remove(&d.path().join("from"), &d.path().join("to")).expect("moved");
+        assert!(!d.path().join("from").exists());
+        assert_eq!(std::fs::read_to_string(d.path().join("to/in/b.txt")).expect("r"), "b");
+        assert_eq!(std::fs::read_to_string(d.path().join("to/a.txt")).expect("r"), "a");
+        #[cfg(unix)]
+        assert!(std::fs::symlink_metadata(d.path().join("to/out")).expect("m").file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(outside.path().join("theirs.txt")).expect("r"), "theirs");
+        // A copy that fails leaves what was there, and no half of a copy.
+        std::fs::write(d.path().join("one.txt"), "one").expect("w");
+        assert!(copy_then_remove(&d.path().join("one.txt"), &d.path().join("no/such/folder/one.txt")).is_err());
+        assert_eq!(std::fs::read_to_string(d.path().join("one.txt")).expect("r"), "one");
     }
 
     #[cfg(unix)]

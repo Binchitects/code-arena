@@ -23,6 +23,12 @@ fn s_of(v: &Value, k: &str) -> String {
     v[k].as_str().unwrap_or("").to_string()
 }
 
+/// Where a path is once `from` has become `to`: `from` itself, or anything in it; none when it is neither.
+pub fn moved_path(path: &str, from: &str, to: &str) -> Option<String> {
+    let rest = path.strip_prefix(from)?;
+    (rest.is_empty() || rest.starts_with('/')).then(|| format!("{to}{rest}"))
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub name: String,
@@ -170,6 +176,14 @@ pub struct Ui {
     pub tree: RwSignal<HashMap<String, Vec<Entry>>>,
     pub expanded: RwSignal<HashSet<String>>,
     pub selected: RwSignal<String>,
+    /// The Explorer's inline input: what it is for (a new file or folder, a row renamed), and what is typed in it.
+    pub explorer_edit: RwSignal<Option<crate::explorer::Edit>>,
+    pub explorer_text: RwSignal<String>,
+    /// The file this window asked the session to make: opened once it is there.
+    pub explorer_asked: RwSignal<Option<String>>,
+    /// The Explorer's menu or its question, open over the window; and the tree, which has the keys again after.
+    pub explorer_popup: RwSignal<Option<floem::ViewId>>,
+    pub explorer_tree: RwSignal<Option<floem::ViewId>>,
     pub tabs: RwSignal<Vec<Tab>>,
     pub active: RwSignal<Option<String>>,
     pub caret: RwSignal<(usize, usize)>,
@@ -267,6 +281,11 @@ impl Ui {
             tree: create_rw_signal(HashMap::new()),
             expanded: create_rw_signal(HashSet::new()),
             selected: create_rw_signal(String::new()),
+            explorer_edit: create_rw_signal(None),
+            explorer_text: create_rw_signal(String::new()),
+            explorer_asked: create_rw_signal(None),
+            explorer_popup: create_rw_signal(None),
+            explorer_tree: create_rw_signal(None),
             tabs: create_rw_signal(Vec::new()),
             active: create_rw_signal(None),
             caret: create_rw_signal((1, 1)),
@@ -530,6 +549,44 @@ impl Ui {
         }
     }
 
+    /// A file or a folder was moved: its open editors, the selection and the open folders follow it (and all that
+    /// was in it, when it is a folder).
+    pub fn moved(&self, from: &str, to: &str) {
+        let now = |p: &str| moved_path(p, from, to);
+        self.tabs.update(|tabs| {
+            for t in tabs.iter_mut().filter(|t| t.diff.is_none()) {
+                if let Some(n) = now(&t.path) {
+                    t.path = n.clone();
+                    t.file = n;
+                }
+            }
+        });
+        if let Some(n) = self.active.get_untracked().as_deref().and_then(now) {
+            self.active.set(Some(n));
+        }
+        if let Some(n) = now(&self.selected.get_untracked()) {
+            self.selected.set(n);
+        }
+        self.expanded.update(|e| *e = e.drain().map(|p| now(&p).unwrap_or(p)).collect());
+        self.tree.update(|t| *t = t.drain().map(|(p, v)| (now(&p).unwrap_or(p), v)).collect());
+    }
+
+    /// A file or a folder was deleted: its editors close (and those of all that was in it).
+    pub fn gone(&self, path: &str) {
+        let inside = |p: &str| moved_path(p, path, "").is_some();
+        let open: Vec<String> = self.tabs.with_untracked(|tabs| {
+            tabs.iter().filter(|t| t.diff.is_none() && inside(&t.path)).map(|t| t.path.clone()).collect()
+        });
+        for p in open {
+            self.close(&p);
+        }
+        if inside(&self.selected.get_untracked()) {
+            self.selected.set(String::new());
+        }
+        self.expanded.update(|e| e.retain(|p| !inside(p)));
+        self.tree.update(|t| t.retain(|p, _| !inside(p)));
+    }
+
     /// One message from the session, as the page takes it.
     pub fn take(&self, m: &Value, send: &Send) {
         let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
@@ -599,6 +656,49 @@ impl Ui {
                 self.tree.update(|t| {
                     t.insert(s("path"), entries);
                 });
+            }
+            // The Explorer's own. Every face is told, so what another face moved or deleted is followed here too;
+            // but a file is opened only in the window that asked for it.
+            "created" => {
+                let path = s("path");
+                if !self.explorer_asked.with_untracked(|a| a.as_deref() == Some(path.as_str())) {
+                    return;
+                }
+                self.explorer_asked.set(None);
+                match m["error"].as_str() {
+                    Some(e) => self.message.set(format!("Could not create {path}: {e}")),
+                    None => {
+                        self.message.set(String::new());
+                        if m["dir"] == true {
+                            self.selected.set(path);
+                        } else {
+                            self.open(&path, send);
+                        }
+                    }
+                }
+            }
+            "renamed" => {
+                let (path, to) = (s("path"), s("to"));
+                match m["error"].as_str() {
+                    Some(e) => self.message.set(format!("Could not rename {path}: {e}")),
+                    None => {
+                        self.message.set(String::new());
+                        self.moved(&path, &to);
+                    }
+                }
+            }
+            "deleted" => {
+                let path = s("path");
+                match m["error"].as_str() {
+                    Some(e) => self.message.set(format!("Could not delete {path}: {e}")),
+                    None => {
+                        self.gone(&path);
+                        self.message.set(match m["kept"].as_str() {
+                            Some(kept) => format!("Deleted {path}: it is kept in {kept}"),
+                            None => String::new(),
+                        });
+                    }
+                }
             }
             "file" => {
                 let path = s("path");
@@ -1041,6 +1141,62 @@ mod tests {
         assert_eq!(ui.thinking.get_untracked(), "high");
         assert_eq!(ui.mode.get_untracked(), "plan");
         assert_eq!(ui.models.get_untracked().len(), 2);
+    }
+
+    fn sender() -> (Send, Rc<std::cell::RefCell<Vec<Value>>>) {
+        let asked = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let to = asked.clone();
+        (Rc::new(move |v: Value| to.borrow_mut().push(v)), asked)
+    }
+
+    #[test]
+    fn open_editors_follow_a_file_that_is_moved_and_close_with_one_that_is_deleted() {
+        let ui = Ui::new();
+        let (send, _asked) = sender();
+        for p in ["src/a.rs", "src/in/b.rs", "srcs.rs"] {
+            ui.take(&json!({"type": "file", "path": p, "text": "x"}), &send);
+        }
+        ui.expanded.set(["src".to_string(), "src/in".to_string()].into());
+        ui.take(&json!({"type": "ls", "path": "src/in", "entries": [{"name": "b.rs", "dir": false}]}), &send);
+        ui.selected.set("src/in/b.rs".into());
+        // A folder renamed: all that is in it follows; a name that only begins as it does stays.
+        ui.take(&json!({"type": "renamed", "path": "src", "to": "lib"}), &send);
+        let paths = || ui.tabs.with_untracked(|t| t.iter().map(|t| t.path.clone()).collect::<Vec<_>>());
+        assert_eq!(paths(), ["lib/a.rs", "lib/in/b.rs", "srcs.rs"]);
+        assert_eq!(ui.tab("lib/a.rs").map(|t| t.file), Some("lib/a.rs".to_string()));
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("srcs.rs"));
+        assert_eq!(ui.selected.get_untracked(), "lib/in/b.rs");
+        assert!(ui.expanded.with_untracked(|e| e.contains("lib/in") && e.contains("lib") && e.len() == 2));
+        assert!(ui.tree.with_untracked(|t| t.contains_key("lib/in") && !t.contains_key("src/in")));
+        ui.active.set(Some("lib/a.rs".into()));
+        ui.take(&json!({"type": "renamed", "path": "lib/a.rs", "to": "lib/c.rs"}), &send);
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("lib/c.rs"));
+        // One that could not be moved: said, and nothing follows.
+        ui.take(&json!({"type": "renamed", "path": "srcs.rs", "to": "x.rs", "error": "already there"}), &send);
+        assert!(ui.message.get_untracked().contains("already there") && ui.tab("srcs.rs").is_some());
+        // A folder deleted: its editors close, and the one shown is another.
+        ui.take(&json!({"type": "deleted", "path": "lib", "kept": "/data/deleted/1/lib"}), &send);
+        assert_eq!(paths(), ["srcs.rs"]);
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("srcs.rs"));
+        assert!(ui.selected.get_untracked().is_empty() && ui.expanded.with_untracked(|e| e.is_empty()));
+        assert!(ui.message.get_untracked().contains("/data/deleted/1/lib"));
+    }
+
+    #[test]
+    fn the_file_this_window_asked_for_is_opened_once_made_and_another_faces_is_not() {
+        let ui = Ui::new();
+        let (send, asked) = sender();
+        ui.take(&json!({"type": "created", "path": "theirs.rs", "dir": false}), &send);
+        assert!(asked.borrow().is_empty(), "made by another face: not opened here");
+        ui.explorer_asked.set(Some("src/new.rs".into()));
+        ui.take(&json!({"type": "created", "path": "src/new.rs", "dir": false}), &send);
+        assert_eq!(*asked.borrow(), [json!({"type": "open", "path": "src/new.rs"})]);
+        assert_eq!(ui.selected.get_untracked(), "src/new.rs");
+        assert!(ui.explorer_asked.get_untracked().is_none());
+        ui.explorer_asked.set(Some("src/new.rs".into()));
+        ui.take(&json!({"type": "created", "path": "src/new.rs", "dir": false, "error": "already there"}), &send);
+        assert!(ui.message.get_untracked().contains("already there"));
+        assert_eq!(asked.borrow().len(), 1);
     }
 
     #[test]
