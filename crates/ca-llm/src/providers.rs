@@ -197,7 +197,7 @@ fn text_of(content: &Value) -> String {
 pub fn anthropic_body(body: &Value, model: &str, thinking: &crate::Thinking) -> Value {
     let mut system = String::new();
     let mut messages: Vec<Map<String, Value>> = Vec::new();
-    let mut add = |messages: &mut Vec<Map<String, Value>>, role: &str, block: Value| {
+    let add = |messages: &mut Vec<Map<String, Value>>, role: &str, block: Value| {
         if let Some(last) = messages.last_mut()
             && last.get("role").and_then(Value::as_str) == Some(role)
         {

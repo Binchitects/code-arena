@@ -35,6 +35,9 @@ struct Cli {
     /// A new session that carries on the plan an earlier one of this folder left.
     #[arg(long = "plan", global = true)]
     carry_plan: bool,
+    /// Start the conversation in one of your chats in Arena: its number in /web's list, or its id.
+    #[arg(long, value_name = "N|ID")]
+    web: Option<String>,
     /// Take up a saved session: its id, or none to choose from a list.
     #[arg(long, num_args = 0..=1, default_missing_value = "", global = true)]
     resume: Option<String>,
@@ -154,6 +157,7 @@ struct Common {
     cwd: Option<PathBuf>,
     add_dir: Vec<PathBuf>,
     carry_plan: bool,
+    web: Option<String>,
 }
 
 fn cli_opts(c: &Common) -> session::Opts {
@@ -185,6 +189,7 @@ async fn chat(app: &mut app::App, opts: &session::Opts, first: Option<String>, c
         resume: resume_of(c),
         first,
         choose: c.resume.as_deref() == Some(""),
+        web: c.web.clone(),
     };
     chat::run(app, args).await
 }
@@ -203,6 +208,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
         cwd: cli.cwd,
         add_dir: cli.add_dir,
         carry_plan: cli.carry_plan,
+        web: cli.web,
     };
     match cli.command {
         Some(Command::Login { provider, kind, url, user, gateway, ca }) => {

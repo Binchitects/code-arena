@@ -200,6 +200,8 @@ pub struct ChatArgs {
     pub first: Option<String>,
     /// `--resume` with no id: choose from a list.
     pub choose: bool,
+    /// `--web N|ID`: start in one of the person's chats in Arena, as `/web N` does.
+    pub web: Option<String>,
 }
 
 pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
@@ -231,6 +233,12 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     if let Some(said) = &p.resumed {
         ui.say(&ui.dim(&format!("Resumed {}, {said}.", p.session)));
         show_last_turns(&p, ui);
+    }
+    if let Some(w) = &args.web {
+        match crate::edition::locked(app.edition(), "/web") {
+            Some(why) => ui.say(&ui.yellow(&why)),
+            None => web(w, &mut p, app, ui).await?,
+        }
     }
     ui.say(&ui.dim("/help for the commands. Ctrl+C stops a turn; Ctrl+D leaves."));
 
