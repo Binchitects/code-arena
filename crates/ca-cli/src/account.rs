@@ -181,13 +181,10 @@ fn state_words(ui: &Ui, s: &State) -> String {
 }
 
 /// Keeps what a server answered, for the next start.
-fn keep_capabilities(app: &App, url: &str, caps: &Capabilities) {
-    let host = url.split("://").nth(1).unwrap_or(url).replace([':', '/'], "_");
-    let file = app.paths.servers_dir().join(format!("{host}.json"));
-    let body = serde_json::json!({"url": url, "probedAt": chrono::Utc::now().to_rfc3339(), "capabilities": caps});
-    if std::fs::create_dir_all(app.paths.servers_dir()).is_ok() {
-        let _ = std::fs::write(file, serde_json::to_string_pretty(&body).unwrap_or_default());
-    }
+fn keep_capabilities(app: &App, arena: &ca_arena::ArenaClient, stamp: Option<String>, caps: &Capabilities) {
+    let probed_at = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
+    ca_arena::Kept { url: arena.base().to_string(), probed_at, stamp, capabilities: caps.clone() }
+        .write(&ca_arena::Kept::file(&app.paths.servers_dir(), arena.base()));
 }
 
 pub async fn doctor(app: &App) -> anyhow::Result<()> {
@@ -241,12 +238,13 @@ pub async fn doctor(app: &App) -> anyhow::Result<()> {
         Err(e) => println!("  MCP       {}", ui.yellow(&e)),
     }
     println!("\n{}", ui.bold("What this Arena has"));
+    let stamp = arena.settings_stamp().await;
     match arena.capabilities().await {
         Ok(caps) => {
             for f in Feature::ALL {
                 println!("  {:<22}{}", f.name(), state_words(&ui, &caps.state(*f)));
             }
-            keep_capabilities(app, url, &caps);
+            keep_capabilities(app, &arena, stamp, &caps);
         }
         Err(e) => println!("  {}", ui.red(&e.to_string())),
     }

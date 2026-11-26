@@ -233,8 +233,8 @@ Code Arena also uses:
 - `/api/downloads/code-arena/*` (updates and signatures);
 - the project routes `/api/projects/*`.
 
-This table is in the repository as a test fixture. A test against a recorded 8.0 and a
-recorded 8.1 keeps it true.
+This table is in the repository as test fixtures (`crates/ca-arena/tests/fixtures/`): each
+version's answers to the probes, read from its routes. The contract tests replay them.
 
 ### How features are negotiated
 
@@ -246,16 +246,19 @@ recorded 8.1 keeps it true.
   answers 401 or 403 exists, and the key or the role is the problem. These rules have
   tests against both servers' recorded answers.
 - **The result is a `Capabilities` set**, for example `checklists.edit`, `project_work`,
-  `automation.agents`, `automation.scheduled`, `tokenize`, `watch`. It is cached per server
-  and probed again when the server's settings word (`GET /settings`) changes, or after an
-  hour. `code-arena doctor` prints it.
+  `automation.agents`, `automation.scheduled`, `tokenize`. It is cached per server
+  (`servers/HOST.json` in the data folder) and probed again when the server's settings stamp
+  (`GET /settings`) changes, or after an hour. `code-arena doctor` probes afresh and prints it.
+  `watch` is not probed (a probe would hold the stream open): sync opens the stream and polls
+  when it cannot.
 - **The UI follows the set, not a version:**
   - Without `automation.*`, the Automation view shows Code Arena's own schedules only and
     says why Arena's are missing.
   - Without `checklists.edit`, checklists can be turned on and ticked, but not made.
   - Without `project_work`, the project tools are left out of the model's list.
 - **A `/capabilities` route for later Arenas.** I will propose
-  `GET /api/code-arena/capabilities` to Arena, a list of feature names. When it is there,
+  `GET /api/code-arena/capabilities` to Arena, answering `{"features": ["chat_sync", …]}`
+  (the names `doctor` prints). When it is there,
   Code Arena reads it first and probes nothing else. Old servers keep working by probing.
 - **The wire shapes** are typed from both servers' C# records. Fields new in 8.1 are
   `Option` in Rust, so an 8.0 answer parses. Contract tests replay recorded answers from

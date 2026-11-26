@@ -3,6 +3,15 @@
 Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
 versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
 
+## Unreleased (0.3.0)
+
+### Added
+- What an Arena has is kept per server (`servers/HOST.json` in the data folder) and asked again
+  after an hour, when a probe got no clear answer, or when the account's settings stamp moves.
+  A later Arena that lists what it has (`GET /api/code-arena/capabilities` answering
+  `{"features": [...]}`) is read instead of probed.
+- Contract tests replay Arena 8.0's and 8.1's answers to every probe.
+
 ## 0.2.0 (2026-11-26)
 
 ### Added

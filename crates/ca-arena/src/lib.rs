@@ -8,6 +8,6 @@ mod client;
 pub mod signin;
 pub mod types;
 
-pub use capabilities::{Capabilities, Feature, State};
+pub use capabilities::{Capabilities, Feature, Kept, State};
 pub use client::{ArenaClient, ArenaError};
 pub use types::{Info, Me};

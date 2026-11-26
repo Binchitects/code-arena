@@ -177,9 +177,113 @@ pub fn classify(raw: &Raw) -> State {
     }
 }
 
+impl Feature {
+    pub fn from_name(name: &str) -> Option<Feature> {
+        Feature::ALL.iter().copied().find(|f| f.name() == name)
+    }
+}
+
+/// What a server answered, kept for the next start: asked again after [`KEEP_SECS`], when the probe was not
+/// complete, or when the account's settings stamp (`GET /settings`) moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Kept {
+    pub url: String,
+    /// Seconds since 1970.
+    pub probed_at: u64,
+    #[serde(default)]
+    pub stamp: Option<String>,
+    pub capabilities: Capabilities,
+}
+
+/// How long what a server answered is trusted.
+pub const KEEP_SECS: u64 = 3600;
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+impl Kept {
+    /// Where a server's answers are kept in `dir` (the data folder's `servers/`): one file per host.
+    pub fn file(dir: &std::path::Path, url: &str) -> std::path::PathBuf {
+        let host = url.split("://").nth(1).unwrap_or(url).replace([':', '/'], "_");
+        dir.join(format!("{host}.json"))
+    }
+
+    pub fn read(file: &std::path::Path) -> Option<Kept> {
+        serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()
+    }
+
+    pub fn write(&self, file: &std::path::Path) {
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(text) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(file, text);
+        }
+    }
+
+    /// Whether it still holds for this server, now that its stamp is `stamp`.
+    pub fn holds(&self, url: &str, stamp: Option<&str>, now: u64) -> bool {
+        self.url == url
+            && now.saturating_sub(self.probed_at) < KEEP_SECS
+            && !self.capabilities.incomplete()
+            && (stamp.is_none() || self.stamp.as_deref() == stamp)
+    }
+}
+
 impl ArenaClient {
-    /// Asks the server about every feature, all at once. A key the server refuses stops it: nothing can be said then.
+    /// The account's settings stamp (`GET /api/code-arena/settings`), which moves when its models, tools or skills change.
+    pub async fn settings_stamp(&self) -> Option<String> {
+        let v: Value = self.get("/api/code-arena/settings").await.ok()?;
+        v.get("stamp").and_then(Value::as_str).map(str::to_string)
+    }
+
+    /// What this server has, from `file` while it holds, else asked and kept there.
+    pub async fn capabilities_kept(&self, file: &std::path::Path) -> Result<Capabilities, ArenaError> {
+        let stamp = self.settings_stamp().await;
+        if let Some(k) = Kept::read(file)
+            && k.holds(self.base(), stamp.as_deref(), now_secs())
+        {
+            return Ok(k.capabilities);
+        }
+        let caps = self.capabilities().await?;
+        Kept { url: self.base().to_string(), probed_at: now_secs(), stamp, capabilities: caps.clone() }.write(file);
+        Ok(caps)
+    }
+
+    /// A later Arena's own list (`GET /api/code-arena/capabilities` answering `{"features": ["chat_sync", …]}`): what
+    /// it names is on, the rest it lacks. `None` when the server has no such route, or its answer is not that (a bare
+    /// array is not taken: a catch-all answering `[]` would otherwise turn everything off).
+    async fn listed(&self) -> Result<Option<Capabilities>, ArenaError> {
+        let raw = match self.raw(Method::GET, "/api/code-arena/capabilities", None).await {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
+        };
+        if raw.status == StatusCode::UNAUTHORIZED {
+            return Err(crate::client::refusal(&raw));
+        }
+        if !raw.status.is_success() || !raw.content_type.contains("json") {
+            return Ok(None);
+        }
+        let Ok(v) = serde_json::from_str::<Value>(&raw.body) else { return Ok(None) };
+        let Some(names) = v.get("features").and_then(Value::as_array) else {
+            return Ok(None);
+        };
+        let on: Vec<Feature> = names.iter().filter_map(Value::as_str).filter_map(Feature::from_name).collect();
+        let mut caps = Capabilities::default();
+        for &f in Feature::ALL {
+            caps.features.insert(f, if on.contains(&f) { State::On } else { State::Absent });
+        }
+        Ok(Some(caps))
+    }
+
+    /// Asks the server about every feature: its own list when it has one, else each probed, all at once. A key the
+    /// server refuses stops it: nothing can be said then.
     pub async fn capabilities(&self) -> Result<Capabilities, ArenaError> {
+        if let Some(caps) = self.listed().await? {
+            return Ok(caps);
+        }
         let probes = Feature::ALL.iter().map(|&f| async move {
             let (method, path, body) = f.probe();
             (f, self.raw(method, &path, body.as_ref()).await)

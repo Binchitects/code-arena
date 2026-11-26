@@ -1,0 +1,124 @@
+{
+  "note": "Answers to Code Arena's probes, read from this version's routes (Program.cs fallback, CodeArena*.cs, Checklists.cs), as it gives them to a signed-in key with nothing installed off. Each row: method, path, answer.",
+  "answers": [
+    {
+      "method": "GET",
+      "path": "/api/code-arena/capabilities",
+      "status": 404,
+      "contentType": "",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/settings",
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "{\"stamp\": \"5f2c0a9e1b7d4c3a\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/chats",
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/memories",
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/skills",
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/checklists",
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/chats/00000000-0000-0000-0000-000000000000/goal",
+      "status": 404,
+      "contentType": "application/json; charset=utf-8",
+      "body": "{\"status\": \"gone\", \"error\": \"That chat is not there.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/chats/00000000-0000-0000-0000-000000000000/plan",
+      "status": 404,
+      "contentType": "application/json; charset=utf-8",
+      "body": "{\"status\": \"gone\", \"error\": \"That chat is not there.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/projects",
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/assistants",
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "POST",
+      "path": "/api/code-arena/tokenize",
+      "status": 400,
+      "contentType": "application/json; charset=utf-8",
+      "body": "{\"status\": \"invalid\", \"error\": \"Name the model.\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/code-arena/history/search",
+      "status": 400,
+      "contentType": "application/json; charset=utf-8",
+      "body": "{\"status\": \"invalid\", \"error\": \"Say what to look for.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/broadcasts",
+      "status": 200,
+      "contentType": "application/json; charset=utf-8",
+      "body": "[]"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/code-arena/checklists/00000000-0000-0000-0000-000000000000",
+      "status": 404,
+      "contentType": "",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/chats/00000000-0000-0000-0000-000000000000/project-work",
+      "status": 404,
+      "contentType": "",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/agents",
+      "status": 404,
+      "contentType": "",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/code-arena/scheduled",
+      "status": 404,
+      "contentType": "",
+      "body": ""
+    }
+  ]
+}
