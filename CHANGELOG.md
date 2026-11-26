@@ -119,6 +119,13 @@ Sections used:
 - **A setting changed from the IDE is checked as the schema says** (its kind, where it may be set,
   the edition's locks) and kept in your settings.json or the project's, its comments kept.
 
+
+### :bug: Bugs fixed
+
+- **Answers are drawn in the native window again.** An answer's text lived in signals that could go when the next
+  message came in, so it streamed into nothing; a fast answer could even stop the window. The thread is no longer
+  built again at each message, and a group's view no longer at each change of the layout.
+
 ## v0.5.0 (2026-11-26)
 
 The IDE. `code-arena ide` opens the session in a window of its own, with two faces: Agent mode, a
