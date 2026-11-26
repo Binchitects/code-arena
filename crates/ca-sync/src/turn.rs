@@ -104,12 +104,40 @@ impl ChatSync {
         let id = &self.session;
         // Where the web's messages go: after `base`, the last message both have. A base this session does not know
         // changes nothing: the session is not cut back on a guess.
-        let base_seq = match &read.base {
+        let mut base_seq = match &read.base {
             Some(b) => match s.seq_by_arena(id, b).ok().flatten() {
                 Some(seq) => Some(seq),
                 None => return false,
             },
             None => None,
+        };
+        // The session's own messages, which Arena kept though its answer was lost: known by their ref, marked as sent
+        // (in order, from the start of what came), and the web's follow them.
+        let prefix = format!("{id}:");
+        let mut ours: Vec<(i64, String)> = Vec::new();
+        for m in &read.messages {
+            let Some(seq) =
+                m.reference.as_deref().and_then(|r| r.strip_prefix(&prefix)).and_then(|n| n.parse::<i64>().ok())
+            else {
+                break;
+            };
+            let Some(arena) = &m.id else { break };
+            if s.arena_id(id, seq).ok().flatten().is_some() || s.summary(id).map(|x| seq >= x.messages).unwrap_or(true)
+            {
+                break;
+            }
+            ours.push((seq, arena.clone()));
+        }
+        let read_owned;
+        let read = if ours.is_empty() {
+            read
+        } else {
+            let _ = s.mark_sent(id, &ours);
+            base_seq = ours.last().map(|(seq, _)| *seq);
+            let mut r = read.clone();
+            r.messages.drain(..ours.len());
+            read_owned = r;
+            &read_owned
         };
         let total = s.summary(id).map(|x| x.messages).unwrap_or(0);
         let after = base_seq.map(|b| b + 1).unwrap_or(0);

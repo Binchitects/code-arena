@@ -100,6 +100,8 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   edition; `logout --provider NAME` forgets one. Tested against fake providers only so far.
 
 ### Fixed
+- A send Arena kept but whose answer was lost: the next take-in would have added the session's
+  own messages again as the web's, and sent them twice. They are known by their ref now.
 - `doctor` would have said Arena 8.1 lacks `checklists.edit`: its probe asked to change an unknown
   checklist, which 8.1 answers with the same plain 404 as 8.0's missing route. It now asks to
   make one with no name, which 8.1 refuses with its own answer (and makes nothing).

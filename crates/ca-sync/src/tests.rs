@@ -172,10 +172,9 @@ async fn a_chat_deleted_on_the_web_ends_the_sync() {
 async fn an_arena_out_of_reach_is_said_once_and_tried_again() {
     let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
     let id = session(&store.lock().expect("store"));
-    // Nothing listens there.
-    let server = MockServer::start().await;
-    let uri = server.uri();
-    drop(server);
+    // Nothing listens there, and nothing may: port 1 is the system's (binding it needs root), so no other test's
+    // server can take it, as one can take a port just let go.
+    let uri = "http://127.0.0.1:1".to_string();
     let said = Arc::new(Mutex::new(Vec::new()));
     let s2 = Arc::clone(&said);
     let notice: Notice = Arc::new(move |_, w| s2.lock().expect("said").push(w));
@@ -529,4 +528,63 @@ async fn the_plan_goes_whole_to_the_chats_plans_board() {
     store.lock().expect("store").set_plan(&id, None).expect("cleared");
     assert_eq!(sync.push().await, Pushed::Done);
     assert_eq!(sync.pending(), 0);
+}
+
+/// Arena keeps what is sent, but its answer is lost on the way (502).
+struct KeptButLost(Arc<Mutex<Vec<Value>>>);
+
+impl Respond for KeptButLost {
+    fn respond(&self, r: &Request) -> ResponseTemplate {
+        let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+        self.0.lock().expect("kept").extend(body["messages"].as_array().cloned().unwrap_or_default());
+        ResponseTemplate::new(502)
+    }
+}
+
+#[tokio::test]
+async fn messages_arena_kept_whose_answer_was_lost_are_known_by_their_ref_not_taken_in_twice() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "chat-1", "created": true})))
+        .mount(&server)
+        .await;
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/chat-1/messages"))
+        .respond_with(KeptButLost(kept.clone()))
+        .mount(&server)
+        .await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let id = session(&store.lock().expect("store"));
+    let (sync, _) = sync(&server, &store, &id);
+    assert!(matches!(sync.push().await, Pushed::Retry(_)));
+    // The web's read gives them back, with Arena's ids and the session's refs, and one of the web's after them.
+    let mut given: Vec<Value> = kept
+        .lock()
+        .expect("kept")
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let mut m = m.clone();
+            m["id"] = json!(format!("k{i}"));
+            m
+        })
+        .collect();
+    given.push(json!({"role": "user", "content": "asked on the web", "id": "w9"}));
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/chat-1"))
+        .respond_with(read_answer(None, false, json!(given)))
+        .mount(&server)
+        .await;
+    let taken = sync.take_in().await;
+    assert_eq!(taken.added.len(), 1, "only the web's own: {:?}", taken.added);
+    assert!(!taken.said.iter().any(|s| s.contains("read the parser")), "{:?}", taken.said);
+    let s = store.lock().expect("store");
+    let all: Vec<String> =
+        s.page(&id, 100, None).expect("page").messages.into_iter().map(|m| m.message.content).collect();
+    assert_eq!(all.len(), 5, "{all:?}");
+    assert_eq!(all[4], "asked on the web");
+    assert!(s.unsent(&id, 10).expect("unsent").is_empty(), "nothing is sent again");
+    assert_eq!(s.arena_id(&id, 0).expect("id").as_deref(), Some("k0"));
 }

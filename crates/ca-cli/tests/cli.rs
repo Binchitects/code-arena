@@ -460,9 +460,8 @@ async fn an_arena_out_of_reach_does_not_hold_a_print_run() {
         ))
         .mount(&gateway)
         .await;
-    let gone = MockServer::start().await;
-    let uri = gone.uri();
-    drop(gone);
+    // Nothing listens on port 1, and no other test's server can take it (binding it needs root).
+    let uri = "http://127.0.0.1:1".to_string();
     let home = tempfile::tempdir().expect("home");
     let project = tempfile::tempdir().expect("project");
     let started = std::time::Instant::now();
