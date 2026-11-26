@@ -2,7 +2,7 @@
 CARGO ?= cargo
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
-.PHONY: ci fmt lint test build dist clean web
+.PHONY: ci fmt lint test build dist dist-all clean web
 
 ci: fmt lint test
 
@@ -27,6 +27,16 @@ dist: web
 	$(CARGO) build --release --locked --target x86_64-unknown-linux-musl
 	mkdir -p dist
 	scripts/package.sh x86_64-unknown-linux-musl linux-x64 $(VERSION)
+
+# Every system this image builds: Linux x64 and arm64 (static), Windows x64. macOS is built on macOS.
+dist-all: web
+	$(CARGO) build --release --locked -p ca-cli --target x86_64-unknown-linux-musl
+	$(CARGO) build --release --locked -p ca-cli --target aarch64-unknown-linux-musl
+	$(CARGO) build --release --locked -p ca-cli --target x86_64-pc-windows-gnu
+	mkdir -p dist
+	scripts/package.sh x86_64-unknown-linux-musl linux-x64 $(VERSION)
+	scripts/package.sh aarch64-unknown-linux-musl linux-arm64 $(VERSION)
+	scripts/package.sh x86_64-pc-windows-gnu win-x64 $(VERSION)
 
 clean:
 	$(CARGO) clean

@@ -213,7 +213,10 @@ mod tests {
 
     /// The file without its comments, as JSON.
     fn strip(t: &str) -> String {
-        t.lines().map(|l| if l.trim_start().starts_with("//") { "" } else { l.split(" //").next().unwrap_or(l) }).collect::<Vec<_>>().join("\n")
+        t.lines()
+            .map(|l| if l.trim_start().starts_with("//") { "" } else { l.split(" //").next().unwrap_or(l) })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
     use crate::schema::{MODE, PERMISSIONS, SHELL_TIMEOUT};
     use serde_json::json;

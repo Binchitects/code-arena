@@ -4,6 +4,6 @@
 set -euo pipefail
 version=$1
 awk -v v="$version" '
-  /^## / { if (found) exit; if (index($0, "## " v) == 1 || index($0, "(" v ")") > 0) { found = 1; next } }
+  /^## / { if (found) exit; if (index($0, "## v" v " ") == 1 || index($0, "## " v " ") == 1) { found = 1; next } }
   found { print }
 ' "$(dirname "$0")/../CHANGELOG.md" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'

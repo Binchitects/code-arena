@@ -1,507 +1,295 @@
-# Changelog
+# CHANGELOG
 
-Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
-versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
+One `##` per release, newest first. Under it, only the sections that release has. Each release's
+full notes are also in its annotated tag (`git tag -n99 v0.5.0`) and on its GitHub release.
 
-## Unreleased (0.5.0)
+Before 1.0 the product's own formats may change between versions; compatibility with Farzan Arena
+servers from 8.0 on is kept throughout.
 
-### Added
-- `code-arena ide`: the session in a window of its own (Chrome, Edge, Chromium or Brave in app mode
-  with a profile of its own, else the default browser; `--no-open` prints the address). Agent mode:
-  the conversation in one column, the answer streamed as it is written, a turn's tool calls in one
-  line ("Ran 2 commands, edited cart.rs") that opens on their results, the agent's questions as
-  cards in the thread (Allow, Always for this session, Deny), messages sent while it works marked
-  so, Stop (or Esc), and one status line: model, mode (click to change it), folder, the last
-  turn's time and tokens. `--continue` and `--resume` take up a session.
-- Coder mode in the IDE (Agent | Coder at its top, kept for the next visit): the project's files
-  in a tree, files in tabs of Monaco (VS Code's editor) with their languages' colours, Ctrl+S
-  saves, a dot on a tab with changes not saved; a file the agent edits that is open takes the
-  change by its changed lines only (the cursor stays). Terminals in a panel (xterm.js on a
-  pseudo-terminal, your shell, as many as you open; not on Windows yet). The agent stays beside
-  them. Coder mode loads only when it is first opened, so Agent mode's page stays small.
-- Coder mode's side bar has Files, Search and Changes. Search looks through the files git sees (its
-  ignores kept), as typed or as a regular expression, any case or matching it, and opens a result
-  at its line (Ctrl+Shift+F). Changes lists the files the agent changed in this run, each opened
-  as a diff of before and now. Ctrl+P finds a file by the letters of its name. Back in the
-  window, open files changed on disk are read again; one with changes of yours asks first (Take
-  the disk's, Keep mine), and one gone says so.
-- Monaco's own editor features in Coder mode: Find and Replace (Ctrl+F, Ctrl+H), folding, Go to
-  Line (Ctrl+G), comments (Ctrl+/), hover, sticky scroll, multiple cursors and the rest of what
-  VS Code's editor does without a language server.
-- An outline of the file shown, for Rust, TypeScript and JavaScript, Python, Go, Java, C#, C and
-  C++, Kotlin, Swift and Markdown: the Outline view (the symbol at the cursor marked), Go to
-  Symbol (Ctrl+Shift+O) and the breadcrumbs. It reads by pattern, line by line.
-- The command palette (Ctrl+Shift+P): saving, going to a file, a symbol or a line, finding,
-  folding, the views, the terminal (Ctrl+`), minimap and word wrap, and the agent's mode,
-  context, compaction and Stop; the ones used last come first.
-- The status line in Coder mode: the git branch, the cursor's line and column, indentation, the
-  encoding, the line ends and the language.
-- Above the box, while there is something to show: the plan as a bar (its title, how many steps
-  are done; it opens on the steps and their marks), the goal being worked on (and how many wait
-  their turn), and each job still running, with Stop. They change as the turn goes.
-- The IDE's terminals outlive the page: a reload, or going to Agent mode and back, takes up the
-  same terminals and draws their last 256 KB again. A terminal closes with its tab's ×, or when
-  its shell ends.
-- What Coder mode shows is watched: an open file changed from outside shows at once (one with
-  changes of yours asks first), and an open folder lists a file made or removed in it. Only what
-  is on screen is looked at, once a second, so it costs little whatever the project's size.
-- Coder mode is as you left it, per folder: the tabs and the one shown, each file's cursor, the
+Sections used:
+
+- `:rocket:` **Epics and highlights**: the one or two things worth reading
+- `:sparkles:` **New features & Enhancements**
+- `:bug:` **Bugs fixed**
+- `:boom:` **Breaking changes & Deprecations**
+- `:arrow_up:` **Deps updates**
+
+## v0.5.0 (2026-11-26)
+
+The IDE. `code-arena ide` opens the session in a window of its own, with two faces: Agent mode, a
+quiet conversation with the agent, and Coder mode, VS Code's editor with the project's files,
+search, the agent's changes as diffs, terminals and the agent beside them. Releases now carry
+binaries for Linux (x64 and arm64) and Windows, and are GitHub's Latest.
+
+### :rocket: Epics and highlights
+
+- **`code-arena ide`: the session in a window of its own.** Chrome, Edge, Chromium or Brave in app
+  mode with a profile of its own, else the default browser (`--no-open` prints the address);
+  `--continue` and `--resume` take up a session. **Agent mode** is the conversation in one column:
+  the answer streamed as it is written, a turn's tool calls in one line ("Ran 2 commands, edited
+  cart.rs") that opens on their results, the agent's questions as cards in the thread (Allow,
+  Always for this session, Deny), messages sent while it works marked so, Stop (or Esc), and one
+  status line: model, thinking and mode pickers, the context ring, the folder, the last turn's time
+  and tokens.
+- **Coder mode: VS Code's editor around the agent.** The project's files in a tree, files in tabs
+  of Monaco (VS Code's own editor) with Find and Replace, folding, Go to Line, comments, hover,
+  sticky scroll and multiple cursors; search across the files git sees; the agent's changes in
+  this run, each a diff of before and now; Ctrl+P to find a file; terminals (xterm.js on your
+  shell) in a panel; the agent beside them all. It loads only when first opened, so Agent mode's
+  page stays small (41 KB).
+- **Binaries for more systems on every release.** Linux x64 and arm64 (static), and Windows x64,
+  built in the build image; macOS follows when GitHub Actions runs again for the organization.
+
+### :sparkles: New features & Enhancements
+
+- **The Context panel.** The ring in the status line opens what fills the next request by kind,
+  its biggest messages, and Compact now.
+- **Edit, Answer again, Rewind to here.** On each of your messages: Edit goes back to before it and
+  puts it in the box to change; Answer again asks it again; Rewind to here goes back to before it,
+  the conversation, the code, or both. A question the turn no longer waits on says so.
+- **The plan, the goal and the jobs as bars above the box.** The plan's title and how many steps
+  are done (it opens on the steps and their marks), the goal being worked on and how many wait,
+  each job still running with Stop. They change as the turn goes.
+- **An outline of the file shown.** For Rust, TypeScript and JavaScript, Python, Go, Java, C#, C and
+  C++, Kotlin, Swift and Markdown: the Outline view (the symbol at the cursor marked), Go to Symbol
+  (Ctrl+Shift+O) and the breadcrumbs. It reads by pattern, line by line.
+- **The command palette (Ctrl+Shift+P).** Saving, going to a file, a symbol or a line, finding,
+  folding, the views, the terminal (Ctrl+`), minimap and word wrap, and the agent's mode, context,
+  compaction and Stop; the ones used last come first.
+- **Search across files (Ctrl+Shift+F).** As typed or as a regular expression, any case or
+  matching it, in the files git sees; a result opens at its line.
+- **What Coder mode shows is watched.** An open file changed from outside shows at once (one with
+  changes of yours asks first: Take the disk's, Keep mine; one gone says so), an open folder lists
+  a file made or removed in it, and a file the agent edits takes the change by its changed lines
+  only (the cursor stays). Only what is on screen is looked at, once a second.
+- **Coder mode as you left it.** Per folder: the tabs and the one shown, each file's cursor, the
   open folders, the side bar's view, the terminal panel and the panes' sizes (drag the dividers).
-  Changes not saved are kept aside a second after you stop typing (in the data folder, readable
-  by you only, 5 MB a file and 50 MB a project at most) and come back with their tab; saving, or
-  closing the tab without saving, lets them go.
-- The editor opens only plain text files inside the project, up to 5 MB: paths come relative to
-  the project, each part resolved as the system resolves it (a link leading out is refused), and
-  a pipe, a device or a binary file is not opened.
-- In the IDE: the model, thinking and mode pickers in the status line; the context ring, which
-  opens the Context panel (what fills the next request by kind, its biggest messages, Compact
-  now); and on each of your messages Edit (back to before it, the message in the box to change),
-  Answer again, and Rewind to here (the conversation, the code, or both). A question the turn no
-  longer waits on says so.
-- The IDE's server is for this machine only: 127.0.0.1, a key for the run in the address it
-  prints (kept in `ide.json` in the data folder, readable by you only), which the first visit
-  turns into an HttpOnly SameSite=Strict cookie; the Host, the Origin and Sec-Fetch-Site are
-  checked, no page may frame it, and the page talks to it only over its stream.
-- The build image has Node 22 and npm, for the IDE's page (`web/`); `make web` builds it, and
-  the release builds it into every binary.
-- `compat.agents`: other agents whose files are read too, by name, none by default. For an agent
-  named NAME: its `.NAME/` folders in the project and the home (commands, skills, sub-agents,
-  output styles, its `settings.json`'s hooks and status line), its `NAME.md` instructions, its
-  plugins' `.NAME-plugin/` manifests and the variables `${NAME_PLUGIN_ROOT}` and
-  `NAME_PROJECT_DIR`.
+  Changes not saved are kept aside a second after you stop typing (readable by you only, 5 MB a
+  file, 50 MB a project) and come back with their tab.
+- **Terminals that outlive the page.** A reload, or going to Agent mode and back, takes up the same
+  terminals and draws their last 256 KB again; one closes with its tab's × or when its shell ends.
+- **Coder mode's status line.** The git branch, the cursor's line and column, indentation, the
+  encoding, the line ends and the language.
+- **The IDE's server is for this machine only.** 127.0.0.1; a key for the run in the address it
+  prints (kept in `ide.json`, readable by you only) that the first visit turns into an HttpOnly
+  SameSite=Strict cookie; the Host, the Origin and Sec-Fetch-Site checked; no page may frame it.
+  The editor opens only plain text files inside the project, up to 5 MB: a link leading out, a
+  pipe, a device or a binary file is refused.
+- **`compat.agents`: other agents' files, when you name the agents.** For an agent named NAME: its
+  `.NAME/` folders in the project and the home (commands, skills, sub-agents, output styles, its
+  `settings.json`'s hooks and status line), its `NAME.md` instructions, its plugins' `.NAME-plugin/`
+  manifests and the variables `${NAME_PLUGIN_ROOT}` and `NAME_PROJECT_DIR`. None by default.
+- **The build image builds the page, Linux arm64 and Windows.** Node 22 and npm for `web/` (`make
+  web` builds and tests it, and every binary carries it), and the targets and C compilers for
+  Linux on arm64 (static, musl) and Windows on x64 (MinGW).
 
-### Changed
-- Other agents' files are no longer read unless `compat.agents` names the agent. Plugins keep
-  their manifest in `.code-arena-plugin/plugin.json` (or `plugin.json`) and name their folder
+### :bug: Bugs fixed
+
+- **A setting written over several lines broke its file when changed.** Code Arena replaced only
+  its first line; a value's brackets are now counted to its end, and a setting taken out takes the
+  comma before it when it was the last.
+
+### :boom: Breaking changes & Deprecations
+
+- **Other agents' files are read only when `compat.agents` names the agent.** Plugins keep their
+  manifest in `.code-arena-plugin/plugin.json` (or `plugin.json`) and name their folder
   `${CODE_ARENA_PLUGIN_ROOT}`.
-- The sandbox hides every `~/.*.json` file from commands (other tools keep their state and keys
-  there), instead of a list of names.
+- **The sandbox hides every `~/.*.json` file from commands**, where other tools keep their state
+  and keys, instead of a list of names.
 
-## 0.4.0 (2026-11-26)
+### :arrow_up: Deps updates
 
-### Added
-- Hooks, in the common shape (`"hooks"` in settings.json; another agent's `~/.NAME/settings.json`
-  and a project's `.NAME/settings.json` read as they are once `compat.agents` names it): `SessionStart`, `UserPromptSubmit`,
-  `PreToolUse` (block, allow without asking, ask whatever the mode, or rewrite the arguments),
-  `PostToolUse` (a word to the model with the result), `Notification` (when Code Arena asks you),
-  `Stop` (send the model on: three times a turn at most) and `PreCompact`. Each runs a command
-  that gets the moment as JSON on stdin and answers by its exit code (2 blocks, its stderr says
-  why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or the common one
-  (`run_shell` or `Bash`). A project's hooks run only once you trust them as they are
-  (`/hooks trust`; a change asks again). `/hooks` lists them.
-- llama.cpp's "Context size has been exceeded." (the cache the engine's requests share was full,
-  others filled it) is asked again after two seconds as it is, compacted only if refused again.
-  Refusals are read as Arena reads them (llama.cpp, LiteLLM, vLLM, SGLang, OpenAI), with the
-  tokens they state.
-- The engine's own window is learned: when it refuses a request and says how much it holds
-  (`n_ctx`), that is the window from then on ("The engine holds 20.5k tokens, not the 32.8k the
-  gateway says: Code Arena compacts for 20.5k from now on."), kept for the next sessions with
-  that gateway and model while the gateway says the same window.
-- A tool call cut off at the limit of one answer does not run (mended, it would have written half
-  a file): the model is told to do it in parts (`write_file` with `append: true` for each part of
-  a long file), and a call cut twice in the same place ends the turn.
-- On Windows, a file another program holds open (an editor, a build, a virus scan) is written
-  again for up to two seconds, then said so: "held open by another program…: close it there".
-- An assistant's tool groups: working as one (`/assistant N`) keeps only Arena's tools of the
-  groups it has on (web, python…, as Arena's MCP server marks each function); `/assistant off`
-  puts the others back.
-- Making a project: `/project new NAME[: WHAT]` makes one of yours in Arena with this repository
-  in it and puts the session in it (as your role allows: Arena's words say why not);
-  `/project show` shows the session's project as its page does: repositories, people, goals
-  with their tasks, and tasks of no goal.
-- An error with no body says so ("Internal Server Error (it gave no reason)").
-- Output styles, in the common format: `/output-style` lists them and `/output-style NAME`
-  uses one from the next message (kept in the settings, `outputStyle`). Built in: default,
-  explanatory (explains the codebase's choices as it goes) and learning (leaves small pieces,
-  marked `TODO(human)`, for you to write). Your own are `output-styles/NAME.md` (the project's,
-  yours, a plugin's) with `name`, `description` and `keep-coding-instructions`: without it, a
-  style takes the place of Code Arena's coding instructions.
-- A status line of your own: `"statusLine": {"type": "command", "command": "…"}` (or that of an
-  agent `compat.agents` names, in `~/.NAME/settings.json`). The command gets the session as JSON on stdin (model,
-  workspace, tokens so far, output style, mode, edition) and its first line is drawn above the
-  prompt, again after each turn; one that fails or takes over two seconds shows nothing.
-- Session forks: `/fork` carries on in a copy of the session, `/fork N` in a copy of what came
-  before question N (as `/rewind` numbers them); `--fork-session` with `--continue` or `--resume`
-  does it from the shell. The fork has the messages, summaries, results kept aside and (a whole
-  fork) the plan and goals; it gets a chat of its own in Arena when it syncs. The session it came
-  from stays as it was (`/resume ID` goes back); files are not touched. The store is upgraded in
-  place (schema 4: the session a fork came from).
-- Your agents and scheduled tasks in Arena (8.1 on; an 8.0 says it lacks them): `/arena-agents`
-  lists the Agent Studio agents you may run (yours and those shared with you) and
-  `/arena-agents run N [TEXT]` runs one, telling you when it ends; `/arena-tasks` lists your
-  scheduled tasks with their next and last runs, `run N` starts one now, `runs N` says how its
-  last runs went. From the shell: `code-arena agents [run NAME [TEXT] [--field K=V]]` (waits for
-  the answer) and `code-arena tasks [run NAME | runs NAME]`. The model gets `arena_agents` and
-  `run_arena_agent` (asks as a command does) when the Arena has them.
-- Plugins, in the common layout (`.code-arena-plugin/plugin.json`, or `.NAME-plugin/` for an agent
-  `compat.agents` names, `commands/`, `agents/`, `skills/`,
-  `hooks/hooks.json`, `.mcp.json`): `code-arena plugin install PATH|GIT_URL`, `list`, `enable NAME`,
-  `disable NAME`, `remove NAME`. An enabled plugin's commands, sub-agents and skills join yours
-  (yours and the project's win by name), its hooks run as yours do, and its MCP servers are
-  named `PLUGIN-SERVER`; `${CODE_ARENA_PLUGIN_ROOT}` is its folder. `plugins.enabled` in a project's
-  settings enables more of those installed.
-- The `task` tool: the model hands a piece of work to a sub-agent (one of the project's or your
-  `agents/NAME.md`, with its instructions, model and tools, or a general one), which works in a
-  context of its own and reports back; several in one answer run at once (four at most). Its
-  calls ask as the session's do; it has no `task` of its own, nor the session's plan. Its steps
-  show as lines of their own; a `SubagentStop` hook may send it on, once.
-- Goal mode: `/goal TEXT` (or `code-arena -p "…" --goal TEXT`) and the agent works turn after turn
-  until the goal is met as its check says: `--check CMD` (its exit code) or `--when CONDITION` (a
-  fresh sub-agent reads the files), else the agent writes one down first with `goal_check`. A
-  budget (`--steps`, `--minutes`, `--tokens`; or `--until-met`); it stops when the budget is
-  spent, after three turns that do nothing while the check fails, or three turns with no check.
-  `/goal` says where it stands; `pause`, `resume` (Ctrl+C pauses), `cancel`; more `/goal TEXT`
-  wait their turn (`drop N`). Kept with the session (a 0.3 store is upgraded in place) and shown
-  above the web chat.
-- Commits the model groups and writes: `/commit` proposes commits of the working tree's changes
-  (by hunk, in the repository's own style of messages: a subject under 72 characters and a
-  body that says why); they are shown, and `/commit yes` makes them, each staged by its own
-  lines alone, your identity the author, with `Co-Authored-By: Code Arena` and
-  `Code-Arena-Session:` trailers. With `git.autoCommit` on (off by default), each turn's own
-  changes (what it wrote, minus files that held your changes when it began) are proposed after
-  it (`git.autoCommit.review`, on: shown first). Never during a merge, rebase, cherry-pick or
-  revert, nor while the session's commands run; a `PreCommit` hook (or git's own) that refuses
-  stops the series. A proposal that leaves a hunk out is asked once more, then made one commit.
-- Steps at once (`run_steps`): 2 to 4 steps of the plan that wait for nothing not done run
-  together. A step with no files to change goes to a read-only sub-agent; one with files to a
-  worker in a git worktree of its own (a copy of the project as it is now, your uncommitted
-  changes in it): it edits there, runs no command but its step's check, and its change is merged
-  into the project (`git apply --3way`, every file kept for `/rewind`) once the check passed.
-  Each step ends done or blocked, with why in its notes; a worktree that did not merge is kept
-  for you to look at. Steps that change files run at once only in auto-edit or yolo mode.
-- Loops: `/loop 30m PROMPT` runs a prompt at once and then every so often as a background
-  sub-agent while the session is open, reading only (`--edits`: it edits files too; its commands
-  are refused, as nobody is there to allow them); a run never overlaps the one before it; its
-  report reaches the agent with your next message. `/loop` lists them, `/loop stop N`.
-- Schedules: `code-arena schedule add NAME --every 1d --at 02:00 [--mode plan] [--model M]
-  [-C FOLDER] PROMPT` runs a prompt on its own as a session of its own (kept with a chat in Arena
-  as any session is), its output kept in a log; `list`, `run NAME`, `remove NAME`, `due` (runs
-  those due), `install` (a systemd user timer, a launchd agent or a Task Scheduler task running
-  `due` every 5 minutes), `uninstall`.
+- **The IDE's page:** Node 22.23.5 (build only), solid-js 1.9.20, vite 8.3.8 with vite-plugin-solid
+  2.11.17, TypeScript 7.0.2, monaco-editor 0.58.0, @xterm/xterm 6.0.0 with @xterm/addon-fit
+  0.11.0.
+- **The IDE's server:** tokio-tungstenite 0.26 (its stream); hyper's server side, already in.
 
-## 0.3.0 (2026-11-26)
+## v0.4.0 (2026-11-26)
 
-### Added
-- What an Arena has is kept per server (`servers/HOST.json` in the data folder) and asked again
-  after an hour, when a probe got no clear answer, or when the account's settings stamp moves.
-  A later Arena that lists what it has (`GET /api/code-arena/capabilities` answering
-  `{"features": [...]}`) is read instead of probed.
-- Contract tests replay Arena 8.0's and 8.1's answers to every probe.
-- Sessions kept in Arena's chats (`arena.syncChats`, on): the chat is made at a session's first
-  message (found again by the session's id, with its folder shown), and each message the session
-  keeps goes after the last one Arena has, in the background, again until Arena has it; a tool's
-  result goes with its tool's name, an answer with its model; a compaction's summary goes once
-  Arena has what it covers. A session that went back to before messages Arena has (`/rewind`)
-  sends on a branch of its own. A chat deleted on the web ends the sync for that session. `-p`
-  waits up to 10 s for its messages to arrive (not at all when Arena is out of reach); what is
-  left goes with the session's next run. `/sync` says where a session stands; `/sync off` keeps
-  it here only. Sessions from 0.2 are kept (the store is upgraded in place) and sent when resumed.
-- What the web added comes in at the next turn's start: the person's questions and the web's
-  answers are written into the session (and said: `From the web: …`), and the model reads them
-  before your next words. When the web went another way (a question edited, an answer written
-  again), the session follows it from where they part; messages not yet sent go after the web's.
-  A summary the web's compaction wrote is read as the session's own.
-- While a turn runs it holds the chat: the web queues the person's messages, and those it may
-  take join the turn at its next step. A turn waits for the web chat's own answer to end (at
-  most 2 min). The answer being written is shown on the web as it comes. The chat is let go
-  once Arena has the turn's messages.
+The whole terminal harness: hooks, sub-agents, goals, model-made commits, steps at once in
+worktrees, loops and schedules, plugins, forks, output styles and a status line, Arena's agents and
+scheduled tasks; and the engine's own window learned when it refuses a request.
 
-- The web's news while the chat waits at its prompt: what is added there shows at once (the
-  person's words, and the web's answers in full) and the model reads it at the next turn. It
-  comes from Arena's stream of the person's chats' changes; where that cannot be had (a proxy
-  that drops it), the chat is asked every 5 s with its stamp, which costs Arena nothing when
-  nothing moved.
-- `code-arena --web N` (or an id) starts the conversation in one of your chats in Arena.
-- `/web` lists your chats in Arena; `/web N` continues one here, in a session of its own (or the
-  one this folder already keeps with it), and brings it back to the web's list if it was archived.
-- Leaving the chat waits a few seconds for the last turn's messages to reach Arena.
-- The `plan` tool: a title, a goal and numbered steps, each with what done means (`check`: a
-  command, or what to look at), its files and symbols, the steps it waits for, and notes. A step
-  whose check is a command is done only once that command passed with `run_shell` since the step
-  began (`cd src && cargo test 2>&1 | tail` counts for `cargo test`). One step is doing at a
-  time; steps wait only for steps the plan has, never in a circle. A call is read kindly (steps
-  as a string of JSON, `id`/`description`/`dependsOn`, other agents' status words) and what was
-  read so is said back. The plan is shown whole when it changes, kept with the session, said
-  again after a compaction and when a session is resumed, and kept in Arena on the chat's Plans
-  board.
-- In plan mode a plan is proposed for your review: `/plan approve` (edits then run; `approve ask`
-  asks before each), `/plan change N what`, `/plan another why`, `/plan reject why`.
-  `/plan undo N` puts the files back as they were before step N began (and every step begun
-  after it); those steps are to do again. `/plan resume` and `code-arena --plan` carry on the plan
-  an earlier session of this folder left. `/plan clear`.
+### :rocket: Epics and highlights
 
-- Checklists, kept in Arena: `/checklist` lists yours and the repository's
-  (`.code-arena/checklists/*.md`, `# Name` and `- item` lines); `/checklist N` or `NAME` turns one
-  on in the session's chat, and the model goes through it, ticking each item with
-  `checklist_check` and how it did or checked it (the web chat shows the same ticks). `/checklist
-  tick N`, `untick N`, `off`; `new NAME: a; b`, `edit N: a; b` and `delete N` on an Arena that
-  has them (8.1 on). A resumed session with a checklist on tells the model again.
+- **Hooks, sub-agents and goals.** Hooks run at the agent's moments (`SessionStart`,
+  `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop`, `SubagentStop`,
+  `PreCompact`, `PreCommit`): each gets the moment as JSON and blocks (exit code 2), allows,
+  rewrites the arguments or sends the model on; a project's run only once you trust them. The
+  `task` tool hands work to a sub-agent (`agents/NAME.md`, with its instructions, model and tools),
+  four at once. Goal mode (`/goal TEXT`, `-p --goal`) works turn after turn until a check passes
+  (`--check CMD` or `--when CONDITION`), within a budget.
+- **Commits the model groups and writes.** `/commit` proposes commits of the working tree's changes
+  by hunk, in the repository's own style (a subject under 72 characters and a body that says why);
+  `/commit yes` makes them, each staged by its own lines alone, your identity the author.
+  `git.autoCommit` (off by default) proposes each turn's own changes after it.
+- **Steps at once, in worktrees of their own.** `run_steps` runs 2 to 4 independent plan steps
+  together: a read-only step to a sub-agent, one that changes files to a worker in a git worktree
+  whose change is merged back (`git apply --3way`) once its check passed.
 
-- Memory. Signed in, Arena's memory, the web chat's too: the person's for every project, the
-  project's by its repository's key (its `origin` remote, `host/group/name`, so every clone
-  shares it), the company's. A session starts with Arena's block (pinned, the company's, the
-  newest), and each message brings what is remembered that matters to it (not what came before).
-  `remember` (a fact, preference, decision, how-to or lesson; for this project or, with scope
-  person, every project) and `recall` for the model; `/memory`, `/memory forget N` and
-  `/remember [--person] TEXT` for you. Without Arena: `memory.md` in the config folder and this
-  project's file in the data folder (never in the repository), with what Arena last gave; they go
-  to Arena when it next answers. An Arena that denies `feature.memory` gets nothing remembered
-  or recalled, and the model is not offered it.
-- The project's long memory in the repository, `.remember/MEMORY.md` with topic files: read at
-  each session's start, kept current by the model with `remember_project` (a section added to
-  or replaced), shared with the team when committed (`memory.project`, on).
-- `skill_save`: a way of doing something worked out in a session, kept as a skill: the project's
-  (`.code-arena/skills/NAME/SKILL.md`) or, with scope person, yours in Arena (for every project and
-  the web chat). After a turn of 8 steps or more, the next is reminded of it.
-- `search_history` and `open_chat`: your past chats and sessions in Arena, found by what they
-  were about.
-- A session's chat in Arena names its project by the same key.
+### :sparkles: New features & Enhancements
 
-- Built-in skills: the 35 that come with Arena (code-review, debug, release-notes, security-review
-  and the rest), read after the project's, yours and Arena's, which win by name; those an Arena
-  admin turned off are left out (`skills.builtIn`, on).
-- Arena's skills: those made there that you may use (yours, your groups', the company's) and your
-  plugins', kept for the next session (`arena-skills/` in the data folder) and refreshed at each
-  start; a file outside its skill's folder is left out.
+- **Loops and schedules.** `/loop 30m PROMPT` runs a prompt now and every so often as a background
+  sub-agent (reading only, or `--edits`); `code-arena schedule add NAME --every 1d --at 02:00
+  PROMPT` runs one as a session of its own, with `list`, `run`, `remove`, `due` and `install` (a
+  systemd user timer, a launchd agent or a Task Scheduler task).
+- **Plugins.** `code-arena plugin install PATH|GIT_URL`, `list`, `enable`, `disable`, `remove`: an
+  enabled plugin's commands, sub-agents, skills, hooks and MCP servers (`PLUGIN-SERVER`) join yours;
+  a project's `plugins.enabled` enables more of those installed.
+- **Session forks.** `/fork` carries on in a copy of the session, `/fork N` in a copy of what came
+  before question N; `--fork-session` with `--continue` or `--resume`. The session it came from
+  stays as it was; the store is upgraded in place (schema 4).
+- **Output styles and your own status line.** `/output-style` (default, explanatory, learning, or
+  your `output-styles/NAME.md`); `"statusLine": {"type": "command", "command": "…"}` draws your
+  command's first line above the prompt after each turn.
+- **Arena's agents and scheduled tasks (8.1 on).** `/arena-agents [run N]`, `/arena-tasks [run N |
+  runs N]`, `code-arena agents` and `code-arena tasks`; the model gets `arena_agents` and
+  `run_arena_agent` when the Arena has them.
+- **The engine's own window, learned.** When it refuses a request and says how much it holds
+  (`n_ctx`), that is the window from then on, kept for that gateway and model.
+- **A full shared cache is asked again.** llama.cpp's "Context size has been exceeded." (other
+  requests filled the cache they share) is asked again after two seconds, compacted only if
+  refused again; refusals are read as Arena reads them (llama.cpp, LiteLLM, vLLM, SGLang, OpenAI).
+- **An assistant's tool groups.** `/assistant N` keeps only Arena's tools of the groups it has on;
+  `/assistant off` puts the others back.
+- **Making a project.** `/project new NAME[: WHAT]` makes one in Arena with this repository in it
+  and puts the session in it; `/project show` shows it as its page does.
 
-- Two editions in one product. **Managed**: signed in to Farzan Arena, everything. **Standalone**: no
-  Arena, your own provider's key: `code-arena login --provider anthropic` (or openai, deepseek,
-  openrouter, mistral, ollama, or your own name with `--url` for any OpenAI-compatible API), or
-  just its variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`…). Its models are `NAME:MODEL`; an
-  OpenAI-compatible provider is sent only what its API takes (none of Arena's own fields), and
-  Anthropic is spoken through its Messages API (the instructions cached). In the standalone
-  edition what needs Arena (`/web`, `/sync`, `/checklist`, Arena's memory, skills and past
-  chats, its tools) is hidden and says how to turn it on; local memory, `.remember/`, skills,
-  the plan and your MCP servers work as in the managed one. Managed, your providers' models sit
-  beside Arena's where Arena's admins allow them. `version`, `doctor` and the chat name the
-  edition; `logout --provider NAME` forgets one. Tested against fake providers only so far.
+### :bug: Bugs fixed
 
-- Skills in and out as files: `/skills import PATH` takes a `.zip` (one skill's folder or several),
-  a folder or a lone SKILL.md, into the project (`--to project`, the default), yours (`--to
-  mine`) or Arena (`--to arena`, managed: its own checks and safeguards); one of the same name is
-  kept unless `--replace`. `/skills export NAME [PATH.zip]`. At most 50 skills and 5 MB; every
-  file stays inside its skill's folder; a file that looks like it holds a secret (an API key, a
-  token, a private key) never comes in, nor goes out.
+- **A tool call cut off at the answer's limit could write half a file.** It does not run now: the
+  model is told to do it in parts (`write_file` with `append: true`), and a call cut twice in the
+  same place ends the turn.
+- **On Windows, a file another program held open failed at once.** It is written again for up to
+  two seconds, then said so: "held open by another program…: close it there".
+- **An error with no body said nothing.** It says so ("Internal Server Error (it gave no reason)").
 
-- Projects (managed): `/projects` lists yours, `/project N` puts the session's chat in one (`off`:
-  none). On an Arena with project work (8.1 on) the model keeps the project's goals and tasks
-  true to the work with `project_plan`, `project_goal` and `project_task`, told the project's
-  instructions; a resumed session in a project takes it up again. Requests carry `chat:` and
-  `project:` tags for Arena's usage log. A session's chat names its repository, so Arena can put
-  it in that repository's project.
-- Assistants (managed): `/assistant` lists yours; `/assistant N` works as one (its instructions,
-  model, thinking and skills) from the next message; `/assistant off`.
+## v0.3.0 (2026-11-26)
 
-- Tab while the model thinks skips its thinking: still only thinking, the request is cut and asked
-  again without it, so the model answers at once; the rest of the turn does not think.
-- `-p --output stream-json`: one JSON object a line on stdout as the turn goes (`start`, `text`,
-  `thinking`, `tool_start`, `tool_end`, `notice`, `step_end`), then the `result`.
+Code Arena and Farzan Arena as one: sessions kept in Arena's chats both ways, the plan, checklists,
+memory, skills, projects and assistants; and two editions, managed (signed in to Arena) and
+standalone (your own provider's key).
 
-- `/context` counts with the model's own tokenizer, in Arena (managed, Arena's models); else it
-  estimates from characters, and says which.
-- When a session compacts follows your Arena account (Your account → Chat), unless you set
-  `agent.compactAt` here; `/compact-at` keeps what you give it in your settings.json (its comments
-  and other settings as they were).
-- One long turn past the target on its own compacts its own earlier steps: your message stays,
-  a summary of the work so far follows it, the last steps stay whole (no result parted from its
-  call). The session keeps every step.
+### :rocket: Epics and highlights
 
-- While a turn works: ↑ with nothing typed takes back the last line you sent meanwhile (before the
-  model reads it), and it waits at the prompt; a `/command` or `!command` typed meanwhile runs
-  when the turn ends, in order, instead of going to the model.
+- **Sessions kept in Arena's chats, both ways.** The chat is made at a session's first message and
+  each message goes after the last one Arena has, in the background; a compaction's summary once
+  Arena has what it covers; a session that went back sends on a branch of its own. What the web
+  adds comes in at the next turn (and at once while the prompt waits, from Arena's stream of the
+  person's chats); while a turn runs it holds the chat, so the web queues. `/web` lists your chats
+  and continues one here; `--web N` starts in one; `/sync`, `/sync off`, `/sync all`.
+- **Two editions in one product.** Managed, signed in to Farzan Arena, has everything. Standalone
+  takes your own provider's key (`code-arena login --provider anthropic|openai|deepseek|openrouter|
+  mistral|ollama`, or `--url` for any OpenAI-compatible API); what needs Arena is hidden and says how
+  to turn it on.
+- **The plan, reviewed and grounded.** The `plan` tool keeps numbered steps with what done means
+  (a command that must pass since the step began); plan mode proposes it for your review
+  (`/plan approve`, `change N`, `another`, `reject`); it is grounded in Farzan Graph and read again
+  with fresh eyes before you see it; `/plan undo N` puts the files back; `--plan` carries it on.
 
-- A plan proposed in plan mode is grounded before your review: each step's symbols are looked up
-  in Farzan Graph (`change_impact`: the lines that use them, the repositories that depend on this
-  one, the tests that name them), and the plan is read again with fresh eyes (`plan.secondReading`,
-  on): what is missing, risky, unchecked or in the wrong order; the agent changes the plan where
-  the notes hold, once. `/plan` shows both.
-- `/sync all`: every session of this folder that Arena lacks (from before chats were kept, or
-  while it was out of reach) sent now, each to its own chat.
-- Arena's settings as they change: the chat asks for their stamp every 30 s, and when they moved,
-  Arena's skills are read again (used from your next message).
+### :sparkles: New features & Enhancements
 
-### Fixed
-- `/context` said 0 for the tokenizer's total: Arena totals only a whole request, so the total is
+- **What an Arena has, kept per server.** Asked again after an hour, on an unclear probe, or when the
+  account's settings stamp moves; a later Arena's own list (`/capabilities`) is read instead of
+  probed. Contract tests replay Arena 8.0's and 8.1's answers.
+- **Checklists, kept in Arena.** `/checklist` turns yours or the repository's on in the session's
+  chat, the model ticks each item with how it checked it, and the web shows the same ticks.
+- **Memory.** Arena's (the person's, the project's by its repository's key, the company's): a
+  session starts with it and each message brings what matters; `remember`, `recall`, `/memory`,
+  `/remember`; a local fallback without Arena; the project's long memory in `.remember/`.
+- **Skills.** The 35 built-in skills that come with Arena, Arena's own skills kept for the next
+  session, `skill_save`, and `/skills import` and `export` as zips (secrets never in nor out).
+- **Projects and assistants (managed).** `/projects` and `/project N` put a session in a project
+  (its goals and tasks kept true to the work on 8.1); `/assistant N` works as one of yours.
+- **The rest.** Tab skips the model's thinking; `-p --output stream-json`; `/context` counted with
+  the model's own tokenizer; compaction following your Arena account; one long turn compacting
+  its own steps; ↑ takes back a line sent while a turn works; `search_history` and `open_chat`;
+  Arena's settings followed as they change. Measured: a static binary of 11.1 MB, `version` in
+  1.9 ms, a 10,000-message session open in 0.6 ms ([docs/measurements/0.3.md](docs/measurements/0.3.md)).
+
+### :bug: Bugs fixed
+
+- **`/context` said 0 for the tokenizer's total.** Arena totals only a whole request: the total is
   the sum of the counts.
-- A session's first turn did not hold its chat (the chat was made only by its first send), so the
-  web chat answered what was written there meanwhile on its own: the chat is made at the first
-  turn's start now, from the question, and held as every turn's is.
-- A CA file moved or deleted after `login --ca` broke every request: login keeps its own copy of it
-  now (`arena-ca.pem` in the config folder), and a CA file that cannot be read says how to give it
-  again; `doctor` says so instead of stopping with an error.
-- The agent's git ran the repository's own filters and merge drivers (commands its settings name,
-  such as a clean filter in `.gitattributes`): they are switched off for every git call now.
-- A send Arena kept but whose answer was lost: the next take-in would have added the session's
-  own messages again as the web's, and sent them twice. They are known by their ref now.
-- `doctor` would have said Arena 8.1 lacks `checklists.edit`: its probe asked to change an unknown
-  checklist, which 8.1 answers with the same plain 404 as 8.0's missing route. It now asks to
-  make one with no name, which 8.1 refuses with its own answer (and makes nothing).
-- The answer being written is kept every two seconds while it comes, so a crash leaves what it
-  got to (0.2 recovered drafts but never kept them).
+- **A session's first turn did not hold its chat**, so the web chat answered what was written there
+  meanwhile on its own: the chat is made at the first turn's start now, and held.
+- **A CA file moved after `login --ca` broke every request.** Login keeps its own copy now, and
+  `doctor` says how to give one that is gone.
+- **The agent's git ran the repository's own filters and merge drivers.** They are switched off
+  for every git call.
+- **A send whose answer was lost was sent twice.** Messages are known by their ref now.
+- **`doctor` would have said Arena 8.1 lacks `checklists.edit`.** Its probe now asks something only
+  8.1 answers in its own words.
+- **A crash lost the answer being written.** It is kept every two seconds while it comes.
 
-### Measured
-- The static Linux binary is 11.1 MB; `code-arena version` takes 1.9 ms; a 10,000-message
-  session opens with its last 30 turns in 0.6 ms. See [docs/measurements/0.3.md](docs/measurements/0.3.md).
+## v0.2.0 (2026-11-26)
 
-### Moved to 0.4
-- A cut tool call redone in parts, files held open by others on Windows, llama.cpp's shared
-  cache asked again and the engine's own window learned, assistants' tool groups, making a
-  project and its views. The plan's checklist names each.
+The conversation in the terminal, on sessions that never lose a message: MCP servers, tools on
+demand, compaction that keeps everything, checkpoints, jobs and a sandbox for the agent's commands.
 
-## 0.2.0 (2026-11-26)
+### :rocket: Epics and highlights
 
-### Added
-- Sessions kept in one SQLite database in the data folder (`sessions.db`): every message on disk
-  before the turn goes on, read back a page of turns at a time, searched with FTS5, with
-  compactions, results kept aside and the answer being written kept as a draft (recovered after a
-  crash).
-- `code-arena chat`, and `code-arena "message"`: a conversation in this terminal. The prompt is
-  edited as a shell's is (word moves, Ctrl+A/E/U/K/W, Ctrl+L, multi-line with Alt+Enter or a
-  trailing `\`, bracketed paste), ↑ and ↓ bring back what was sent in this folder (kept per
-  folder, 1,000 lines), Esc returns to what was being typed; approvals answer with y, n or a;
-  Ctrl+C stops a turn and keeps what was said; a line typed while a turn runs is read at its next
-  step; Ctrl+Z stops code-arena as a shell stops a job; the bell rings after a long turn and at
-  a question.
-- `--continue` and `--resume [ID]` (no id: choose from a list), for the chat and for `-p`;
-  `-p --output json` names its session.
-- MCP servers: Arena's tools (`https://DOMAIN/mcp`), Farzan Graph's (its copy of a tool Arena
-  serves left out, so no tool comes twice) and your own under `mcpServers` (a child process with
-  `command`, `args`, `env`, `cwd`, or a `url` with `headers`; `${NAME}` from the environment;
-  `trust`, `disabled`). They connect in the background: a conversation waits up to 3 s
-  (`mcp.startWait`), `-p` up to 25 s, and the wait ends as soon as each has answered once; one that
-  answers later joins the session at its next step. A server that went away is connected again at
-  the next call; one that fails is tried again after 5 s, then less often (up to every 5 min).
-- Tool calls have a deadline (10 min, or what the tool says in `_meta`), which each progress report
-  starts again; past it the call is given up and the server told (`notifications/cancelled`).
-- Tools on demand: past `tools.onDemandChars` (6,000) characters of a server's definitions, its
-  tools are listed in a note and loaded with `load_tools`, or by being called; what is loaded stays
-  loaded, so the start of the requests stays the same.
-- Pictures, sounds and files a tool returns are saved under `.code-arena/media/` (git-ignored),
-  named after the tool and the time, and the model is told where.
-- The model's window from the gateway (`/v1/model/info`, else `agent.context`, else 32,768), with
-  room kept for the answer (its longest answer, at most an eighth of the window), and the
-  characters a token holds learned from the gateway's own counts.
-- Before anything is summarized: a result over 16,000 characters is kept aside in the session
-  (`r1`, `r2`…) and the model reads its start and end with how to read on (`read_result`, by
-  lines or by text); results the model has used are condensed to their key lines; past the
-  threshold, results older than your last two messages are cleared (kept aside).
-- Compaction past `agent.compactAt` (80%), keeping the recent part whole (`agent.compactTarget`,
-  25%) from a message of yours: the summary is asked with the same prompt and tools
-  (`tool_choice: none`), in sections; one that comes back empty, cut or in a loop is replaced by
-  what the older messages held. The session keeps every message; only what the model reads
-  changes, and a resumed session starts from its last summary. A request the window refuses is
-  compacted and asked again, once.
-- `session_search` and `session_read` (this session's messages, those summarized too), and
-  `search_sessions` (the folder's other sessions).
-- In the chat: `/compact`, `/context` (what fills the window, by kind, and the biggest messages),
-  and after each turn how full the window is (`context 18.2k / 131k (14%), compacts at 80%`).
-- Commands, skills and sub-agents as Markdown files, the project's (`.code-arena/`, `.arena/`,
-  other agents' folders) over yours (the config folder, `~/.code-arena`), read again at each message: `commands/NAME.md` is `/NAME`
-  (`commands/git/commit.md` is `/git:commit`; `$ARGUMENTS`, `$1`…; front matter `description`
-  and `argument-hint`); `skills/NAME/SKILL.md` is listed for the model, loaded with the `skill`
-  tool (and the files beside it), or used as `/NAME words`; `agents/NAME.md` (`name`,
-  `description`, `tools`, `model`) are read and listed (the `task` tool that runs them comes in
-  0.7). `/NAME` works in `-p` too.
-- `/commands` and `/skills` in the chat.
-- Commands with no time limit (`run_shell` with `no_time_limit`: a full build, a long test suite)
-  run as jobs of their own: the turn does not wait, and when one ends the model is told its exit
-  code and the end of its output and carries on in a turn of its own. Commands in the
-  `background` (a dev server) run until stopped, the model getting their first output after a few
-  seconds. `command_output` reads a job's latest output (or waits for it); `stop_command` stops
-  one and asks every time, in every mode. Ctrl+C stops the turn and the jobs it started with no
-  time limit; those in the background run on. `/jobs [stop N]`. Asking says how a command waits,
-  and "always" for one way does not cover another; kept rules hold for every way. `-p`, which ends
-  with its answer, refuses them with a reason.
-- The agent's commands (`run_shell`, jobs, `!command`) run in a sandbox where the system has one:
-  bubblewrap on Linux, `sandbox-exec` on macOS (`tools.sandbox`: `auto`, `on`, `off`). They read
-  everything but what holds secrets (`~/.ssh`, `~/.gnupg`, cloud and Kubernetes credentials,
-  `.netrc`, `.npmrc`, browsers' profiles, Code Arena's own folders), which they cannot see; they
-  write only in the working folders, the build tools' caches, `tools.sandboxWritable` and a
-  `/tmp` of their own; Docker's and Podman's sockets are out of reach; `tools.sandboxNetwork`
-  takes the network away. Without one, the session says why. `/sandbox` says what applies.
-- `@files` in a message: `@src/parser.rs` sends the file with it, numbered as `read_file` numbers
-  it; `@src/parser.rs:40-60` (or `#L40-L60`) those lines with three around them; a folder its list;
-  `@"a b.txt"` a name with spaces. What is no file the tools may read (`@Override`, an email
-  address) stays as typed. 60,000 characters a file, 150,000 a message.
-- Waiting in a model's line: while Arena holds a request back because the model's line is full, Code
-  Arena waits in it as a person in the web chat does, asking again when Arena says, for up to
-  15 minutes.
-- In the chat: the model's thinking shown dimmed before its answer; an edit's diff under its call;
-  `/tools [on|off NAME]` (a tool, or a server's tools), `/permissions [allow|deny RULE]` and
-  `/compact-at [% [%]|off]` for the session.
-- Options such as `--mode` and `--model` are taken after `chat` too.
-- Checkpoints: each turn keeps what every file its tools wrote held before (the last 50 turns, in
-  this run). `/rewind` lists your questions; `/rewind N` goes back to before question N (the files
-  put back, a file a turn made removed, and the conversation cut there), `/rewind N code` or
-  `/rewind N chat` only one of them. What commands changed is not put back.
-- `/mcp` in the chat: each server, connected or not and why.
-- In the chat: `/help`, `/model`, `/mode`, `/thinking`, `/cost`, `/clear`, `/resume`, `/search`,
-  `/exit`, and `!command`.
+- **`code-arena chat`: a conversation in this terminal.** A prompt edited as a shell's is, history
+  per folder, approvals with y, n or a, Ctrl+C to stop a turn, typing while it runs, `/help`,
+  `/model`, `/mode`, `/thinking`, `/compact`, `/context`, `/rewind`, `/tools`, `/permissions`, `/mcp`,
+  `/jobs`, `!command` and the rest; `--continue` and `--resume`.
+- **Sessions that never lose a message.** One SQLite store: every message on disk before the turn
+  goes on, read a page of turns at a time, searched with FTS5, compactions that change only what
+  the model reads (the session keeps every message), results kept aside (`read_result`), the
+  answer being written kept as a draft.
+- **The agent's commands in a sandbox.** Bubblewrap on Linux, `sandbox-exec` on macOS: they cannot
+  see secrets (`~/.ssh`, cloud credentials, browsers' profiles…), write only in the working folders
+  and caches, and cannot reach Docker's socket.
 
-### Measured
-- A session of 10,000 messages opens with its last 30 turns read in 1.25 ms, the 30 before them
-  in 0.75 ms; what the model reads (from the last compaction) in 1.5 ms; each message is on disk
-  in 0.35 ms; a search of the folder's sessions takes 7.6 ms. See
-  [docs/measurements/0.2.md](docs/measurements/0.2.md).
+### :sparkles: New features & Enhancements
 
-### Moved to 0.3
-- Other providers' models, Tab to skip thinking, `--output stream-json`, the Arena account's
-  compaction threshold and Arena's tokenizer for `/context`, git's filters and merge drivers kept
-  from running, a long turn compacting its own steps. The plan's checklist names each.
+- **MCP servers.** Arena's tools, Farzan Graph's and your own (`mcpServers`: a command or a URL),
+  connected in the background, with deadlines and progress, and tools loaded on demand past
+  `tools.onDemandChars`; pictures and files a tool returns saved under `.code-arena/media/`.
+- **The window, measured and kept.** The model's window from the gateway, results condensed and
+  cleared before anything is summarized, compaction past `agent.compactAt` keeping the recent part
+  whole, a summary that comes back empty or in a loop replaced, a refused request compacted and
+  asked again.
+- **Commands, skills and sub-agents as Markdown files.** The project's and yours: `/NAME`, the
+  `skill` tool, `agents/NAME.md`; `/commands`, `/skills`.
+- **Jobs.** Commands with no time limit run as jobs: the turn goes on, and the model is told when
+  one ends; background commands run until stopped; `command_output`, `stop_command`, `/jobs`.
+- **Checkpoints and `/rewind`.** Each turn keeps what its tools changed: `/rewind N` puts the files
+  back and cuts the conversation there (or only one of them).
+- **`@files` in a message**, a line range or a folder; **waiting in a model's line** as the web chat
+  does; the model's thinking shown dimmed; an edit's diff under its call.
+- **Measured.** A 10,000-message session opens its last 30 turns in 1.25 ms
+  ([docs/measurements/0.2.md](docs/measurements/0.2.md)).
 
-## 0.1.0 (2026-11-26)
+## v0.1.0 (2026-11-26)
 
-### Added
-- `code-arena login` (an API key typed without echo, or a user name, password and second
-  factor), `logout`, `models` (each with its window and longest answer), `doctor` (the folders,
-  the Arena, the account, the models, Arena's tools, and what this Arena has, feature by
-  feature, kept for the next start) and `version`.
-- `code-arena -p PROMPT` (or `-p -` from stdin): one answer on stdout, the progress on stderr,
-  `--output json` with the result, the model and the tokens; `--mode`, `--model`, `--thinking`,
-  `-C FOLDER`, `--add-dir`.
-- A minimal MCP client over streamable HTTP (initialize, tools page by page, JSON or an event
-  stream), for counting Arena's tools.
-- A test that fails when code reads an environment variable anywhere but the settings.
-- The Rust workspace: `ca-core`, `ca-settings`, `ca-net`, `ca-arena`, `ca-llm`, `ca-tools`,
-  `ca-workspace` and the `code-arena` program.
-- One settings schema (`ca-settings`), with the person's and the project's `settings.json`
-  (comments and trailing commas allowed), environment overrides, and a project that may only
-  deny, never allow.
-- The Arena connection kept in `credentials.json`, readable by its owner only; `ARENA_*`
-  variables override it for one run.
-- The Arena client: the API key and `X-Requested-With` on every call, Arena's refusals in its
-  own words, password sign-in with the second factor (a key made for this machine), and
-  **capability probing**: each optional feature is asked about once, and an Arena 8.0 is told
-  apart from 8.1 by what it answers, never by its version.
-- The gateway client: models with their windows, answers streamed with thinking and tool calls,
-  retries for a gateway briefly away, refusals as Arena words them, a dropped stream kept.
-- The agent's tools: `read_file`, `write_file`, `edit_file` (UTF-8, UTF-16 and UTF-32 by their
-  mark, CRLF kept), `list_dir`, `glob`, `grep` (no backtracking, `.gitignore` followed),
-  `run_shell` (time limit, the process group stopped, the API key never passed on) and a
-  read-only `git`.
-- The agent's turn: requests and tool calls until the model answers; reading calls run at once,
-  changing ones in order; an answer cut at the output limit or by a dropped stream carried on.
-- Modes `ask`, `auto-edit`, `plan` and `yolo`; kept rules (`permissions`: `run_shell(npm test*)`,
-  commands matched whole and part by part); "always" for the session; a run that cannot ask refuses
-  what would ask, with a reason the model passes on.
-- Calls mended before they run: other harnesses' tool and argument names, nearly-JSON arguments,
-  wrong types; a call missing what it needs is explained with the tool's parameters.
-- Instructions from `ARENA.md`, `AGENTS.md` or another agent's file (the person's, the
-  repository root's and the working directory's).
-- Paths resolved as the system resolves them: a link that leads out counts as outside.
-- The project's `.code-arena/` folder, made with its default files at a repository's root the
-  first time (a folder that is no repository gets none).
-- The build image (`docker/builder`), static Linux binaries (musl), Windows binaries with the C
-  runtime inside.
-- CI on six systems (Linux x64 and arm64, macOS arm64 and x64, Windows x64 and arm64): format,
-  clippy and the tests; a release workflow that builds, packages and publishes each system's
-  binary with `SHA256SUMS` on a `v*` tag; a workflow that publishes the build image to GHCR.
+The first Code Arena in Rust: signing in, one answer from the command line with the agent's tools,
+modes and kept rules, and capability probing that tells Arena 8.0 from 8.1 by what it answers.
 
-### Fixed before release
-- `-p` printed blank lines before a step's tool calls, and listed calls that ran at once before
-  their results; each call now shows with its result, in order.
-- `.code-arena/` is made only at a repository's root, not in any folder `-p` runs in.
+### :rocket: Epics and highlights
 
-### Measured
-- The program is 7.1 MB (C# 8.1: 48.8 MB), starts in 0.4 ms (106 ms) and uses 2 MB of memory to
-  say its version (83 MB). See [docs/measurements/0.1.md](docs/measurements/0.1.md).
+- **`code-arena -p PROMPT`.** One answer on stdout, progress on stderr, `--output json`; `--mode`,
+  `--model`, `--thinking`, `-C FOLDER`, `--add-dir`. The agent's tools: `read_file`, `write_file`,
+  `edit_file` (UTF-8, UTF-16 and UTF-32, CRLF kept), `list_dir`, `glob`, `grep`, `run_shell` and a
+  read-only `git`; modes `ask`, `auto-edit`, `plan` and `yolo`; kept rules; calls mended before
+  they run.
+- **Every Arena from 8.0 on.** `login` (an API key, or a user name, password and second factor),
+  `logout`, `models`, `doctor` and `version`; each optional feature probed once, an Arena told by
+  what it answers, never by its version.
+
+### :sparkles: New features & Enhancements
+
+- **One settings schema.** The person's and the project's `settings.json` (comments allowed),
+  environment overrides, a project that may only deny; the connection kept readable by its owner
+  only; a test that fails when code reads the environment anywhere but the settings.
+- **Instructions and the project's folder.** `ARENA.md`, `AGENTS.md` or another agent's file; the
+  project's `.code-arena/` made with its default files at a repository's root.
+- **Builds and CI.** The build image, static Linux binaries, CI on six systems and a release
+  workflow. Measured: 7.1 MB (C# 8.1: 48.8 MB), started in 0.4 ms (106 ms), 2 MB of memory (83 MB)
+  ([docs/measurements/0.1.md](docs/measurements/0.1.md)).
+
+### :bug: Bugs fixed
+
+- **`-p` printed blank lines and listed calls before their results.** Each call now shows with its
+  result, in order.
+- **`.code-arena/` was made in any folder `-p` ran in.** Only at a repository's root now.
