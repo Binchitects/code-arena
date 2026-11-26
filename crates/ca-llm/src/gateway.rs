@@ -8,6 +8,7 @@ use futures_util::StreamExt;
 use reqwest::StatusCode;
 use serde_json::Value;
 
+use crate::providers::{self, AnthropicStream, Kind, Provider};
 use crate::sse::SseReader;
 use crate::types::{Completion, Finish, Message, Request, Role, Sink, ToolCall, Usage};
 
@@ -51,6 +52,10 @@ pub struct ModelInfo {
 pub struct Gateway {
     base: String,
     key: Secret,
+    /// Arena's gateway is there (none in the standalone edition: only providers).
+    primary: bool,
+    /// Providers beside it, each with its key: their models are `name:model`.
+    providers: Vec<(Provider, Secret)>,
     http: reqwest::Client,
     /// Tries for a gateway that is briefly away, before anything was shown.
     pub retries: u32,
@@ -71,6 +76,8 @@ impl Gateway {
         Ok(Self {
             base: base.trim_end_matches('/').trim_end_matches("/v1").to_string(),
             key,
+            primary: true,
+            providers: vec![],
             http: ca_net::client(ca)?,
             retries: 5,
             retry_delay: Duration::from_secs(3),
@@ -80,6 +87,65 @@ impl Gateway {
 
     pub fn base(&self) -> &str {
         &self.base
+    }
+
+    /// The standalone edition's: no Arena, only the person's providers.
+    pub fn standalone(providers: Vec<(Provider, Secret)>, ca: Option<&Path>) -> Result<Self, LlmError> {
+        let mut g = Self::new("", Secret::default(), ca)?;
+        g.primary = false;
+        g.providers = providers;
+        Ok(g)
+    }
+
+    /// Providers beside Arena's gateway (none: Arena's admins turned them off, or there are none).
+    pub fn set_providers(&mut self, providers: Vec<(Provider, Secret)>) {
+        self.providers = providers;
+    }
+
+    pub fn providers(&self) -> impl Iterator<Item = &Provider> {
+        self.providers.iter().map(|(p, _)| p)
+    }
+
+    /// Whether Arena's gateway is there.
+    pub fn has_arena(&self) -> bool {
+        self.primary
+    }
+
+    /// The provider a model named `name:model` is asked of, and its own name for the model.
+    fn route<'a>(&'a self, model: &'a str) -> Option<(&'a Provider, &'a Secret, &'a str)> {
+        let (name, rest) = model.split_once(':')?;
+        self.providers.iter().find(|(p, _)| p.name == name).map(|(p, k)| (p, k, rest))
+    }
+
+    /// A provider's models, as its API lists them (or as its settings name them).
+    async fn provider_models(&self, p: &Provider, key: &Secret) -> Result<Vec<ModelInfo>, LlmError> {
+        let ids: Vec<String> = if !p.models.is_empty() {
+            p.models.clone()
+        } else {
+            let mut r = self.http.get(format!("{}/v1/models", p.url)).timeout(Duration::from_secs(20));
+            r = match p.kind {
+                Kind::Anthropic => r.header("x-api-key", key.expose()).header("anthropic-version", ANTHROPIC_VERSION),
+                Kind::OpenAi => r.bearer_auth(key.expose()),
+            };
+            let res = r.send().await.map_err(|e| LlmError::Net(ca_net::explain(&e)))?;
+            let status = res.status();
+            let text = res.text().await.unwrap_or_default();
+            if !status.is_success() {
+                return Err(provider_failure(p, failure(status, &text, &format!("{}/v1/models", p.url))));
+            }
+            let v: Value = serde_json::from_str(&text).map_err(|e| LlmError::Parse(format!("{}: {e}", p.name)))?;
+            v["data"].as_array().into_iter().flatten().filter_map(|m| m["id"].as_str().map(str::to_string)).collect()
+        };
+        Ok(ids
+            .into_iter()
+            .map(|id| ModelInfo {
+                id: format!("{}:{id}", p.name),
+                context: p.context,
+                tools: true,
+                thinking: true,
+                ..Default::default()
+            })
+            .collect())
     }
 
     async fn get(&self, path: &str, timeout: Duration) -> Result<Value, LlmError> {
@@ -102,6 +168,28 @@ impl Gateway {
     /// The models the key may use (`/v1/models`), with their windows where `/v1/model/info` says them. Models that
     /// are not for chat (embeddings, speech) are left out.
     pub async fn models(&self) -> Result<Vec<ModelInfo>, LlmError> {
+        let mut theirs = Vec::new();
+        let mut first_err = None;
+        for (p, k) in &self.providers {
+            match self.provider_models(p, k).await {
+                Ok(m) => theirs.extend(m),
+                Err(e) => {
+                    first_err.get_or_insert(e);
+                }
+            }
+        }
+        if !self.primary {
+            return match (theirs.is_empty(), first_err) {
+                (true, Some(e)) => Err(e),
+                _ => Ok(theirs),
+            };
+        }
+        let mut mine = self.arena_models().await?;
+        mine.extend(theirs);
+        Ok(mine)
+    }
+
+    async fn arena_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
         let list = self.get("/v1/models", Duration::from_secs(30)).await?;
         let Some(data) = list.get("data").and_then(Value::as_array) else {
             return Err(LlmError::Parse(format!(
@@ -145,12 +233,39 @@ impl Gateway {
     /// 503, 504, a refused connection) is tried again while nothing has been shown; a key past its limit is not
     /// (the minute is not over in a few seconds, and each try counts).
     pub async fn complete(&self, request: &Request, sink: &mut dyn Sink) -> Result<Completion, LlmError> {
-        let body = request.to_wire();
+        let (url, auth, body) = match self.route(&request.model) {
+            Some((p, key, model)) => match p.kind {
+                Kind::OpenAi => (
+                    format!("{}/v1/chat/completions", p.url),
+                    Auth::Bearer(key.clone()),
+                    providers::openai_body(request.to_wire(), model, &request.thinking, p),
+                ),
+                Kind::Anthropic => (
+                    format!("{}/v1/messages", p.url),
+                    Auth::Anthropic(key.clone()),
+                    providers::anthropic_body(&request.to_wire(), model, &request.thinking),
+                ),
+            },
+            None if !self.primary => {
+                let names: Vec<String> = self.providers.iter().map(|(p, _)| format!("{}:MODEL", p.name)).collect();
+                return Err(LlmError::Refused(format!(
+                    "no provider has the model {}: a model is named after its provider ({})",
+                    request.model,
+                    if names.is_empty() {
+                        "none is set: code-arena login --provider NAME".into()
+                    } else {
+                        names.join(", ")
+                    }
+                )));
+            }
+            None => (format!("{}/v1/chat/completions", self.base), Auth::Bearer(self.key.clone()), request.to_wire()),
+        };
+        let provider = self.route(&request.model).map(|(p, _, _)| p);
         let mut tries = 0;
         let mut waiting_since: Option<tokio::time::Instant> = None;
         let mut last_said: Option<tokio::time::Instant> = None;
         loop {
-            match self.stream_once(&body, sink).await {
+            match self.stream_once(&url, &auth, &body, sink).await {
                 Err(Attempt::Busy { message, again }) => {
                     let since = *waiting_since.get_or_insert_with(tokio::time::Instant::now);
                     if since.elapsed() >= LINE_WAIT {
@@ -173,15 +288,32 @@ impl Gateway {
                 Err(Attempt::Retry(why)) => {
                     return Err(LlmError::Refused(format!("{why}, and still after {} tries", self.retries)));
                 }
-                Err(Attempt::Fail(e)) => return Err(e),
+                Err(Attempt::Fail(e)) => {
+                    return Err(match provider {
+                        Some(p) => provider_failure(p, e),
+                        None => e,
+                    });
+                }
                 Ok(c) => return Ok(c),
             }
         }
     }
 
-    async fn stream_once(&self, body: &Value, sink: &mut dyn Sink) -> Result<Completion, Attempt> {
-        let url = format!("{}/v1/chat/completions", self.base);
-        let send = self.http.post(&url).bearer_auth(self.key.expose()).json(body).send();
+    async fn stream_once(
+        &self,
+        url: &str,
+        auth: &Auth,
+        body: &Value,
+        sink: &mut dyn Sink,
+    ) -> Result<Completion, Attempt> {
+        let url = url.to_string();
+        let r = self.http.post(&url).json(body);
+        let r = match auth {
+            Auth::Bearer(k) => r.bearer_auth(k.expose()),
+            Auth::Anthropic(k) => r.header("x-api-key", k.expose()).header("anthropic-version", ANTHROPIC_VERSION),
+        };
+        let anthropic = matches!(auth, Auth::Anthropic(_));
+        let send = r.send();
         let res = match tokio::time::timeout(self.stall, send).await {
             Err(_) => return Err(Attempt::Fail(LlmError::Stalled(self.stall.as_secs()))),
             Ok(Err(e)) if e.is_connect() => {
@@ -205,6 +337,7 @@ impl Gateway {
             return Err(Attempt::Fail(failure(status, &text, &url)));
         }
         let mut answer = Assembly::default();
+        let mut anth = anthropic.then(AnthropicStream::default);
         let mut reader = SseReader::default();
         let mut stream = res.bytes_stream();
         let mut shown = false;
@@ -226,15 +359,54 @@ impl Gateway {
                 }
             };
             for data in reader.feed(&String::from_utf8_lossy(&chunk)) {
-                if answer.take(&data, sink).map_err(Attempt::Fail)? {
+                let took = match anth.as_mut() {
+                    Some(a) => answer.take_anthropic(a, &data, sink),
+                    None => answer.take(&data, sink),
+                };
+                if took.map_err(Attempt::Fail)? {
                     shown = true;
                 }
             }
         }
         if let Some(data) = reader.finish() {
-            answer.take(&data, sink).map_err(Attempt::Fail)?;
+            match anth.as_mut() {
+                Some(a) => answer.take_anthropic(a, &data, sink),
+                None => answer.take(&data, sink),
+            }
+            .map_err(Attempt::Fail)?;
+        }
+        if let Some(a) = anth {
+            answer.calls = a.calls();
+            answer.finish = a.finish;
+            answer.done = a.ended;
+            answer.usage = Usage { prompt: a.input, cached: a.cached, completion: a.output };
         }
         Ok(answer.done())
+    }
+}
+
+/// The Anthropic API version Code Arena speaks.
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+enum Auth {
+    Bearer(Secret),
+    Anthropic(Secret),
+}
+
+/// A provider's refusal, in its own name: its key is not Arena's.
+fn provider_failure(p: &Provider, e: LlmError) -> LlmError {
+    match e {
+        LlmError::Key => {
+            let env = providers::known(&p.name).map(|k| k.key_env).unwrap_or("its key");
+            LlmError::Refused(format!(
+                "{} refused the API key (401): check {env}, or give it again with code-arena login --provider {}",
+                p.name, p.name
+            ))
+        }
+        LlmError::NoApi { url } => {
+            LlmError::Refused(format!("{} has no such API at {url} (404): check its url", p.name))
+        }
+        other => other,
     }
 }
 
@@ -277,6 +449,23 @@ struct Assembly {
 }
 
 impl Assembly {
+    /// One of Anthropic's events; true when something was shown.
+    fn take_anthropic(&mut self, a: &mut AnthropicStream, data: &str, sink: &mut dyn Sink) -> Result<bool, LlmError> {
+        let piece = a.read(data).map_err(LlmError::Refused)?;
+        let mut shown = false;
+        if let Some(t) = piece.text.filter(|t| !t.is_empty()) {
+            self.text.push_str(&t);
+            sink.text(&t);
+            shown = true;
+        }
+        if let Some(r) = piece.thinking.filter(|r| !r.is_empty()) {
+            self.reasoning.push_str(&r);
+            sink.reasoning(&r);
+            shown = true;
+        }
+        Ok(shown)
+    }
+
     /// Takes one event's data; true when something was shown.
     fn take(&mut self, data: &str, sink: &mut dyn Sink) -> Result<bool, LlmError> {
         if data.trim() == "[DONE]" {
@@ -600,5 +789,115 @@ mod tests {
         let c = gateway(&server).complete(&req, &mut Quiet).await.expect("completes");
         assert_eq!(c.finish, Finish::Dropped);
         assert_eq!(c.message.content, "half an ans");
+    }
+
+    /// A provider of OpenAI's kind that refuses what it does not know, as Mistral and others do.
+    struct Strict;
+    impl wiremock::Respond for Strict {
+        fn respond(&self, r: &wiremock::Request) -> ResponseTemplate {
+            let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+            let known = ["model", "messages", "stream", "tools", "max_tokens", "tool_choice"];
+            if let Some(extra) = body.as_object().and_then(|o| o.keys().find(|k| !known.contains(&k.as_str()))) {
+                return ResponseTemplate::new(422)
+                    .set_body_json(serde_json::json!({"error": {"message": format!("extra field {extra}")}}));
+            }
+            if r.headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer sk-mistral") {
+                return ResponseTemplate::new(401);
+            }
+            let ev = serde_json::json!({"choices": [{"delta": {"content": format!("{} here", body["model"].as_str().unwrap_or(""))}, "finish_reason": "stop"}]});
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse(&[&ev.to_string(), "[DONE]"]))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_providers_model_goes_to_it_with_only_what_it_takes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST")).and(path("/mistral/v1/chat/completions")).respond_with(Strict).mount(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/mistral/v1/models"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [{"id": "mistral-large"}]})),
+            )
+            .mount(&server)
+            .await;
+        let p = Provider::parse(
+            "mistral",
+            &serde_json::json!({"url": format!("{}/mistral", server.uri()), "usageOption": false}),
+        )
+        .expect("p");
+        let mut g = Gateway::standalone(vec![(p, Secret::new("sk-mistral"))], None).expect("g");
+        g.retry_delay = Duration::from_millis(1);
+        assert!(!g.has_arena());
+        let models = g.models().await.expect("models");
+        assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["mistral:mistral-large"]);
+        let req = Request {
+            model: "mistral:mistral-large".into(),
+            messages: vec![Message::user("hi")],
+            thinking: crate::Thinking::Off,
+            tags: vec!["chat:1".into()],
+            ..Default::default()
+        };
+        let c = g.complete(&req, &mut Quiet).await.expect("answered");
+        assert_eq!(c.message.content, "mistral-large here");
+        // A model of no provider's, with no Arena: said so.
+        let e =
+            g.complete(&Request { model: "qwen".into(), ..Default::default() }, &mut Quiet).await.expect_err("none");
+        assert!(e.to_string().contains("mistral:MODEL"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn anthropics_messages_api_and_its_key_refused_in_its_name() {
+        let server = MockServer::start().await;
+        let events = [
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":5}}}"#,
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}"#,
+            r#"{"type":"message_stop"}"#,
+        ];
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .and(header("x-api-key", "sk-ant-test"))
+            .and(header("anthropic-version", ANTHROPIC_VERSION))
+            .and(body_partial_json(serde_json::json!({"model": "claude-x", "system": [{"text": "sys"}]})))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse(&events)),
+            )
+            .mount(&server)
+            .await;
+        let p = Provider::parse("anthropic", &serde_json::json!({"url": server.uri()})).expect("p");
+        let g = Gateway::standalone(vec![(p.clone(), Secret::new("sk-ant-test"))], None).expect("g");
+        let req = Request {
+            model: "anthropic:claude-x".into(),
+            messages: vec![Message::system("sys"), Message::user("hi")],
+            ..Default::default()
+        };
+        let mut c = Collect::default();
+        let done = g.complete(&req, &mut c).await.expect("answered");
+        assert_eq!(c.text, "Hello");
+        assert_eq!((done.usage.prompt, done.usage.completion), (5, 2));
+        assert_eq!(done.finish, Finish::Stop);
+        let wrong = Gateway::standalone(vec![(p, Secret::new("sk-wrong"))], None).expect("g");
+        let e = wrong.complete(&req, &mut Quiet).await.expect_err("refused");
+        assert!(e.to_string().contains("ANTHROPIC_API_KEY") || e.to_string().contains("anthropic"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn arenas_models_and_a_providers_together() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"data": [{"id": "qwen"}]})))
+            .mount(&server)
+            .await;
+        let mut g = gateway(&server);
+        let p = Provider::parse("local", &serde_json::json!({"url": "http://127.0.0.1:9", "models": ["llama"]}))
+            .expect("p");
+        g.set_providers(vec![(p, Secret::default())]);
+        let ids: Vec<String> = g.models().await.expect("models").into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["qwen", "local:llama"]);
     }
 }
