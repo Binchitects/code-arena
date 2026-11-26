@@ -274,7 +274,6 @@ fn tip(v: impl IntoView + 'static, text: &'static str) -> impl IntoView {
 
 /// The Explorer title's actions, as VS Code's: New File, New Folder, Refresh, Collapse All.
 // Not in the title yet: the title is drawn with the dock, which puts them there.
-#[allow(dead_code)]
 pub fn actions(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     let (file, folder, again) = (send.clone(), send.clone(), send);

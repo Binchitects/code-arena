@@ -379,18 +379,7 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
                     })
                 });
                 match active {
-                    Some(View::Files) => h_stack((
-                        action(t, "refresh", move || {
-                            ui.tree.update(|t| t.clear());
-                            send(serde_json::json!({"type": "ls", "path": ""}));
-                            for p in ui.expanded.get_untracked() {
-                                send(serde_json::json!({"type": "ls", "path": p}));
-                            }
-                        }),
-                        action(t, "collapse-all", move || ui.expanded.update(|e| e.clear())),
-                    ))
-                    .style(|s| s.gap(2.0))
-                    .into_any(),
+                    Some(View::Files) => crate::explorer::actions(ui, send).into_any(),
                     Some(View::Terminal) => {
                         h_stack((crate::terminal::actions(ui, send), close)).style(|s| s.gap(2.0)).into_any()
                     }

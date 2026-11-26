@@ -85,6 +85,11 @@ Sections used:
   and Kill (its bin); with two or more, VS Code's list of them at the panel's right. Drag to
   select (a double click a word, a triple click a line), Ctrl+Shift+C copies, a right-click copies
   a selection or else pastes; Terminal: Clear in the palette.
+- **The Explorer's file operations, as VS Code's.** New File and New Folder typed in a row of the
+  tree, a row renamed in place (F2, open tabs following it), a file or a folder deleted after a
+  question (Delete) with a copy kept among the session's backups, a row's menu on a right-click
+  (Copy Path and Copy Relative Path too), and the arrows to go through the tree. The driver makes,
+  moves and deletes only inside the project, a link as a link.
 - **Quick Open and the Command Palette in the native window**, VS Code's quick input: Ctrl+P (or a
   click on the command center) finds a file among 50,000 in about 2 ms a key, its matched letters
   lit; Ctrl+Shift+P (or `>`) runs a command, its keys shown; Ctrl+K Ctrl+T picks a colour theme,
