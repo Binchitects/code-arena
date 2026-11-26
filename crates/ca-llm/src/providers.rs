@@ -1,6 +1,6 @@
 //! Providers of models beside Arena's gateway, with the person's own key: Anthropic (its Messages API), or any API that
 //! speaks OpenAI's chat completions (OpenAI, DeepSeek, OpenRouter, Mistral, a local Ollama, a company's own vLLM). Their
-//! models are offered as `name:model` (`anthropic:claude-sonnet-5-5`) and asked of them directly. Without Arena they are
+//! models are offered as `name:model` (`anthropic:MODEL`) and asked of them directly. Without Arena they are
 //! the only models there are (the standalone edition); signed in to Arena, its admins decide whether they are used.
 
 use serde_json::{Map, Value, json};
@@ -36,7 +36,7 @@ pub const KNOWN: &[Known] = &[
         kind: Kind::Anthropic,
         url: "https://api.anthropic.com",
         key_env: "ANTHROPIC_API_KEY",
-        about: "Anthropic: Claude (console.anthropic.com, API keys)",
+        about: "Anthropic (console.anthropic.com, API keys)",
         usage_option: false,
         effort: true,
     },
@@ -421,7 +421,7 @@ mod tests {
             {"role": "tool", "tool_call_id": "c1", "content": "fn a() {}"},
             {"role": "user", "content": "and?"}
         ], "tools": [{"type": "function", "function": {"name": "read_file", "description": "Reads", "parameters": {"type": "object"}}}], "max_tokens": 1000});
-        let a = anthropic_body(&body, "claude-x", &Thinking::Level("low".into()));
+        let a = anthropic_body(&body, "model-x", &Thinking::Level("low".into()));
         assert_eq!(a["system"][0]["text"], "Be brief.");
         assert_eq!(a["system"][0]["cache_control"]["type"], "ephemeral");
         let ms = a["messages"].as_array().expect("messages");

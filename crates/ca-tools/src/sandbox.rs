@@ -33,8 +33,6 @@ const SECRETS: &[&str] = &[
     ".pypirc",
     ".git-credentials",
     ".config/gh",
-    ".qwen/settings.json",
-    ".claude.json",
     ".mozilla",
     ".config/google-chrome",
     ".config/chromium",
@@ -43,6 +41,22 @@ const SECRETS: &[&str] = &[
     "Library/Keychains",
     "Library/Application Support/Google/Chrome",
 ];
+
+/// The JSON files right in the home folder whose name starts with a dot (`~/.tool.json`).
+fn home_json(home: &Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = std::fs::read_dir(home)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.starts_with('.') && n.ends_with(".json") && e.path().is_file()
+        })
+        .map(|e| e.path())
+        .collect();
+    out.sort();
+    out
+}
 
 /// The build tools' caches, under the home folder: writable.
 const CACHES: &[&str] = &[
@@ -80,6 +94,8 @@ impl Sandbox {
         if let Some(h) = home {
             writable.extend(CACHES.iter().map(|c| h.join(c)));
             hidden.extend(SECRETS.iter().map(|s| h.join(s)));
+            // The home's own `.NAME.json` files: other tools keep their state and keys there.
+            hidden.extend(home_json(h));
         }
         hidden.extend(SOCKETS.iter().map(PathBuf::from));
         if let Some(r) = runtime_dir {

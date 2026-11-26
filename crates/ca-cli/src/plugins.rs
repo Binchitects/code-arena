@@ -1,7 +1,9 @@
-//! Plugins: a folder (or a git repository) bundling commands, sub-agents, skills, hooks and MCP servers, in Claude
-//! Code's layout (`.claude-plugin/plugin.json`, `commands/`, `agents/`, `skills/`, `hooks/hooks.json`, `.mcp.json`).
+//! Plugins: a folder (or a git repository) bundling commands, sub-agents, skills, hooks and MCP servers, in the common
+//! layout (`.code-arena-plugin/plugin.json`, `commands/`, `agents/`, `skills/`, `hooks/hooks.json`, `.mcp.json`; an
+//! agent `compat.agents` names may keep its manifest in `.NAME-plugin/`).
 //! Installed into the data folder (`code-arena plugin install PATH|URL`), and used once enabled (`plugins.enabled`, in
-//! your settings or the project's). `${CLAUDE_PLUGIN_ROOT}` in its hooks and servers is its folder.
+//! your settings or the project's). `${CODE_ARENA_PLUGIN_ROOT}` (and a named agent's `${NAME_PLUGIN_ROOT}`) in its
+//! hooks and servers is its folder.
 
 use std::path::{Path, PathBuf};
 
@@ -21,15 +23,20 @@ pub struct Plugin {
     pub root: PathBuf,
 }
 
-fn manifest(root: &Path) -> Option<Value> {
-    [root.join(".claude-plugin/plugin.json"), root.join("plugin.json")]
+use ca_core::compat::Agents;
+
+fn manifest(root: &Path, agents: &Agents) -> Option<Value> {
+    std::iter::once(root.join(".code-arena-plugin/plugin.json"))
+        .chain(agents.plugin_folders().iter().map(|f| root.join(f).join("plugin.json")))
+        .chain(std::iter::once(root.join("plugin.json")))
+        .collect::<Vec<_>>()
         .iter()
         .find_map(|f| std::fs::read_to_string(f).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
 }
 
-fn read(root: &Path) -> Option<Plugin> {
-    let m = manifest(root).unwrap_or(Value::Null);
+fn read(root: &Path, agents: &Agents) -> Option<Plugin> {
+    let m = manifest(root, agents).unwrap_or(Value::Null);
     let name = m["name"]
         .as_str()
         .map(str::to_string)
@@ -42,54 +49,62 @@ fn read(root: &Path) -> Option<Plugin> {
     })
 }
 
-pub fn installed(data: &Path) -> Vec<Plugin> {
+pub fn installed(data: &Path, agents: &Agents) -> Vec<Plugin> {
     let mut out: Vec<Plugin> = std::fs::read_dir(dir(data))
         .into_iter()
         .flatten()
         .flatten()
         .filter(|e| e.path().is_dir() && !e.file_name().to_string_lossy().starts_with('.'))
-        .filter_map(|e| read(&e.path()))
+        .filter_map(|e| read(&e.path(), agents))
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
 /// The plugins in use: installed and enabled (by name).
-pub fn enabled(data: &Path, names: &[String]) -> Vec<Plugin> {
-    installed(data).into_iter().filter(|p| names.contains(&p.name)).collect()
+pub fn enabled(data: &Path, names: &[String], agents: &Agents) -> Vec<Plugin> {
+    installed(data, agents).into_iter().filter(|p| names.contains(&p.name)).collect()
 }
 
-/// `${CLAUDE_PLUGIN_ROOT}` (and Code Arena's own name for it) read as the plugin's folder.
-pub fn rooted(text: &str, root: &Path) -> String {
+/// `${CODE_ARENA_PLUGIN_ROOT}` (and the named agents' `${NAME_PLUGIN_ROOT}`) read as the plugin's folder.
+pub fn rooted(text: &str, root: &Path, agents: &Agents) -> String {
     let r = root.display().to_string();
-    text.replace("${CLAUDE_PLUGIN_ROOT}", &r).replace("${CODE_ARENA_PLUGIN_ROOT}", &r)
+    let mut out = text.replace("${CODE_ARENA_PLUGIN_ROOT}", &r);
+    for v in agents.variables("PLUGIN_ROOT") {
+        out = out.replace(&format!("${{{v}}}"), &r);
+    }
+    out
 }
 
-fn rooted_value(v: &Value, root: &Path) -> Value {
+fn rooted_value(v: &Value, root: &Path, agents: &Agents) -> Value {
     match v {
-        Value::String(s) => Value::String(rooted(s, root)),
-        Value::Array(a) => Value::Array(a.iter().map(|x| rooted_value(x, root)).collect()),
-        Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), rooted_value(x, root))).collect()),
+        Value::String(s) => Value::String(rooted(s, root, agents)),
+        Value::Array(a) => Value::Array(a.iter().map(|x| rooted_value(x, root, agents)).collect()),
+        Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), rooted_value(x, root, agents))).collect()),
         other => other.clone(),
     }
 }
 
 /// The plugin's hooks (`hooks/hooks.json`), its folder put in.
-pub fn hooks(p: &Plugin) -> Option<Value> {
+pub fn hooks(p: &Plugin, agents: &Agents) -> Option<Value> {
     let t = std::fs::read_to_string(p.root.join("hooks/hooks.json")).ok()?;
     let v: Value = serde_json::from_str(&t).ok()?;
-    Some(rooted_value(v.get("hooks").unwrap_or(&v), &p.root))
+    Some(rooted_value(v.get("hooks").unwrap_or(&v), &p.root, agents))
 }
 
 /// The plugin's MCP servers (`.mcp.json`), each named `PLUGIN-SERVER`, its folder put in.
-pub fn servers(p: &Plugin) -> Vec<(String, Value)> {
+pub fn servers(p: &Plugin, agents: &Agents) -> Vec<(String, Value)> {
     let Some(v) =
         std::fs::read_to_string(p.root.join(".mcp.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok())
     else {
         return vec![];
     };
     let map = v.get("mcpServers").unwrap_or(&v);
-    map.as_object().into_iter().flatten().map(|(n, s)| (format!("{}-{n}", p.name), rooted_value(s, &p.root))).collect()
+    map.as_object()
+        .into_iter()
+        .flatten()
+        .map(|(n, s)| (format!("{}-{n}", p.name), rooted_value(s, &p.root, agents)))
+        .collect()
 }
 
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -114,13 +129,19 @@ fn is_url(s: &str) -> bool {
 }
 
 /// `code-arena plugin …`.
-pub fn command(data: &Path, settings_file: &Path, enabled_now: &[String], args: &[String]) -> anyhow::Result<i32> {
+pub fn command(
+    data: &Path,
+    settings_file: &Path,
+    enabled_now: &[String],
+    args: &[String],
+    agents: &Agents,
+) -> anyhow::Result<i32> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     let keep_enabled =
         |names: Vec<String>| ca_settings::settings::keep(settings_file, "plugins.enabled", &serde_json::json!(names));
     match words.as_slice() {
         [] | ["list"] => {
-            let all = installed(data);
+            let all = installed(data, agents);
             if all.is_empty() {
                 println!("No plugins yet: code-arena plugin install PATH|GIT_URL.");
             }
@@ -162,8 +183,8 @@ pub fn command(data: &Path, settings_file: &Path, enabled_now: &[String], args: 
             } else {
                 std::fs::canonicalize(src).with_context(|| format!("the folder {src}"))?
             };
-            let p = read(&from)
-                .ok_or_else(|| anyhow::anyhow!("{src} has no name: its .claude-plugin/plugin.json says none"))?;
+            let p = read(&from, agents)
+                .ok_or_else(|| anyhow::anyhow!("{src} has no name: its .code-arena-plugin/plugin.json says none"))?;
             if !p.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
                 bail!("the plugin's name {:?} cannot be a folder's", p.name);
             }

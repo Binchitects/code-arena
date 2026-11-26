@@ -1,6 +1,6 @@
-//! A status line of the person's own, in Claude Code's shape (`"statusLine": {"type": "command", "command": "…"}`):
+//! A status line of the person's own, in the common shape (`"statusLine": {"type": "command", "command": "…"}`):
 //! the command gets the session as JSON on stdin and the first line it prints is shown above the prompt, drawn again
-//! after each turn. Claude Code's `~/.claude/settings.json` statusLine is used when Code Arena's is not set.
+//! after each turn. When Code Arena's is not set, that of an agent `compat.agents` names (`~/.NAME/settings.json`).
 
 use std::time::Duration;
 
@@ -21,13 +21,16 @@ pub fn command(app: &App) -> Option<String> {
             .filter(|c| !c.trim().is_empty())
     };
     of(&app.settings.value(&ca_settings::schema::STATUS_LINE)).or_else(|| {
-        let file = app.home.as_ref()?.join(".claude").join("settings.json");
-        let v: Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
-        of(v.get("statusLine")?)
+        let home = app.home.as_ref()?;
+        app.agents().folders().iter().find_map(|f| {
+            let v: Value =
+                serde_json::from_str(&std::fs::read_to_string(home.join(f).join("settings.json")).ok()?).ok()?;
+            of(v.get("statusLine")?)
+        })
     })
 }
 
-/// What the command is told, as Claude Code tells its own, and Code Arena's mode and edition.
+/// What the command is told, in the common shape, and Code Arena's mode and edition.
 pub fn input(p: &crate::session::Prepared, app: &App, usage: &ca_llm::Usage) -> Value {
     let style = app.settings.string(&ca_settings::schema::OUTPUT_STYLE).unwrap_or_else(|| "default".into());
     json!({

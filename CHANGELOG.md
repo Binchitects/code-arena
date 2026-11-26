@@ -7,17 +7,29 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 
 ### Added
 - The build image has Node 22 and npm, for the IDE's page (`web/`).
+- `compat.agents`: other agents whose files are read too, by name, none by default. For an agent
+  named NAME: its `.NAME/` folders in the project and the home (commands, skills, sub-agents,
+  output styles, its `settings.json`'s hooks and status line), its `NAME.md` instructions, its
+  plugins' `.NAME-plugin/` manifests and the variables `${NAME_PLUGIN_ROOT}` and
+  `NAME_PROJECT_DIR`.
+
+### Changed
+- Other agents' files are no longer read unless `compat.agents` names the agent. Plugins keep
+  their manifest in `.code-arena-plugin/plugin.json` (or `plugin.json`) and name their folder
+  `${CODE_ARENA_PLUGIN_ROOT}`.
+- The sandbox hides every `~/.*.json` file from commands (other tools keep their state and keys
+  there), instead of a list of names.
 
 ## 0.4.0 (2026-11-26)
 
 ### Added
-- Hooks, in Claude Code's shape (`"hooks"` in settings.json; Claude Code's `~/.claude/settings.json`
-  and a project's `.claude/settings.json` read as they are): `SessionStart`, `UserPromptSubmit`,
+- Hooks, in the common shape (`"hooks"` in settings.json; another agent's `~/.NAME/settings.json`
+  and a project's `.NAME/settings.json` read as they are once `compat.agents` names it): `SessionStart`, `UserPromptSubmit`,
   `PreToolUse` (block, allow without asking, ask whatever the mode, or rewrite the arguments),
   `PostToolUse` (a word to the model with the result), `Notification` (when Code Arena asks you),
   `Stop` (send the model on: three times a turn at most) and `PreCompact`. Each runs a command
   that gets the moment as JSON on stdin and answers by its exit code (2 blocks, its stderr says
-  why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or Claude Code's
+  why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or the common one
   (`run_shell` or `Bash`). A project's hooks run only once you trust them as they are
   (`/hooks trust`; a change asks again). `/hooks` lists them.
 - llama.cpp's "Context size has been exceeded." (the cache the engine's requests share was full,
@@ -41,14 +53,14 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   `/project show` shows the session's project as its page does: repositories, people, goals
   with their tasks, and tasks of no goal.
 - An error with no body says so ("Internal Server Error (it gave no reason)").
-- Output styles, in Claude Code's format: `/output-style` lists them and `/output-style NAME`
+- Output styles, in the common format: `/output-style` lists them and `/output-style NAME`
   uses one from the next message (kept in the settings, `outputStyle`). Built in: default,
   explanatory (explains the codebase's choices as it goes) and learning (leaves small pieces,
   marked `TODO(human)`, for you to write). Your own are `output-styles/NAME.md` (the project's,
   yours, a plugin's) with `name`, `description` and `keep-coding-instructions`: without it, a
   style takes the place of Code Arena's coding instructions.
-- A status line of your own: `"statusLine": {"type": "command", "command": "…"}` (or Claude
-  Code's in `~/.claude/settings.json`). The command gets the session as JSON on stdin (model,
+- A status line of your own: `"statusLine": {"type": "command", "command": "…"}` (or that of an
+  agent `compat.agents` names, in `~/.NAME/settings.json`). The command gets the session as JSON on stdin (model,
   workspace, tokens so far, output style, mode, edition) and its first line is drawn above the
   prompt, again after each turn; one that fails or takes over two seconds shows nothing.
 - Session forks: `/fork` carries on in a copy of the session, `/fork N` in a copy of what came
@@ -64,11 +76,12 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   last runs went. From the shell: `code-arena agents [run NAME [TEXT] [--field K=V]]` (waits for
   the answer) and `code-arena tasks [run NAME | runs NAME]`. The model gets `arena_agents` and
   `run_arena_agent` (asks as a command does) when the Arena has them.
-- Plugins, in Claude Code's layout (`.claude-plugin/plugin.json`, `commands/`, `agents/`, `skills/`,
+- Plugins, in the common layout (`.code-arena-plugin/plugin.json`, or `.NAME-plugin/` for an agent
+  `compat.agents` names, `commands/`, `agents/`, `skills/`,
   `hooks/hooks.json`, `.mcp.json`): `code-arena plugin install PATH|GIT_URL`, `list`, `enable NAME`,
   `disable NAME`, `remove NAME`. An enabled plugin's commands, sub-agents and skills join yours
   (yours and the project's win by name), its hooks run as yours do, and its MCP servers are
-  named `PLUGIN-SERVER`; `${CLAUDE_PLUGIN_ROOT}` is its folder. `plugins.enabled` in a project's
+  named `PLUGIN-SERVER`; `${CODE_ARENA_PLUGIN_ROOT}` is its folder. `plugins.enabled` in a project's
   settings enables more of those installed.
 - The `task` tool: the model hands a piece of work to a sub-agent (one of the project's or your
   `agents/NAME.md`, with its instructions, model and tools, or a general one), which works in a
@@ -326,8 +339,7 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 - In the chat: `/compact`, `/context` (what fills the window, by kind, and the biggest messages),
   and after each turn how full the window is (`context 18.2k / 131k (14%), compacts at 80%`).
 - Commands, skills and sub-agents as Markdown files, the project's (`.code-arena/`, `.arena/`,
-  Claude Code's `.claude/`, Qwen Code's `.qwen/`) over yours (the config folder, `~/.code-arena`,
-  `~/.claude`), read again at each message: `commands/NAME.md` is `/NAME`
+  other agents' folders) over yours (the config folder, `~/.code-arena`), read again at each message: `commands/NAME.md` is `/NAME`
   (`commands/git/commit.md` is `/git:commit`; `$ARGUMENTS`, `$1`…; front matter `description`
   and `argument-hint`); `skills/NAME/SKILL.md` is listed for the model, loaded with the `skill`
   tool (and the files beside it), or used as `/NAME words`; `agents/NAME.md` (`name`,
@@ -417,7 +429,7 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   what would ask, with a reason the model passes on.
 - Calls mended before they run: other harnesses' tool and argument names, nearly-JSON arguments,
   wrong types; a call missing what it needs is explained with the tool's parameters.
-- Instructions from `ARENA.md`, `AGENTS.md`, `CLAUDE.md` or `QWEN.md` (the person's, the
+- Instructions from `ARENA.md`, `AGENTS.md` or another agent's file (the person's, the
   repository root's and the working directory's).
 - Paths resolved as the system resolves them: a link that leads out counts as outside.
 - The project's `.code-arena/` folder, made with its default files at a repository's root the

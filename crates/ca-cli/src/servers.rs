@@ -149,8 +149,9 @@ pub fn configured(app: &App, reserved: &[String]) -> (Vec<Server>, Vec<String>) 
         .flatten()
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    for p in crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS)) {
-        own.extend(crate::plugins::servers(&p));
+    let agents = app.agents();
+    for p in crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS), &agents) {
+        own.extend(crate::plugins::servers(&p, &agents));
     }
     for (name, v) in &own {
         let name = name.as_str();

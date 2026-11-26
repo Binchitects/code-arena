@@ -2,7 +2,7 @@
 
 Code Arena is Farzan Arena's own coding agent with an IDE around it. This repository
 rewrites it in Rust as a product of its own, with its own versions: **0.1** first,
-**1.0** the first stable release. It is built to stand beside Claude Code, Codex CLI,
+**1.0** the first stable release. It is built to stand beside the other coding agents (Codex CLI,
 OpenCode, Qwen Code, Cursor and Zed, and to work with every Farzan Arena server from
 **8.0** on.
 
@@ -304,12 +304,12 @@ a file that exists, and it says in one line what it made.
   local/             per-person state, never committed
 ```
 
-`ARENA.md` stays at the root, beside `AGENTS.md`, `CLAUDE.md` and `QWEN.md`, which are
-read as today. When none exists, Code Arena offers once to write a starter `ARENA.md`.
+`ARENA.md` stays at the root, beside `AGENTS.md`; other agents' own files are read when
+`compat.agents` names those agents (none by default). When none exists, Code Arena offers once to write a starter `ARENA.md`.
 The model drafts it from the repository: how it builds and tests, and its conventions.
 
-Compatibility inside the folder: `.arena/` (today's place), `.claude/` and `.qwen/` are
-read as today. `.code-arena/` wins over them by name.
+Compatibility inside the folder: `.arena/` (today's place) is read as today, and other
+agents' folders once `compat.agents` names them. `.code-arena/` wins over them by name.
 
 `"projectFolder": false` in the user's settings stops the folder from being created.
 The folder is still read when it exists.
@@ -508,21 +508,21 @@ systems, and a **headline**: one thing to show.
 
 ### New harness features
 
-These go past today's Code Arena, with Claude Code, Codex and OpenCode as the bar.
+These go past today's Code Arena, with the best coding agents as the bar.
 
 - **Hooks**: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (allow, deny or ask, and
   rewrite the arguments), `PostToolUse`, `Notification`, `Stop`, `SubagentStop`,
   `PreCompact` and `PreCommit`. Each runs a command that gets JSON on stdin and answers
-  JSON. They are declared in `settings.json`; Claude Code's hook format is read as it is.
+  JSON. They are declared in `settings.json`; the common hook format is read as it is.
   A project's hooks run only after the person enables them, as its tools do today.
 - **Plugins**: a folder or git URL bundling commands, agents, skills, hooks, MCP servers
-  and command tools, with a manifest. Claude Code's plugin layout is read as it is. They
+  and command tools, with a manifest. The common plugin layout is read as it is. They
   can be installed from Arena's plugins (Admin → Plugins), a git URL or a folder, and
   enabled per person and per project.
 - **Sub-agent definitions** with their own model, tools and permission mode. The Tasks
   panel shows each one live.
 - **Output styles** and **custom status lines**: the Agent mode status line can run a
-  command, as Claude Code's does.
+  command, as other agents' do.
 - **Session forks**: branch a session at any message into a new one.
 - **Headless JSON streaming**: `-p --output stream-json`, for CI and other tools.
 
@@ -653,7 +653,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 - [x] 0.1 `git` read-only: no hooks, fsmonitor, external diff, text conversion, pager, network or outside paths
 - [x] 0.3 `git`: the repository's clean and smudge filters and merge drivers kept from running too
 - [ ] 0.8 `screenshot` (headless browser, or the whole screen)
-- [ ] 0.7 `ask_agent` and `/agent` (Claude Code, Codex, Gemini CLI by their own sign-ins)
+- [ ] 0.7 `ask_agent` and `/agent` (other agents' command lines, by their own sign-ins)
 - [x] 0.1 Read-only calls at once, changing calls in order
 - [x] 0.1 Encodings (UTF-8, UTF-16, UTF-32 by BOM); Git bash paths on Windows
 - [x] 0.4 Files held open by others on Windows (moved from 0.3)
@@ -662,7 +662,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 - [x] 0.2 Per-session tool choice (`/tools on|off`); tools on demand (`load_tools`, `tools.onDemandChars`)
 - [ ] 0.7 Code index: `code_search`, `code_symbol`, `code_outline`; secrets never read; CLI `index` and `search` (better: tree-sitter for many languages)
 - [ ] 0.8 VMs: list, power, snapshot, copy, run, screenshot, input, test, create, clone, delete on four hypervisors; guest sign-in from the keyring; CLI `vm …`
-- [x] 0.2 ARENA.md and AGENTS.md, CLAUDE.md, QWEN.md (person's, root, folder), 20,000 characters each, environment facts
+- [x] 0.2 ARENA.md and AGENTS.md, and other agents' files by `compat.agents` (person's, root, folder), 20,000 characters each, environment facts
 
 ### Checklists, plan, sub-agents, goals, automation
 
@@ -699,7 +699,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 
 ### Commands, skills, rules, sandbox
 
-- [x] 0.2 Commands (`$ARGUMENTS`, `$1`, front matter), sub-agent files, skills (agentskills.io), read again each turn; from `.code-arena/`, `.arena/`, `.claude/`, `.qwen/`, the home and the config folder
+- [x] 0.2 Commands (`$ARGUMENTS`, `$1`, front matter), sub-agent files, skills (agentskills.io), read again each turn; from `.code-arena/`, `.arena/`, other agents' folders by `compat.agents`, the home and the config folder
 - [ ] 0.4 Skills view (by source, open or use, New Skill, Refresh)
 - [x] 0.3 Skills from Arena and plugins (cached, refreshed); built-in skills
 - [x] 0.3 Import and export of skills (zip, folder, SKILL.md; conflicts; secrets never come in; Arena's safeguards; limits)
@@ -723,8 +723,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 
 - The plan comes first, and you see it before any code is written.
 - I work step by step myself, with no sub-agents or parallel agents. Each step is
-  committed and pushed to `Binchitects/code-arena`. Each commit ends with
-  `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+  committed and pushed to `Binchitects/code-arena`.
 - No Prettier.
 - No backward compatibility inside the product before 1.0. Compatibility with Arena
   servers from 8.0 on is required.

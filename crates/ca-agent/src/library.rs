@@ -1,7 +1,7 @@
-//! Commands, skills and sub-agents written as Markdown files: the project's (`.code-arena/`, `.arena/`, and
-//! Claude Code's `.claude/` and Qwen Code's `.qwen/`) and the person's (the config folder, `~/.code-arena`,
-//! `~/.claude`). The project's win over the person's of the same name. Read again at each turn, so one added or
-//! changed works from the next message.
+//! Commands, skills and sub-agents written as Markdown files: the project's (`.code-arena/`, `.arena/`, and other
+//! agents' folders when the person names them in `compat.agents`) and the person's (the config folder, `~/.code-arena`,
+//! the named agents' home folders). The project's win over the person's of the same name. Read again at each turn, so
+//! one added or changed works from the next message.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,15 +20,24 @@ pub struct Source {
 
 /// The folders read, best first: the project's, yours, then (with `data_dir`) Arena's skills as it last gave them and
 /// the built-in ones, so a skill of the project's or yours wins by name.
-pub fn sources(repo_root: &Path, config_dir: &Path, home: Option<&Path>, data_dir: Option<&Path>) -> Vec<Source> {
+pub fn sources(
+    repo_root: &Path,
+    config_dir: &Path,
+    home: Option<&Path>,
+    data_dir: Option<&Path>,
+    agents: &ca_core::compat::Agents,
+) -> Vec<Source> {
     let mut s = Vec::new();
-    for name in [".code-arena", ".arena", ".claude", ".qwen"] {
+    let others = agents.folders();
+    for name in [".code-arena", ".arena"].into_iter().chain(others.iter().map(String::as_str)) {
         s.push(Source { label: format!("this project ({name})"), dir: repo_root.join(name) });
     }
     s.push(Source { label: "yours".into(), dir: config_dir.to_path_buf() });
     if let Some(h) = home {
         s.push(Source { label: "yours (~/.code-arena)".into(), dir: h.join(".code-arena") });
-        s.push(Source { label: "yours (~/.claude)".into(), dir: h.join(".claude") });
+        for name in &others {
+            s.push(Source { label: format!("yours (~/{name})"), dir: h.join(name) });
+        }
     }
     if let Some(d) = data_dir {
         s.push(Source { label: "Arena's".into(), dir: arena_dir(d) });
@@ -439,7 +448,7 @@ mod builtin_tests {
             ],
         )
         .expect("arena");
-        let lib = load(&sources(&repo, &config, None, Some(&data)));
+        let lib = load(&sources(&repo, &config, None, Some(&data), &Default::default()));
         let review = lib.skills.iter().find(|k| k.name == "code-review").expect("review");
         assert_eq!(review.description, "ours");
         assert!(lib.skills.iter().any(|k| k.name == "debug" && k.source == "built in"));
@@ -448,7 +457,12 @@ mod builtin_tests {
         assert!(!data.join("escape.md").exists() && !d.path().join("escape.md").exists());
         // Built-in skills off: none.
         keep_builtin(&data, &[], false).expect("none");
-        assert!(!load(&sources(&repo, &config, None, Some(&data))).skills.iter().any(|k| k.source == "built in"));
+        assert!(
+            !load(&sources(&repo, &config, None, Some(&data), &Default::default()))
+                .skills
+                .iter()
+                .any(|k| k.source == "built in")
+        );
     }
 }
 
@@ -490,18 +504,18 @@ mod tests {
         let repo = d.path().join("repo");
         let cfg = d.path().join("cfg");
         write(&repo.join(".code-arena/commands/review.md"), "---\ndescription: the project's\n---\nReview it.");
-        write(&repo.join(".claude/commands/git/commit.md"), "Commit $ARGUMENTS");
+        write(&repo.join(".other/commands/git/commit.md"), "Commit $ARGUMENTS");
         write(&cfg.join("commands/review.md"), "mine");
         write(
-            &repo.join(".claude/skills/release/SKILL.md"),
+            &repo.join(".other/skills/release/SKILL.md"),
             "---\nname: release\ndescription: How to release\n---\nStep 1: tag.",
         );
-        write(&repo.join(".claude/skills/release/checklist.md"), "- tests");
+        write(&repo.join(".other/skills/release/checklist.md"), "- tests");
         write(
             &cfg.join("agents/reviewer.md"),
             "---\nname: reviewer\ntools: read_file, grep\nmodel: qwen-small\n---\nYou review.",
         );
-        let lib = load(&sources(&repo, &cfg, None, None));
+        let lib = load(&sources(&repo, &cfg, None, None, &ca_core::compat::Agents::new(&["other".into()])));
         let names: Vec<&str> = lib.commands.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, vec!["review", "git:commit"]);
         assert_eq!(lib.commands[0].description, "the project's");
@@ -518,7 +532,7 @@ mod tests {
         let d = tempfile::tempdir().expect("temp");
         write(&d.path().join(".code-arena/skills/release/SKILL.md"), "---\nname: release\n---\nTag it.");
         write(&d.path().join(".code-arena/skills/release/notes.md"), "Notes.");
-        let t = SkillTool { sources: sources(d.path(), &d.path().join("cfg"), None, None) };
+        let t = SkillTool { sources: sources(d.path(), &d.path().join("cfg"), None, None, &Default::default()) };
         let ws = ca_workspace::Workspace::open(d.path(), &[]).expect("ws");
         let ctx = Context::new(Arc::new(ws), None, std::time::Duration::from_secs(5));
         let o = t.run(json!({"name": "release"}), &ctx).await;

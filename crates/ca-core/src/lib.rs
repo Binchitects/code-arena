@@ -1,5 +1,6 @@
 //! Code Arena's shared ground: its version, where it keeps things, and the `Secret` type that is never printed.
 
+pub mod compat;
 pub mod paths;
 pub mod secret;
 

@@ -1,5 +1,4 @@
-//! Hooks: commands the person (or a project they trusted) runs at the agent's moments, Claude Code's format read as it
-//! is: `{"hooks": {"PreToolUse": [{"matcher": "run_shell|edit_file", "hooks": [{"type": "command", "command": "...",
+//! Hooks: commands the person (or a project they trusted) runs at the agent's moments, in the common format: `{"hooks": {"PreToolUse": [{"matcher": "run_shell|edit_file", "hooks": [{"type": "command", "command": "...",
 //! "timeout": 60}]}]}}`. Each gets the moment as JSON on stdin; it answers by its exit code (0: go on, its stdout added
 //! as context where the moment takes some; 2: blocked, its stderr the reason) or with JSON on stdout (`decision`,
 //! `reason`, `continue`, `stopReason`, `hookSpecificOutput` with `permissionDecision`, `updatedInput`,
@@ -23,8 +22,8 @@ pub const EVENTS: &[&str] = &[
     "PreCommit",
 ];
 
-/// Claude Code's names for Code Arena's tools, so a hook written for it matches here too.
-fn claude_name(tool: &str) -> Option<&'static str> {
+/// The names other agents commonly give Code Arena's tools, so a hook written for one matches here too.
+fn common_name(tool: &str) -> Option<&'static str> {
     Some(match tool {
         "run_shell" => "Bash",
         "read_file" => "Read",
@@ -53,7 +52,7 @@ impl Hook {
     fn matches(&self, subject: &str) -> bool {
         match &self.matcher {
             None => true,
-            Some(re) => re.is_match(subject) || claude_name(subject).is_some_and(|c| re.is_match(c)),
+            Some(re) => re.is_match(subject) || common_name(subject).is_some_and(|c| re.is_match(c)),
         }
     }
 }
@@ -81,6 +80,8 @@ pub struct Hooks {
     pub list: Vec<Hook>,
     pub cwd: PathBuf,
     pub session: String,
+    /// Variables that also hold the project's folder, for hooks written for other agents (`NAME_PROJECT_DIR`).
+    pub project_vars: Vec<String>,
 }
 
 /// The hooks a settings object declares (`{"hooks": {...}}` or the hooks map itself), with where they came from; what
@@ -177,12 +178,12 @@ impl Hooks {
             o.insert("hook_event_name".into(), json!(event));
             o.insert("session_id".into(), json!(self.session));
             o.insert("cwd".into(), json!(self.cwd.display().to_string()));
-            if let Some(t) = o.get("tool_name").and_then(Value::as_str).and_then(claude_name) {
-                o.insert("claude_tool_name".into(), json!(t));
+            if let Some(t) = o.get("tool_name").and_then(Value::as_str).and_then(common_name) {
+                o.insert("common_tool_name".into(), json!(t));
             }
         }
         for h in hooks {
-            let (code, out, err) = run_one(h, &self.cwd, &input).await;
+            let (code, out, err) = run_one(h, &self.cwd, &input, &self.project_vars).await;
             let answer: Option<Value> = serde_json::from_str(out.trim()).ok().filter(Value::is_object);
             match (&answer, code) {
                 (Some(a), _) => {
@@ -260,15 +261,15 @@ impl Hooks {
     }
 }
 
-async fn run_one(h: &Hook, cwd: &Path, input: &Value) -> (Option<i32>, String, String) {
+async fn run_one(h: &Hook, cwd: &Path, input: &Value, project_vars: &[String]) -> (Option<i32>, String, String) {
     use tokio::io::AsyncWriteExt;
     let (shell, flag) = if cfg!(windows) { ("cmd.exe", "/c") } else { ("sh", "-c") };
     let mut cmd = tokio::process::Command::new(shell);
     cmd.arg(flag)
         .arg(&h.command)
         .current_dir(cwd)
-        .env("CLAUDE_PROJECT_DIR", cwd)
         .env("CODE_ARENA_PROJECT_DIR", cwd)
+        .envs(project_vars.iter().map(|v| (v.as_str(), cwd)))
         .env_remove("ARENA_API_KEY")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -298,7 +299,7 @@ mod tests {
     fn hooks(v: Value) -> Hooks {
         let (list, problems) = parse(&v, "test");
         assert!(problems.is_empty(), "{problems:?}");
-        Hooks { list, cwd: std::env::temp_dir(), session: "s1".into() }
+        Hooks { list, cwd: std::env::temp_dir(), session: "s1".into(), project_vars: vec![] }
     }
 
     #[tokio::test]

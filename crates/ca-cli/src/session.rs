@@ -159,19 +159,24 @@ fn hooks_in(file: &std::path::Path) -> Option<serde_json::Value> {
     v.get("hooks").filter(|h| h.as_object().is_some_and(|o| !o.is_empty())).cloned()
 }
 
-/// The project's hooks as it declares them: `.code-arena/settings.json`'s, Claude Code's `.claude/settings.json` and
-/// `.claude/settings.local.json`'s, by file.
-pub fn project_hooks(root: &std::path::Path) -> serde_json::Value {
+/// The project's hooks as it declares them: `.code-arena/settings.json`'s, and the named agents' (`.NAME/settings.json`
+/// and `.NAME/settings.local.json`), by file.
+pub fn project_hooks(root: &std::path::Path, agents: &ca_core::compat::Agents) -> serde_json::Value {
     let mut by = serde_json::Map::new();
-    for rel in [".code-arena/settings.json", ".claude/settings.json", ".claude/settings.local.json"] {
-        if let Some(h) = hooks_in(&root.join(rel)) {
-            by.insert(rel.to_string(), h);
+    let mut files = vec![".code-arena/settings.json".to_string()];
+    for f in agents.folders() {
+        files.push(format!("{f}/settings.json"));
+        files.push(format!("{f}/settings.local.json"));
+    }
+    for rel in files {
+        if let Some(h) = hooks_in(&root.join(&rel)) {
+            by.insert(rel, h);
         }
     }
     serde_json::Value::Object(by)
 }
 
-/// The session's hooks: the person's (Code Arena's settings, Claude Code's `~/.claude/settings.json`) always; the
+/// The session's hooks: the person's (Code Arena's settings, the named agents' `~/.NAME/settings.json`) always; the
 /// project's when trusted as they are. What to say of them.
 fn load_hooks(
     app: &App,
@@ -189,18 +194,21 @@ fn load_hooks(
     if let Some(h) = hooks_in(&app.paths.settings_file()) {
         add(&h, "your settings.json");
     }
-    if let Some(home) = &app.home
-        && let Some(h) = hooks_in(&home.join(".claude").join("settings.json"))
-    {
-        add(&h, "your ~/.claude/settings.json");
+    let agents = app.agents();
+    if let Some(home) = &app.home {
+        for f in agents.folders() {
+            if let Some(h) = hooks_in(&home.join(&f).join("settings.json")) {
+                add(&h, &format!("your ~/{f}/settings.json"));
+            }
+        }
     }
     // Plugins you enabled: yours, as your own settings are.
-    for p in crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS)) {
-        if let Some(h) = crate::plugins::hooks(&p) {
+    for p in crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS), &agents) {
+        if let Some(h) = crate::plugins::hooks(&p, &agents) {
             add(&h, &format!("the plugin {}", p.name));
         }
     }
-    let project = project_hooks(root);
+    let project = project_hooks(root, &agents);
     if project.as_object().is_some_and(|o| !o.is_empty()) {
         if ca_agent::hooks::trusted(&app.paths.data, root, &project) {
             for (file, h) in project.as_object().into_iter().flatten() {
@@ -210,16 +218,20 @@ fn load_hooks(
             said.push("This project has hooks that do not run until you trust them: /hooks shows them, /hooks trust runs them.".into());
         }
     }
-    (ca_agent::hooks::Hooks { list, cwd: cwd.to_path_buf(), session: session.to_string() }, said)
+    let project_vars = agents.variables("PROJECT_DIR");
+    (ca_agent::hooks::Hooks { list, cwd: cwd.to_path_buf(), session: session.to_string(), project_vars }, said)
 }
 
 /// The folders commands, skills, sub-agents and output styles are read from: the project's, yours, the plugins you
 /// enabled, Arena's and the built-in ones.
 pub fn library_sources(app: &App, root: &std::path::Path) -> Vec<ca_agent::library::Source> {
-    let mut sources = ca_agent::library::sources(root, &app.paths.config, app.home.as_deref(), Some(&app.paths.data));
+    let agents = app.agents();
+    let mut sources =
+        ca_agent::library::sources(root, &app.paths.config, app.home.as_deref(), Some(&app.paths.data), &agents);
     let at = sources.iter().position(|s| s.label == "Arena's").unwrap_or(sources.len());
-    for (n, p) in
-        crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS)).into_iter().enumerate()
+    for (n, p) in crate::plugins::enabled(&app.paths.data, &app.settings.strings(&schema::PLUGINS), &agents)
+        .into_iter()
+        .enumerate()
     {
         sources.insert(at + n, ca_agent::library::Source { label: format!("the plugin {}", p.name), dir: p.root });
     }
@@ -784,8 +796,9 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         Thinking::parse(&o.thinking.clone().or_else(|| app.settings.string(&schema::THINKING)).unwrap_or_default());
     let shell_setting = app.settings.string(&schema::SHELL);
     let (shell, _) = ca_tools::shell_for(shell_setting.as_deref());
-    let person = instructions::person_candidates(&app.paths.config, app.home.as_deref());
-    let read = instructions::read_all(&person, ws.root(), ws.cwd());
+    let agents = app.agents();
+    let person = instructions::person_candidates(&app.paths.config, app.home.as_deref(), &agents);
+    let read = instructions::read_all(&person, ws.root(), ws.cwd(), &agents);
     // The built-in skills, as this version has them; Arena's, as it last gave them (refreshed below).
     let _ = ca_agent::library::keep_builtin(
         &app.paths.data,

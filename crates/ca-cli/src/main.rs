@@ -138,7 +138,7 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Plugins (commands, sub-agents, skills, hooks and MCP servers in Claude Code's layout): list, install PATH|GIT_URL,
+    /// Plugins (commands, sub-agents, skills, hooks and MCP servers, in the common layout): list, install PATH|GIT_URL,
     /// enable NAME, disable NAME, remove NAME.
     Plugin {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -277,7 +277,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
             // Only your own list: a project's is its own.
             let yours = ca_settings::settings::Settings::load(&file, None, Default::default())
                 .strings(&ca_settings::schema::PLUGINS);
-            plugins::command(&app.paths.data, &file, &yours, &args)
+            plugins::command(&app.paths.data, &file, &yours, &args, &app.agents())
         }
         Some(Command::Version) => {
             let edition = match app.edition() {

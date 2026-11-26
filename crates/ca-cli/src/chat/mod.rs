@@ -1077,7 +1077,7 @@ async fn command(
         "/hooks" => {
             let root = p.agent.ctx.workspace.root().to_path_buf();
             if rest == "trust" {
-                let project = session::project_hooks(&root);
+                let project = session::project_hooks(&root, &app.agents());
                 if project.as_object().is_none_or(|o| o.is_empty()) {
                     ui.say("This project has no hooks.");
                 } else {
@@ -1093,7 +1093,7 @@ async fn command(
                 for h in &p.agent.hooks.list {
                     ui.say(&format!("{:<17} {}  {}", h.event, h.command, ui.dim(&format!("({})", h.from))));
                 }
-                let project = session::project_hooks(&root);
+                let project = session::project_hooks(&root, &app.agents());
                 if project.as_object().is_some_and(|o| !o.is_empty())
                     && !ca_agent::hooks::trusted(&app.paths.data, &root, &project)
                 {

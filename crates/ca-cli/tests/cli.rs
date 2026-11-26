@@ -1258,17 +1258,17 @@ async fn a_plugin_installed_and_enabled_brings_its_skill_hook_and_server() {
     std::fs::create_dir_all(home.path().join("config")).expect("config");
     std::fs::write(
         home.path().join("config/settings.json"),
-        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false}).to_string(),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "compat.agents": ["other"]}).to_string(),
     )
     .expect("settings");
-    // A plugin in Claude Code's layout.
+    // A plugin in another agent's layout (its manifest in .other-plugin/), read once compat.agents names it.
     let src = tempfile::tempdir().expect("src");
     let p = src.path();
-    for d in [".claude-plugin", "skills/greet", "hooks"] {
+    for d in [".other-plugin", "skills/greet", "hooks"] {
         std::fs::create_dir_all(p.join(d)).expect("dir");
     }
     std::fs::write(
-        p.join(".claude-plugin/plugin.json"),
+        p.join(".other-plugin/plugin.json"),
         r#"{"name": "kit", "version": "1.2.0", "description": "A kit."}"#,
     )
     .expect("manifest");
@@ -1280,7 +1280,7 @@ async fn a_plugin_installed_and_enabled_brings_its_skill_hook_and_server() {
     std::fs::write(p.join("note.txt"), "The kit's note.").expect("note");
     std::fs::write(
         p.join("hooks/hooks.json"),
-        json!({"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "cat ${CLAUDE_PLUGIN_ROOT}/note.txt"}]}]}})
+        json!({"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "cat ${OTHER_PLUGIN_ROOT}/note.txt"}]}]}})
             .to_string(),
     )
     .expect("hooks");

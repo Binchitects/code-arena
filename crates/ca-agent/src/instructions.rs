@@ -2,9 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
-/// The names read in each folder, the first one there counting: a project written for another agent is read as
-/// it is.
-pub const NAMES: &[&str] = &["ARENA.md", "AGENTS.md", "CLAUDE.md", "QWEN.md"];
+/// The names read in each folder, the first one there counting; other agents' own (`compat.agents`) come after.
+pub const NAMES: &[&str] = &["ARENA.md", "AGENTS.md"];
+
+fn names(agents: &ca_core::compat::Agents) -> Vec<String> {
+    NAMES.iter().map(|n| n.to_string()).chain(agents.instruction_files()).collect()
+}
 
 /// Each file is read up to this many characters.
 pub const MOST_CHARS: usize = 20_000;
@@ -18,26 +21,39 @@ pub struct Instruction {
 }
 
 /// Where the person's own instructions are looked for, in order: the config folder's `ARENA.md`, then the first of
-/// the names in `~/.code-arena`, else `~/.claude/CLAUDE.md`. With `CODE_ARENA_HOME` set, the home's are not read.
-pub fn person_candidates(config_dir: &Path, home: Option<&Path>) -> Vec<Vec<PathBuf>> {
+/// the names in `~/.code-arena`, else each other agent's own (`~/.NAME/NAME.md`). With `CODE_ARENA_HOME` set, the
+/// home's are not read.
+pub fn person_candidates(
+    config_dir: &Path,
+    home: Option<&Path>,
+    agents: &ca_core::compat::Agents,
+) -> Vec<Vec<PathBuf>> {
     let mut groups = vec![vec![config_dir.join("ARENA.md")]];
     if let Some(h) = home {
-        let mut g: Vec<PathBuf> = NAMES.iter().map(|n| h.join(".code-arena").join(n)).collect();
-        g.push(h.join(".claude").join("CLAUDE.md"));
+        let mut g: Vec<PathBuf> = names(agents).iter().map(|n| h.join(".code-arena").join(n)).collect();
+        for (folder, file) in agents.folders().iter().zip(agents.instruction_files()) {
+            g.push(h.join(folder).join(file));
+        }
         groups.push(g);
     }
     groups
 }
 
 /// The person's, the repository root's and the working directory's (when it is below the root).
-pub fn read_all(person: &[Vec<PathBuf>], root: &Path, cwd: &Path) -> Vec<Instruction> {
+pub fn read_all(
+    person: &[Vec<PathBuf>],
+    root: &Path,
+    cwd: &Path,
+    agents: &ca_core::compat::Agents,
+) -> Vec<Instruction> {
+    let names = names(agents);
     let mut out = Vec::new();
     for group in person {
         if let Some(i) = first_of(group) {
             out.push(i);
         }
     }
-    let in_folder = |dir: &Path| first_of(&NAMES.iter().map(|n| dir.join(n)).collect::<Vec<_>>());
+    let in_folder = |dir: &Path| first_of(&names.iter().map(|n| dir.join(n)).collect::<Vec<_>>());
     if let Some(i) = in_folder(root) {
         out.push(i);
     }
@@ -148,19 +164,24 @@ mod tests {
         let home = d.path().join("home");
         let root = d.path().join("repo");
         let sub = root.join("pkg");
-        for p in [&cfg, &home.join(".claude"), &sub] {
+        for p in [&cfg, &home.join(".other"), &sub] {
             std::fs::create_dir_all(p).expect("mkdir");
         }
-        std::fs::write(home.join(".claude/CLAUDE.md"), "home rules").expect("w");
+        std::fs::write(home.join(".other/OTHER.md"), "home rules").expect("w");
         std::fs::write(root.join("AGENTS.md"), "agents").expect("w");
-        std::fs::write(root.join("CLAUDE.md"), "claude").expect("w");
+        std::fs::write(root.join("OTHER.md"), "other").expect("w");
         std::fs::write(sub.join("ARENA.md"), "x".repeat(MOST_CHARS + 5)).expect("w");
-        let got = read_all(&person_candidates(&cfg, Some(&home)), &root, &sub);
+        // Another agent's files are read only once it is named.
+        let none = ca_core::compat::Agents::default();
+        let got = read_all(&person_candidates(&cfg, Some(&home), &none), &root, &sub, &none);
+        assert_eq!(got.len(), 2, "no other agent's files");
+        let other = ca_core::compat::Agents::new(&["other".into()]);
+        let got = read_all(&person_candidates(&cfg, Some(&home), &other), &root, &sub, &other);
         let names: Vec<_> = got
             .iter()
             .map(|i| i.path.strip_prefix(d.path()).expect("in").display().to_string().replace('\\', "/"))
             .collect();
-        assert_eq!(names, vec!["home/.claude/CLAUDE.md", "repo/AGENTS.md", "repo/pkg/ARENA.md"]);
+        assert_eq!(names, vec!["home/.other/OTHER.md", "repo/AGENTS.md", "repo/pkg/ARENA.md"]);
         assert!(got[2].cut);
         assert_eq!(got[2].text.len(), MOST_CHARS);
     }

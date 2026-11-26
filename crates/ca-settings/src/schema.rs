@@ -224,7 +224,7 @@ pub static MCP_SERVERS: Setting = Setting {
     key: "mcpServers",
     kind: Kind::Object,
     default: "{}",
-    description: "Your own MCP servers, in the shape Claude Code and others use: {\"name\": {\"command\": \"npx\", \"args\": [...], \"env\": {...}}} for a child process, or {\"url\": \"https://…/mcp\", \"headers\": {\"Authorization\": \"Bearer ${TOKEN}\"}}. ${NAME} is taken from the environment. \"trust\": true lets its tools run without asking; \"disabled\": true keeps it without starting it.",
+    description: "Your own MCP servers, in the shape other agents use too: {\"name\": {\"command\": \"npx\", \"args\": [...], \"env\": {...}}} for a child process, or {\"url\": \"https://…/mcp\", \"headers\": {\"Authorization\": \"Bearer ${TOKEN}\"}}. ${NAME} is taken from the environment. \"trust\": true lets its tools run without asking; \"disabled\": true keeps it without starting it.",
     scope: Scope::User,
     env: None,
     section: "MCP servers",
@@ -304,10 +304,20 @@ pub static HOOKS: Setting = Setting {
     key: "hooks",
     kind: Kind::Object,
     default: "{}",
-    description: "Commands run at the agent's moments, in Claude Code's shape: {\"PreToolUse\": [{\"matcher\": \"run_shell|Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"...\", \"timeout\": 60}]}]}. The moments: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, SubagentStop, PreCompact, PreCommit. Each gets the moment as JSON on stdin; exit code 2 blocks (its stderr says why), or it answers JSON. A project's hooks (.code-arena/settings.json, .claude/settings.json) run only once you trust them (/hooks trust).",
+    description: "Commands run at the agent's moments, in the common shape: {\"PreToolUse\": [{\"matcher\": \"run_shell|Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"...\", \"timeout\": 60}]}]}. The moments: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, SubagentStop, PreCompact, PreCommit. Each gets the moment as JSON on stdin; exit code 2 blocks (its stderr says why), or it answers JSON. A project's hooks (.code-arena/settings.json, and the settings.json of the agents compat.agents names) run only once you trust them (/hooks trust).",
     scope: Scope::User,
     env: None,
     section: "Hooks",
+};
+
+pub static COMPAT_AGENTS: Setting = Setting {
+    key: "compat.agents",
+    kind: Kind::StringList,
+    default: "[]",
+    description: "Other agents whose files Code Arena reads too, by name (none by default). For an agent named NAME: its folders .NAME/ in the project and the home (commands, skills, sub-agents, output styles, and its settings.json's hooks and status line), its instructions NAME.md, its plugins' .NAME-plugin/ manifests, and the variables ${NAME_PLUGIN_ROOT} and NAME_PROJECT_DIR.",
+    scope: Scope::Project,
+    env: None,
+    section: "Compatibility",
 };
 
 pub static OUTPUT_STYLE: Setting = Setting {
@@ -324,7 +334,7 @@ pub static STATUS_LINE: Setting = Setting {
     key: "statusLine",
     kind: Kind::Object,
     default: "{}",
-    description: "A line of your own above the prompt, in Claude Code's shape: {\"type\": \"command\", \"command\": \"~/.code-arena/statusline.sh\"}. The command gets the session as JSON on stdin (model, workspace, cost, output style, mode, context) and its first line is shown, drawn again after each turn. Claude Code's ~/.claude/settings.json statusLine is used when this is not set.",
+    description: "A line of your own above the prompt, in the common shape: {\"type\": \"command\", \"command\": \"~/.code-arena/statusline.sh\"}. The command gets the session as JSON on stdin (model, workspace, cost, output style, mode, context) and its first line is shown, drawn again after each turn. When this is not set, the statusLine of an agent compat.agents names (~/.NAME/settings.json) is used.",
     scope: Scope::User,
     env: None,
     section: "Output",
@@ -430,6 +440,7 @@ pub static ALL: &[&Setting] = &[
     &HOOKS,
     &PLUGINS,
     &OUTPUT_STYLE,
+    &COMPAT_AGENTS,
     &STATUS_LINE,
     &SANDBOX,
     &SANDBOX_NETWORK,

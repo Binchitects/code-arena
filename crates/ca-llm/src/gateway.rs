@@ -866,7 +866,7 @@ mod tests {
             .and(path("/v1/messages"))
             .and(header("x-api-key", "sk-ant-test"))
             .and(header("anthropic-version", ANTHROPIC_VERSION))
-            .and(body_partial_json(serde_json::json!({"model": "claude-x", "system": [{"text": "sys"}]})))
+            .and(body_partial_json(serde_json::json!({"model": "model-x", "system": [{"text": "sys"}]})))
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("content-type", "text/event-stream")
@@ -877,7 +877,7 @@ mod tests {
         let p = Provider::parse("anthropic", &serde_json::json!({"url": server.uri()})).expect("p");
         let g = Gateway::standalone(vec![(p.clone(), Secret::new("sk-ant-test"))], None).expect("g");
         let req = Request {
-            model: "anthropic:claude-x".into(),
+            model: "anthropic:model-x".into(),
             messages: vec![Message::system("sys"), Message::user("hi")],
             ..Default::default()
         };

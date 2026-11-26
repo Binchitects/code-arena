@@ -33,6 +33,11 @@ impl App {
         Ok(App { paths, settings, connection, ui, home })
     }
 
+    /// The other agents whose files are read too (`compat.agents`).
+    pub fn agents(&self) -> ca_core::compat::Agents {
+        ca_core::compat::Agents::new(&self.settings.strings(&ca_settings::schema::COMPAT_AGENTS))
+    }
+
     pub fn ca(&self) -> Option<&std::path::Path> {
         self.connection.ca.as_deref()
     }

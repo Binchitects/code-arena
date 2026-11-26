@@ -1,4 +1,4 @@
-//! Output styles: how the agent talks, in Claude Code's format. A style is a Markdown file `output-styles/NAME.md`
+//! Output styles: how the agent talks, in the common format. A style is a Markdown file `output-styles/NAME.md`
 //! (the project's, yours, a plugin's) with front matter `name`, `description` and `keep-coding-instructions`; its
 //! text goes into the system prompt. Without `keep-coding-instructions: true` it takes the place of Code Arena's own
 //! coding instructions (a style for other work); with it, it is added to them. Three are built in: default,

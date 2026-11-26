@@ -16,7 +16,7 @@ opened, and never writes over a file you have changed.
 | `local/`, `media/`, `plots/`, `vm/` | each person's own state and outputs | no (`.gitignore` keeps them out) |
 
 The project's instructions for the agent go in `ARENA.md` at the repository's root
-(`AGENTS.md`, `CLAUDE.md` and `QWEN.md` are read too).
+(`AGENTS.md` is read too, and other agents' own files once `compat.agents` names them).
 
 A project's settings can only make Code Arena more careful: they can deny tools and make
 them ask, never let them run unasked. Commands, tools, MCP servers and hooks that the
