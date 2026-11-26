@@ -21,6 +21,8 @@ serde.workspace = true
 serde_json.workspace = true
 similar.workspace = true
 tokio.workspace = true
+# For the code index and the formatters: declarations and error places by pattern.
+regex.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 nix.workspace = true

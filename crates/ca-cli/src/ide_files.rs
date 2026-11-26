@@ -3,6 +3,10 @@
 //! system resolves it (a link that leads out is refused); only plain files are read or written, never a pipe or a
 //! device, and not a binary file or one over 5 MB. The Explorer's own operations are here too: a file or a folder
 //! made, moved, or deleted (what is deleted is first kept aside, where the person can get it back).
+//!
+//! An area of the IDE that needs the project's files only (`ide_ext`'s `Rule::Side`) answers through this too:
+//! [`Side::handle`] asks the areas first, and they resolve a page's path with [`Side::real`] or [`Side::entry`],
+//! name one with [`Side::shown`], and keep what belongs to the folder in [`Side::kept`].
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -11,6 +15,32 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
+
+/// The project's own messages (`ide_ext`'s turn rules): all answered at once, a turn running or not.
+pub const MESSAGES: &[(&str, crate::ide_ext::Rule)] = {
+    use crate::ide_ext::Rule::Side;
+    &[
+        ("ls", Side),
+        ("open", Side),
+        ("save", Side),
+        ("create", Side),
+        ("rename", Side),
+        ("delete", Side),
+        ("stat", Side),
+        ("watch", Side),
+        ("backup", Side),
+        ("backup_drop", Side),
+        ("backups", Side),
+        ("changes", Side),
+        ("files", Side),
+        ("search", Side),
+        ("term_open", Side),
+        ("term_in", Side),
+        ("term_resize", Side),
+        ("terms", Side),
+        ("term_close", Side),
+    ]
+};
 
 /// The largest file the editor opens.
 const MOST_BYTES: u64 = 5 * 1024 * 1024;
@@ -51,6 +81,9 @@ pub struct Side {
     watch: Arc<Mutex<Watch>>,
     /// Where the unsaved changes of this project's files are kept (only the person may read them).
     backups: PathBuf,
+    /// What the areas keep for this folder (their terminals, their servers): new with another folder.
+    #[allow(dead_code)] // The areas' own: none keeps anything yet.
+    pub kept: crate::ide_ext::Kept,
 }
 
 /// What the page shows, watched: each open file's and each open folder's last change (`None`: gone, or not known yet).
@@ -188,11 +221,38 @@ impl Side {
             .filter(|p| p.is_absolute())
             .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }));
         let backups = data.join("ide-backups").join(name_of(&ws.root().to_string_lossy()));
-        Side { ws, checkpoints, out, terms: Arc::default(), shell, watch: Arc::default(), backups }
+        Side {
+            ws,
+            checkpoints,
+            out,
+            terms: Arc::default(),
+            shell,
+            watch: Arc::default(),
+            backups,
+            kept: Default::default(),
+        }
+    }
+
+    /// To every face.
+    #[allow(dead_code)] // For the areas that answer from the project's side.
+    pub fn out(&self) -> &broadcast::Sender<String> {
+        &self.out
+    }
+
+    /// The project's folders.
+    #[allow(dead_code)] // For the areas that answer from the project's side.
+    pub fn workspace(&self) -> &Arc<ca_workspace::Workspace> {
+        &self.ws
+    }
+
+    /// What the agent's files were before it changed them.
+    #[allow(dead_code)] // For the areas that answer from the project's side.
+    pub fn checkpoints(&self) -> &Arc<ca_tools::checkpoints::Checkpoints> {
+        &self.checkpoints
     }
 
     /// The real path a page's path names: relative to the project, inside it.
-    fn real(&self, rel: &str) -> Result<PathBuf, String> {
+    pub fn real(&self, rel: &str) -> Result<PathBuf, String> {
         let rel = rel.trim_start_matches("./");
         let given = Path::new(rel);
         if given.is_absolute() || rel.starts_with('/') || rel.starts_with('\\') || rel.contains(':') {
@@ -210,7 +270,8 @@ impl Side {
     /// The real place of an entry itself, for making, moving or deleting it: its folder resolved as the system
     /// resolves it and inside the project, its own name kept as it is (a link is the link, not where it leads).
     /// Never the project's top, and never git's own folder.
-    fn entry(&self, rel: &str) -> Result<PathBuf, String> {
+    #[allow(dead_code)] // The areas' too.
+    pub fn entry(&self, rel: &str) -> Result<PathBuf, String> {
         let rel = rel.trim_start_matches("./").trim_end_matches('/');
         if rel.starts_with(['/', '\\']) || rel.contains(':') {
             return Err("only a path inside the project, from its top".into());
@@ -365,12 +426,15 @@ impl Side {
         Ok(kept)
     }
 
-    fn shown(&self, real: &Path) -> String {
+    pub fn shown(&self, real: &Path) -> String {
         real.strip_prefix(self.ws.root()).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default()
     }
 
-    /// A message of Coder mode's, answered; false when it is none of them.
+    /// A message of Coder mode's, answered; false when it is none of them. An area's file-side message first.
     pub fn handle(&self, m: &Value) -> bool {
+        if crate::ide_ext::side(self, m) {
+            return true;
+        }
         let path = m["path"].as_str().unwrap_or("");
         match m["type"].as_str().unwrap_or("") {
             "ls" => send(&self.out, self.ls(path)),

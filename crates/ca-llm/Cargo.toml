@@ -17,6 +17,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+# A picture in a message, as text.
+base64 = "0.22"
 
 [dev-dependencies]
 wiremock.workspace = true

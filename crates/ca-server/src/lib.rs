@@ -5,6 +5,8 @@
 //! no page may frame it.
 #![forbid(unsafe_code)]
 
+pub mod relay;
+
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;

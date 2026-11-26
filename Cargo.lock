@@ -435,6 +435,7 @@ dependencies = [
 name = "ca-arena"
 version = "0.5.0"
 dependencies = [
+ "base64 0.22.1",
  "ca-core",
  "ca-net",
  "futures-util",
@@ -454,6 +455,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "ca-agent",
  "ca-arena",
  "ca-core",
@@ -474,18 +476,25 @@ dependencies = [
  "crossterm",
  "dirs",
  "futures-util",
+ "globset",
  "grep-regex",
  "grep-searcher",
  "ignore",
  "nix",
+ "regex",
+ "ring",
  "rpassword",
  "serde",
  "serde_json",
+ "sha2",
+ "similar",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
  "unicode-width 0.2.3",
+ "walkdir",
  "wiremock",
+ "zip",
 ]
 
 [[package]]
@@ -502,6 +511,7 @@ dependencies = [
 name = "ca-llm"
 version = "0.5.0"
 dependencies = [
+ "base64 0.22.1",
  "ca-core",
  "ca-net",
  "futures-util",
@@ -658,6 +668,7 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "nix",
+ "regex",
  "serde",
  "serde_json",
  "similar",

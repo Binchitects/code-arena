@@ -2,6 +2,7 @@
 //! calls mended before they run, and the instructions it reads.
 
 pub mod builtin_skills;
+pub mod code_mode;
 pub mod commits;
 pub mod context;
 pub mod goal;

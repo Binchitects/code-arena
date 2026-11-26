@@ -1803,3 +1803,167 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
     assert_eq!(until(&mut page, "state").await["view_state"], look);
 }
+
+/// A model whose first answer takes a while (a turn that is still running when more is asked), the rest at once.
+struct SlowFirst(Vec<String>, AtomicUsize, std::time::Duration);
+
+impl Respond for SlowFirst {
+    fn respond(&self, _r: &Request) -> ResponseTemplate {
+        let n = self.1.fetch_add(1, Ordering::SeqCst);
+        let answer = ResponseTemplate::new(200)
+            .insert_header("content-type", "text/event-stream")
+            .set_body_string(self.0[n.min(self.0.len() - 1)].clone());
+        if n == 0 { answer.set_delay(self.2) } else { answer }
+    }
+}
+
+#[tokio::test]
+async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_end_or_refused() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::io::BufRead;
+    use tokio_tungstenite::tungstenite::Message;
+    let said = |text: &str| sse(json!({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}));
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(SlowFirst(
+            vec![said("The first answer."), said("The second answer.")],
+            AtomicUsize::new(0),
+            std::time::Duration::from_millis(2500),
+        ))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let mut child = code_arena(home.path())
+        .args(["ide", "--no-open", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("runs");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stderr = child.stderr.take().expect("stderr");
+    let _child = Kill(child);
+    let url = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| l.split("The IDE: ").nth(1).map(str::to_string))
+        .expect("the address");
+    let (base, key) = url.split_once("/?k=").expect("key in it");
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+        format!("ws://{}/ws", base.trim_start_matches("http://")).as_str(),
+    )
+    .expect("request");
+    request.headers_mut().insert("cookie", format!("code_arena={key}").parse().expect("h"));
+    request.headers_mut().insert("origin", base.parse().expect("h"));
+    let (mut page, _) = tokio_tungstenite::connect_async(request).await.expect("the page connects");
+    // Every message up to (and with) the first for which `end` holds.
+    let until = async |page: &mut tokio_tungstenite::WebSocketStream<_>, end: &dyn Fn(&Value) -> bool| -> Vec<Value> {
+        let mut seen = Vec::new();
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            let Message::Text(t) = m else { continue };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            let done = end(&v);
+            seen.push(v);
+            if done {
+                return seen;
+            }
+        }
+    };
+    let ask = async |page: &mut tokio_tungstenite::WebSocketStream<_>, m: Value| {
+        page.send(Message::text(m.to_string())).await.expect("send");
+    };
+    // The session as it starts: the About box's fields with it, nothing locked with an Arena signed in to.
+    let first = until(&mut page, &|v| v["type"] == "state").await.pop().expect("state");
+    assert_eq!((first["license"].as_str(), first["source"].as_str()), (Some("MIT"), Some(ca_core::SOURCE)), "{first}");
+    assert!(first["license_text"].as_str().is_some_and(|t| t.starts_with("MIT License")), "{first}");
+    assert_eq!(first["manual"], "https://arena.example/help/code-arena");
+    assert_eq!((&first["locked"], &first["log"]), (&json!({}), &Value::Null), "{first}");
+
+    ask(&mut page, json!({"type": "send", "text": "say hello"})).await;
+    until(&mut page, &|v| v["type"] == "turn_start").await;
+    // While the model writes its answer: a change of model, a step back, a setting, the themes, another message.
+    ask(&mut page, json!({"type": "model", "model": "qwen-large"})).await;
+    ask(&mut page, json!({"type": "rewind", "q": 1, "what": "chat"})).await;
+    ask(&mut page, json!({"type": "thinking", "level": "high"})).await;
+    ask(&mut page, json!({"type": "set_setting", "key": "workbench.colorTheme", "value": "Light Modern"})).await;
+    ask(&mut page, json!({"type": "themes"})).await;
+    ask(&mut page, json!({"type": "send", "text": "and then?"})).await;
+    let meanwhile = until(&mut page, &|v| v["type"] == "turn_end").await;
+    let at = |all: &[Value], want: &dyn Fn(&Value) -> bool| all.iter().position(want);
+    assert_eq!(meanwhile.last().expect("end")["ok"], true, "{meanwhile:?}");
+    // Kept for the turn's end, each said so at once; the step back refused, with why.
+    for (of, key) in [("model", Value::Null), ("thinking", Value::Null), ("set_setting", json!("workbench.colorTheme"))]
+    {
+        assert!(
+            at(&meanwhile, &|v| v["type"] == "deferred" && v["of"] == of && v["key"] == key).is_some(),
+            "{of}: {meanwhile:?}"
+        );
+    }
+    let why = "Wait for the answer, or stop it, to go back to an earlier question.";
+    assert!(at(&meanwhile, &|v| v["type"] == "notice" && v["text"] == why).is_some(), "{meanwhile:?}");
+    let refused = &meanwhile[at(&meanwhile, &|v| v["type"] == "refused").expect("refused")];
+    assert_eq!(refused, &json!({"type": "refused", "of": "rewind", "reason": why, "q": 1}));
+    // What needs no session is answered while the turn runs, and nothing kept is answered before it ends.
+    assert!(at(&meanwhile, &|v| v["type"] == "themes" && v["items"].is_array()).is_some(), "{meanwhile:?}");
+    assert!(at(&meanwhile, &|v| v["type"] == "queued" && v["text"] == "and then?").is_some(), "{meanwhile:?}");
+    assert!(at(&meanwhile, &|v| v["type"] == "status" || v["type"] == "setting_kept").is_none(), "{meanwhile:?}");
+    assert!(at(&meanwhile, &|v| v["type"] == "state").is_none(), "nothing went back: {meanwhile:?}");
+
+    // The turn ended: what waited is answered in the order asked, then the message that came too late for the
+    // turn to read runs as a turn of its own (the thread shows it already: no second question).
+    let after = until(&mut page, &|v| v["type"] == "turn_end").await;
+    let model = at(&after, &|v| v["type"] == "status" && v["model"] == "qwen-large" && v["thinking"] == "default")
+        .expect("the model, first");
+    let thinking =
+        at(&after, &|v| v["type"] == "status" && v["model"] == "qwen-large" && v["thinking"] == "high").expect("then");
+    let kept = at(&after, &|v| v["type"] == "setting_kept" && v["key"] == "workbench.colorTheme").expect("kept");
+    let theme = at(&after, &|v| v["type"] == "theme" && v["theme"] == "Light Modern").expect("theme");
+    let started = at(&after, &|v| v["type"] == "turn_start").expect("the late message's turn");
+    assert!(model < thinking && thinking < kept && kept < theme && theme < started, "{after:?}");
+    assert!(at(&after, &|v| v["type"] == "user").is_none(), "{after:?}");
+    let text: String = after.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
+    assert_eq!(text, "The second answer.");
+    assert_eq!(after.last().expect("end")["ok"], true, "{after:?}");
+    let settings = std::fs::read_to_string(home.path().join("config/settings.json")).expect("settings");
+    assert!(settings.contains("Light Modern"), "{settings}");
+    // The late turn was asked of the model chosen meanwhile, with the message as the person's.
+    let requests = gateway.received_requests().await.expect("requests");
+    let asked: Vec<Value> = requests
+        .iter()
+        .filter(|r| r.url.path().ends_with("/chat/completions"))
+        .map(|r| serde_json::from_slice(&r.body).expect("json"))
+        .collect();
+    assert_eq!(asked.len(), 2, "two turns");
+    assert_eq!((asked[0]["model"].as_str(), asked[1]["model"].as_str()), (Some("qwen"), Some("qwen-large")));
+    let last = asked[1]["messages"].as_array().and_then(|m| m.last()).cloned().unwrap_or_default();
+    assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some("and then?")), "{last}");
+
+    // Between turns the same messages are answered at once, and a name of the driver's own is not a page's to send.
+    ask(&mut page, json!({"type": "_job_ended", "id": 1})).await;
+    ask(&mut page, json!({"type": "rewind", "q": 2, "what": "chat"})).await;
+    let back = until(&mut page, &|v| v["type"] == "state").await;
+    assert!(at(&back, &|v| v["type"] == "refused" || v["type"] == "deferred").is_none(), "{back:?}");
+    assert_eq!(back.last().expect("state")["messages"].as_array().map(Vec::len), Some(2), "{back:?}");
+}
