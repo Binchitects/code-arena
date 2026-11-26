@@ -4,7 +4,7 @@
 
 use floem::IntoView;
 use floem::action::{minimize_window, toggle_window_maximized};
-use floem::event::{Event, EventListener};
+use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::peniko::Color;
 use floem::reactive::{SignalGet, SignalUpdate, SignalWith};
@@ -29,16 +29,16 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let body = h_stack((
         activity_bar(ui),
         container_view(ui, send.clone(), Where::Primary),
-        sash(t, true, move |d| ui.primary_width.update(|w| *w = (*w + d).clamp(170.0, 800.0)))
+        sash(t, true, 1.0, ui.primary_width, move |w| resize(ui, Where::Primary, w))
             .style(move |s| s.apply_if(!ui.layout.with(|l| l.shown(Where::Primary)), |s| s.hide())),
         v_stack((
             editor::view(ui),
-            sash(t, false, move |d| ui.panel_height.update(|h| *h = (*h - d).clamp(100.0, 900.0)))
+            sash(t, false, -1.0, ui.panel_height, move |h| resize(ui, Where::Panel, h))
                 .style(move |s| s.apply_if(!ui.layout.with(|l| l.shown(Where::Panel)), |s| s.hide())),
             container_view(ui, send.clone(), Where::Panel),
         ))
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full()),
-        sash(t, true, move |d| ui.secondary_width.update(|w| *w = (*w - d).clamp(220.0, 900.0)))
+        sash(t, true, -1.0, ui.secondary_width, move |w| resize(ui, Where::Secondary, w))
             .style(move |s| s.apply_if(!ui.layout.with(|l| l.shown(Where::Secondary)), |s| s.hide())),
         container_view(ui, send.clone(), Where::Secondary),
     ))
@@ -47,8 +47,13 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         v_stack((title_bar(ui), body, status_bar(ui))).style(|s| s.size_full()),
         menu_overlay(ui, send.clone()),
         view_menu(ui),
+        drop_edges(ui),
         resize_edges(),
     ))
+    .on_resize(move |r| {
+        ui.window.set((r.width(), r.height()));
+        fit(ui);
+    })
     .on_event_cont(EventListener::PointerMove, move |e| {
         if let Event::PointerMove(p) = e {
             ui.pointer.set((p.pos.x, p.pos.y));
@@ -84,6 +89,65 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             })
             .class(floem::views::PlaceholderTextClass, |s| s.color(c.placeholder).font_size(13.0))
     })
+}
+
+/// VS Code's own sizes: a side bar at least 170 px and the panel 77, the editor kept at least 220 wide and 70 high;
+/// dragged below half its least, a part closes (VS Code's snap), and a double-click on its sash gives it its first
+/// size again.
+pub const LEAST: [f64; 3] = [170.0, 170.0, 77.0];
+const FIRST: [f64; 3] = [260.0, 380.0, 230.0];
+
+pub fn resize(ui: Ui, w: Where, size: f64) {
+    let i = w as usize;
+    let signal = [ui.primary_width, ui.secondary_width, ui.panel_height][i];
+    if size.is_nan() {
+        signal.set(FIRST[i]);
+        return;
+    }
+    if size < LEAST[i] / 2.0 {
+        ui.layout.update(|l| {
+            if l.shown(w) {
+                *l = l.toggled(w)
+            }
+        });
+        return;
+    }
+    let (width, height) = ui.window.get_untracked();
+    let shown = |w: Where| ui.layout.with_untracked(|l| l.shown(w));
+    let most = match w {
+        Where::Primary => {
+            width - 48.0 - 220.0 - if shown(Where::Secondary) { ui.secondary_width.get_untracked() } else { 0.0 }
+        }
+        Where::Secondary => {
+            width - 48.0 - 220.0 - if shown(Where::Primary) { ui.primary_width.get_untracked() } else { 0.0 }
+        }
+        Where::Panel => height - 35.0 - 22.0 - 35.0 - 70.0,
+    };
+    signal.set(size.min(most).max(LEAST[i]));
+}
+
+/// The parts fitted to the window, the editor kept at its least: the secondary side bar gives room first, then the
+/// primary, then the panel, each down to its own least (after the window is resized, or a layout is read back).
+pub fn fit(ui: Ui) {
+    let (width, height) = ui.window.get_untracked();
+    let shown = |w: Where| ui.layout.with_untracked(|l| l.shown(w));
+    let mut over = 48.0
+        + 220.0
+        + if shown(Where::Primary) { ui.primary_width.get_untracked() } else { 0.0 }
+        + if shown(Where::Secondary) { ui.secondary_width.get_untracked() } else { 0.0 }
+        - width;
+    for (w, s) in [(Where::Secondary, ui.secondary_width), (Where::Primary, ui.primary_width)] {
+        if over > 0.0 && shown(w) {
+            let now = s.get_untracked();
+            let to = (now - over).max(LEAST[w as usize]);
+            over -= now - to;
+            s.set(to);
+        }
+    }
+    let most = height - 35.0 - 22.0 - 35.0 - 70.0;
+    if shown(Where::Panel) && ui.panel_height.get_untracked() > most {
+        ui.panel_height.set(most.max(LEAST[2]));
+    }
 }
 
 /// VS Code's keys for the workbench.
@@ -461,8 +525,8 @@ fn activity_bar(ui: Ui) -> impl IntoView {
             empty().style(|s| s.width(2.0)),
         ))
         .on_click_stop(move |_| ui.layout.update(|l| *l = l.view_toggled(v)))
-        .on_secondary_click_stop(move |e| open_view_menu(ui, v, e))
-        .style(move |s| {
+        .on_secondary_click_stop(move |e| open_view_menu(ui, v, e));
+        let button = drag_source(ui, v, button).style(move |s| {
             let c = t.get();
             s.width(48.0)
                 .height(48.0)
@@ -487,7 +551,7 @@ fn activity_bar(ui: Ui) -> impl IntoView {
                 .hover(|s| s.color(c.activity_fg))
         })
     };
-    v_stack((
+    let bar = v_stack((
         dyn_stack(move || ui.layout.with(|l| l.of(Where::Primary).to_vec()), |v: &View| *v, item)
             .style(|s| s.flex_col()),
         empty().style(|s| s.flex_grow(1.0_f32)),
@@ -496,8 +560,13 @@ fn activity_bar(ui: Ui) -> impl IntoView {
     ))
     .style(move |s| {
         let c = t.get();
-        line(s, c.activity_border, 'r').width(48.0).height_full().background(c.activity_bg)
-    })
+        line(s, c.activity_border, 'r')
+            .width(48.0)
+            .height_full()
+            .background(c.activity_bg)
+            .apply_if(ui.drop_on.get() == Some(Where::Primary), |s| s.background(c.drop_bg))
+    });
+    drop_target(ui, Where::Primary, bar)
 }
 
 /// A container (a side bar or the panel): its title (the view's, or the panel's tabs) and the view it shows.
@@ -515,7 +584,7 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
                     |v: &View| *v,
                     move |v: View| {
                         let on = active == Some(v);
-                        v_stack((
+                        let tab = v_stack((
                             label(move || v.title().to_uppercase()).style(caps),
                             empty().style(move |s| {
                                 let c = t.get();
@@ -527,8 +596,8 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
                             }),
                         ))
                         .on_click_stop(move |_| ui.layout.update(|l| *l = l.revealed(v)))
-                        .on_secondary_click_stop(move |e| open_view_menu(ui, v, e))
-                        .style(move |s| {
+                        .on_secondary_click_stop(move |e| open_view_menu(ui, v, e));
+                        drag_source(ui, v, tab).style(move |s| {
                             let c = t.get();
                             s.gap(5.0)
                                 .padding_top(6.0)
@@ -542,14 +611,17 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
                 .style(|s| s.flex_row()),))
                 .into_any()
             } else {
-                label(move || active.map(|v| v.title().to_uppercase()).unwrap_or_default())
+                let title = label(move || active.map(|v| v.title().to_uppercase()).unwrap_or_default())
                     .on_secondary_click_stop(move |e| {
                         if let Some(v) = active {
                             open_view_menu(ui, v, e)
                         }
                     })
-                    .style(move |s| caps(s).padding_left(20.0).color(t.get().side_title))
-                    .into_any()
+                    .style(move |s| caps(s).padding_left(20.0).color(t.get().side_title));
+                match active {
+                    Some(v) => drag_source(ui, v, title).into_any(),
+                    None => title.into_any(),
+                }
             }
         },
     );
@@ -589,7 +661,14 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
         None => empty().into_any(),
     })
     .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
-    v_stack((title, body)).style(move |s| {
+    let lit = empty().style(move |s| {
+        let c = t.get();
+        s.position(Position::Absolute)
+            .inset(0.0)
+            .background(c.drop_bg)
+            .apply_if(ui.drop_on.get() != Some(w), |s| s.hide())
+    });
+    let part = stack((v_stack((title, body)).style(|s| s.size_full()), lit)).style(move |s| {
         let c = t.get();
         let shown = ui.layout.with(|l| l.shown(w));
         let s = s.apply_if(!shown, |s| s.hide());
@@ -608,7 +687,73 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
                 line(s, c.panel_border, 't').height(ui.panel_height.get()).width_full().background(c.panel_bg)
             }
         }
-    })
+    });
+    drop_target(ui, w, part)
+}
+
+/// A view's icon or tab, dragged to another container as in VS Code (drawn under the pointer while it goes).
+fn drag_source<V: IntoView + 'static>(ui: Ui, v: View, view: V) -> impl IntoView {
+    let t = ui.colors;
+    view.into_view()
+        .draggable()
+        .on_event_cont(EventListener::DragStart, move |_| {
+            ui.dragging.set(Some(v));
+            ui.menu.set(None);
+            ui.context.set(None);
+        })
+        .on_event_cont(EventListener::DragEnd, move |_| {
+            ui.dragging.set(None);
+            ui.drop_on.set(None);
+        })
+        .dragging_style(move |s| {
+            let c = t.get();
+            s.background(c.list_selected).color(c.list_selected_fg).border_radius(4.0).box_shadow_blur(6.0)
+        })
+}
+
+/// Where a dragged view may go: lit while it is over it, and the view moved there when it is dropped.
+fn drop_target<V: IntoView + 'static>(ui: Ui, w: Where, view: V) -> impl IntoView {
+    view.into_view()
+        .on_event(EventListener::DragOver, move |_| {
+            if ui.dragging.get_untracked().is_some() && ui.drop_on.get_untracked() != Some(w) {
+                ui.drop_on.set(Some(w));
+            }
+            EventPropagation::Continue
+        })
+        .on_event_cont(EventListener::DragLeave, move |_| {
+            if ui.drop_on.get_untracked() == Some(w) {
+                ui.drop_on.set(None);
+            }
+        })
+        .on_event(EventListener::Drop, move |_| match ui.dragging.get_untracked() {
+            Some(v) => {
+                ui.layout.update(|l| *l = l.moved(v, w, None));
+                ui.dragging.set(None);
+                ui.drop_on.set(None);
+                EventPropagation::Stop
+            }
+            None => EventPropagation::Continue,
+        })
+}
+
+/// While a view is dragged, a hidden container takes it at its edge of the window (its place when shown).
+fn drop_edges(ui: Ui) -> impl IntoView {
+    let t = ui.colors;
+    let edge = move |w: Where| {
+        let zone = empty().style(move |s| {
+            let c = t.get();
+            let open = ui.dragging.get().is_some() && !ui.layout.with(|l| l.shown(w));
+            let s = s.position(Position::Absolute).z_index(150).apply_if(!open, |s| s.hide());
+            let s = match w {
+                Where::Primary => s.inset_left(48.0).inset_top(35.0).inset_bottom(22.0).width(90.0),
+                Where::Secondary => s.inset_right(0.0).inset_top(35.0).inset_bottom(22.0).width(90.0),
+                Where::Panel => s.inset_left(48.0).inset_right(0.0).inset_bottom(22.0).height(90.0),
+            };
+            s.background(if ui.drop_on.get() == Some(w) { c.drop_bg } else { c.drop_bg.multiply_alpha(0.35) })
+        });
+        drop_target(ui, w, zone)
+    };
+    (edge(Where::Primary), edge(Where::Secondary), edge(Where::Panel))
 }
 
 /// A view not drawn natively yet: said so, and where it is meanwhile.

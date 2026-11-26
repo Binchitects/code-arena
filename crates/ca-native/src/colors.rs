@@ -139,6 +139,7 @@ colors! {
     scrollbar: ["scrollbarSlider.background"], "#79797966", "#64646466";
     scrollbar_hover: ["scrollbarSlider.hoverBackground"], "#646464B3", "#646464B3";
     sash: ["sash.hoverBorder", "focusBorder"], "#007FD4", "#0090F1";
+    drop_bg: ["sideBar.dropBackground", "panel.dropBackground", "editorGroup.dropBackground"], "#53595D80", "#2677CB2D";
 
     menu_bg: ["menu.background", "dropdown.background"], "#252526", "#FFFFFF";
     menu_fg: ["menu.foreground", "dropdown.foreground", "foreground"], "#CCCCCC", "#616161";

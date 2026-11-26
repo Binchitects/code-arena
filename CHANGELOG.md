@@ -53,6 +53,15 @@ Sections used:
   application cursor mode too); Ctrl+Shift+V pastes (bracketed when the program asks); the
   workbench's own keys (Ctrl+B, Ctrl+J, Ctrl+`) stay the workbench's. When the shell ends, a key
   starts another.
+- **The native window's views are dragged, and its parts resized, as in VS Code.** Drag a view's
+  icon or tab onto a side bar, the panel or the activity bar (where it would go lights up); a part
+  that is hidden takes it at its edge of the window. A sash follows the pointer exactly, with VS
+  Code's limits: a side bar at least 170 px and the panel 77, as large as the window allows while
+  the editor keeps 220 × 70; dragged under half its least, a part closes, and a double-click on
+  its sash gives it its first size. The parts fit the window again when it is resized. Long lines
+  in the editor scroll, as VS Code's, instead of wrapping.
+- **Development builds optimise their dependencies**, so the native window built for trying it is
+  as quick as the released one (Floem's layout, text and drawing are far too slow unoptimised).
 - **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,
   the editor, the panel and a secondary side bar, with VS Code's sizes and the theme's colours.
   Six views (Explorer, Search, Changes, Outline, Agent, Terminal) start where VS Code puts them:

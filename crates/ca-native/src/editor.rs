@@ -156,6 +156,8 @@ fn body(ui: Ui) -> impl IntoView {
                             .visible_whitespace(c.whitespace)
                             .phantom_color(c.desc)
                             .placeholder_color(c.placeholder)
+                            // As VS Code: long lines go on, scrolled to, not wrapped.
+                            .wrap_method(floem::views::editor::text::WrapMethod::None)
                     })
                     .style(move |s| {
                         s.size_full()

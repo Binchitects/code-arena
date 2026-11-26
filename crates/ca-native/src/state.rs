@@ -105,6 +105,8 @@ pub struct Ui {
     pub primary_width: RwSignal<f64>,
     pub secondary_width: RwSignal<f64>,
     pub panel_height: RwSignal<f64>,
+    /// The window's size (the parts' sizes are bounded by it).
+    pub window: RwSignal<(f64, f64)>,
     /// The title bar's menu open, by its place.
     pub menu: RwSignal<Option<usize>>,
     /// A view's own menu (Move to…), open where it was right-clicked (in the window).
@@ -119,6 +121,9 @@ pub struct Ui {
     /// A line to show in a file once its editor is drawn: the file, the line (from 1), and a number of its own so
     /// the same line asked again is gone to again.
     pub goto: RwSignal<Option<(String, usize, u64)>>,
+    /// The view being dragged, and the container it is over.
+    pub dragging: RwSignal<Option<crate::layout::View>>,
+    pub drop_on: RwSignal<Option<crate::layout::Where>>,
     /// Where the pointer is in the window (for a menu opened by a right-click).
     pub pointer: RwSignal<(f64, f64)>,
     /// The layout kept for the folder has been read: from then on a change is kept.
@@ -159,10 +164,13 @@ impl Ui {
             primary_width: create_rw_signal(260.0),
             secondary_width: create_rw_signal(380.0),
             panel_height: create_rw_signal(230.0),
+            window: create_rw_signal((1280.0, 800.0)),
             menu: create_rw_signal(None),
             context: create_rw_signal(None),
             loaded: create_rw_signal(false),
             pointer: create_rw_signal((0.0, 0.0)),
+            dragging: create_rw_signal(None),
+            drop_on: create_rw_signal(None),
             changes: create_rw_signal(Vec::new()),
             term: create_rw_signal(crate::terminal::State::None),
             term_screen: create_rw_signal(crate::terminal::Screen::default()),
@@ -307,14 +315,14 @@ impl Ui {
             send(json!({"type": "open", "path": a}));
         }
         self.layout.set(Layout::normalize(&v["layout"]));
-        let size = |k: &str, lo: f64, hi: f64| v["sizes"][k].as_f64().map(|x| x.clamp(lo, hi));
-        if let Some(w) = size("primary", 170.0, 800.0) {
+        let size = |k: &str, lo: f64| v["sizes"][k].as_f64().filter(|x| x.is_finite()).map(|x| x.clamp(lo, 4000.0));
+        if let Some(w) = size("primary", 170.0) {
             self.primary_width.set(w);
         }
-        if let Some(w) = size("secondary", 220.0, 900.0) {
+        if let Some(w) = size("secondary", 170.0) {
             self.secondary_width.set(w);
         }
-        if let Some(h) = size("panel", 100.0, 900.0) {
+        if let Some(h) = size("panel", 77.0) {
             self.panel_height.set(h);
         }
     }
@@ -349,6 +357,7 @@ impl Ui {
                 self.items.set(self.thread_of(m));
                 if !self.loaded.get_untracked() {
                     self.restore(&m["view_state"], send);
+                    crate::workbench::fit(*self);
                     self.loaded.set(true);
                 }
                 send(json!({"type": "themes"}));
@@ -638,7 +647,24 @@ mod tests {
         // In their order, then the one shown last once more, so it is the one shown.
         let opened: Vec<_> = asked.borrow().iter().filter_map(|v| v["path"].as_str().map(str::to_string)).collect();
         assert_eq!(opened, ["a.rs", "b.rs", "a.rs"]);
-        assert_eq!(again.panel_height.get_untracked(), 100.0);
+        assert_eq!(again.panel_height.get_untracked(), 77.0);
         assert_eq!(again.layout.get_untracked(), Layout::default());
+    }
+
+    #[test]
+    fn the_editor_keeps_its_room_and_a_part_dragged_small_closes() {
+        let ui = Ui::new();
+        ui.window.set((1000.0, 700.0));
+        ui.primary_width.set(300.0);
+        ui.secondary_width.set(900.0);
+        crate::workbench::fit(ui);
+        // 1000 = 48 + 220 (the editor) + 300 + 432: the secondary side bar gave the room.
+        assert_eq!(ui.secondary_width.get_untracked(), 432.0);
+        crate::workbench::resize(ui, Where::Primary, 2000.0);
+        assert_eq!(ui.primary_width.get_untracked(), 1000.0 - 48.0 - 220.0 - 432.0);
+        crate::workbench::resize(ui, Where::Primary, 100.0);
+        assert_eq!(ui.primary_width.get_untracked(), 170.0, "held at its least");
+        crate::workbench::resize(ui, Where::Primary, 60.0);
+        assert!(!ui.layout.get_untracked().shown(Where::Primary), "under half its least, it closes");
     }
 }

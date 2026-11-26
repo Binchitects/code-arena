@@ -92,25 +92,34 @@ pub fn bold(s: Style) -> Style {
 }
 
 /// A sash: the 4 px strip between two parts that resizes them, lit in `sash.hoverBorder` while it is pointed at or
-/// dragged. `by` gets how far the pointer went (across when `vertical`, else down) since the last move.
-pub fn sash(t: Theme, vertical: bool, by: impl Fn(f64) + 'static) -> impl IntoView {
-    let down = RwSignal::new(None::<f64>);
+/// dragged. It follows the pointer exactly: `to` gets the size the part would have, its size when the drag began
+/// and how far the pointer has gone since (across when `vertical`, else down, `sign` -1 when the part grows the
+/// other way), in the window's pixels.
+pub fn sash(t: Theme, vertical: bool, sign: f64, size: RwSignal<f64>, to: impl Fn(f64) + 'static) -> impl IntoView {
+    let to = std::rc::Rc::new(to);
+    let again = to.clone();
+    let down = RwSignal::new(None::<(f64, f64)>);
     let lit = RwSignal::new(false);
     let view = empty();
     let id = view.id();
+    // Where the pointer is in the window: the sash's own place in it and the pointer's in the sash.
+    let at = move |p: floem::kurbo::Point| {
+        let o = id.layout_rect().origin();
+        if vertical { o.x + p.x } else { o.y + p.y }
+    };
     view.on_event_stop(EventListener::PointerDown, move |e| {
         if let Event::PointerDown(p) = e {
-            down.set(Some(if vertical { p.pos.x } else { p.pos.y }));
+            down.set(Some((at(p.pos), size.get_untracked())));
             id.request_active();
         }
     })
     .on_event_stop(EventListener::PointerMove, move |e| {
-        if let (Event::PointerMove(p), Some(at)) = (e, down.get_untracked()) {
-            let now = if vertical { p.pos.x } else { p.pos.y };
-            by(now - at);
+        if let (Event::PointerMove(p), Some((from, start))) = (e, down.get_untracked()) {
+            to(start + sign * (at(p.pos) - from));
         }
     })
     .on_event_stop(EventListener::PointerUp, move |_| down.set(None))
+    .on_double_click_stop(move |_| again(f64::NAN))
     .on_event_cont(EventListener::PointerEnter, move |_| lit.set(true))
     .on_event_cont(EventListener::PointerLeave, move |_| lit.set(false))
     .style(move |s| {
