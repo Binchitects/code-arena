@@ -7,9 +7,11 @@ import * as monaco from "monaco-editor/editor/editor.api";
 import "./monaco-features";
 import "monaco-editor/basic-languages/monaco.contribution";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
-import { For, type JSX, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
+import { For, type JSX, Show, createEffect, createRoot, createSignal, on, onCleanup, onMount } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { setEditorStatus } from "./editor-status";
+import { current, setPickerOpen } from "./theme-store";
+import { base, monacoColors, monacoRules, terminalColors } from "./themes";
 import { type Symbol as OutlineSymbol, outline } from "./outline";
 import { listen, send, session, setDetail } from "./stream";
 
@@ -118,7 +120,18 @@ const diffs = new Map<string, { before: monaco.editor.ITextModel; after: monaco.
 /** Each open file's model, and the version it was saved (or read) at. */
 const models = new Map<string, { model: monaco.editor.ITextModel; saved: number }>();
 
-const dark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
+/** The theme in force as Monaco's: defined once per theme (its colours and its token colours), then set. */
+const defined = new Set<string>();
+function monacoTheme(): string {
+  const th = current();
+  const id = `ca-${th.id.replace(/[^a-z0-9-]/gi, "-")}`;
+  if (!defined.has(id)) {
+    monaco.editor.defineTheme(id, { base: base(th), inherit: true, rules: monacoRules(th), colors: monacoColors(th) });
+    defined.add(id);
+  }
+  return id;
+}
+createRoot(() => createEffect(() => monaco.editor.setTheme(monacoTheme())));
 
 /** The text of a file that changed on disk, put in its model by its changed lines only: the cursor stays. */
 function replaceChanged(model: monaco.editor.ITextModel, text: string) {
@@ -383,14 +396,14 @@ function Editor() {
       automaticLayout: true,
       readOnly: true,
       originalEditable: false,
-      theme: dark() ? "vs-dark" : "vs",
+      theme: monacoTheme(),
       fontSize: 13,
       renderSideBySide: true,
     });
     editor = monaco.editor.create(host, {
       model: null,
       automaticLayout: true,
-      theme: dark() ? "vs-dark" : "vs",
+      theme: monacoTheme(),
       fontSize: 13,
       minimap: { enabled: true },
       scrollBeyondLastLine: false,
@@ -442,12 +455,8 @@ function Editor() {
         keepLayout();
       }
     });
-    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
-    const onScheme = () => monaco.editor.setTheme(dark() ? "vs-dark" : "vs");
-    scheme.addEventListener("change", onScheme);
     if (active()) showModel(active());
     onCleanup(() => {
-      scheme.removeEventListener("change", onScheme);
       editor?.dispose();
       editor = undefined;
       differ?.dispose();
@@ -607,7 +616,10 @@ function Term(props: { id: number; visible: boolean; onExit: () => void }) {
       fontFamily: css.getPropertyValue("--mono"),
       fontSize: 13,
       cursorBlink: true,
-      theme: { background: css.getPropertyValue("--panel").trim(), foreground: css.getPropertyValue("--text").trim() },
+      theme: terminalColors(current()),
+    });
+    createEffect(() => {
+      term.options.theme = terminalColors(current());
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -779,6 +791,7 @@ function commands(): Command[] {
       keys: "Alt+Z",
       run: () => editor?.updateOptions({ wordWrap: editor.getOption(monaco.editor.EditorOption.wordWrap) === "on" ? "off" : "on" }),
     },
+    { id: "theme", label: "Preferences: Color Theme", keys: "Ctrl+K Ctrl+T", run: () => setPickerOpen(true) },
     { id: "agent.context", label: "Agent: Show the Context", run: () => (setDetail("open", true), send({ type: "context" })) },
     { id: "agent.compact", label: "Agent: Compact Now", run: () => send({ type: "compact" }) },
     { id: "agent.stop", label: "Agent: Stop the Turn", keys: "Esc", run: () => send({ type: "stop" }) },

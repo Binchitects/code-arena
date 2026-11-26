@@ -149,6 +149,7 @@ fn state(p: &Prepared, app: &App, models: &[String], running: bool) -> Value {
         "root": p.agent.ctx.workspace.root().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
         "terminals": cfg!(unix),
         "branch": ca_agent::instructions::git_branch(p.agent.ctx.workspace.root()),
+        "theme": theme(app),
         "model": p.agent.model,
         "mode": p.agent.policy.mode.name(),
         "thinking": thinking_name(&p.agent.thinking),
@@ -193,6 +194,39 @@ fn context_detail(p: &Prepared) -> Value {
         "kinds": kinds.iter().map(|(k, c)| json!({"kind": k, "tokens": w.tokens(*c)})).collect::<Vec<_>>(),
         "biggest": b.biggest.iter().map(|(at, role, chars, start)| json!({"at": at, "role": role, "tokens": w.tokens(*chars), "start": start})).collect::<Vec<_>>(),
     })
+}
+
+/// A setting changed from the page: checked as the schema says (its kind, where it may be set, the edition's
+/// locks), kept in the person's settings.json or the project's, and read again. `null` takes it out (its default).
+pub fn keep_setting(app: &mut App, root: &Path, key: &str, value: &Value, project: bool) -> Result<PathBuf, String> {
+    let Some(setting) = ca_settings::schema::ALL.iter().find(|s| s.key == key) else {
+        return Err(format!("there is no setting {key}"));
+    };
+    if let Some(why) = crate::edition::setting_locked(app.edition(), key) {
+        return Err(why);
+    }
+    if project && setting.scope != ca_settings::Scope::Project {
+        return Err(format!("{key} is yours alone: a project's settings cannot set it"));
+    }
+    if !value.is_null() && !setting.accepts(value) {
+        return Err(format!("{key} does not take {value}"));
+    }
+    let project_file = root.join(".code-arena").join("settings.json");
+    let file = if project { project_file.clone() } else { app.paths.settings_file() };
+    let done = if value.is_null() {
+        ca_settings::settings::forget(&file, key)
+    } else {
+        ca_settings::settings::keep(&file, key, value)
+    };
+    done.map_err(|e| format!("{}: {e}", file.display()))?;
+    app.settings =
+        ca_settings::Settings::load(&app.paths.settings_file(), Some(&project_file), app.settings.env().clone());
+    Ok(file)
+}
+
+/// The colour theme chosen (`workbench.colorTheme`; empty: the system's light or dark).
+fn theme(app: &App) -> String {
+    app.settings.string(&ca_settings::schema::COLOR_THEME).unwrap_or_default()
 }
 
 /// What the status line shows, without the thread (after a turn, or a change: the page keeps its thread).
@@ -348,6 +382,27 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                 send(&out, status(&p));
             }
             "context" => send(&out, context_detail(&p)),
+            "themes" => {
+                let dirs =
+                    crate::ide_themes::folders(&app.paths.config, app.home.as_deref(), p.agent.ctx.workspace.root());
+                send(&out, json!({"type": "themes", "items": crate::ide_themes::all(&dirs)}));
+            }
+            "set_setting" => {
+                let key = msg["key"].as_str().unwrap_or("");
+                let root = p.agent.ctx.workspace.root().to_path_buf();
+                match keep_setting(app, &root, key, &msg["value"], msg["where"] == "project") {
+                    Ok(file) => {
+                        send(
+                            &out,
+                            json!({"type": "setting_kept", "key": key, "value": msg["value"], "file": file.display().to_string()}),
+                        );
+                        if key == ca_settings::schema::COLOR_THEME.key {
+                            send(&out, json!({"type": "theme", "theme": theme(app)}));
+                        }
+                    }
+                    Err(e) => send(&out, json!({"type": "setting_refused", "key": key, "error": e})),
+                }
+            }
             "compact" => {
                 let mut events = PageEvents { out: out.clone(), tasks: None };
                 let said = match p.agent.compact(&mut events, true).await {

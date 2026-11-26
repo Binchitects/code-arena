@@ -10,6 +10,7 @@ mod edition;
 mod goals;
 mod ide;
 mod ide_files;
+mod ide_themes;
 mod loops;
 mod plugins;
 mod projects;

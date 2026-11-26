@@ -310,6 +310,16 @@ pub static HOOKS: Setting = Setting {
     section: "Hooks",
 };
 
+pub static COLOR_THEME: Setting = Setting {
+    key: "workbench.colorTheme",
+    kind: Kind::String,
+    default: "\"\"",
+    description: "The IDE's colour theme, by name or id: Dark Modern, Light Modern, Dark+, Light+, Dark High Contrast, Light High Contrast, Monokai, Solarized Dark, Solarized Light, or one of yours (a VS Code theme's JSON, or a VS Code theme extension's folder, in themes/ in the config folder, ~/.code-arena/themes or the project's .code-arena/themes). Empty: Dark Modern or Light Modern, as the system is dark or light.",
+    scope: Scope::User,
+    env: None,
+    section: "Appearance",
+};
+
 pub static COMPAT_AGENTS: Setting = Setting {
     key: "compat.agents",
     kind: Kind::StringList,
@@ -441,6 +451,7 @@ pub static ALL: &[&Setting] = &[
     &PLUGINS,
     &OUTPUT_STYLE,
     &COMPAT_AGENTS,
+    &COLOR_THEME,
     &STATUS_LINE,
     &SANDBOX,
     &SANDBOX_NETWORK,

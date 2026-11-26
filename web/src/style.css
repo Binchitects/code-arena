@@ -1,34 +1,33 @@
 :root {
-  --bg: #fbfbfa;
-  --panel: #ffffff;
-  --text: #1f2328;
-  --muted: #6b7280;
-  --line: #e5e7eb;
-  --accent: #2563eb;
+  /* Dark Modern until the theme in force is applied (themes.ts sets every one of these). */
+  --bg: #1f1f1f;
+  --panel: #181818;
+  --text: #cccccc;
+  --muted: #9d9d9d;
+  --line: #2b2b2b;
+  --accent: #0078d4;
+  --button: #0078d4;
   --accent-text: #ffffff;
-  --user: #f1f3f5;
-  --code: #f6f8fa;
-  --danger: #b42318;
-  --ok: #16a34a;
-  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17181a;
-    --panel: #1e1f22;
-    --text: #e6e6e6;
-    --muted: #9aa0a6;
-    --line: #2e3034;
-    --accent: #4f8cff;
-    --accent-text: #0b0c0e;
-    --user: #24262a;
-    --code: #202226;
-    --danger: #ff7b72;
-    --ok: #3fb950;
-  }
+  --user: #2a2d2e;
+  --selection: #37373d;
+  --code: #2b2b2b;
+  --input: #313131;
+  --danger: #f85149;
+  --ok: #73c991;
+  --activity: #181818;
+  --activity-fg: #d7d7d7;
+  --activity-border: #0078d4;
+  --title: #181818;
+  --title-fg: #cccccc;
+  --status: #181818;
+  --status-fg: #cccccc;
+  --tab: #181818;
+  --tab-active: #1f1f1f;
+  --tab-border-top: #0078d4;
+  --terminal: #181818;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, Ubuntu, "Droid Sans", sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, "Droid Sans Mono", "DejaVu Sans Mono", monospace;
+  color-scheme: dark;
 }
 
 * {
@@ -64,8 +63,8 @@ button:disabled {
 }
 
 button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--button);
+  border-color: var(--button);
   color: var(--accent-text);
 }
 
@@ -540,9 +539,10 @@ button.small {
 .top {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
+  padding: 4px 10px;
   border-bottom: 1px solid var(--line);
-  background: var(--bg);
+  background: var(--title);
+  color: var(--title-fg);
 }
 
 .faces {
@@ -574,7 +574,13 @@ button.small {
 
 .status-row {
   border-top: 1px solid var(--line);
-  padding: 0 0 6px;
+  background: var(--status);
+  color: var(--status-fg);
+}
+
+.status-row .status {
+  color: var(--status-fg);
+  padding: 3px 4px;
 }
 
 .status-row .column.wide {
@@ -1115,4 +1121,12 @@ button.small {
 .sym.enum,
 .sym.type {
   color: #e2a03f;
+}
+
+.quick-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  padding: 6px 14px 2px;
 }

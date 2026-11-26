@@ -14,6 +14,22 @@ Sections used:
 - `:boom:` **Breaking changes & Deprecations**
 - `:arrow_up:` **Deps updates**
 
+## Unreleased (v0.6.0)
+
+### :sparkles: New features & Enhancements
+
+- **Colour themes in VS Code's own format.** Nine built in: Dark Modern, Light Modern, Dark+,
+  Light+, Dark and Light High Contrast, Monokai, Solarized Dark and Light. Yours from `themes/` in
+  the config folder, `~/.code-arena/themes` or the project's `.code-arena/themes`: a theme's JSON
+  (`name`, `type`, `colors`, `tokenColors`, comments allowed, `include` followed) or a VS Code theme
+  extension's folder (its `package.json` names its themes). A theme colours the whole page, the
+  editor (its token colours too) and the terminals.
+- **The Color Theme picker.** The Theme button, Ctrl+K Ctrl+T, or Preferences: Color Theme in the
+  palette: ↑ and ↓ show each theme as it would be, Enter keeps it (`workbench.colorTheme` in your
+  settings.json), Esc goes back. By default it follows the system: Dark Modern or Light Modern.
+- **A setting changed from the IDE is checked as the schema says** (its kind, where it may be set,
+  the edition's locks) and kept in your settings.json or the project's, its comments kept.
+
 ## v0.5.0 (2026-11-26)
 
 The IDE. `code-arena ide` opens the session in a window of its own, with two faces: Agent mode, a

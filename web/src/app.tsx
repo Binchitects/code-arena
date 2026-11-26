@@ -1,8 +1,10 @@
 // Agent mode: the conversation in one column, the box, one status line. A turn's tool calls fold into a line, and
 // the questions the agent asks are cards in the thread.
-import { For, Match, Show, Suspense, Switch, createEffect, createSignal, lazy, onMount } from "solid-js";
+import { For, Match, Show, Suspense, Switch, createEffect, createSignal, lazy, onCleanup, onMount } from "solid-js";
 import { produce } from "solid-js/store";
 import { editorStatus } from "./editor-status";
+import { allThemes, choice, custom, pickerOpen, setChoice, setPickerOpen, setPreview } from "./theme-store";
+import { BUILT_IN } from "./themes";
 import { type Item, type Tool, detail, items, send, session, setDetail, setItems, tasks } from "./stream";
 
 const MODES = ["ask", "auto-edit", "plan", "yolo"];
@@ -536,6 +538,84 @@ function Agent() {
   );
 }
 
+/** The colour theme picker: ↑ and ↓ show each theme as it would be, Enter keeps it, Esc goes back. */
+function ThemePicker() {
+  let input!: HTMLInputElement;
+  const [text, setText] = createSignal("");
+  const entries = () => {
+    const q = text().trim().toLowerCase();
+    const list: { id: string; name: string; group: string }[] = [
+      { id: "", name: "Follow the system (Dark Modern or Light Modern)", group: "" },
+      ...BUILT_IN.map((t) => ({ id: t.id, name: t.name, group: "Built in" })),
+      ...custom().map((t) => ({ id: t.id, name: t.name, group: "Yours" })),
+    ];
+    return q ? list.filter((e) => e.name.toLowerCase().includes(q)) : list;
+  };
+  const startAt = () => Math.max(0, entries().findIndex((e) => e.id === (choice() ?? "")));
+  const [at, setAt] = createSignal(startAt());
+  const show = (i: number) => {
+    setAt(i);
+    const e = entries()[i];
+    if (e) setPreview(e.id);
+  };
+  const close = () => {
+    setPreview(undefined);
+    setPickerOpen(false);
+  };
+  const keep = (i: number) => {
+    const e = entries()[i];
+    if (!e) return;
+    setChoice(e.id);
+    send({ type: "set_setting", key: "workbench.colorTheme", value: e.id });
+    close();
+  };
+  onMount(() => {
+    input.focus();
+    send({ type: "themes" });
+  });
+  return (
+    <div class="quick-back" onClick={close}>
+      <div class="quick" role="dialog" aria-label="Color theme" onClick={(e) => e.stopPropagation()}>
+        <input
+          ref={input}
+          placeholder={`Select a color theme (${allThemes().length}; ↑↓ to preview)`}
+          aria-label="Color theme"
+          value={text()}
+          onInput={(e) => {
+            setText(e.currentTarget.value);
+            show(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") close();
+            else if (e.key === "ArrowDown") show(Math.min(at() + 1, entries().length - 1));
+            else if (e.key === "ArrowUp") show(Math.max(at() - 1, 0));
+            else if (e.key === "Enter") keep(at());
+            else return;
+            e.preventDefault();
+          }}
+        />
+        <ul class="quick-list">
+          <For each={entries()}>
+            {(e, i) => (
+              <li>
+                <Show when={e.group && (i() === 0 || entries()[i() - 1].group !== e.group)}>
+                  <div class="quick-group">{e.group}</div>
+                </Show>
+                <button classList={{ at: i() === at() }} onMouseEnter={() => show(i())} onClick={() => keep(i())}>
+                  <span class="name">{e.name}</span>
+                  <Show when={e.id === (choice() ?? "")}>
+                    <span class="keys">current</span>
+                  </Show>
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 const Coder = lazy(() => import("./coder"));
 
 /** Which face the IDE shows, kept for the next visit. */
@@ -559,9 +639,29 @@ function choose(f: "agent" | "coder") {
 }
 
 export function App() {
+  // Ctrl+K then Ctrl+T, as VS Code: the colour theme picker.
+  onMount(() => {
+    let chord = 0;
+    const keys = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && e.key.toLowerCase() === "k") {
+        chord = Date.now();
+        e.preventDefault();
+      } else if (mod && e.key.toLowerCase() === "t" && Date.now() - chord < 1500) {
+        chord = 0;
+        e.preventDefault();
+        setPickerOpen(true);
+      }
+    };
+    window.addEventListener("keydown", keys, true);
+    onCleanup(() => window.removeEventListener("keydown", keys, true));
+  });
   return (
     <div class="app">
       <header class="top">
+        <Show when={pickerOpen()}>
+          <ThemePicker />
+        </Show>
         <div class="faces" role="tablist" aria-label="Mode">
           <button role="tab" aria-selected={face() === "agent"} classList={{ on: face() === "agent" }} onClick={() => choose("agent")}>
             Agent
@@ -570,6 +670,10 @@ export function App() {
             Coder
           </button>
         </div>
+        <span class="grow" />
+        <button class="quiet small" title="Color theme (Ctrl+K Ctrl+T)" aria-label="Color theme" onClick={() => setPickerOpen(true)}>
+          Theme
+        </button>
       </header>
       <Show when={face() === "coder"} fallback={<div class="agent-face"><Agent /></div>}>
         <Suspense fallback={<div class="loading muted">Opening the editor…</div>}>

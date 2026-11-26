@@ -8,6 +8,19 @@ use ca_settings::Edition;
 pub const NEEDS_ARENA: &[&str] =
     &["/web", "/sync", "/checklist", "/project", "/projects", "/assistant", "/arena-agents", "/arena-tasks"];
 
+/// The settings that do something only with Farzan Arena: locked in the standalone edition (the Settings editor says
+/// why).
+pub const SETTINGS_NEED_ARENA: &[&str] = &["arena.syncChats", "mcp.arenaTools", "mcp.codeIntelTools"];
+
+/// Why a setting cannot be changed in this edition; `None` when it can.
+pub fn setting_locked(edition: Edition, key: &str) -> Option<String> {
+    (edition != Edition::Managed && SETTINGS_NEED_ARENA.contains(&key)).then(|| {
+        format!(
+            "{key} needs Farzan Arena (the managed edition): code-arena login --url https://YOUR-ARENA turns it on."
+        )
+    })
+}
+
 /// What a command needing Arena says in the standalone edition; `None` when it may run.
 pub fn locked(edition: Edition, command: &str) -> Option<String> {
     if edition == Edition::Managed || !NEEDS_ARENA.contains(&command) {
