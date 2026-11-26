@@ -30,6 +30,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   most 2 min). The answer being written is shown on the web as it comes. The chat is let go
   once Arena has the turn's messages.
 
+- The web's news while the chat waits at its prompt: what is added there shows at once (the
+  person's words, and the web's answers in full) and the model reads it at the next turn. It
+  comes from Arena's stream of the person's chats' changes; where that cannot be had (a proxy
+  that drops it), the chat is asked every 5 s with its stamp, which costs Arena nothing when
+  nothing moved.
+- `/web` lists your chats in Arena; `/web N` continues one here, in a session of its own (or the
+  one this folder already keeps with it), and brings it back to the web's list if it was archived.
+- Leaving the chat waits a few seconds for the last turn's messages to reach Arena.
+
 ### Fixed
 - The answer being written is kept every two seconds while it comes, so a crash leaves what it
   got to (0.2 recovered drafts but never kept them).

@@ -349,6 +349,73 @@ impl ArenaClient {
     }
 }
 
+/// A change in the person's chats, as the watch says it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct WatchEvent {
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The chat that changed.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// "messages", "title", "project", "deleted".
+    #[serde(default)]
+    pub what: Option<String>,
+}
+
+/// The stream of the person's chats' changes (`GET /api/code-arena/watch`), open for as long as it is read.
+pub struct Watch {
+    res: reqwest::Response,
+    buf: String,
+}
+
+impl Watch {
+    /// The next change; `Some(None)` for a heartbeat (Arena says something every 15 s); `None` when the stream ended.
+    pub async fn next(&mut self) -> Option<Option<WatchEvent>> {
+        loop {
+            if let Some(end) = self.buf.find("\n\n") {
+                let block: String = self.buf.drain(..end + 2).collect();
+                let data: String = block
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("data:"))
+                    .map(str::trim_start)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if data.is_empty() {
+                    return Some(None);
+                }
+                if let Ok(e) = serde_json::from_str::<WatchEvent>(&data) {
+                    return Some(Some(e));
+                }
+                continue;
+            }
+            match self.res.chunk().await {
+                Ok(Some(bytes)) => self.buf.push_str(&String::from_utf8_lossy(&bytes).replace("\r\n", "\n")),
+                _ => return None,
+            }
+        }
+    }
+}
+
+impl ArenaClient {
+    /// Opens the stream of the person's chats' changes. An Arena without it answers 404, a proxy that does not pass
+    /// streams answers something else: the caller asks every few seconds instead.
+    pub async fn watch(&self) -> Result<Watch, ArenaError> {
+        let res = self
+            .untimed(Method::GET, &format!("{API}/watch"))
+            .header("Accept", "text/event-stream")
+            .send()
+            .await
+            .map_err(|e| ArenaError::Net(ca_net::explain(&e)))?;
+        let ct = res.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+        if !res.status().is_success() || !ct.contains("event-stream") {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(refusal(&crate::client::Raw { status, content_type: ct, body }));
+        }
+        Ok(Watch { res, buf: String::new() })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,6 +432,33 @@ mod tests {
         assert_eq!(r.base.as_deref(), Some("m1"));
         assert_eq!(r.messages[0].text(), "and the tests?");
         assert_eq!(r.messages[0].id.as_deref(), Some("m2"));
+    }
+
+    #[tokio::test]
+    async fn the_watch_says_each_change_and_its_heartbeats() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let body = "data: {\"type\":\"watching\"}\n\n: still here\n\ndata: {\"type\":\"chat\",\"id\":\"c1\",\"what\":\"messages\"}\n\n";
+        Mock::given(method("GET"))
+            .and(path("/api/code-arena/watch"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+            .mount(&server)
+            .await;
+        let c = ArenaClient::new(&server.uri(), Some(ca_core::Secret::new("sk-test")), None).expect("client");
+        let mut w = c.watch().await.expect("open");
+        assert_eq!(w.next().await.and_then(|e| e).map(|e| e.kind), Some("watching".into()));
+        assert_eq!(w.next().await, Some(None));
+        let e = w.next().await.and_then(|e| e).expect("a change");
+        assert_eq!((e.id.as_deref(), e.what.as_deref()), (Some("c1"), Some("messages")));
+        assert_eq!(w.next().await, None);
+    }
+
+    #[tokio::test]
+    async fn an_arena_without_the_watch_is_told() {
+        let server = wiremock::MockServer::start().await;
+        let c = ArenaClient::new(&server.uri(), Some(ca_core::Secret::new("sk-test")), None).expect("client");
+        assert!(c.watch().await.is_err());
     }
 
     #[test]

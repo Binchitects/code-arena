@@ -6,7 +6,7 @@ mod history;
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ca_agent::{Answer, Approver, Mode, TurnError};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -118,6 +118,17 @@ fn finish_prompt(ed_text: &str, drawn: &mut Drawn) {
     drawn.cursor_row = 0;
 }
 
+/// Takes the prompt's drawing away, to print above it (the web's news); it is drawn again after.
+fn clear_prompt(drawn: &mut Drawn) {
+    let mut o = std::io::stdout().lock();
+    if drawn.cursor_row > 0 {
+        let _ = queue!(o, cursor::MoveUp(drawn.cursor_row));
+    }
+    let _ = queue!(o, cursor::MoveToColumn(0), terminal::Clear(terminal::ClearType::FromCursorDown));
+    let _ = o.flush();
+    drawn.cursor_row = 0;
+}
+
 /// A question the turn waits on, answered by the next key.
 type Pending = Arc<Mutex<Option<oneshot::Sender<Answer>>>>;
 
@@ -167,6 +178,7 @@ fn help() -> &'static str {
 /NAME [words]         a command or a skill, with your words\n\
 /mcp                  Arena's, Farzan Graph's and your MCP servers: connected or not, and why\n\
 /sync [on|off]        where this session stands with its chat in Arena; off keeps it here only\n\
+/web [N]              your chats in Arena; /web N continues one here\n\
 /exit                 leave (also Ctrl+D)\n\
 !command              run a command yourself; its output goes with your next message\n\
 \n\
@@ -218,6 +230,9 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         None => mpsc::unbounded_channel().1,
     };
     let _raw = raw;
+    // The web's news while the prompt waits: taken in at once.
+    let (news_tx, mut news) = mpsc::unbounded_channel::<()>();
+    let mut listening: Option<Arc<ca_sync::ChatSync>> = None;
     let mut drawn = Drawn::default();
     let mut interrupted_once = false;
     let mut session_usage = ca_llm::Usage::default();
@@ -233,10 +248,29 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             carry_on = true;
             job_note(&j, ui)
         } else {
+            // A new session (/clear, /resume, /web) is listened for too.
+            if let Some(s) = &p.sync
+                && !listening.as_ref().is_some_and(|l| Arc::ptr_eq(l, s))
+            {
+                s.listen(news_tx.clone());
+                listening = Some(s.clone());
+            }
             session::say_notices(&p.notices, ui);
             draw(&ed, &mut drawn);
-            match read_line(&mut ed, &mut keys, &mut ended, &mut drawn, &mut interrupted_once, ui).await {
+            match read_line(&mut ed, &mut keys, &mut ended, &mut news, &mut drawn, &mut interrupted_once, ui).await {
                 Input::Line(l) => l,
+                Input::News => {
+                    if let Some(s) = p.sync.clone() {
+                        let taken = s.take_in().await;
+                        for line in &taken.said {
+                            ui.say(&ui.dim(line));
+                        }
+                        if taken.any() {
+                            session::reload_history(&mut p);
+                        }
+                    }
+                    continue;
+                }
                 Input::JobEnded(j) => {
                     carry_on = true;
                     job_note(&j, ui)
@@ -359,6 +393,11 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     if let Some(j) = &p.agent.ctx.jobs {
         j.stop_all();
     }
+    // What the last turn said reaches the chat in Arena before Code Arena goes (at most a few seconds).
+    if let Some(s) = &p.sync {
+        s.end_turn().await;
+        s.flush(Duration::from_secs(5)).await;
+    }
     Ok(0)
 }
 
@@ -367,6 +406,8 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
 enum Input {
     Line(String),
     JobEnded(ca_tools::jobs::Ended),
+    /// The web chat has messages this session lacks.
+    News,
     Leave,
 }
 
@@ -374,6 +415,7 @@ async fn read_line(
     ed: &mut Editor,
     keys: &mut mpsc::UnboundedReceiver<Event>,
     ended: &mut mpsc::UnboundedReceiver<ca_tools::jobs::Ended>,
+    news: &mut mpsc::UnboundedReceiver<()>,
     drawn: &mut Drawn,
     once: &mut bool,
     ui: Ui,
@@ -384,6 +426,12 @@ async fn read_line(
             Some(j) = ended.recv() => {
                 finish_prompt(&ed.text(), drawn);
                 return Input::JobEnded(j);
+            }
+            Some(()) = news.recv() => {
+                // Several at once are one take-in.
+                while news.try_recv().is_ok() {}
+                clear_prompt(drawn);
+                return Input::News;
             }
         };
         let action = match ev {
@@ -781,6 +829,7 @@ async fn command(
             }
         }
         "/rewind" => rewind(rest, p, ui)?,
+        "/web" => web(rest, p, app, ui).await?,
         "/sync" => match (&p.sync, rest) {
             (None, _) => ui.say(&ui.dim(
                 "Kept here only: sign in (code-arena login) with arena.syncChats on to keep sessions in Arena's chats.",
@@ -900,6 +949,82 @@ async fn command(
 }
 
 /// What a key typed at a question answers: y (or Enter), a, and anything else is a no.
+/// `/web`: the person's chats in Arena; `/web N` (or its id) continues one here, in a session of its own.
+async fn web(rest: &str, p: &mut Prepared, app: &mut App, ui: Ui) -> anyhow::Result<()> {
+    if p.sync.is_none() {
+        ui.say(&ui.dim("Not kept with Arena: sign in (code-arena login) with arena.syncChats on."));
+        return Ok(());
+    }
+    let arena = app.arena()?;
+    let list = match arena.chats(20).await {
+        Ok(l) => l.chats,
+        Err(e) => {
+            ui.say(&ui.red(&e.to_string()));
+            return Ok(());
+        }
+    };
+    if rest.is_empty() {
+        if list.is_empty() {
+            ui.say(&ui.dim("No chats in Arena yet."));
+        }
+        for (i, c) in list.iter().enumerate() {
+            let place = c.origin_place.as_deref().map(|p| format!(", {p}")).unwrap_or_default();
+            ui.say(&format!("{:>3}  {}  {}", i + 1, c.title, ui.dim(&format!("({} messages{place})", c.messages))));
+        }
+        ui.say(&ui.dim("/web N continues one here."));
+        return Ok(());
+    }
+    let chosen = match rest.parse::<usize>() {
+        Ok(n) if (1..=list.len()).contains(&n) => list[n - 1].clone(),
+        _ => match list.iter().find(|c| c.id == rest) {
+            Some(c) => c.clone(),
+            None => {
+                ui.say(&ui.red(&format!("No chat {rest}: /web lists them.")));
+                return Ok(());
+            }
+        },
+    };
+    // A session of this folder's that is kept with it already: taken up; else a new one, filled from the web.
+    let (session, fresh) = {
+        let store = p.store.lock().map_err(|_| anyhow::anyhow!("the store"))?;
+        match store.by_chat(&chosen.id)? {
+            Some(s) if store.summary(&s).map(|x| x.folder == p.folder).unwrap_or(false) => (s, false),
+            _ => {
+                let id = store.create(&p.folder, &p.agent.model, p.agent.policy.mode.name())?;
+                store.link_chat(&id, &chosen.id)?;
+                (id, true)
+            }
+        }
+    };
+    let opts = Opts {
+        cwd: Some(p.agent.ctx.workspace.cwd().to_path_buf()),
+        add_dirs: vec![],
+        mode: Some(p.agent.policy.mode.name().into()),
+        model: chosen.model.clone().or_else(|| Some(p.agent.model.clone())),
+        thinking: None,
+        interactive: true,
+    };
+    let approver = p.agent.approver.clone();
+    let inbox = p.agent.inbox.clone();
+    *p = session::prepare(app, &opts, approver, Resume::Id(session)).await?;
+    p.agent.inbox = inbox;
+    if let Some(s) = p.sync.clone() {
+        let taken = s.take_in().await;
+        if taken.any() {
+            session::reload_history(p);
+        }
+    }
+    let _ = arena.continued(&chosen.id).await;
+    let count = p.store.lock().ok().and_then(|s| s.summary(&p.session).ok()).map(|s| s.messages).unwrap_or(0);
+    ui.say(&ui.dim(&format!(
+        "{} the web chat \"{}\" here: {count} messages.",
+        if fresh { "Continuing" } else { "Back in" },
+        chosen.title
+    )));
+    show_last_turns(p, ui);
+    Ok(())
+}
+
 fn answer_of(k: KeyEvent) -> Answer {
     match k.code {
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => Answer::Yes,

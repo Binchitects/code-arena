@@ -72,12 +72,12 @@ impl ArenaClient {
     /// A request as Code Arena sends every one: its key, `X-Requested-With` (which Arena asks of every call that
     /// changes something), JSON.
     fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
-        let mut r = self
-            .http
-            .request(method, format!("{}{path}", self.base))
-            .header("X-Requested-With", "code-arena")
-            .header("Accept", "application/json")
-            .timeout(Duration::from_secs(30));
+        self.untimed(method, path).header("Accept", "application/json").timeout(Duration::from_secs(30))
+    }
+
+    /// A request with no time limit: a stream that stays open (`/watch`).
+    pub(crate) fn untimed(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
+        let mut r = self.http.request(method, format!("{}{path}", self.base)).header("X-Requested-With", "code-arena");
         if let Some(k) = &self.key {
             r = r.bearer_auth(k.expose());
         }

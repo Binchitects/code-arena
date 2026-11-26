@@ -8,6 +8,7 @@
 
 mod convert;
 mod turn;
+mod watch;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -19,6 +20,7 @@ use tokio::sync::Notify;
 
 pub use convert::{from_arena, to_arena};
 pub use turn::Taken;
+pub use watch::News;
 
 /// The most messages one request sends.
 pub const BATCH: usize = 200;
@@ -63,6 +65,11 @@ pub struct ChatSync {
     drafting: std::sync::atomic::AtomicBool,
     /// The last turn's end, under way.
     ending: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The stream of the web's changes is open.
+    streaming: std::sync::atomic::AtomicBool,
+    /// Held by a send and by a take-in: what one writes into the session the other must see whole (a send's ids
+    /// marked before the web's messages are placed after them).
+    io: tokio::sync::Mutex<()>,
 }
 
 /// How a push ended.
@@ -105,6 +112,8 @@ impl ChatSync {
             draft_next: Mutex::new(None),
             drafting: std::sync::atomic::AtomicBool::new(false),
             ending: Mutex::new(None),
+            streaming: std::sync::atomic::AtomicBool::new(false),
+            io: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -246,6 +255,11 @@ impl ChatSync {
                 if behind {
                     line.push_str("; the web added messages, taken in at the next turn");
                 }
+                line.push_str(if self.streaming() {
+                    "; the web's messages come as they are written"
+                } else {
+                    "; the web chat is asked every few seconds"
+                });
                 if let Some(e) = err {
                     line.push_str(&format!("; last problem: {e}"));
                 }
@@ -319,6 +333,7 @@ impl ChatSync {
 
     /// Sends what Arena lacks, a batch at a time, then the last summary it lacks.
     pub async fn push(&self) -> Pushed {
+        let _one = self.io.lock().await;
         if self.state.lock().map(|s| s.behind.is_some()).unwrap_or(false) {
             return Pushed::Behind;
         }

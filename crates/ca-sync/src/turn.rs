@@ -43,7 +43,7 @@ impl Taken {
 }
 
 impl ChatSync {
-    fn chat_id(&self) -> Option<String> {
+    pub(crate) fn chat_id(&self) -> Option<String> {
         if self.unsupported.load(Ordering::Relaxed) {
             return None;
         }
@@ -56,6 +56,7 @@ impl ChatSync {
     /// new, or when Arena cannot say now (it comes at the next turn).
     pub async fn take_in(&self) -> Taken {
         let Some(chat) = self.chat_id() else { return Taken::default() };
+        let _one = self.io.lock().await;
         let mut taken = Taken::default();
         let mut pending = self.take_behind();
         loop {
@@ -85,7 +86,9 @@ impl ChatSync {
                 return taken;
             }
             let more = read.more;
-            self.write_in(&read, &mut taken);
+            if !self.write_in(&read, &mut taken) {
+                break;
+            }
             if !more {
                 break;
             }
@@ -95,13 +98,17 @@ impl ChatSync {
         taken
     }
 
-    /// One read of the web's, written into the session.
-    fn write_in(&self, read: &SyncRead, taken: &mut Taken) {
-        let Ok(s) = self.store.lock() else { return };
+    /// One read of the web's, written into the session; `false` when it could not be placed (read again next time).
+    fn write_in(&self, read: &SyncRead, taken: &mut Taken) -> bool {
+        let Ok(s) = self.store.lock() else { return false };
         let id = &self.session;
-        // Where the web's messages go: after `base`, the last message both have.
+        // Where the web's messages go: after `base`, the last message both have. A base this session does not know
+        // changes nothing: the session is not cut back on a guess.
         let base_seq = match &read.base {
-            Some(b) => s.seq_by_arena(id, b).ok().flatten(),
+            Some(b) => match s.seq_by_arena(id, b).ok().flatten() {
+                Some(seq) => Some(seq),
+                None => return false,
+            },
             None => None,
         };
         let total = s.summary(id).map(|x| x.messages).unwrap_or(0);
@@ -133,6 +140,8 @@ impl ChatSync {
             if s.append_from_arena(id, &msg, arena, begins).is_ok() {
                 if msg.role == Role::User && !msg.content.is_empty() {
                     taken.said.push(format!("From the web: {}", first_line(&msg.content)));
+                } else if msg.role == Role::Assistant && msg.tool_calls.is_empty() && !msg.content.trim().is_empty() {
+                    taken.said.push(format!("Answered on the web:\n{}", msg.content.trim()));
                 }
                 taken.added.push(msg);
             }
@@ -152,6 +161,7 @@ impl ChatSync {
             }
         }
         let _ = s.set_chat_stamp(id, Some(&read.stamp));
+        true
     }
 
     /// A turn starts here: what the web added is taken in, then the chat is the session's until the turn ends (the web

@@ -238,7 +238,10 @@ async fn what_the_web_added_comes_in_after_the_last_message_both_have() {
     let taken = sync.take_in().await;
     assert_eq!(taken.added.len(), 2);
     assert!(taken.rebuilt, "the session's own message moved after the web's");
-    assert_eq!(taken.said, vec!["From the web: asked on the web".to_string()]);
+    assert_eq!(
+        taken.said,
+        vec!["From the web: asked on the web".to_string(), "Answered on the web:\nanswered on the web".to_string()]
+    );
     let s = store.lock().expect("store");
     let all: Vec<String> =
         s.page(&id, 100, None).expect("page").messages.into_iter().map(|m| m.message.content).collect();
@@ -365,4 +368,131 @@ async fn a_turn_holds_the_chat_takes_the_webs_queue_and_lets_it_go() {
     sync.end_turn().await;
     let reqs = server.received_requests().await.expect("requests");
     assert_eq!(reqs.iter().filter(|r| r.method.as_str() == "DELETE").count(), 1);
+}
+
+#[tokio::test]
+async fn the_webs_news_is_heard_by_asking_when_there_is_no_stream() {
+    let (server, _) = arena().await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let (id, sync) = sent_session(&server, &store).await;
+    // No /watch here (404): the chat is asked with its stamp instead.
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/chat-1"))
+        .respond_with(read_answer(
+            Some(format!("a{id}:3")),
+            false,
+            json!([{"role": "user", "content": "hi", "id": "w1"}]),
+        ))
+        .mount(&server)
+        .await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    sync.listen(tx);
+    tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.expect("news came").expect("open");
+    assert!(!sync.streaming());
+}
+
+#[tokio::test]
+async fn the_webs_news_comes_from_the_stream_for_this_chat_only() {
+    let (server, _) = arena().await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let (_id, sync) = sent_session(&server, &store).await;
+    let body = "data: {\"type\":\"watching\"}\n\ndata: {\"type\":\"chat\",\"id\":\"other\",\"what\":\"messages\"}\n\ndata: {\"type\":\"chat\",\"id\":\"chat-1\",\"what\":\"messages\"}\n\n";
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/watch"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "text/event-stream"))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    sync.listen(tx);
+    tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.expect("news came").expect("open");
+    // One change of this chat's, none for the other's.
+    assert!(rx.try_recv().is_err());
+}
+
+/// Arena's append, answered only when the test says: a send still on its way.
+struct Slow(Arc<tokio::sync::Notify>, Arc<Mutex<Vec<Value>>>);
+
+impl Respond for Slow {
+    fn respond(&self, r: &Request) -> ResponseTemplate {
+        let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+        let ids: Vec<String> = body["messages"]
+            .as_array()
+            .map(|ms| ms.iter().map(|m| format!("a{}", m["ref"].as_str().unwrap_or_default())).collect())
+            .unwrap_or_default();
+        self.1.lock().expect("seen").push(body);
+        self.0.notify_one();
+        ResponseTemplate::new(200)
+            .set_delay(Duration::from_millis(300))
+            .set_body_json(json!({"ids": ids, "count": 0, "stamp": "s", "summarized": false}))
+    }
+}
+
+#[tokio::test]
+async fn the_web_is_taken_in_only_once_a_send_on_its_way_has_landed() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "chat-1", "created": true})))
+        .mount(&server)
+        .await;
+    let arrived = Arc::new(tokio::sync::Notify::new());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/chat-1/messages"))
+        .respond_with(Slow(arrived.clone(), seen.clone()))
+        .mount(&server)
+        .await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let id = session(&store.lock().expect("store"));
+    // The web's read names the session's last message, which Arena has, though its answer is still on its way.
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/chat-1"))
+        .respond_with(read_answer(
+            Some(format!("a{id}:3")),
+            false,
+            json!([{"role": "user", "content": "web", "id": "w1"}]),
+        ))
+        .mount(&server)
+        .await;
+    let (sync, _) = sync(&server, &store, &id);
+    let pushing = {
+        let s = Arc::clone(&sync);
+        tokio::spawn(async move { s.push().await })
+    };
+    arrived.notified().await;
+    let taken = sync.take_in().await;
+    assert_eq!(pushing.await.expect("pushed"), Pushed::Done);
+    assert_eq!(taken.added.len(), 1);
+    assert!(!taken.rebuilt);
+    let s = store.lock().expect("store");
+    let all: Vec<(String, Option<String>)> = s
+        .page(&id, 100, None)
+        .expect("page")
+        .messages
+        .iter()
+        .map(|m| (m.message.content.clone(), s.arena_id(&id, m.seq).expect("id")))
+        .collect();
+    assert_eq!(all[0], ("read the parser".to_string(), Some(format!("a{id}:0"))));
+    assert_eq!(all[4], ("web".to_string(), Some("w1".to_string())));
+    assert_eq!(all.len(), 5);
+    assert_eq!(seen.lock().expect("seen").len(), 1, "nothing was sent twice");
+}
+
+#[tokio::test]
+async fn a_read_whose_base_the_session_does_not_know_changes_nothing() {
+    let (server, _) = arena().await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let (id, sync) = sent_session(&server, &store).await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/chat-1"))
+        .respond_with(read_answer(
+            Some("not-here".into()),
+            false,
+            json!([{"role": "user", "content": "x", "id": "w1"}]),
+        ))
+        .mount(&server)
+        .await;
+    assert!(!sync.take_in().await.any());
+    assert_eq!(store.lock().expect("store").summary(&id).expect("s").messages, 4);
 }

@@ -63,6 +63,7 @@ jobs:
           cargo build --locked -q -p ca-cli
           python3 tests/pty/chat_approval.py "$PWD/target/debug/code-arena"
           python3 tests/pty/chat_jobs.py "$PWD/target/debug/code-arena"
+          python3 tests/pty/chat_sync.py "$PWD/target/debug/code-arena"
       - name: The sandbox, where the runner can make one
         if: "!startsWith(matrix.name, 'win-')"
         shell: bash
