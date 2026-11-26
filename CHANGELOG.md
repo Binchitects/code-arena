@@ -3,7 +3,7 @@
 Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
 versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
 
-## Unreleased (0.2.0)
+## 0.2.0 (2026-11-26)
 
 ### Added
 - Sessions kept in one SQLite database in the data folder (`sessions.db`): every message on disk
@@ -93,6 +93,17 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 - `/mcp` in the chat: each server, connected or not and why.
 - In the chat: `/help`, `/model`, `/mode`, `/thinking`, `/cost`, `/clear`, `/resume`, `/search`,
   `/exit`, and `!command`.
+
+### Measured
+- A session of 10,000 messages opens with its last 30 turns read in 1.25 ms, the 30 before them
+  in 0.75 ms; what the model reads (from the last compaction) in 1.5 ms; each message is on disk
+  in 0.35 ms; a search of the folder's sessions takes 7.6 ms. See
+  [docs/measurements/0.2.md](docs/measurements/0.2.md).
+
+### Moved to 0.3
+- Other providers' models, Tab to skip thinking, `--output stream-json`, the Arena account's
+  compaction threshold and Arena's tokenizer for `/context`, git's filters and merge drivers kept
+  from running, a long turn compacting its own steps. The plan's checklist names each.
 
 ## 0.1.0 (2026-11-26)
 
