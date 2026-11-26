@@ -1,6 +1,6 @@
 //! The thread as the native window holds it, and what it says of a turn's calls.
 
-use floem::reactive::{RwSignal, create_rw_signal};
+use floem::reactive::{RwSignal, Scope};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tool {
@@ -38,11 +38,13 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub fn assistant() -> Kind {
+    /// An answer, its signals made in `scope`: the window's own, which lasts, not the one current when a message is
+    /// taken in (that one may go while the answer is still drawn).
+    pub fn assistant(scope: Scope) -> Kind {
         Kind::Assistant {
-            text: create_rw_signal(String::new()),
-            tools: create_rw_signal(Vec::new()),
-            open: create_rw_signal(false),
+            text: scope.create_rw_signal(String::new()),
+            tools: scope.create_rw_signal(Vec::new()),
+            open: scope.create_rw_signal(false),
         }
     }
 }

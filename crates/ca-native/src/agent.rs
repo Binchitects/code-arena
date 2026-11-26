@@ -58,8 +58,12 @@ fn thread(ui: Ui, send: Send) -> impl IntoView {
         ui.items.with(|l| l.len());
         follow.set(100.0);
     });
+    // Whether there is a thread at all, told only when that changes: the thread is built once, not again at each
+    // message (Floem's dyn_container builds again whenever what it reads is set, and building it again under an
+    // answer being drawn drops what the answer's blocks read).
+    let empty = floem::reactive::create_memo(move |_| ui.items.with(|l| l.is_empty()));
     dyn_container(
-        move || ui.items.with(|l| l.is_empty()),
+        move || empty.get(),
         move |empty| {
             if empty {
                 welcome(ui).into_any()

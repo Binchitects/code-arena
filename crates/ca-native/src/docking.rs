@@ -88,10 +88,16 @@ impl Ui {
         })
     }
 
-    /// The view on screen: its group shown, it shown in it.
+    /// The view on screen: its group shown, it shown in it. The dock and the hidden groups are set only when they
+    /// change, so what reads them is not told of nothing.
     pub fn reveal(&self, v: View) {
-        self.dock.update(|d| *d = d.shown(v));
-        if let Some(g) = self.dock.with_untracked(|d| d.group_of(v)) {
+        let next = self.dock.with_untracked(|d| d.shown(v));
+        if self.dock.with_untracked(|d| *d != next) {
+            self.dock.set(next);
+        }
+        if let Some(g) = self.dock.with_untracked(|d| d.group_of(v))
+            && self.hidden.with_untracked(|h| h.contains(&g))
+        {
             self.hidden.update(|h| {
                 h.remove(&g);
             });
@@ -130,7 +136,10 @@ impl Ui {
     }
 
     pub fn dock_view(&self, v: View, target: u32, side: Side) {
-        self.dock.update(|d| *d = d.docked(v, target, side));
+        let next = self.dock.with_untracked(|d| d.docked(v, target, side));
+        if self.dock.with_untracked(|d| *d != next) {
+            self.dock.set(next);
+        }
         self.reveal(v);
         // Docked from a window of its own: the window goes.
         if let Some(w) = WINDOWS.with(|w| w.borrow_mut().remove(&v)) {
@@ -323,54 +332,60 @@ pub fn fit(ui: Ui) {
 
 fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     let t = ui.colors;
-    let views = move || {
+    // The group's views and the one it shows, told only when they change: a container built from them is built
+    // again then, not at every change of the dock (Floem's dyn_container builds again whenever what it reads is set).
+    let views = create_memo(move |_| {
         ui.dock.with(|d| match d.find(id) {
             Some(Node::Tabs { views, active, .. }) => (views.clone(), Some(*active)),
             _ => (Vec::new(), None),
         })
-    };
-    let side_bar = ui.dock.with_untracked(|d| d.side_bar()) == Some(id);
-    let header = dyn_container(views, move |(views, active)| {
-        let panel = matches!(place, Place::Before(Dir::Column) | Place::After(Dir::Column));
-        if side_bar || (views.len() == 1 && !panel) {
-            // A side bar's title (the activity bar switches its views), as VS Code's: the shown view's name.
-            let Some(v) = active else { return empty().into_any() };
-            let title = label(move || v.title().to_uppercase())
-                .style(move |s| caps(s).padding_left(20.0).height_full().items_center().color(t.get().side_title));
-            handle(ui, v, title, move || {}).into_any()
-        } else {
-            h_stack_from_iter(views.into_iter().map(|v| {
-                let on = active == Some(v);
-                let tab = v_stack((
-                    label(move || v.title().to_uppercase()).style(caps),
-                    empty().style(move |s| {
-                        let c = t.get();
-                        s.height(1.0).width_full().background(if on {
-                            c.panel_title_border
-                        } else {
-                            Color::TRANSPARENT
-                        })
-                    }),
-                ))
-                .style(move |s| {
-                    let c = t.get();
-                    s.gap(5.0)
-                        .padding_top(6.0)
-                        .margin_horiz(10.0)
-                        .cursor(CursorStyle::Pointer)
-                        .color(if on { c.panel_title } else { c.panel_title_inactive })
-                        .hover(|s| s.color(c.panel_title))
-                });
-                handle(ui, v, tab, move || ui.reveal(v))
-            }))
-            .style(|s| s.height_full())
-            .into_any()
-        }
     });
+    let shown = create_memo(move |_| views.with(|v| v.1));
+    let side_bar = ui.dock.with_untracked(|d| d.side_bar()) == Some(id);
+    let header = dyn_container(
+        move || views.get(),
+        move |(views, active)| {
+            let panel = matches!(place, Place::Before(Dir::Column) | Place::After(Dir::Column));
+            if side_bar || (views.len() == 1 && !panel) {
+                // A side bar's title (the activity bar switches its views), as VS Code's: the shown view's name.
+                let Some(v) = active else { return empty().into_any() };
+                let title = label(move || v.title().to_uppercase())
+                    .style(move |s| caps(s).padding_left(20.0).height_full().items_center().color(t.get().side_title));
+                handle(ui, v, title, move || {}).into_any()
+            } else {
+                h_stack_from_iter(views.into_iter().map(|v| {
+                    let on = active == Some(v);
+                    let tab = v_stack((
+                        label(move || v.title().to_uppercase()).style(caps),
+                        empty().style(move |s| {
+                            let c = t.get();
+                            s.height(1.0).width_full().background(if on {
+                                c.panel_title_border
+                            } else {
+                                Color::TRANSPARENT
+                            })
+                        }),
+                    ))
+                    .style(move |s| {
+                        let c = t.get();
+                        s.gap(5.0)
+                            .padding_top(6.0)
+                            .margin_horiz(10.0)
+                            .cursor(CursorStyle::Pointer)
+                            .color(if on { c.panel_title } else { c.panel_title_inactive })
+                            .hover(|s| s.color(c.panel_title))
+                    });
+                    handle(ui, v, tab, move || ui.reveal(v))
+                }))
+                .style(|s| s.height_full())
+                .into_any()
+            }
+        },
+    );
     let actions = {
         let send = send.clone();
         dyn_container(
-            move || views().1,
+            move || shown.get(),
             move |active| {
                 let send = send.clone();
                 let close = action(t, "close", move || {
@@ -393,7 +408,7 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     let title = h_stack((header.style(|s| s.flex_grow(1.0_f32).height_full()), actions))
         .style(|s| s.height(35.0).width_full().items_center().selectable(false));
     let body = dyn_container(
-        move || views().1,
+        move || shown.get(),
         move |v| match v {
             Some(v) => view_body(ui, send.clone(), v).into_any(),
             None => empty().into_any(),
@@ -581,8 +596,10 @@ pub fn overlay(ui: Ui) -> impl IntoView {
                 .box_shadow_color(c.shadow)
         })
     };
+    // Drawn again when the part pointed at or the shade changes, not at every move of the pointer.
+    let state = create_memo(move |_| ui.drag.with(|d| d.as_ref().map(|d| (d.over.map(|o| o.1), d.shade, d.view))));
     dyn_container(
-        move || ui.drag.with(|d| d.as_ref().map(|d| (d.over.map(|o| o.1), d.shade, d.view))),
+        move || state.get(),
         move |state| {
             let Some((over, shade, _)) = state else { return empty().into_any() };
             let mut parts: Vec<floem::AnyView> = Vec::new();

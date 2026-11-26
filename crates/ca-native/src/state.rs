@@ -334,7 +334,7 @@ impl Ui {
         {
             return last;
         }
-        let item = Item { id: self.id(), kind: Kind::assistant() };
+        let item = Item { id: self.id(), kind: Kind::assistant(self.scope) };
         self.items.update(|l| l.push(item.clone()));
         item
     }
@@ -890,7 +890,7 @@ impl Ui {
                 id: m["id"].as_u64().unwrap_or(0),
                 tool: s("tool"),
                 subject: s("subject"),
-                answer: create_rw_signal(None),
+                answer: self.scope.create_rw_signal(None),
             }),
             "answered" => {
                 let id = m["id"].as_u64().unwrap_or(0);
@@ -972,7 +972,7 @@ impl Ui {
                         })
                         .collect();
                     if !matches!(items.last(), Some(Item { kind: Kind::Assistant { .. }, .. })) {
-                        items.push(Item { id: self.id(), kind: Kind::assistant() });
+                        items.push(Item { id: self.id(), kind: Kind::assistant(self.scope) });
                     }
                     if let Some(Item { kind: Kind::Assistant { text: t, tools: ts, .. }, .. }) = items.last() {
                         if !text.is_empty() {
