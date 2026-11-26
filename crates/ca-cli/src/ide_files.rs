@@ -25,6 +25,7 @@ struct Term {
 /// What Coder mode needs, apart from the session: the workspace, the terminals, the stream.
 pub struct Side {
     ws: Arc<ca_workspace::Workspace>,
+    checkpoints: Arc<ca_tools::checkpoints::Checkpoints>,
     out: broadcast::Sender<String>,
     terms: Arc<Mutex<HashMap<u64, Term>>>,
     shell: PathBuf,
@@ -43,12 +44,17 @@ fn modified(meta: &std::fs::Metadata) -> u64 {
 }
 
 impl Side {
-    pub fn new(ws: Arc<ca_workspace::Workspace>, out: broadcast::Sender<String>, shell: Option<&str>) -> Side {
+    pub fn new(
+        ws: Arc<ca_workspace::Workspace>,
+        checkpoints: Arc<ca_tools::checkpoints::Checkpoints>,
+        out: broadcast::Sender<String>,
+        shell: Option<&str>,
+    ) -> Side {
         let shell = shell
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }));
-        Side { ws, out, terms: Arc::default(), shell }
+        Side { ws, checkpoints, out, terms: Arc::default(), shell }
     }
 
     /// The real path a page's path names: relative to the project, inside it.
@@ -78,6 +84,18 @@ impl Side {
             "ls" => send(&self.out, self.ls(path)),
             "open" => send(&self.out, self.open(path)),
             "save" => send(&self.out, self.save(path, m["text"].as_str().unwrap_or(""))),
+            "stat" => send(&self.out, self.stat(m)),
+            "changes" => send(&self.out, self.changes()),
+            "files" => {
+                let (root, out) = (self.ws.root().to_path_buf(), self.out.clone());
+                tokio::task::spawn_blocking(move || send(&out, files(&root)));
+            }
+            "search" => {
+                let (root, out) = (self.ws.root().to_path_buf(), self.out.clone());
+                let (query, regex, case) =
+                    (m["query"].as_str().unwrap_or("").to_string(), m["regex"] == true, m["case"] == true);
+                tokio::task::spawn_blocking(move || send(&out, search(&root, &query, regex, case)));
+            }
             "term_open" => self.term_open(m),
             "term_in" => {
                 let id = m["id"].as_u64().unwrap_or(0);
@@ -180,6 +198,47 @@ impl Side {
         json!({"type": "saved", "path": self.shown(&real), "modified": m})
     }
 
+    /// When each file was last changed (or that it is gone): open tabs are checked so when the window comes back.
+    fn stat(&self, m: &Value) -> Value {
+        let items: Vec<Value> = m["paths"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .take(500)
+            .map(|p| match self.real(p).ok().and_then(|r| std::fs::metadata(r).ok()) {
+                Some(meta) => json!({"path": p, "modified": modified(&meta)}),
+                None => json!({"path": p, "gone": true}),
+            })
+            .collect();
+        json!({"type": "stats", "items": items})
+    }
+
+    /// The files the agent changed in this run: each as it was before and as it is now (text only).
+    fn changes(&self) -> Value {
+        let text = |b: Option<Vec<u8>>| -> Option<String> {
+            let b = b?;
+            if b.len() as u64 > MOST_BYTES || b.iter().take(8000).any(|x| *x == 0) {
+                return Some("(not shown: a binary file, or one over 5 MB)".into());
+            }
+            String::from_utf8(b).ok()
+        };
+        let files: Vec<Value> = self
+            .checkpoints
+            .originals()
+            .into_iter()
+            .filter(|(p, _)| p.starts_with(self.ws.root()))
+            .filter_map(|(p, before)| {
+                let now = std::fs::read(&p).ok();
+                if now == before {
+                    return None;
+                }
+                Some(json!({"path": self.shown(&p), "before": text(before), "after": text(now)}))
+            })
+            .collect();
+        json!({"type": "changes", "files": files})
+    }
+
     fn term_open(&self, m: &Value) {
         let id = m["id"].as_u64().unwrap_or(0);
         let cols = m["cols"].as_u64().unwrap_or(80) as u16;
@@ -224,6 +283,97 @@ impl Side {
     }
 }
 
+/// The most files quick open lists, and the most hits a search gives.
+const MOST_FILES: usize = 50_000;
+const MOST_HITS: usize = 2000;
+
+/// The project's files as git sees them (its ignores kept), for quick open.
+fn walker(root: &Path) -> ignore::Walk {
+    ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(false)
+        .git_exclude(true)
+        .require_git(false)
+        .follow_links(false)
+        .sort_by_file_name(std::cmp::Ord::cmp)
+        .filter_entry(|e| e.file_name() != ".git")
+        .build()
+}
+
+fn files(root: &Path) -> Value {
+    let mut paths = Vec::new();
+    let mut more = false;
+    for e in walker(root).flatten() {
+        if !e.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        if paths.len() >= MOST_FILES {
+            more = true;
+            break;
+        }
+        if let Ok(rel) = e.path().strip_prefix(root) {
+            paths.push(rel.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    json!({"type": "files", "paths": paths, "more": more})
+}
+
+/// Each line that holds `query` (a regex when `regex`; any case unless `case`), in the files git sees.
+fn search(root: &Path, query: &str, regex: bool, case: bool) -> Value {
+    use grep_searcher::{BinaryDetection, SearcherBuilder, sinks::UTF8};
+    let fail = |e: String| json!({"type": "search", "query": query, "error": e});
+    if query.is_empty() {
+        return json!({"type": "search", "query": query, "hits": []});
+    }
+    let pattern = if regex { query.to_string() } else { regex_escape(query) };
+    let matcher = match grep_regex::RegexMatcherBuilder::new().case_insensitive(!case).build(&pattern) {
+        Ok(m) => m,
+        Err(e) => return fail(e.to_string()),
+    };
+    let mut searcher = SearcherBuilder::new().binary_detection(BinaryDetection::quit(0)).line_number(true).build();
+    let mut hits: Vec<Value> = Vec::new();
+    let mut files = 0;
+    let mut more = false;
+    'walk: for e in walker(root).flatten() {
+        if !e.file_type().is_some_and(|t| t.is_file()) || e.metadata().map(|m| m.len() > MOST_BYTES).unwrap_or(true) {
+            continue;
+        }
+        let rel = e.path().strip_prefix(root).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+        let mut found = Vec::new();
+        let _ = searcher.search_path(
+            &matcher,
+            e.path(),
+            UTF8(|line, text| {
+                found.push((line, text.trim_end().chars().take(240).collect::<String>()));
+                Ok(found.len() < MOST_HITS)
+            }),
+        );
+        if !found.is_empty() {
+            files += 1;
+        }
+        for (line, text) in found {
+            if hits.len() >= MOST_HITS {
+                more = true;
+                break 'walk;
+            }
+            hits.push(json!({"path": rel, "line": line, "text": text}));
+        }
+    }
+    json!({"type": "search", "query": query, "hits": hits, "files": files, "more": more})
+}
+
+fn regex_escape(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if "\\.+*?()|[]{}^$#&-~".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,7 +385,7 @@ mod tests {
         std::fs::write(d.path().join("blob.bin"), [0u8, 1, 2]).expect("w");
         let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
         let (out, rx) = broadcast::channel(64);
-        (d, Side::new(ws, out, None), rx)
+        (d, Side::new(ws, Arc::default(), out, None), rx)
     }
 
     #[test]
@@ -257,6 +407,59 @@ mod tests {
             std::os::unix::fs::symlink("/etc", d.path().join("etc-link")).expect("link");
             assert!(s.open("etc-link/hostname")["error"].is_string(), "a link out is refused");
         }
+    }
+
+    #[test]
+    fn quick_open_and_search_see_what_git_sees() {
+        let (d, _s, _rx) = side();
+        std::fs::write(d.path().join(".gitignore"), "target/\n").expect("w");
+        std::fs::create_dir_all(d.path().join("target")).expect("dir");
+        std::fs::write(d.path().join("target/out.rs"), "fn main() {}\n").expect("w");
+        std::fs::write(d.path().join("src/lib.rs"), "pub fn main_thing() {}\n// Main (a.b)\n").expect("w");
+        let f = files(d.path());
+        let paths: Vec<&str> = f["paths"].as_array().expect("paths").iter().filter_map(Value::as_str).collect();
+        assert!(paths.contains(&"src/main.rs") && paths.contains(&"src/lib.rs"), "{paths:?}");
+        assert!(!paths.iter().any(|p| p.starts_with("target/")), "ignored by git: {paths:?}");
+        let r = search(d.path(), "main", false, false);
+        let hits: Vec<String> = r["hits"]
+            .as_array()
+            .expect("hits")
+            .iter()
+            .map(|h| format!("{}:{}", h["path"].as_str().unwrap_or(""), h["line"]))
+            .collect();
+        assert_eq!(hits, ["src/lib.rs:1", "src/lib.rs:2", "src/main.rs:1"]);
+        // As typed: the dot and the brackets are not a pattern; with case kept, "Main" only.
+        assert_eq!(search(d.path(), "(a.b)", false, false)["hits"].as_array().map(Vec::len), Some(1));
+        assert_eq!(search(d.path(), "Main", false, true)["hits"].as_array().map(Vec::len), Some(1));
+        assert!(search(d.path(), "(", true, false)["error"].is_string());
+    }
+
+    #[test]
+    fn the_agents_changes_are_each_file_before_and_now() {
+        let d = tempfile::tempdir().expect("temp");
+        std::fs::write(d.path().join("a.txt"), "one\n").expect("w");
+        let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
+        let cps = Arc::new(ca_tools::checkpoints::Checkpoints::default());
+        let (out, _rx) = broadcast::channel(8);
+        let s = Side::new(ws.clone(), cps.clone(), out, None);
+        cps.begin(0);
+        let a = ws.resolve("a.txt").expect("a");
+        cps.before_write(&a);
+        std::fs::write(&a, "two\n").expect("w");
+        let b = ws.resolve("b.txt").expect("b");
+        cps.before_write(&b);
+        std::fs::write(&b, "new\n").expect("w");
+        let c = s.changes();
+        let files = c["files"].as_array().expect("files");
+        assert_eq!(files.len(), 2);
+        assert_eq!(
+            (files[0]["path"].as_str(), files[0]["before"].as_str(), files[0]["after"].as_str()),
+            (Some("a.txt"), Some("one\n"), Some("two\n"))
+        );
+        assert!(files[1]["before"].is_null() && files[1]["after"] == "new\n");
+        // Put back as it was: no longer a change.
+        std::fs::write(&a, "one\n").expect("w");
+        assert_eq!(s.changes()["files"].as_array().map(Vec::len), Some(1));
     }
 
     #[cfg(unix)]

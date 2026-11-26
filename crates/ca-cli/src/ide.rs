@@ -248,7 +248,12 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
     let mut p = session::prepare(app, &Opts { interactive: true, ..args.opts.clone() }, approver, args.resume).await?;
     let inbox = Arc::new(Mutex::new(Vec::<String>::new()));
     p.agent.inbox = Some(inbox.clone());
-    let side = crate::ide_files::Side::new(p.agent.ctx.workspace.clone(), out.clone(), app.settings.env().get("SHELL"));
+    let side = crate::ide_files::Side::new(
+        p.agent.ctx.workspace.clone(),
+        p.agent.ctx.checkpoints.clone(),
+        out.clone(),
+        app.settings.env().get("SHELL"),
+    );
     let kept = keep_address(&app.paths.data, &server.url);
     ui.say(&format!("{} {} · {} · {}", ui.bold(ca_core::PRODUCT), ca_core::VERSION, p.agent.model, ui.dim(&p.folder)));
     ui.say(&format!("The IDE: {}", server.url));

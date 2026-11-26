@@ -19,6 +19,12 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   change by its changed lines only (the cursor stays). Terminals in a panel (xterm.js on a
   pseudo-terminal, your shell, as many as you open; not on Windows yet). The agent stays beside
   them. Coder mode loads only when it is first opened, so Agent mode's page stays small.
+- Coder mode's side bar has Files, Search and Changes. Search looks through the files git sees (its
+  ignores kept), as typed or as a regular expression, any case or matching it, and opens a result
+  at its line (Ctrl+Shift+F). Changes lists the files the agent changed in this run, each opened
+  as a diff of before and now. Ctrl+P finds a file by the letters of its name. Back in the
+  window, open files changed on disk are read again; one with changes of yours asks first (Take
+  the disk's, Keep mine), and one gone says so.
 - The editor opens only plain text files inside the project, up to 5 MB: paths come relative to
   the project, each part resolved as the system resolves it (a link leading out is refused), and
   a pipe, a device or a binary file is not opened.

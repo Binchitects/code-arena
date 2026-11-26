@@ -97,6 +97,20 @@ impl Checkpoints {
         self.inner.lock().map(|g| g.turns.contains_key(&seq)).unwrap_or(false)
     }
 
+    /// Each file the agent wrote in this run, as it was before the first of those writes (`None`: it was not there):
+    /// what the agent's changes are compared with.
+    pub fn originals(&self) -> Vec<(PathBuf, Option<Vec<u8>>)> {
+        let Ok(g) = self.inner.lock() else { return vec![] };
+        let mut out: BTreeMap<PathBuf, Option<Vec<u8>>> = BTreeMap::new();
+        // The earliest turn's copy of a file wins: later ones hold what an earlier turn already changed.
+        for files in g.turns.values().rev() {
+            for (p, before) in files {
+                out.insert(p.clone(), before.clone());
+            }
+        }
+        out.into_iter().collect()
+    }
+
     /// The files that would change going back to before the turn at `seq`: each with whether it would be
     /// removed (a turn made it).
     pub fn preview(&self, seq: i64) -> Vec<(PathBuf, bool)> {
@@ -171,6 +185,8 @@ mod tests {
         c.before_write(&made);
         std::fs::write(&made, "new").expect("w");
         assert_eq!(c.preview(4), vec![(a.clone(), false), (made.clone(), true)]);
+        // What the changes are compared with: a.txt as before the first turn, made.txt as not there.
+        assert_eq!(c.originals(), vec![(a.clone(), Some(b"one".to_vec())), (made.clone(), None)]);
         let r = c.rewind(4);
         assert_eq!(std::fs::read_to_string(&a).expect("r"), "three");
         assert!(!made.exists());

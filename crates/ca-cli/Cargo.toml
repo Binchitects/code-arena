@@ -14,6 +14,9 @@ path = "src/main.rs"
 [dependencies]
 ca-server.workspace = true
 ca-pty.workspace = true
+ignore.workspace = true
+grep-regex.workspace = true
+grep-searcher.workspace = true
 ca-agent.workspace = true
 ca-arena.workspace = true
 ca-core.workspace = true

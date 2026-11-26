@@ -13,12 +13,31 @@ import { listen, send, session } from "./stream";
 (self as any).MonacoEnvironment = { getWorker: () => new EditorWorker() };
 
 type Entry = { name: string; dir: boolean; link: boolean };
-type Tab = { path: string; dirty: boolean; error?: string };
+type Tab = { path: string; dirty: boolean; error?: string; diff?: boolean; onDisk?: "changed" | "gone" };
+type Hit = { path: string; line: number; text: string };
+type Change = { path: string; before: string | null; after: string | null };
 
 const [tree, setTree] = createStore<Record<string, Entry[] | { error: string }>>({});
 const [open, setOpen] = createStore<Record<string, boolean>>({ "": true });
 const [tabs, setTabs] = createStore<Tab[]>([]);
 const [active, setActive] = createSignal("");
+const [view, setView] = createSignal<"files" | "search" | "changes">("files");
+const [found, setFound] = createStore<{ query: string; hits: Hit[]; files: number; more: boolean; error?: string; busy: boolean }>(
+  { query: "", hits: [], files: 0, more: false, busy: false },
+);
+const [changes, setChanges] = createStore<Change[]>([]);
+const [quick, setQuick] = createStore<{ open: boolean; paths: string[]; text: string; at: number }>({
+  open: false,
+  paths: [],
+  text: "",
+  at: 0,
+});
+/** When each open file was last read or saved, as the disk said: compared when the window comes back. */
+const modifiedAt = new Map<string, number>();
+/** Where a file opened from a search should show. */
+const goTo = new Map<string, number>();
+/** The diff tabs' models: before and now. */
+const diffs = new Map<string, { before: monaco.editor.ITextModel; after: monaco.editor.ITextModel }>();
 
 /** Each open file's model, and the version it was saved (or read) at. */
 const models = new Map<string, { model: monaco.editor.ITextModel; saved: number }>();
@@ -51,14 +70,56 @@ function setDirty(path: string, dirty: boolean) {
   setTabs((t) => t.path === path, "dirty", dirty);
 }
 
-function openFile(path: string) {
+function openFile(path: string, line?: number) {
   if (!tabs.some((t) => t.path === path)) setTabs(produce((l) => void l.push({ path, dirty: false })));
   setActive(path);
+  if (line) goTo.set(path, line);
   if (!models.has(path)) send({ type: "open", path });
+  else showModel(path);
+}
+
+/** A file's language as Monaco names it, by its name or extension ("plaintext" when none is known). */
+function languageOf(path: string): string {
+  const name = path.split("/").pop() ?? "";
+  const lower = name.toLowerCase();
+  for (const l of monaco.languages.getLanguages()) {
+    if (l.filenames?.some((f) => f.toLowerCase() === lower)) return l.id;
+    if (l.extensions?.some((e) => lower.endsWith(e.toLowerCase()))) return l.id;
+  }
+  return "plaintext";
+}
+
+/** A file the agent changed, before and now, in a tab of its own. */
+function openDiff(c: Change) {
+  const key = `Δ ${c.path}`;
+  diffs.get(key)?.before.dispose();
+  diffs.get(key)?.after.dispose();
+  const uri = (side: string) => monaco.Uri.from({ scheme: "diff", path: `/${side}/${c.path}` });
+  const language = languageOf(c.path);
+  diffs.set(key, {
+    before: monaco.editor.createModel(c.before ?? "", language, uri("before")),
+    after: monaco.editor.createModel(c.after ?? "", language, uri("after")),
+  });
+  if (!tabs.some((t) => t.path === key)) setTabs(produce((l) => void l.push({ path: key, dirty: false, diff: true })));
+  setActive(key);
+  showModel(key);
+}
+
+/** Back in the window: the open files are asked when they last changed, and the open folders listed again. */
+function checkDisk() {
+  const paths = tabs.filter((t) => !t.diff).map((t) => t.path);
+  if (paths.length) send({ type: "stat", paths });
+  for (const [path, isOpen] of Object.entries(open)) if (isOpen) send({ type: "ls", path });
+  setQuick("paths", []);
 }
 
 function closeTab(path: string) {
   const t = tabs.find((x) => x.path === path);
+  if (t?.diff) {
+    diffs.get(path)?.before.dispose();
+    diffs.get(path)?.after.dispose();
+    diffs.delete(path);
+  }
   if (t?.dirty && !confirm(`${path} has changes not saved. Close it anyway?`)) return;
   const i = tabs.findIndex((x) => x.path === path);
   setTabs(produce((l) => void l.splice(i, 1)));
@@ -82,6 +143,8 @@ listen((m) => {
         setTabs((t) => t.path === m.path, "error", m.error);
         break;
       }
+      modifiedAt.set(m.path, m.modified);
+      setTabs((t) => t.path === m.path, "onDisk", undefined);
       const had = models.get(m.path);
       if (had) {
         // Read again (the agent changed it): taken in only when the tab has no changes of its own.
@@ -100,12 +163,37 @@ listen((m) => {
       if (active() === m.path) showModel(m.path);
       break;
     }
+    case "files":
+      setQuick("paths", m.paths);
+      break;
+    case "search":
+      if (m.query === found.query) setFound({ hits: m.hits ?? [], files: m.files ?? 0, more: !!m.more, error: m.error, busy: false });
+      break;
+    case "changes":
+      setChanges(m.files);
+      break;
+    case "stats":
+      for (const it of m.items) {
+        const known = modifiedAt.get(it.path);
+        const dirty = tabs.find((t) => t.path === it.path)?.dirty;
+        if (it.gone) setTabs((t) => t.path === it.path, "onDisk", "gone");
+        else if (known !== undefined && it.modified !== known) {
+          if (dirty) setTabs((t) => t.path === it.path, "onDisk", "changed");
+          else send({ type: "open", path: it.path });
+        }
+      }
+      break;
+    case "turn_end":
+      if (view() === "changes") send({ type: "changes" });
+      break;
     case "saved": {
       const had = models.get(m.path);
       if (m.error) alert(`${m.path} was not saved: ${m.error}`);
       else if (had) {
         had.saved = had.model.getAlternativeVersionId();
+        modifiedAt.set(m.path, m.modified);
         setDirty(m.path, false);
+        setTabs((t) => t.path === m.path, "onDisk", undefined);
       }
       break;
     }
@@ -119,11 +207,23 @@ listen((m) => {
 });
 
 let editor: monaco.editor.IStandaloneCodeEditor | undefined;
+let differ: monaco.editor.IStandaloneDiffEditor | undefined;
 
 function showModel(path: string) {
+  const d = diffs.get(path);
+  if (d) {
+    differ?.setModel({ original: d.before, modified: d.after });
+    return;
+  }
   const m = models.get(path);
   if (editor && m) {
     editor.setModel(m.model);
+    const line = goTo.get(path);
+    if (line) {
+      goTo.delete(path);
+      editor.setPosition({ lineNumber: line, column: 1 });
+      editor.revealLineInCenter(line);
+    }
     editor.focus();
   }
 }
@@ -174,7 +274,17 @@ function Folder(props: { path: string; depth: number }) {
 
 function Editor() {
   let host!: HTMLDivElement;
+  let diffHost!: HTMLDivElement;
+  const current = () => tabs.find((t) => t.path === active());
   onMount(() => {
+    differ = monaco.editor.createDiffEditor(diffHost, {
+      automaticLayout: true,
+      readOnly: true,
+      originalEditable: false,
+      theme: dark() ? "vs-dark" : "vs",
+      fontSize: 13,
+      renderSideBySide: true,
+    });
     editor = monaco.editor.create(host, {
       model: null,
       automaticLayout: true,
@@ -186,6 +296,7 @@ function Editor() {
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       if (active()) save(active());
     });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => openQuick());
     const scheme = window.matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => monaco.editor.setTheme(dark() ? "vs-dark" : "vs");
     scheme.addEventListener("change", onScheme);
@@ -194,6 +305,8 @@ function Editor() {
       scheme.removeEventListener("change", onScheme);
       editor?.dispose();
       editor = undefined;
+      differ?.dispose();
+      differ = undefined;
     });
   });
   return (
@@ -211,6 +324,7 @@ function Editor() {
                 }}
               >
                 {t.path.split("/").pop()}
+                {t.diff ? " (changes)" : ""}
                 <Show when={t.dirty}>
                   <span class="dirty" aria-label="changed"> ●</span>
                 </Show>
@@ -222,13 +336,40 @@ function Editor() {
           )}
         </For>
       </div>
-      <Show when={tabs.find((t) => t.path === active())?.error}>
+      <Show when={current()?.error}>
         {(e) => <div class="editor-error">{active()}: {e()}</div>}
       </Show>
-      <Show when={!tabs.length}>
-        <div class="editor-empty muted">Open a file from the tree. Ctrl+S saves it.</div>
+      <Show when={current()?.onDisk}>
+        {(why) => (
+          <div class="disk-bar" role="status">
+            <Show
+              when={why() === "changed"}
+              fallback={<span>{active()} is gone from the disk: saving makes it again.</span>}
+            >
+              <span>{active()} changed on disk, and has changes of yours.</span>
+              <button
+                class="small"
+                onClick={() => {
+                  const had = models.get(active());
+                  if (had) had.saved = had.model.getAlternativeVersionId();
+                  setDirty(active(), false);
+                  send({ type: "open", path: active() });
+                }}
+              >
+                Take the disk's
+              </button>
+              <button class="quiet small" onClick={() => setTabs((t) => t.path === active(), "onDisk", undefined)}>
+                Keep mine
+              </button>
+            </Show>
+          </div>
+        )}
       </Show>
-      <div class="monaco" ref={host} classList={{ hidden: !tabs.length || !!tabs.find((t) => t.path === active())?.error }} />
+      <Show when={!tabs.length}>
+        <div class="editor-empty muted">Open a file from the tree, or Ctrl+P to find one. Ctrl+S saves it.</div>
+      </Show>
+      <div class="monaco" ref={host} classList={{ hidden: !tabs.length || !!current()?.error || !!current()?.diff }} />
+      <div class="monaco" ref={diffHost} classList={{ hidden: !current()?.diff }} />
     </div>
   );
 }
@@ -318,17 +459,215 @@ function Term(props: { id: number; visible: boolean; onExit: () => void }) {
   return <div class="term" ref={host} classList={{ hidden: !props.visible }} />;
 }
 
+function SearchView() {
+  let input!: HTMLInputElement;
+  const [regex, setRegex] = createSignal(false);
+  const [kase, setKase] = createSignal(false);
+  const run = () => {
+    const q = input.value;
+    setFound({ query: q, hits: [], files: 0, more: false, error: undefined, busy: !!q });
+    if (q) send({ type: "search", query: q, regex: regex(), case: kase() });
+  };
+  const byFile = () => {
+    const out: { path: string; hits: Hit[] }[] = [];
+    for (const h of found.hits) {
+      const last = out[out.length - 1];
+      if (last?.path === h.path) last.hits.push(h);
+      else out.push({ path: h.path, hits: [h] });
+    }
+    return out;
+  };
+  onMount(() => input.focus());
+  return (
+    <div class="search-view">
+      <form
+        class="search-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          run();
+        }}
+      >
+        <input ref={input} value={found.query} placeholder="Search the files" aria-label="Search the files" />
+        <button type="button" class="toggle" classList={{ on: kase() }} title="Match case" aria-pressed={kase()} onClick={() => setKase(!kase())}>
+          Aa
+        </button>
+        <button type="button" class="toggle" classList={{ on: regex() }} title="Regular expression" aria-pressed={regex()} onClick={() => setRegex(!regex())}>
+          .*
+        </button>
+      </form>
+      <Show when={found.busy}>
+        <div class="muted small-pad">Searching…</div>
+      </Show>
+      <Show when={found.error}>{(e) => <div class="error-text small-pad">{e()}</div>}</Show>
+      <Show when={!found.busy && found.query && !found.error}>
+        <div class="muted small-pad">
+          {found.hits.length} result{found.hits.length === 1 ? "" : "s"} in {found.files} file{found.files === 1 ? "" : "s"}
+          {found.more ? " (the first ones)" : ""}
+        </div>
+      </Show>
+      <For each={byFile()}>
+        {(f) => (
+          <div class="hit-file">
+            <div class="hit-path" title={f.path}>{f.path}</div>
+            <For each={f.hits}>
+              {(h) => (
+                <button class="hit" onClick={() => openFile(h.path, h.line)}>
+                  <span class="hit-line">{h.line}</span>
+                  <span class="hit-text">{h.text.trim()}</span>
+                </button>
+              )}
+            </For>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
+function ChangesView() {
+  onMount(() => send({ type: "changes" }));
+  return (
+    <div class="changes-view">
+      <Show when={changes.length} fallback={<div class="muted small-pad">The agent has changed no file in this run.</div>}>
+        <For each={changes}>
+          {(c) => (
+            <button class="tree-row" onClick={() => openDiff(c)} title={c.path}>
+              <span class="badge" classList={{ added: c.before === null, removed: c.after === null }}>
+                {c.before === null ? "A" : c.after === null ? "D" : "M"}
+              </span>
+              <span class="name">{c.path}</span>
+            </button>
+          )}
+        </For>
+      </Show>
+    </div>
+  );
+}
+
+/** How well `text` matches `path`: its letters in order, closer and in the file's name better; -1 when not. */
+export function score(path: string, text: string): number {
+  const p = path.toLowerCase();
+  const t = text.toLowerCase().replace(/\s+/g, "");
+  if (!t) return 0;
+  let at = 0;
+  let total = 0;
+  let last = -1;
+  const nameAt = p.lastIndexOf("/") + 1;
+  for (const c of t) {
+    const i = p.indexOf(c, at);
+    if (i < 0) return -1;
+    total += i === last + 1 ? 3 : 1;
+    if (i >= nameAt) total += 2;
+    last = i;
+    at = i + 1;
+  }
+  return total * 100 - p.length;
+}
+
+function openQuick() {
+  setQuick({ open: true, text: "", at: 0 });
+  if (!quick.paths.length) send({ type: "files" });
+}
+
+function QuickOpen() {
+  let input!: HTMLInputElement;
+  const list = () =>
+    quick.paths
+      .map((p) => ({ p, s: score(p, quick.text) }))
+      .filter((x) => x.s >= 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 50)
+      .map((x) => x.p);
+  const choose = (p?: string) => {
+    setQuick("open", false);
+    if (p) openFile(p);
+  };
+  onMount(() => input.focus());
+  return (
+    <div class="quick-back" onClick={() => setQuick("open", false)}>
+      <div class="quick" role="dialog" aria-label="Go to a file" onClick={(e) => e.stopPropagation()}>
+        <input
+          ref={input}
+          placeholder={quick.paths.length ? `Go to a file (${quick.paths.length.toLocaleString()})` : "Listing the files…"}
+          value={quick.text}
+          aria-label="Go to a file"
+          onInput={(e) => setQuick({ text: e.currentTarget.value, at: 0 })}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setQuick("open", false);
+            else if (e.key === "ArrowDown") setQuick("at", Math.min(quick.at + 1, list().length - 1));
+            else if (e.key === "ArrowUp") setQuick("at", Math.max(quick.at - 1, 0));
+            else if (e.key === "Enter") choose(list()[quick.at]);
+            else return;
+            e.preventDefault();
+          }}
+        />
+        <ul class="quick-list">
+          <For each={list()}>
+            {(p, i) => (
+              <li>
+                <button classList={{ at: i() === quick.at }} onClick={() => choose(p)}>
+                  <span class="name">{p.split("/").pop()}</span>
+                  <span class="muted"> {p}</span>
+                </button>
+              </li>
+            )}
+          </For>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 /** Coder mode, with the agent's thread and box (given by Agent mode) beside the editor. */
 export default function Coder(props: { agent: () => JSX.Element }) {
   const [panel, setPanel] = createSignal(true);
+  onMount(() => {
+    const keys = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && !e.shiftKey) {
+        e.preventDefault();
+        openQuick();
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setView("search");
+      }
+    };
+    window.addEventListener("keydown", keys);
+    window.addEventListener("focus", checkDisk);
+    onCleanup(() => {
+      window.removeEventListener("keydown", keys);
+      window.removeEventListener("focus", checkDisk);
+    });
+  });
   return (
     <div class="coder">
-      <nav class="side" aria-label="Explorer">
-        <div class="side-head">{session.root || "Project"}</div>
-        <div class="tree">
-          <Folder path="" depth={0} />
+      <nav class="side" aria-label="Side bar">
+        <div class="views" role="tablist">
+          <button role="tab" aria-selected={view() === "files"} classList={{ on: view() === "files" }} onClick={() => setView("files")}>
+            Files
+          </button>
+          <button role="tab" aria-selected={view() === "search"} classList={{ on: view() === "search" }} onClick={() => setView("search")}>
+            Search
+          </button>
+          <button role="tab" aria-selected={view() === "changes"} classList={{ on: view() === "changes" }} onClick={() => setView("changes")}>
+            Changes
+          </button>
         </div>
+        <Show when={view() === "files"}>
+          <div class="side-head">{session.root || "Project"}</div>
+          <div class="tree">
+            <Folder path="" depth={0} />
+          </div>
+        </Show>
+        <Show when={view() === "search"}>
+          <SearchView />
+        </Show>
+        <Show when={view() === "changes"}>
+          <ChangesView />
+        </Show>
       </nav>
+      <Show when={quick.open}>
+        <QuickOpen />
+      </Show>
       <div class="center">
         <Editor />
         <div class="panel-bar">
