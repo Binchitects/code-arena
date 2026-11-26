@@ -239,6 +239,8 @@ mod tests {
         std::fs::create_dir_all(home.join(".ssh")).expect("mkdir");
         std::fs::create_dir_all(home.join(".cache")).expect("mkdir");
         std::fs::write(home.join(".netrc"), "x").expect("write");
+        // Where they really are (on macOS the temporary folder is under /private).
+        let (work, home) = (std::fs::canonicalize(&work).expect("canon"), std::fs::canonicalize(&home).expect("canon"));
         let s = Sandbox::new(
             Kind::Bubblewrap("/usr/bin/bwrap".into()),
             false,
@@ -297,7 +299,10 @@ mod tests {
     #[test]
     fn a_real_sandbox_keeps_writes_inside() {
         let Ok(kind) = find() else { return };
-        let d = tempfile::tempdir().expect("temp");
+        // Not in a temporary folder: commands may write the system's (on macOS, $TMPDIR under /var/folders).
+        let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target");
+        std::fs::create_dir_all(&target).expect("target");
+        let d = tempfile::tempdir_in(&target).expect("temp");
         let work = d.path().join("work");
         let outside = d.path().join("outside");
         let secret = d.path().join("secret");
