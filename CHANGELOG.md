@@ -3,6 +3,11 @@
 Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
 versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
 
+## Unreleased (0.5.0)
+
+### Added
+- The build image has Node 22 and npm, for the IDE's page (`web/`).
+
 ## 0.4.0 (2026-11-26)
 
 ### Added

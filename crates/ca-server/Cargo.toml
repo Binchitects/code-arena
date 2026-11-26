@@ -1,0 +1,19 @@
+[package]
+name = "ca-server"
+description = "The IDE's server: its page, its API and its live streams, for this machine only."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+tokio = { workspace = true }
+tokio-tungstenite = "0.26"
+serde_json.workspace = true

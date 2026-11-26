@@ -2,3 +2,6 @@
 /dist
 *.json.tmp
 /.cargo-home
+/.cache
+/web/node_modules
+/web/dist

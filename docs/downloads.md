@@ -2,6 +2,8 @@
 
 Each needs the person's yes before it is fetched. Sizes from the registries' own metadata (unpacked), 2026-11-26.
 
+**Fetched on 2026-11-26** with the person's yes: Node 22.23.5 (its own tarball, Docker Hub refused the image through the proxy), the npm packages below (83 in all with their own, 208 MB in npm's cache, 181 MB installed: monaco-editor 84 MB, TypeScript 7's native compiler 27 MB, rolldown 21 MB), and tokio-tungstenite with 16 small crates (0.9 MB). solid-js is 1.9.20, not 2.0.4: vite-plugin-solid supports Solid 2 only in a prerelease.
+
 ## The IDE (Agent mode, Coder mode): the milestones after the terminal harness
 
 | what | version | size | for |

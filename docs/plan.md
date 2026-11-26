@@ -426,7 +426,7 @@ the same inputs, so each number has a "before".
 ```
 Cargo.toml            workspace
 crates/ca-*/          the crates above
-web/                  the IDE's page (pnpm, Vite, SolidJS)
+web/                  the IDE's page (npm, Vite, SolidJS)
 bench/                benches and perf fixtures
 tests/compat/         recorded Arena 8.0 and 8.1 answers, contract tests
 docker/builder/       the build image
@@ -441,7 +441,7 @@ CHANGELOG.md
 
 - the pinned Rust toolchain (1.100.0), rustfmt and clippy, and the musl target, so the Linux
   binary is static and runs on any distribution;
-- Node and pnpm for the page, once there is one (0.4);
+- Node (22, its own build checked by its SHA-256) and npm for the page;
 - `scripts/in-builder.sh make dist` writes `dist/` with the package and `SHA256SUMS`.
 
 Windows and macOS builds come from their own CI runners. Cross-building Windows from Linux
