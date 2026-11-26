@@ -260,6 +260,16 @@ pub static SYNC_CHATS: Setting = Setting {
     section: "Arena",
 };
 
+pub static PROJECT_MEMORY: Setting = Setting {
+    key: "memory.project",
+    kind: Kind::Bool,
+    default: "true",
+    description: "The project's long memory in the repository (.remember/MEMORY.md and topic files): read at each session's start and kept current by the agent with remember_project. Off: neither read nor written.",
+    scope: Scope::User,
+    env: None,
+    section: "Memory",
+};
+
 pub static SERVER_WAIT: Setting = Setting {
     key: "mcp.startWait",
     kind: Kind::Integer { min: 0, max: 120 },
@@ -343,6 +353,7 @@ pub static ALL: &[&Setting] = &[
     &TOOL_CHARS,
     &SERVER_WAIT,
     &SYNC_CHATS,
+    &PROJECT_MEMORY,
     &SANDBOX,
     &SANDBOX_NETWORK,
     &SANDBOX_WRITABLE,

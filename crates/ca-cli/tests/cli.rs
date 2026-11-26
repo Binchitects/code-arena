@@ -123,6 +123,8 @@ async fn doctor_tells_an_8_0_arena_by_its_answers() {
         Mock::given(path(p)).respond_with(not_there()).mount(&arena).await;
     }
     Mock::given(method("PUT")).respond_with(not_there()).mount(&arena).await;
+    // 8.0 has no route that makes a checklist.
+    Mock::given(method("POST")).and(path("/api/code-arena/checklists")).respond_with(not_there()).mount(&arena).await;
     Mock::given(path("/api/info"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"name": "Arena", "version": "8.0.0"})))
         .mount(&arena)
@@ -733,4 +735,62 @@ async fn a_checklist_on_in_the_chat_is_told_and_ticked() {
     let asked = String::from_utf8_lossy(&requests.last().expect("one").body).to_string();
     assert!(asked.contains("The person turned on a checklist"), "{asked}");
     assert!(asked.contains("1. [x] the tests pass (cargo test: 3 passed)"), "{asked}");
+}
+
+#[tokio::test]
+async fn arenas_memory_starts_the_session_and_what_matters_comes_with_a_message() {
+    let gateway = MockServer::start().await;
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(path("/v1/chat/completions")).respond_with(Heard(heard.clone())).mount(&gateway).await;
+    let arena = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/memories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"on": true, "note": "- The person likes short answers.", "inNote": ["m1"], "memories": []}),
+        ))
+        .mount(&arena)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/memories/recall"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "note": "(Memories that may matter to this question; use them where they help:\n- Releases are cut from main.)",
+            "memories": [{"id": "m2", "text": "Releases are cut from main."}]
+        })))
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).mount(&arena).await;
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let out = code_arena(home.path())
+        .args(["-p", "how do we release?", "-C"])
+        .arg(project.path())
+        .env("ARENA_URL", arena.uri())
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let heard = heard.lock().expect("heard");
+    let asked = heard.first().expect("asked").to_string();
+    assert!(asked.contains("# Memory\\n\\n- The person likes short answers."), "{asked}");
+    assert!(asked.contains("Releases are cut from main."), "{asked}");
+    let tools: Vec<String> = heard[0]["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap_or("").to_string())
+        .collect();
+    for t in [
+        "remember",
+        "recall",
+        "remember_project",
+        "skill_save",
+        "search_history",
+        "open_chat",
+        "plan",
+        "checklist_check",
+    ] {
+        assert!(tools.iter().any(|x| x == t), "{t} in {tools:?}");
+    }
 }

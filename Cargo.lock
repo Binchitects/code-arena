@@ -195,6 +195,7 @@ dependencies = [
  "ca-core",
  "ca-llm",
  "ca-mcp",
+ "ca-memory",
  "ca-session",
  "ca-settings",
  "ca-sync",
@@ -249,6 +250,23 @@ dependencies = [
  "reqwest",
  "serde_json",
  "thiserror",
+ "tokio",
+ "wiremock",
+]
+
+[[package]]
+name = "ca-memory"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "ca-arena",
+ "ca-core",
+ "ca-llm",
+ "ca-tools",
+ "ca-workspace",
+ "chrono",
+ "serde_json",
+ "tempfile",
  "tokio",
  "wiremock",
 ]

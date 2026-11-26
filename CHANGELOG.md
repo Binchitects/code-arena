@@ -60,6 +60,26 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   tick N`, `untick N`, `off`; `new NAME: a; b`, `edit N: a; b` and `delete N` on an Arena that
   has them (8.1 on). A resumed session with a checklist on tells the model again.
 
+- Memory. Signed in, Arena's memory, the web chat's too: the person's for every project, the
+  project's by its repository's key (its `origin` remote, `host/group/name`, so every clone
+  shares it), the company's. A session starts with Arena's block (pinned, the company's, the
+  newest), and each message brings what is remembered that matters to it (not what came before).
+  `remember` (a fact, preference, decision, how-to or lesson; for this project or, with scope
+  person, every project) and `recall` for the model; `/memory`, `/memory forget N` and
+  `/remember [--person] TEXT` for you. Without Arena: `memory.md` in the config folder and this
+  project's file in the data folder (never in the repository), with what Arena last gave; they go
+  to Arena when it next answers. An Arena that denies `feature.memory` gets nothing remembered
+  or recalled, and the model is not offered it.
+- The project's long memory in the repository, `.remember/MEMORY.md` with topic files: read at
+  each session's start, kept current by the model with `remember_project` (a section added to
+  or replaced), shared with the team when committed (`memory.project`, on).
+- `skill_save`: a way of doing something worked out in a session, kept as a skill: the project's
+  (`.code-arena/skills/NAME/SKILL.md`) or, with scope person, yours in Arena (for every project and
+  the web chat). After a turn of 8 steps or more, the next is reminded of it.
+- `search_history` and `open_chat`: your past chats and sessions in Arena, found by what they
+  were about.
+- A session's chat in Arena names its project by the same key.
+
 ### Fixed
 - `doctor` would have said Arena 8.1 lacks `checklists.edit`: its probe asked to change an unknown
   checklist, which 8.1 answers with the same plain 404 as 8.0's missing route. It now asks to

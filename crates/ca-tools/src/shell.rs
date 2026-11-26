@@ -45,9 +45,11 @@ pub fn shell_for(setting: Option<&str>) -> (String, Vec<String>) {
     if which("bash") { ("bash".into(), vec!["-c".into()]) } else { ("sh".into(), vec!["-c".into()]) }
 }
 
-fn which(name: &str) -> bool {
+/// Whether a program is on PATH (on Windows with its usual endings too).
+pub(crate) fn which(name: &str) -> bool {
+    let ends: &[&str] = if cfg!(windows) { &["", ".exe", ".cmd", ".bat", ".com"] } else { &[""] };
     std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .any(|d| d.is_absolute() && d.join(name).is_file())
+        .any(|d| d.is_absolute() && ends.iter().any(|e| d.join(format!("{name}{e}")).is_file()))
 }
 
 /// What an exit code past 128 says: the signal that ended the command.

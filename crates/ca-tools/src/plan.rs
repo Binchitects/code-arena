@@ -518,14 +518,7 @@ pub fn is_command(check: &str, root: &std::path::Path) -> bool {
         let p = std::path::Path::new(first);
         return if p.is_absolute() { p.exists() } else { root.join(p).exists() };
     }
-    let exts: Vec<String> = if cfg!(windows) {
-        std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into()).split(';').map(str::to_string).collect()
-    } else {
-        vec![String::new()]
-    };
-    std::env::var_os("PATH")
-        .map(|path| std::env::split_paths(&path).any(|d| exts.iter().any(|e| d.join(format!("{first}{e}")).is_file())))
-        .unwrap_or(false)
+    crate::shell::which(first)
 }
 
 /// What the session does when the plan changes: keep it, and send it to Arena.

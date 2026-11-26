@@ -57,6 +57,9 @@ pub struct Prepared {
     pub notices: Notices,
     /// Words a command says to the agent as the person's next message (a plan's review).
     pub said_next: Option<String>,
+    pub memory: Arc<ca_memory::Memory>,
+    /// The last turn was long: the next is reminded to keep what it worked out.
+    pub nudge: bool,
 }
 
 /// Lines to say at the next prompt: each with whether it is a problem.
@@ -73,6 +76,59 @@ pub async fn begin_turn(p: &mut Prepared, ui: crate::ui::Ui) {
     if taken.any() {
         reload_history(p);
     }
+}
+
+/// Before the person's message: what is remembered that matters to it (a few hundred tokens at most), and after a long
+/// turn the reminder to keep what it worked out.
+pub async fn before_message(p: &mut Prepared, message: &str) {
+    if let Some(note) = p.memory.recall(message, 1_500).await {
+        p.agent.note(note);
+    }
+    if std::mem::take(&mut p.nudge) {
+        p.agent.note("(Code Arena: the last turn was a long one. If it worked out a way of doing something worth doing again, keep it as a skill with skill_save; a lasting fact about this project, with remember_project.)".into());
+    }
+}
+
+/// What `/memory` and `/remember` do.
+pub async fn memory_command(p: &mut Prepared, name: &str, rest: &str, ui: crate::ui::Ui) -> String {
+    let m = p.memory.clone();
+    if m.denied() {
+        return ca_memory::DENIED.into();
+    }
+    if name == "/remember" {
+        let (person, text) = match rest.strip_prefix("--person") {
+            Some(t) => (true, t.trim()),
+            None => (false, rest),
+        };
+        return match m.remember(person, text, "fact").await {
+            Ok((true, place)) => format!("Remembered {place}."),
+            Ok((false, place)) => format!("Already remembered {place}."),
+            Err(e) => e,
+        };
+    }
+    if let Some(n) = rest.strip_prefix("forget").map(str::trim) {
+        return match n.parse::<usize>() {
+            Ok(n) => match m.forget(n).await {
+                Ok(t) => format!("Forgot: {t}"),
+                Err(e) => e,
+            },
+            Err(_) => "/memory forget N: the number /memory gives it.".into(),
+        };
+    }
+    let all = m.listed();
+    let mut out = vec![if m.online() {
+        format!("Arena's memory (the web chat's too), for {}:", m.project_key)
+    } else {
+        "Kept on this machine (it goes to Arena when Code Arena next reaches it):".into()
+    }];
+    if all.is_empty() {
+        out.push(ui.dim("  nothing yet: the agent keeps what a later session should know with remember, and you with /remember TEXT."));
+    }
+    for (i, (_, scope, text)) in all.iter().enumerate() {
+        out.push(format!("{:>3}. {text}  {}", i + 1, ui.dim(&format!("({scope})"))));
+    }
+    out.push(ui.dim("/memory forget N forgets one; /remember TEXT keeps one for this project (/remember --person TEXT for every project)."));
+    out.join("\n")
 }
 
 /// What the model reads, from the session's store again (after the web's messages came in).
@@ -430,7 +486,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     store.set_model(&session, &model, mode.name())?;
     let store = Arc::new(Mutex::new(store));
     let notices: Notices = Arc::new(Mutex::new(Vec::new()));
-    let sync = start_sync(app, &store, &session, &folder, &model, &notices);
+    let sync = start_sync(app, &store, &session, &folder, &model, &notices, ca_memory::keys::project_key(ws.root()));
 
     let thinking =
         Thinking::parse(&o.thinking.clone().or_else(|| app.settings.string(&schema::THINKING)).unwrap_or_default());
@@ -440,6 +496,23 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     let read = instructions::read_all(&person, ws.root(), ws.cwd());
     let sources = ca_agent::library::sources(ws.root(), &app.paths.config, app.home.as_deref());
     let library = ca_agent::library::load(&sources);
+    // What the agent remembers: Arena's (else this machine's files), and the project's .remember/.
+    let memory = Arc::new(ca_memory::Memory::new(
+        if app.connection.signed_in() { app.arena().ok() } else { None },
+        ws.cwd(),
+        &app.paths.config,
+        &app.paths.data,
+        app.home.as_deref(),
+    ));
+    let remembered = {
+        let said = std::sync::Mutex::new(Vec::new());
+        let block = memory.start(&|s| said.lock().map(|mut v| v.push(s)).unwrap_or(())).await;
+        for s in said.into_inner().unwrap_or_default() {
+            ui.say(&ui.dim(&s));
+        }
+        let project_memory = app.settings.bool(&schema::PROJECT_MEMORY);
+        if project_memory { format!("{block}{}", ca_memory::project::for_prompt(&memory.root)) } else { block }
+    };
     let env = Environment {
         os: std::env::consts::OS.into(),
         shell,
@@ -475,6 +548,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
                 s.push('\n');
                 s.push_str(&n);
             }
+            s.push_str(&remembered);
             s
         },
         history,
@@ -552,6 +626,10 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     // What the session's store gives the model: results kept aside, and the session's own messages.
     agent.tools.extend(crate::session_tools::tools(store.clone(), session.clone(), folder.clone()));
     agent.tools.push(ca_agent::library::skill_tool(sources.clone()));
+    let project_memory = app.settings.bool(&schema::PROJECT_MEMORY);
+    agent.tools.extend(
+        ca_memory::tools(memory.clone()).into_iter().filter(|t| project_memory || t.def().name != "remember_project"),
+    );
     // Checklists are kept in Arena, with the session's chat.
     if let Some(s) = &sync {
         agent.tools.push(Arc::new(crate::checklist::CheckTool { sync: s.clone() }));
@@ -595,6 +673,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         sync,
         notices,
         said_next: None,
+        memory,
+        nudge: false,
     };
     if prepared.resumed.is_some() {
         crate::checklist::remind(&mut prepared).await;
@@ -619,6 +699,7 @@ fn start_sync(
     folder: &str,
     model: &str,
     notices: &Notices,
+    project: String,
 ) -> Option<Arc<ca_sync::ChatSync>> {
     if !app.settings.bool(&schema::SYNC_CHATS) || !app.connection.signed_in() {
         return None;
@@ -636,7 +717,7 @@ fn start_sync(
         store.clone(),
         session.to_string(),
         folder.to_string(),
-        None,
+        Some(project),
         model.to_string(),
         notice,
     );

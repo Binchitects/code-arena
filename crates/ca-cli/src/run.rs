@@ -185,6 +185,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
     let mut progress = Progress::new(ui, args.output == OutputFormat::Text);
     progress.plan = vec![p.agent.ctx.plan.clone()];
     session::begin_turn(&mut p, ui).await;
+    session::before_message(&mut p, &prompt).await;
     let result = p.agent.turn(&prompt, &mut progress).await;
     // The turn's messages reach the chat in Arena before the run ends (or are sent with the next session's).
     if let Some(sync) = &p.sync

@@ -21,6 +21,7 @@ ca-agent = { path = "crates/ca-agent" }
 ca-workspace = { path = "crates/ca-workspace" }
 ca-session = { path = "crates/ca-session" }
 ca-sync = { path = "crates/ca-sync" }
+ca-memory = { path = "crates/ca-memory" }
 
 anyhow = "1"
 async-trait = "0.1"

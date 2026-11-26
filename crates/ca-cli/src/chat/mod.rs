@@ -180,6 +180,8 @@ fn help() -> &'static str {
 /plan                 the working plan; /plan approve [ask] | change N what | another why | reject why reviews a proposed one;\n\
                       /plan undo N puts the files back as before step N; /plan resume carries on the last session's plan\n\
 /checklist [N|NAME|off]  your checklists; turn one on (the model ticks each item), tick N, new NAME: a; b, edit N: a; b, delete N\n\
+/memory [forget N]    what is remembered (Arena's, else this machine's); forget N forgets one\n\
+/remember [--person] TEXT  keep a memory for this project (or, with --person, for every project)\n\
 /sync [on|off]        where this session stands with its chat in Arena; off keeps it here only\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
 /exit                 leave (also Ctrl+D)\n\
@@ -324,6 +326,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             None => line.clone(),
         };
         session::begin_turn(&mut p, ui).await;
+        session::before_message(&mut p, &message).await;
         let started = Instant::now();
         let mut progress = Progress::new(ui, true);
         progress.show_thinking = true;
@@ -379,6 +382,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             }
             Some(Ok(out)) => {
                 session_usage.add(out.usage);
+                p.nudge = out.steps >= 8;
                 let secs = started.elapsed().as_secs();
                 ui.say(&ui.dim(&format!("{} · {}", usage_line(&out), context_line(&p.agent))));
                 if secs > 10 {
@@ -842,6 +846,7 @@ async fn command(
         "/rewind" => rewind(rest, p, ui)?,
         "/web" => web(rest, p, app, ui).await?,
         "/checklist" => ui.say(&crate::checklist::command(rest, p).await),
+        "/memory" | "/remember" => ui.say(&session::memory_command(p, name, rest, ui).await),
         "/plan" if rest.is_empty() => ui.say(&session::render_plan(&p.agent.ctx.plan.get(), ui)),
         "/plan" => {
             let (word, more) = rest.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((rest, ""));
