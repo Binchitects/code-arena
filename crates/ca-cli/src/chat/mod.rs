@@ -879,9 +879,11 @@ async fn command(
                 ui.say(&format!("  {:<32}{:>8}", label, n));
             }
             match &counted {
-                Some((_, total)) => ui.say(
-                    &ui.dim(&format!("  counted by the model's own tokenizer, in Arena: {} in all", ui::short(*total))),
-                ),
+                // Arena gives a whole request's total only when given the whole request: for texts, their sum.
+                Some((c, total)) => ui.say(&ui.dim(&format!(
+                    "  counted by the model's own tokenizer, in Arena: {} in all",
+                    ui::short(if *total > 0 { *total } else { c.iter().sum() })
+                ))),
                 None => ui.say(&ui.dim("  estimated from characters (about the gateway's own counts)")),
             }
             ui.say(&format!("  {:<32}{:>8}", "kept for the answer", ui::short(w.reserve)));

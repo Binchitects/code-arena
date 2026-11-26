@@ -145,6 +145,8 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   Arena's skills are read again (used from your next message).
 
 ### Fixed
+- `/context` said 0 for the tokenizer's total: Arena totals only a whole request, so the total is
+  the sum of the counts.
 - A session's first turn did not hold its chat (the chat was made only by its first send), so the
   web chat answered what was written there meanwhile on its own: the chat is made at the first
   turn's start now, from the question, and held as every turn's is.
