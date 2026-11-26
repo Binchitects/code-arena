@@ -23,6 +23,11 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   (`n_ctx`), that is the window from then on ("The engine holds 20.5k tokens, not the 32.8k the
   gateway says: Code Arena compacts for 20.5k from now on."), kept for the next sessions with
   that gateway and model while the gateway says the same window.
+- A tool call cut off at the limit of one answer does not run (mended, it would have written half
+  a file): the model is told to do it in parts (`write_file` with `append: true` for each part of
+  a long file), and a call cut twice in the same place ends the turn.
+- On Windows, a file another program holds open (an editor, a build, a virus scan) is written
+  again for up to two seconds, then said so: "held open by another program…: close it there".
 - An error with no body says so ("Internal Server Error (it gave no reason)").
 - Output styles, in Claude Code's format: `/output-style` lists them and `/output-style NAME`
   uses one from the next message (kept in the settings, `outputStyle`). Built in: default,

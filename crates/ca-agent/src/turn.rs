@@ -161,6 +161,8 @@ pub enum TurnError {
     Steps(usize),
     /// A hook blocked the person's message (`UserPromptSubmit`), or stopped the session.
     Blocked(String),
+    /// The model's call was cut off at its answer's limit twice in the same place.
+    Cut(String),
 }
 
 impl std::fmt::Display for TurnError {
@@ -169,6 +171,10 @@ impl std::fmt::Display for TurnError {
             TurnError::Llm(e) => write!(f, "{e}"),
             TurnError::Steps(n) => write!(f, "the turn stopped after {n} requests to the model (agent.maxSteps)"),
             TurnError::Blocked(why) => write!(f, "{why}"),
+            TurnError::Cut(name) => write!(
+                f,
+                "the model's {name} call was cut off at the limit of one answer twice in the same place: the turn ends here (ask for the work in smaller parts)"
+            ),
         }
     }
 }
@@ -343,6 +349,8 @@ impl Agent {
         let mut carried = 0;
         let mut overflowed = false;
         let mut shared_waited = false;
+        // The last call cut off at the answer's limit: its tool and how its arguments began.
+        let mut last_cut: Option<(String, String)> = None;
         self.skip.reset();
         let plan_at_start = self.ctx.plan.get();
         loop {
@@ -459,6 +467,39 @@ impl Agent {
             self.add(c.message, false);
             if !calls.is_empty() {
                 out.tool_calls += calls.len();
+                // Cut at the answer's limit: the last call is not whole (mended, it would write half a file). It does
+                // not run; the model does it in parts. Cut again the same way, the turn ends.
+                if matches!(finish, Finish::Length | Finish::Dropped) {
+                    let (whole, cut) = calls.split_at(calls.len() - 1);
+                    let cut = &cut[0];
+                    let key = (cut.name.clone(), cut.arguments.chars().take(400).collect::<String>());
+                    if !whole.is_empty() {
+                        self.run_calls(whole, events, &mut out).await;
+                    }
+                    if last_cut.as_ref() == Some(&key) {
+                        self.add(
+                            Message::tool(cut.id.clone(), "Cut off again in the same place: it did not run."),
+                            false,
+                        );
+                        return Err(TurnError::Cut(cut.name.clone()));
+                    }
+                    last_cut = Some(key);
+                    let n = cut.arguments.chars().count();
+                    events.notice(&format!(
+                        "The model's {} call was cut off at the limit of one answer ({n} characters): it did not run, and the model does it in parts.",
+                        cut.name
+                    ));
+                    self.add(
+                        Message::tool(
+                            cut.id.clone(),
+                            format!(
+                                "This call was cut off after {n} characters of arguments, at the limit of one answer: it did not run. Do it in smaller parts, each well within one answer: for a long file, write_file its first part, then write_file with append: true for each part after; for a long command, write it to a script file first."
+                            ),
+                        ),
+                        false,
+                    );
+                    continue;
+                }
                 self.run_calls(&calls, events, &mut out).await;
                 continue;
             }
@@ -1264,6 +1305,41 @@ mod tests {
         let r = a.ctx.checkpoints.rewind(0);
         assert_eq!(r.removed.len(), 1);
         assert!(!d.path().join("x.txt").exists());
+    }
+
+    fn cut_call(name: &str, args: &str) -> String {
+        let event = serde_json::json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c-cut", "function": {"name": name, "arguments": args}}]}, "finish_reason": "length"}]});
+        format!("data: {event}\n\ndata: [DONE]\n\n")
+    }
+
+    #[tokio::test]
+    async fn a_cut_call_does_not_run_and_is_done_in_parts() {
+        let cut = r#"{"path": "big.txt", "content": "line one\nline tw"#;
+        let (_s, mut a, d, seen) = agent(
+            vec![
+                cut_call("write_file", cut),
+                call("write_file", r#"{"path": "big.txt", "content": "line one\n"}"#),
+                call("write_file", r#"{"path": "big.txt", "content": "line two\n", "append": true}"#),
+                say("Written in two parts.", "stop"),
+            ],
+            Mode::Yolo,
+        )
+        .await;
+        let out = a.turn("write big.txt", &mut Quiet).await.expect("turn");
+        assert_eq!(out.answer, "Written in two parts.");
+        assert_eq!(std::fs::read_to_string(d.path().join("big.txt")).expect("file"), "line one\nline two\n");
+        let told = seen.lock().expect("lock")[1]["messages"].to_string();
+        assert!(told.contains("cut off after") && told.contains("append: true"), "{told}");
+    }
+
+    #[tokio::test]
+    async fn a_call_cut_twice_in_the_same_place_ends_the_turn() {
+        let cut = r#"{"path": "big.txt", "content": "the same long start"#;
+        let (_s, mut a, d, _seen) =
+            agent(vec![cut_call("write_file", cut), cut_call("write_file", cut)], Mode::Yolo).await;
+        let e = a.turn("write big.txt", &mut Quiet).await.expect_err("ends");
+        assert!(matches!(e, TurnError::Cut(ref n) if n == "write_file"), "{e}");
+        assert!(!d.path().join("big.txt").exists(), "nothing half written");
     }
 
     #[tokio::test]

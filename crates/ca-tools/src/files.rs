@@ -38,7 +38,37 @@ fn read_text(path: &Path, shown: &str) -> Result<(String, Encoding), Output> {
         .map_err(|_| Output::error(format!("{shown} is not text (binary, or not UTF-8, UTF-16 or UTF-32)")))
 }
 
+/// Windows' sharing and lock violations (ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION): another program (an editor,
+/// a build, a virus scan, the indexer) holds the file open without sharing it.
+pub(crate) fn held_open(e: &std::io::Error) -> bool {
+    cfg!(windows) && matches!(e.raw_os_error(), Some(32 | 33))
+}
+
+/// The waits before a write to a file held open is tried again: most programs let go within a second.
+const HELD_WAITS: [u64; 4] = [100, 250, 500, 1000];
+
+/// A write tried again while another program holds the file open, a little under two seconds in all.
+pub(crate) async fn write_held(
+    mut write: impl FnMut() -> std::io::Result<()>,
+    held: impl Fn(&std::io::Error) -> bool,
+) -> std::io::Result<()> {
+    let mut waits = HELD_WAITS.iter();
+    loop {
+        match write() {
+            Err(e) if held(&e) => match waits.next() {
+                Some(ms) => tokio::time::sleep(std::time::Duration::from_millis(*ms)).await,
+                None => return Err(e),
+            },
+            r => return r,
+        }
+    }
+}
+
 pub(crate) fn io_words(e: &std::io::Error) -> String {
+    if held_open(e) {
+        return "held open by another program (an editor, a build or a virus scan): close it there, then ask again"
+            .into();
+    }
     match e.kind() {
         std::io::ErrorKind::NotFound => "not there".into(),
         std::io::ErrorKind::PermissionDenied => "not readable here (permission denied)".into(),
@@ -140,10 +170,14 @@ impl Tool for WriteFile {
     fn def(&self) -> ToolDef {
         ToolDef {
             name: "write_file".into(),
-            description: "Creates a file, or replaces all of one, with the content given. A file that uses Windows line endings keeps them. Prefer edit_file to change part of a file.".into(),
+            description: "Creates a file, or replaces all of one, with the content given; with append, adds the content at its end (a long file is written in parts so). A file that uses Windows line endings keeps them. Prefer edit_file to change part of a file.".into(),
             parameters: json!({
                 "type": "object",
-                "properties": {"path": path_schema(), "content": {"type": "string", "description": "The whole new content."}},
+                "properties": {
+                    "path": path_schema(),
+                    "content": {"type": "string", "description": "The whole new content (with append: what comes next)."},
+                    "append": {"type": "boolean", "description": "Add the content at the end of the file instead of replacing it."}
+                },
                 "required": ["path", "content"]
             }),
         }
@@ -163,8 +197,12 @@ impl Tool for WriteFile {
             Ok(p) => p,
             Err(e) => return Output::error(e.to_string()),
         };
+        let append = args.get("append").and_then(Value::as_bool).unwrap_or(false);
         let (content, enc, existed) = match read_text(&real, &shown) {
-            Ok((old, enc)) => (if text::uses_crlf(&old) { text::to_crlf(&content) } else { content }, enc, true),
+            Ok((old, enc)) => {
+                let new = if text::uses_crlf(&old) { text::to_crlf(&content) } else { content };
+                (if append { format!("{old}{new}") } else { new }, enc, true)
+            }
             Err(_) if real.exists() && !real.is_file() => {
                 return Output::error(format!("{shown} is not a file it can write"));
             }
@@ -176,12 +214,18 @@ impl Tool for WriteFile {
             return Output::error(format!("{shown}: its folder could not be made: {e}"));
         }
         ctx.checkpoints.before_write(&real);
-        if let Err(e) = std::fs::write(&real, text::encode(&content, enc)) {
+        let bytes = text::encode(&content, enc);
+        if let Err(e) = write_held(|| std::fs::write(&real, &bytes), held_open).await {
             return Output::error(format!("{shown}: {}", io_words(&e)));
         }
         let lines = content.lines().count();
         let plural = if lines == 1 { "line" } else { "lines" };
-        let mut o = Output::ok(format!("{} {shown} ({lines} {plural}).", if existed { "Replaced" } else { "Created" }));
+        let did = match (existed, append) {
+            (true, true) => "Added to",
+            (true, false) => "Replaced",
+            _ => "Created",
+        };
+        let mut o = Output::ok(format!("{did} {shown} ({lines} {plural})."));
         o.wrote.push(real);
         o
     }
@@ -253,7 +297,8 @@ impl Tool for EditFile {
         let first_line = text[..at].matches('\n').count() + 1;
         let changed = if all { text.replace(&old, &new) } else { text.replacen(&old, &new, 1) };
         ctx.checkpoints.before_write(&real);
-        if let Err(e) = std::fs::write(&real, text::encode(&changed, enc)) {
+        let bytes = text::encode(&changed, enc);
+        if let Err(e) = write_held(|| std::fs::write(&real, &bytes), held_open).await {
             return Output::error(format!("{shown}: {}", io_words(&e)));
         }
         let last_line = first_line + new.matches('\n').count();
@@ -338,6 +383,45 @@ impl Tool for ListDir {
 mod tests {
     use super::*;
     use crate::testing::context;
+
+    #[tokio::test]
+    async fn a_file_held_open_is_written_once_it_is_let_go_and_said_when_it_is_not() {
+        let held = |e: &std::io::Error| e.raw_os_error() == Some(32);
+        let mut tries = 0;
+        let r = write_held(
+            || {
+                tries += 1;
+                if tries < 3 { Err(std::io::Error::from_raw_os_error(32)) } else { Ok(()) }
+            },
+            held,
+        )
+        .await;
+        assert!(r.is_ok());
+        assert_eq!(tries, 3);
+        let mut tries = 0;
+        let r = write_held(
+            || {
+                tries += 1;
+                Err(std::io::Error::from_raw_os_error(32))
+            },
+            held,
+        )
+        .await;
+        assert_eq!(r.expect_err("held").raw_os_error(), Some(32));
+        assert_eq!(tries, 5, "tried once and again after each wait");
+        // Any other failure is said at once.
+        let mut tries = 0;
+        let r = write_held(
+            || {
+                tries += 1;
+                Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            },
+            held,
+        )
+        .await;
+        assert!(r.is_err());
+        assert_eq!(tries, 1);
+    }
 
     #[tokio::test]
     async fn read_numbers_lines_and_pages() {
