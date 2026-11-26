@@ -22,6 +22,9 @@ mod highlight;
 mod icons;
 mod layout;
 mod model;
+// Not joined to the workbench yet (its root stack and its keys): this allow goes when it is.
+#[allow(dead_code)]
+mod palette;
 mod search;
 mod state;
 mod terminal;

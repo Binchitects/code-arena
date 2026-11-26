@@ -137,6 +137,16 @@ pub struct Ui {
     pub caret: RwSignal<(usize, usize)>,
     /// A line for the status bar: what was just done, or went wrong.
     pub message: RwSignal<String>,
+    /// The quick input open, as it was opened: on files or on the themes (commands are the files' with ">" typed).
+    pub quick: RwSignal<Option<crate::palette::Mode>>,
+    pub quick_text: RwSignal<String>,
+    /// The row chosen, among the rows shown.
+    pub quick_at: RwSignal<usize>,
+    pub quick_rows: RwSignal<Rc<Vec<crate::palette::Row>>>,
+    /// The project's files, as the session listed them last.
+    pub quick_files: RwSignal<Rc<crate::palette::Files>>,
+    /// The theme in force when the themes were opened, gone back to when none is chosen.
+    pub quick_theme: RwSignal<Option<String>>,
     /// The scope open editors' documents live in (not an effect's, which goes when the effect runs again).
     pub scope: Scope,
 }
@@ -184,6 +194,12 @@ impl Ui {
             active: create_rw_signal(None),
             caret: create_rw_signal((1, 1)),
             message: create_rw_signal(String::new()),
+            quick: create_rw_signal(None),
+            quick_text: create_rw_signal(String::new()),
+            quick_at: create_rw_signal(0),
+            quick_rows: create_rw_signal(Rc::new(Vec::new())),
+            quick_files: create_rw_signal(Rc::new(crate::palette::Files::default())),
+            quick_theme: create_rw_signal(None),
             scope: Scope::new(),
         }
     }
@@ -220,6 +236,12 @@ impl Ui {
         let t = ca_themes::chosen(&self.themes.get_untracked(), &self.choice.get_untracked(), true);
         self.colors.set(Colors::of(&t));
         crate::terminal::recolour(*self);
+    }
+
+    /// A theme shown without being kept (the theme pick's preview, and its way back).
+    pub fn show_theme(&self, choice: &str) {
+        self.choice.set(choice.to_string());
+        self.apply_theme();
     }
 
     pub fn tab(&self, path: &str) -> Option<Tab> {
@@ -429,6 +451,14 @@ impl Ui {
                     });
                 }
                 self.active.set(Some(path));
+            }
+            "files" => {
+                let paths = || m["paths"].as_array().into_iter().flatten().filter_map(Value::as_str);
+                let more = m["more"] == true;
+                // Listed again as they were: what is shown stays (the row chosen with it).
+                if !self.quick_files.with_untracked(|f| f.holds(paths(), more)) {
+                    self.quick_files.set(Rc::new(crate::palette::Files::of(paths(), more)));
+                }
             }
             "search" => {
                 if m["query"].as_str() != Some(self.search_query.get_untracked().as_str()) {

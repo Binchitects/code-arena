@@ -148,6 +148,17 @@ colors! {
     menu_border: ["menu.border", "widget.border"], "#454545", "#CECECE";
     menu_separator: ["menu.separatorBackground"], "#606060", "#D4D4D4";
 
+    quick_bg: ["quickInput.background", "editorWidget.background"], "#252526", "#F3F3F3";
+    quick_fg: ["quickInput.foreground", "editorWidget.foreground", "foreground"], "#CCCCCC", "#616161";
+    quick_border: ["widget.border", "contrastBorder", "editorWidget.border"], "#454545", "#C8C8C8";
+    quick_focus_bg: ["quickInputList.focusBackground", "quickInput.list.focusBackground", "list.activeSelectionBackground"], "#04395E", "#0060C0";
+    quick_focus_fg: ["quickInputList.focusForeground", "list.activeSelectionForeground"], "#FFFFFF", "#FFFFFF";
+    highlight: ["list.highlightForeground"], "#2AAAFF", "#0066BF";
+    highlight_focus: ["list.focusHighlightForeground", "list.highlightForeground"], "#2AAAFF", "#BBE7FF";
+    key_bg: ["keybindingLabel.background"], "#8080802B", "#DDDDDD66";
+    key_fg: ["keybindingLabel.foreground"], "#CCCCCC", "#555555";
+    key_border: ["keybindingLabel.border"], "#33333399", "#CCCCCC66";
+
     chat_request: ["chat.requestBubbleBackground", "chat.requestBackground", "list.hoverBackground"], "#2A2D2E", "#F2F2F2";
     terminal_bg: ["terminal.background", "panel.background"], "#1E1E1E", "#FFFFFF";
     terminal_fg: ["terminal.foreground"], "#CCCCCC", "#333333";
