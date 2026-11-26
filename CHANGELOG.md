@@ -6,7 +6,19 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 ## Unreleased (0.5.0)
 
 ### Added
-- The build image has Node 22 and npm, for the IDE's page (`web/`).
+- `code-arena ide`: the session in a window of its own (Chrome, Edge, Chromium or Brave in app mode
+  with a profile of its own, else the default browser; `--no-open` prints the address). Agent mode:
+  the conversation in one column, the answer streamed as it is written, a turn's tool calls in one
+  line ("Ran 2 commands, edited cart.rs") that opens on their results, the agent's questions as
+  cards in the thread (Allow, Always for this session, Deny), messages sent while it works marked
+  so, Stop (or Esc), and one status line: model, mode (click to change it), folder, the last
+  turn's time and tokens. `--continue` and `--resume` take up a session.
+- The IDE's server is for this machine only: 127.0.0.1, a key for the run in the address it
+  prints (kept in `ide.json` in the data folder, readable by you only), which the first visit
+  turns into an HttpOnly SameSite=Strict cookie; the Host, the Origin and Sec-Fetch-Site are
+  checked, no page may frame it, and the page talks to it only over its stream.
+- The build image has Node 22 and npm, for the IDE's page (`web/`); `make web` builds it, and
+  the release builds it into every binary.
 - `compat.agents`: other agents whose files are read too, by name, none by default. For an agent
   named NAME: its `.NAME/` folders in the project and the home (commands, skills, sub-agents,
   output styles, its `settings.json`'s hooks and status line), its `NAME.md` instructions, its

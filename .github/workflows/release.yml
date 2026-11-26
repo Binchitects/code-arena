@@ -34,6 +34,14 @@ jobs:
       - name: musl for a static Linux binary
         if: startsWith(matrix.rid, 'linux-')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: The IDE's page
+        working-directory: web
+        run: npm ci && npm run build
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.rid }}

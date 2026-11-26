@@ -567,7 +567,7 @@ that brings it. "Better" says what the rewrite changes. Items are ticked as they
 - [ ] 0.4 Its own window (Chrome, Edge, Chromium, Brave in app mode; its own profile); browser choice and version check; a tab as the fallback; plus the system web view launcher (better)
 - [ ] 0.4 The browsers supported (Chrome/Edge 109+, Firefox 115+, Safari 16+) and the "too old" page
 - [ ] 0.4 The log: `code-arena.log`, rotated at 5 MB, three kept, path in `--help` and About
-- [ ] 0.4 Only this machine: 127.0.0.1, one-run key with an HttpOnly SameSite=Strict cookie, launcher file (0600), Host and Origin and Sec-Fetch checks, JSON only, no framing, paths relative only, links resolved one part at a time, pipes and devices refused
+- [x] 0.5 Only this machine: 127.0.0.1, one-run key with an HttpOnly SameSite=Strict cookie, launcher file (0600), Host and Origin and Sec-Fetch checks, JSON only, no framing (paths and links: with the file views), paths relative only, links resolved one part at a time, pipes and devices refused
 - [ ] 0.8 Code Studio (`web --connect`): the relay over WebSocket, reconnect with backoff, the folder's id kept
 - [ ] 0.5 Activity bar: views, counts, drag to reorder or to the panel, hide and show, position (side, top, hidden), reset
 - [ ] 0.5 Side bar left or right; panel bottom, left or right; sizes and visibility kept across runs and ports

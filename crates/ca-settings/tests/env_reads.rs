@@ -13,6 +13,10 @@ const ALLOWED: &[(&str, &str)] = &[
     // Finding a program on PATH is the system's business, not a setting.
     ("ca-tools/src/shell.rs", "std::env::var_os(\"PATH\")"),
     ("ca-tools/src/sandbox.rs", "std::env::var_os(\"PATH\")"),
+    ("ca-cli/src/ide.rs", "std::env::var_os(\"PATH\")"),
+    // A build script's own variables, set by Cargo while it builds: not the program's environment.
+    ("ca-server/build.rs", "std::env::var(\"CARGO_MANIFEST_DIR\")"),
+    ("ca-server/build.rs", "std::env::var(\"OUT_DIR\")"),
 ];
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {

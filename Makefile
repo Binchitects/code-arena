@@ -2,7 +2,7 @@
 CARGO ?= cargo
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 
-.PHONY: ci fmt lint test build dist clean
+.PHONY: ci fmt lint test build dist clean web
 
 ci: fmt lint test
 
@@ -15,15 +15,19 @@ lint:
 test:
 	$(CARGO) test --workspace --locked
 
-build:
+# The IDE's page (web/dist), built into the binary: npm ci when its packages are not there yet.
+web:
+	cd web && { [ -d node_modules ] || npm ci; } && npm run build
+
+build: web
 	$(CARGO) build --release --locked
 
 # Static Linux binary in dist/ (in the build image).
-dist:
+dist: web
 	$(CARGO) build --release --locked --target x86_64-unknown-linux-musl
 	mkdir -p dist
 	scripts/package.sh x86_64-unknown-linux-musl linux-x64 $(VERSION)
 
 clean:
 	$(CARGO) clean
-	rm -rf dist
+	rm -rf dist web/dist

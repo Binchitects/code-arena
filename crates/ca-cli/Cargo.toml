@@ -12,6 +12,7 @@ name = "code-arena"
 path = "src/main.rs"
 
 [dependencies]
+ca-server.workspace = true
 ca-agent.workspace = true
 ca-arena.workspace = true
 ca-core.workspace = true
@@ -42,6 +43,8 @@ nix.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 wiremock.workspace = true
+tokio-tungstenite = "0.26"
+futures-util.workspace = true
 
 [lints]
 workspace = true

@@ -8,6 +8,7 @@ mod checklist;
 mod commit;
 mod edition;
 mod goals;
+mod ide;
 mod loops;
 mod plugins;
 mod projects;
@@ -127,6 +128,15 @@ enum Command {
     Schedule {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// The IDE: the session in a window of its own (a browser in app mode), on this machine only.
+    Ide {
+        /// The port to listen on, on 127.0.0.1 (any free one when not given).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Print the address only; open no window.
+        #[arg(long)]
+        no_open: bool,
     },
     /// Your agents in Arena (Agent Studio, 8.1 on): list, run NAME [TEXT…] [--field K=V]… (waits for its answer).
     Agents {
@@ -269,6 +279,15 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
             let cwd = std::env::current_dir()?;
             // A timer of the system's goes in the system's own home, whatever CODE_ARENA_HOME says.
             schedules::command(&app.paths.config, dirs::home_dir().as_deref(), &cwd, &args)
+        }
+        Some(Command::Ide { port, no_open }) => {
+            let args = ide::IdeArgs {
+                opts: cli_opts(&cli_common),
+                resume: resume_of(&cli_common),
+                port: port.unwrap_or(0),
+                open: !no_open,
+            };
+            ide::run(&mut app, args).await
         }
         Some(Command::Agents { args }) => automation::agents_cli(&app, &args).await,
         Some(Command::Tasks { args }) => automation::tasks_cli(&app, &args).await,

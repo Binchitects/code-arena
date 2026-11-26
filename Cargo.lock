@@ -223,6 +223,7 @@ dependencies = [
  "ca-mcp",
  "ca-memory",
  "ca-net",
+ "ca-server",
  "ca-session",
  "ca-settings",
  "ca-sync",
@@ -232,12 +233,14 @@ dependencies = [
  "clap",
  "crossterm",
  "dirs",
+ "futures-util",
  "nix",
  "rpassword",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
  "unicode-width",
  "wiremock",
 ]
@@ -316,6 +319,9 @@ dependencies = [
 name = "ca-server"
 version = "0.4.0"
 dependencies = [
+ "bytes",
+ "futures-util",
+ "getrandom 0.3.4",
  "http-body-util",
  "hyper",
  "hyper-util",

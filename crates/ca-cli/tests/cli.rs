@@ -1652,3 +1652,110 @@ async fn a_full_shared_cache_is_asked_again_and_the_engines_window_is_learned_an
     let entry = kept.as_object().and_then(|o| o.values().next()).cloned().unwrap_or_default();
     assert_eq!((entry["said"].as_u64(), entry["holds"].as_u64()), (Some(32768), Some(20480)), "{kept}");
 }
+
+#[tokio::test]
+async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::io::BufRead;
+    use tokio_tungstenite::tungstenite::Message;
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(
+            vec![sse(json!({"choices": [{"delta": {"content": "Hello from the IDE."}, "finish_reason": "stop"}]}))],
+            AtomicUsize::new(0),
+        ))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let mut child = code_arena(home.path())
+        .args(["ide", "--no-open", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("runs");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stderr = child.stderr.take().expect("stderr");
+    let _child = Kill(child);
+    let url = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| l.split("The IDE: ").nth(1).map(str::to_string))
+        .expect("the address");
+    let (base, key) = url.split_once("/?k=").expect("key in it");
+    let host = base.trim_start_matches("http://").to_string();
+    // The address file is the person's only.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(home.path().join("data/ide.json")).expect("kept").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    let ws = |origin: &str| {
+        let mut r = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+            format!("ws://{host}/ws").as_str(),
+        )
+        .expect("request");
+        r.headers_mut().insert("cookie", format!("code_arena={key}").parse().expect("h"));
+        r.headers_mut().insert("origin", origin.parse().expect("h"));
+        r
+    };
+    assert!(tokio_tungstenite::connect_async(ws("https://evil.example")).await.is_err(), "another site's page");
+    let (mut page, _) = tokio_tungstenite::connect_async(ws(base)).await.expect("the page connects");
+    let mut seen: Vec<Value> = Vec::new();
+    let mut next = async || -> Value {
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            if let Message::Text(t) = m {
+                return serde_json::from_str(t.as_str()).expect("json");
+            }
+        }
+    };
+    let first = next().await;
+    assert_eq!(
+        (first["type"].as_str(), first["model"].as_str(), first["mode"].as_str()),
+        (Some("state"), Some("qwen"), Some("ask"))
+    );
+    drop(next);
+    page.send(Message::text(json!({"type": "send", "text": "say hello"}).to_string())).await.expect("send");
+    loop {
+        let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+            .await
+            .expect("in time")
+            .expect("open")
+            .expect("ok");
+        let Message::Text(t) = m else { continue };
+        let v: Value = serde_json::from_str(t.as_str()).expect("json");
+        let end = v["type"] == "turn_end";
+        seen.push(v);
+        if end {
+            break;
+        }
+    }
+    let kinds: Vec<&str> = seen.iter().filter_map(|v| v["type"].as_str()).collect();
+    assert!(kinds.starts_with(&["user", "turn_start"]), "{kinds:?}");
+    let text: String = seen.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
+    assert_eq!(text, "Hello from the IDE.");
+    assert_eq!(seen.last().expect("end")["ok"], true, "{seen:?}");
+}

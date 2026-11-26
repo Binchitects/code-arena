@@ -11,6 +11,7 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 ca-core = { path = "crates/ca-core" }
+ca-server = { path = "crates/ca-server" }
 ca-settings = { path = "crates/ca-settings" }
 ca-net = { path = "crates/ca-net" }
 ca-arena = { path = "crates/ca-arena" }
