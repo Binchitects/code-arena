@@ -140,7 +140,16 @@ which an MIT product cannot take; Slint's licences do not fit an MIT product.
 1. A native window with Agent mode: the thread (streamed answers, tool lines that open,
    approval cards), the box, the bars (plan, goal, jobs), the status line with its pickers, the
    theme in force. `code-arena ide` opens it; `--browser` serves the page instead.
-2. The workbench: the activity bar, the side bars, the panel, the views dragged between them,
+   *Seen (2026-11-26): it works, and it does not look like VS Code: "I want exactly same UI
+   as vscode". So the window is VS Code's workbench from the next slice on, Agent mode a view
+   in it.*
+2. The workbench, **drawn as VS Code draws it**: its regions and their sizes (a 35 px title
+   bar with the menu, the command center and the layout buttons; a 48 px activity bar with
+   24 px codicons; side bars with 35 px titles, 22 px section headers and 22 px rows; 35 px
+   editor tabs with breadcrumbs; the panel with its tabs; a 22 px status bar), VS Code's
+   colour ids for every part, its codicon font (CC BY 4.0, from Monaco), its fonts and its
+   hover, focus and selection states. Agent mode is the chat view in the secondary side bar,
+   as VS Code's chat is. Each region is checked against VS Code's own by screenshot. Then the activity bar, the side bars, the panel, the views dragged between them,
    the layout kept per folder, VS Code's keys; the layout's rules shared with the page's.
 3. The editor: tabs, syntax colours (TextMate grammars), save, the agent's edits and changes
    on disk taken in by changed lines, diffs, find, the outline.
