@@ -59,10 +59,19 @@
 //!
 //! Only the driver's loop starts a turn. A handler that wants one sets `ctx.p.said_next`: after every message
 //! answered between turns, and after every turn, the loop runs what `said_next` holds as the next turn (a plan's
-//! review, a goal's next turn, a job that ended), with `user{carried: true}`. A turn the person stopped ends the
-//! chain. After a turn the order is: `turn_end`, each area's `after_turn`, `status`; then what waited for the turn
-//! ([Q]) in the order asked; then a message the person sent too late for the turn to read (it runs as a turn of
-//! its own); then `said_next`.
+//! review, a goal's next turn, a job that ended), with `user{carried: true}`. A turn the person stopped, or one
+//! that failed, ends the chain (`said_next` is dropped after the areas' `after_turn`). After a turn the order is:
+//! `turn_end`, each area's `after_turn`, `status`; then what waited for the turn ([Q]) in the order asked; then a
+//! message the person sent too late for the turn to read (it runs as a turn of its own, with no second `user`:
+//! the thread shows it since `queued`); then `said_next`.
+//!
+//! # Whose the shared messages are
+//!
+//! The messages several areas have a part in stay the driver's, and each area takes its part through a function
+//! of its own: `send` and `again` through [`Area::shape`] and [`Area::command`] (the face's message, with
+//! whatever fields the area gave it, is in [`Sent::msg`]; what the area adds to `user` and `queued` goes in
+//! [`Sent::fields`]); `state`, `status` and `tasks` through the functions of those names. The terminals' and the
+//! files' messages (`term_open`, `save`, `search`, ...) are `ide_files.rs`'s.
 //!
 //! # What an area keeps
 //!

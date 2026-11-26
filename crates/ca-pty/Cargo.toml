@@ -11,6 +11,19 @@ rust-version.workspace = true
 libc = "0.2"
 nix = { version = "0.30", default-features = false, features = ["term", "process", "signal"] }
 
+# Windows' own pseudo-terminal (ConPTY), its pipes and processes, and a window without a console.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Console",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [dev-dependencies]
 tempfile.workspace = true
 

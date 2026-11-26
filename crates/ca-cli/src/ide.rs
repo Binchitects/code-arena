@@ -421,10 +421,11 @@ fn next_turn(said_next: &mut Option<String>, inbox: &Mutex<Vec<String>>) -> Opti
     said_next.take().map(|text| (text, How::Carried))
 }
 
-/// Stop ends the chain: after a turn the person stopped, the session does not carry on by itself (what it had to
-/// say next is dropped). What the person sent meanwhile still runs.
-fn after_stop(stopped: bool, said_next: &mut Option<String>) {
-    if stopped {
+/// Stop ends the chain, and so does a turn that failed: after either the session does not carry on by itself
+/// (what it had to say next is dropped), so nothing runs on against the person's word or a model out of reach.
+/// What the person sent meanwhile still runs.
+fn chain_ends(end: &TurnEnd, said_next: &mut Option<String>) {
+    if end.stopped || end.error.is_some() {
         *said_next = None;
     }
 }
@@ -849,7 +850,7 @@ async fn turn(
     }
     ide_ext::after_turn(&mut Ctx { app: &mut *app, p: &mut *p, side: &mut *side, drv: &mut *drv, sh: &*sh }, &end)
         .await;
-    after_stop(end.stopped, &mut p.said_next);
+    chain_ends(&end, &mut p.said_next);
     session::keep_window(app, p);
     settled(sh, p, app, drv, side);
     send(&out, status(p, sh));
@@ -872,12 +873,24 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_the_person_stopped_ends_the_chain_but_not_what_they_sent_meanwhile() {
-        let inbox = Mutex::new(vec!["no, the other file".to_string()]);
-        let mut said = Some("Goal (turn 3): make it pass".to_string());
-        after_stop(false, &mut said);
+    fn a_turn_stopped_or_failed_ends_the_chain_but_not_what_the_person_sent_meanwhile() {
+        let end = |stopped: bool, error: Option<&str>| TurnEnd {
+            message: "Goal (turn 2): make it pass".into(),
+            outcome: None,
+            stopped,
+            error: error.map(str::to_string),
+            took: std::time::Duration::from_secs(1),
+            carried: true,
+        };
+        let next = || Some("Goal (turn 3): make it pass".to_string());
+        let mut said = next();
+        chain_ends(&end(false, None), &mut said);
         assert!(said.is_some(), "a turn that ended by itself carries on");
-        after_stop(true, &mut said);
+        chain_ends(&end(false, Some("the gateway is out of reach")), &mut said);
+        assert_eq!(said, None, "not on against a model that does not answer");
+        let inbox = Mutex::new(vec!["no, the other file".to_string()]);
+        let mut said = next();
+        chain_ends(&end(true, None), &mut said);
         assert_eq!(next_turn(&mut said, &inbox), Some(("no, the other file".into(), How::Late)));
         assert_eq!(next_turn(&mut said, &inbox), None, "the session says nothing more by itself");
     }
