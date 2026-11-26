@@ -554,6 +554,8 @@ thread_local! {
     /// The window's emulators, by their terminals' numbers.
     static EMULATORS: RefCell<HashMap<u64, Emulator>> = RefCell::new(HashMap::new());
     static CELL_WIDTH: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+    /// The theme's terminal colours, read from it once (a redraw is not to read the theme again).
+    static PALETTE: RefCell<Option<Palette>> = const { RefCell::new(None) };
 }
 
 /// How wide a cell of the monospace font is.
@@ -608,7 +610,9 @@ fn shell_name() -> String {
 }
 
 fn palette(ui: Ui) -> Palette {
-    Palette::of(&ui.theme_json(), ui.colors.get_untracked().dark)
+    PALETTE.with(|p| {
+        p.borrow_mut().get_or_insert_with(|| Palette::of(&ui.theme_json(), ui.colors.get_untracked().dark)).clone()
+    })
 }
 
 /// The terminal the panel shows.
@@ -1076,5 +1080,73 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
 
 /// The theme changed: the screen drawn again in its colours.
 pub fn recolour(ui: Ui) {
+    PALETTE.with(|p| *p.borrow_mut() = None);
     redraw(ui);
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::*;
+    use floem::reactive::SignalGet;
+
+    fn first(ui: Ui) -> String {
+        ui.term_screen
+            .get_untracked()
+            .rows
+            .first()
+            .map(|r| r.iter().map(|x| x.text.as_str()).collect::<String>().trim_end().to_string())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_window_keeps_several_terminals_and_shows_one() {
+        let ui = Ui::new();
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let send: Send = {
+            let sent = sent.clone();
+            Rc::new(move |v: serde_json::Value| sent.borrow_mut().push(v))
+        };
+        let of = |kind: &str| -> Vec<u64> {
+            sent.borrow().iter().filter(|v| v["type"] == kind).filter_map(|v| v["id"].as_u64()).collect()
+        };
+        new_terminal(ui, &send);
+        new_terminal(ui, &send);
+        let (a, b) = (FIRST_ID, FIRST_ID + 1);
+        assert_eq!(of("term_open"), [a, b]);
+        assert_eq!(sent.borrow()[0]["cols"], 80);
+        assert_eq!(ui.term.get_untracked(), State::Running(b));
+        assert_eq!(ui.term_focus.get_untracked(), 2);
+        // Each has its own screen; the output of the one not shown is kept for when it is.
+        output(ui, a, "first", &send);
+        assert_eq!(first(ui), "");
+        output(ui, b, "second", &send);
+        assert_eq!(first(ui), "second");
+        show(ui, a);
+        assert_eq!((ui.term.get_untracked(), first(ui)), (State::Running(a), "first".to_string()));
+        // One that ends while another is shown says so once it is shown; a key's new shell takes its place.
+        ended(ui, b, Some(3));
+        assert_eq!(ui.term.get_untracked(), State::Running(a));
+        show(ui, b);
+        assert_eq!(ui.term.get_untracked(), State::Ended(b, Some(3)));
+        open(ui, &send, Some(b));
+        let c = FIRST_ID + 2;
+        assert_eq!(ui.terms.get_untracked().iter().map(|s| s.id).collect::<Vec<_>>(), [a, c]);
+        assert_eq!(ui.term.get_untracked(), State::Running(c));
+        // Clear is the shown one's, and what was typed stays the first line.
+        output(ui, c, "one\r\ntwo\r\n$ ", &send);
+        clear(ui);
+        assert_eq!(first(ui), "$");
+        // Killed: closed in the session, its late output not taken, the one beside it shown.
+        kill(ui, &send);
+        assert_eq!(of("term_close"), [b, c]);
+        output(ui, c, "late", &send);
+        assert_eq!((ui.term.get_untracked(), first(ui)), (State::Running(a), "first".to_string()));
+        kill(ui, &send);
+        assert_eq!(ui.term.get_untracked(), State::None);
+        assert!(ui.terms.get_untracked().is_empty());
+        assert_eq!(ui.term_screen.get_untracked(), Screen::default());
+        // Another after every one was killed takes a number none had.
+        new_terminal(ui, &send);
+        assert_eq!(ui.term.get_untracked(), State::Running(FIRST_ID + 3));
+    }
 }
