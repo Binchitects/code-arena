@@ -474,6 +474,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
                 ui.say(&said);
             }
         }
+        session::keep_window(app, &p);
         // Goal mode: the check runs, and the next goal turn starts by itself while the goal is worked on.
         if let Some(next) =
             crate::goals::after_turn(&mut p, outcome.as_ref(), started.elapsed(), &|s| ui.say(&ui.yellow(&s))).await

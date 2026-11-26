@@ -15,6 +15,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or Claude Code's
   (`run_shell` or `Bash`). A project's hooks run only once you trust them as they are
   (`/hooks trust`; a change asks again). `/hooks` lists them.
+- llama.cpp's "Context size has been exceeded." (the cache the engine's requests share was full,
+  others filled it) is asked again after two seconds as it is, compacted only if refused again.
+  Refusals are read as Arena reads them (llama.cpp, LiteLLM, vLLM, SGLang, OpenAI), with the
+  tokens they state.
+- The engine's own window is learned: when it refuses a request and says how much it holds
+  (`n_ctx`), that is the window from then on ("The engine holds 20.5k tokens, not the 32.8k the
+  gateway says: Code Arena compacts for 20.5k from now on."), kept for the next sessions with
+  that gateway and model while the gateway says the same window.
+- An error with no body says so ("Internal Server Error (it gave no reason)").
 - Output styles, in Claude Code's format: `/output-style` lists them and `/output-style NAME`
   uses one from the next message (kept in the settings, `outputStyle`). Built in: default,
   explanatory (explains the codebase's choices as it goes) and learning (leaves small pieces,

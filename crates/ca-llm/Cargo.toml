@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+regex.workspace = true
 ca-core.workspace = true
 ca-net.workspace = true
 futures-util.workspace = true

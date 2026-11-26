@@ -27,8 +27,8 @@ pub enum LlmError {
     NoApi { url: String },
     #[error("the gateway answered {status}: {message}")]
     Status { status: u16, message: String },
-    #[error("the window refused the request: {0}")]
-    ContextOverflow(String),
+    #[error("the window refused the request: {message}")]
+    ContextOverflow { message: String, overflow: crate::overflow::Overflow },
     #[error("the answer stalled: nothing came for {0} s")]
     Stalled(u64),
     #[error("{0}")]
@@ -579,13 +579,19 @@ fn failure(status: StatusCode, body: &str, url: &str) -> LlmError {
         .and_then(Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| body.chars().take(400).collect());
-    let lower = message.to_ascii_lowercase();
-    if lower.contains("context size")
-        || lower.contains("maximum context length")
-        || lower.contains("contextwindowexceeded")
-        || lower.contains("context length")
-    {
-        return LlmError::ContextOverflow(message);
+    let message = if message.trim().is_empty() {
+        format!("{} (it gave no reason)", status.canonical_reason().unwrap_or("no answer"))
+    } else {
+        message
+    };
+    if let Some(overflow) = crate::overflow::parse(&message).or_else(|| crate::overflow::parse(body)) {
+        // The whole body may say more (llama.cpp's n_ctx beside its message).
+        let mut overflow = overflow;
+        if let Some(whole) = crate::overflow::parse(body) {
+            overflow.prompt = overflow.prompt.or(whole.prompt);
+            overflow.context = overflow.context.or(whole.context);
+        }
+        return LlmError::ContextOverflow { message, overflow };
     }
     match status {
         StatusCode::UNAUTHORIZED => LlmError::Key,
@@ -771,7 +777,7 @@ mod tests {
             r#"{"error":{"message":"This model's maximum context length is 32768 tokens"}}"#,
             "u",
         );
-        assert!(matches!(e, LlmError::ContextOverflow(_)));
+        assert!(matches!(e, LlmError::ContextOverflow { overflow, .. } if overflow.context == Some(32_768)));
         assert!(matches!(failure(StatusCode::UNAUTHORIZED, "", "u"), LlmError::Key));
     }
 

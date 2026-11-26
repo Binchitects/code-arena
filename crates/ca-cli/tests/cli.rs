@@ -1592,3 +1592,63 @@ async fn a_projects_output_style_takes_the_place_of_the_coding_instructions() {
     let system = seen.lock().expect("lock")[1]["messages"][0]["content"].as_str().unwrap_or_default().to_string();
     assert!(system.contains("Read before you change") && !system.contains("Output style"), "{system}");
 }
+
+#[tokio::test]
+async fn a_full_shared_cache_is_asked_again_and_the_engines_window_is_learned_and_kept() {
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [{"id": "qwen"}]})))
+        .mount(&gateway)
+        .await;
+    Mock::given(path("/v1/model/info"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [
+            {"model_name": "qwen", "model_info": {"max_input_tokens": 32768, "max_output_tokens": 4096}}
+        ]})))
+        .mount(&gateway)
+        .await;
+    struct Engine(AtomicUsize);
+    impl Respond for Engine {
+        fn respond(&self, _r: &Request) -> ResponseTemplate {
+            match self.0.fetch_add(1, Ordering::SeqCst) {
+                // Others filled the cache the engine's requests share.
+                0 => ResponseTemplate::new(500)
+                    .set_body_json(json!({"error": {"code": 500, "message": "Context size has been exceeded.", "type": "server_error"}})),
+                // The engine holds less than the gateway says.
+                1 => ResponseTemplate::new(400).set_body_json(json!({"error": {"code": 400,
+                    "message": "request (25000 tokens) exceeds the available context size (20480 tokens), try increasing it",
+                    "type": "exceed_context_size_error", "n_prompt_tokens": 25000, "n_ctx": 20480}})),
+                _ => ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(sse(
+                    json!({"choices": [{"delta": {"content": "Fits now."}, "finish_reason": "stop"}]}),
+                )),
+            }
+        }
+    }
+    Mock::given(path("/v1/chat/completions")).respond_with(Engine(AtomicUsize::new(0))).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let out = code_arena(home.path())
+        .args(["-p", "hello", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Fits now."));
+    assert!(stderr.contains("shared by the requests it runs, was full: asking again in two seconds"), "{stderr}");
+    assert!(stderr.contains("The engine holds 20.5k tokens, not the 32.8k the gateway says"), "{stderr}");
+    let kept: Value =
+        serde_json::from_str(&std::fs::read_to_string(home.path().join("data/engine-windows.json")).expect("kept"))
+            .expect("json");
+    let entry = kept.as_object().and_then(|o| o.values().next()).cloned().unwrap_or_default();
+    assert_eq!((entry["said"].as_u64(), entry["holds"].as_u64()), (Some(32768), Some(20480)), "{kept}");
+}

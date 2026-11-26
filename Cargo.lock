@@ -250,6 +250,7 @@ dependencies = [
  "ca-core",
  "ca-net",
  "futures-util",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

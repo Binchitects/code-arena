@@ -74,6 +74,35 @@ pub struct Prepared {
     /// The session's loops, and their reports for the next message.
     pub loops: Vec<crate::loops::Loop>,
     pub loop_reports: crate::loops::Reports,
+    /// The window the gateway says, and where the one the engine holds is kept: the gateway and the model.
+    pub window_said: (u64, String),
+}
+
+/// The windows engines were found to hold, by gateway and model (`engine-windows.json` in the data folder): used again
+/// while the gateway says the same window it did; another model, or the gateway saying another, starts afresh.
+fn windows_file(app: &App) -> PathBuf {
+    app.paths.data.join("engine-windows.json")
+}
+
+fn engine_window(app: &App, key: &str, said: u64) -> Option<u64> {
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(windows_file(app)).ok()?).ok()?;
+    let e = v.get(key)?;
+    (e.get("said")?.as_u64()? == said).then(|| e.get("holds")?.as_u64()).flatten()
+}
+
+/// Keeps the window this session's engine was found to hold, when it is smaller than the gateway said.
+pub fn keep_window(app: &App, p: &Prepared) {
+    let (said, key) = &p.window_said;
+    let holds = p.agent.window.size;
+    if holds >= *said || engine_window(app, key, *said) == Some(holds) {
+        return;
+    }
+    let mut v: serde_json::Value = std::fs::read_to_string(windows_file(app))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    v[key.as_str()] = serde_json::json!({"said": said, "holds": holds});
+    let _ = std::fs::write(windows_file(app), serde_json::to_string_pretty(&v).unwrap_or_default());
 }
 
 /// The sub-agents' starting point, as the session is now (its model, mode, tools and instructions).
@@ -732,12 +761,16 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         0 => None,
         p => Some(p.clamp(20, 95) as u64),
     };
-    let window = ca_agent::Window::new(
+    let mut window = ca_agent::Window::new(
         size,
         info.and_then(|m| m.max_output),
         compact_at,
         app.settings.integer(&schema::COMPACT_TARGET) as u64,
     );
+    let window_said = (window.size, format!("{} {model}", gateway.base()));
+    if let Some(n) = engine_window(app, &window_said.1, window_said.0) {
+        window.engine_holds(n);
+    }
     let session = if session.is_empty() { store.create(&folder, &model, mode.name())? } else { session };
     store.set_model(&session, &model, mode.name())?;
     let store = Arc::new(Mutex::new(store));
@@ -953,6 +986,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         }
     }
     let mut prepared = Prepared {
+        window_said,
         agent,
         store,
         session,

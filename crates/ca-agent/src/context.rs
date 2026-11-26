@@ -68,6 +68,15 @@ impl Window {
     }
 }
 
+/// Tokens as people read them: 20k, 32.8k, 900.
+pub fn short_tokens(n: u64) -> String {
+    if n < 1000 {
+        return n.to_string();
+    }
+    let k = n as f64 / 1000.0;
+    if k >= 100.0 || (k - k.round()).abs() < 0.05 { format!("{k:.0}k") } else { format!("{k:.1}k") }
+}
+
 /// The characters one message brings to a request.
 pub fn message_chars(m: &Message) -> usize {
     m.content.len() + m.tool_calls.iter().map(|c| c.name.len() + c.arguments.len() + 30).sum::<usize>() + 12
@@ -231,6 +240,10 @@ mod tests {
         w.learn(10, 0);
         assert!((w.chars_per_token - 4.0).abs() < 1e-9, "no count, nothing learned");
         w.engine_holds(20_000);
+        assert_eq!(
+            (short_tokens(20_480), short_tokens(32_768), short_tokens(20_000), short_tokens(900)),
+            ("20.5k".into(), "32.8k".into(), "20k".into(), "900".into())
+        );
         assert_eq!(w.size, 20_000);
     }
 

@@ -342,6 +342,7 @@ impl Agent {
         let mut out = TurnOutcome::default();
         let mut carried = 0;
         let mut overflowed = false;
+        let mut shared_waited = false;
         self.skip.reset();
         let plan_at_start = self.ctx.plan.get();
         loop {
@@ -413,10 +414,36 @@ impl Agent {
                 }
             };
             let c = match answered {
-                Err(LlmError::ContextOverflow(why)) if !overflowed => {
+                // llama.cpp's cache, shared by the requests it runs at once, was full (others filled it): asked
+                // again after two seconds as it is, compacted only if refused again.
+                Err(LlmError::ContextOverflow { overflow, .. }) if overflow.shared_cache && !shared_waited => {
+                    shared_waited = true;
+                    events.notice(
+                        "The engine's cache, shared by the requests it runs, was full: asking again in two seconds.",
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
+                }
+                Err(LlmError::ContextOverflow { message, overflow }) if !overflowed => {
+                    // The engine said how much it holds: that is the window from now on.
+                    if let Some(n) = overflow.context
+                        && n < self.window.size
+                    {
+                        let was = self.window.size;
+                        self.window.engine_holds(n);
+                        if self.window.size == n {
+                            events.notice(&format!(
+                                "The engine holds {} tokens, not the {} the gateway says: Code Arena compacts for {} from now on.",
+                                context::short_tokens(n),
+                                context::short_tokens(was),
+                                context::short_tokens(n)
+                            ));
+                        }
+                    }
                     // The window refused it: compacted at once and asked again, once.
                     overflowed = true;
-                    events.notice(&format!("The window refused the request ({why}): compacting, then asking again."));
+                    events
+                        .notice(&format!("The window refused the request ({message}): compacting, then asking again."));
                     self.make_room(events, true).await;
                     continue;
                 }

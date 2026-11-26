@@ -243,6 +243,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
         } else {
             p.agent.turn(&prompt, &mut progress).await
         };
+        crate::session::keep_window(app, &p);
         if args.goal.is_none() {
             break;
         }
