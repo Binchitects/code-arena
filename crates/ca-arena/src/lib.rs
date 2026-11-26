@@ -4,6 +4,7 @@
 //! is probed once, and its answer says whether the server has it, has it turned off, or lacks it.
 
 pub mod capabilities;
+pub mod chats;
 mod client;
 pub mod signin;
 pub mod types;

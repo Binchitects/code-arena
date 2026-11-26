@@ -250,6 +250,16 @@ pub static TOOL_CHARS: Setting = Setting {
     section: "Tools",
 };
 
+pub static SYNC_CHATS: Setting = Setting {
+    key: "arena.syncChats",
+    kind: Kind::Bool,
+    default: "true",
+    description: "Keep each session in step with a chat in Arena, both ways: what is said here is in the web chat (Chat, with the folder shown), and what is added there comes in at the next turn. Off: sessions stay on this machine (/sync off does it for one session).",
+    scope: Scope::User,
+    env: None,
+    section: "Arena",
+};
+
 pub static SERVER_WAIT: Setting = Setting {
     key: "mcp.startWait",
     kind: Kind::Integer { min: 0, max: 120 },
@@ -332,6 +342,7 @@ pub static ALL: &[&Setting] = &[
     &CODE_INTEL_TOOLS,
     &TOOL_CHARS,
     &SERVER_WAIT,
+    &SYNC_CHATS,
     &SANDBOX,
     &SANDBOX_NETWORK,
     &SANDBOX_WRITABLE,

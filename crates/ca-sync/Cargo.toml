@@ -1,0 +1,23 @@
+[package]
+name = "ca-sync"
+description = "Code Arena: a session kept in step with its chat in Arena, both ways"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ca-arena.workspace = true
+ca-llm.workspace = true
+ca-session.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+ca-core.workspace = true
+wiremock.workspace = true
+
+[lints]
+workspace = true

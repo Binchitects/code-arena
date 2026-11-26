@@ -18,6 +18,7 @@ ca-core.workspace = true
 ca-llm.workspace = true
 ca-mcp.workspace = true
 ca-session.workspace = true
+ca-sync.workspace = true
 ca-settings.workspace = true
 ca-tools.workspace = true
 ca-workspace.workspace = true

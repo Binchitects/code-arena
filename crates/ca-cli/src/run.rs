@@ -170,6 +170,17 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
     };
     let mut progress = Progress::new(ui, args.output == OutputFormat::Text);
     let result = p.agent.turn(&prompt, &mut progress).await;
+    // The turn's messages reach the chat in Arena before the run ends (or are sent with the next session's).
+    if let Some(sync) = &p.sync
+        && !sync.flush(std::time::Duration::from_secs(10)).await
+        && sync.pending() > 0
+    {
+        ui.say(&ui.dim(&format!(
+            "{} message(s) wait to reach the chat in Arena: they go with this session's next run.",
+            sync.pending()
+        )));
+    }
+    crate::session::say_notices(&p.notices, ui);
     match (args.output, result) {
         (OutputFormat::Text, Ok(out)) => {
             if !progress.at_line_start {

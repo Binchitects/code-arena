@@ -11,6 +11,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   A later Arena that lists what it has (`GET /api/code-arena/capabilities` answering
   `{"features": [...]}`) is read instead of probed.
 - Contract tests replay Arena 8.0's and 8.1's answers to every probe.
+- Sessions kept in Arena's chats (`arena.syncChats`, on): the chat is made at a session's first
+  message (found again by the session's id, with its folder shown), and each message the session
+  keeps goes after the last one Arena has, in the background, again until Arena has it; a tool's
+  result goes with its tool's name, an answer with its model; a compaction's summary goes once
+  Arena has what it covers. A session that went back to before messages Arena has (`/rewind`)
+  sends on a branch of its own. A chat deleted on the web ends the sync for that session. `-p`
+  waits up to 10 s for its messages to arrive (not at all when Arena is out of reach); what is
+  left goes with the session's next run. `/sync` says where a session stands; `/sync off` keeps
+  it here only. Sessions from 0.2 are kept (the store is upgraded in place) and sent when resumed.
 
 ## 0.2.0 (2026-11-26)
 

@@ -22,7 +22,7 @@ pub type Result<T> = std::result::Result<T, SessionError>;
 
 /// The schema's version. Before 1.0 a store of another version is not migrated: it is moved aside and a new one
 /// begun (the plan's "no backward compatibility before 1.0").
-const SCHEMA: i64 = 1;
+const SCHEMA: i64 = 2;
 
 const CREATE: &str = r#"
 CREATE TABLE sessions (
@@ -34,7 +34,11 @@ CREATE TABLE sessions (
   created INTEGER NOT NULL,
   updated INTEGER NOT NULL,
   messages INTEGER NOT NULL DEFAULT 0,
-  turns INTEGER NOT NULL DEFAULT 0
+  turns INTEGER NOT NULL DEFAULT 0,
+  chat TEXT,
+  chat_stamp TEXT,
+  chat_branch INTEGER NOT NULL DEFAULT 0,
+  chat_off INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX sessions_by_folder ON sessions(folder, updated DESC);
 CREATE TABLE messages (
@@ -44,6 +48,7 @@ CREATE TABLE messages (
   role TEXT NOT NULL,
   body TEXT NOT NULL,
   at INTEGER NOT NULL,
+  arena TEXT,
   PRIMARY KEY (session, seq)
 ) WITHOUT ROWID;
 CREATE INDEX messages_by_turn ON messages(session, turn);
@@ -53,6 +58,7 @@ CREATE TABLE compactions (
   through INTEGER NOT NULL,
   summary TEXT NOT NULL,
   at INTEGER NOT NULL,
+  sent INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (session, through)
 ) WITHOUT ROWID;
 CREATE TABLE results (
@@ -68,6 +74,37 @@ CREATE TABLE drafts (
   at INTEGER NOT NULL
 );
 "#;
+
+/// From schema 1 (0.2) to 2: what keeps a session in step with its chat in Arena. Sessions are kept.
+const UPGRADE_1: &str = r#"
+ALTER TABLE sessions ADD COLUMN chat TEXT;
+ALTER TABLE sessions ADD COLUMN chat_stamp TEXT;
+ALTER TABLE sessions ADD COLUMN chat_branch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE sessions ADD COLUMN chat_off INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE messages ADD COLUMN arena TEXT;
+ALTER TABLE compactions ADD COLUMN sent INTEGER NOT NULL DEFAULT 0;
+"#;
+
+/// Where a session stands with its chat in Arena.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChatLink {
+    /// Arena's chat, once made.
+    pub chat: Option<String>,
+    /// The branch's stamp as last read in step: asked with it, Arena says only "unchanged".
+    pub stamp: Option<String>,
+    /// The session went back to before messages Arena has: what it sends next goes on a branch of its own.
+    pub branch: bool,
+    /// Kept apart from Arena (`/sync off`, or its chat was deleted there).
+    pub off: bool,
+}
+
+/// A summary Arena does not have yet, and the Arena id of the last message it covers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsentSummary {
+    pub through: i64,
+    pub text: String,
+    pub up_to: String,
+}
 
 /// A session as the lists show it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -129,6 +166,9 @@ impl Store {
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         if version == 0 {
             db.execute_batch(CREATE)?;
+            db.pragma_update(None, "user_version", SCHEMA)?;
+        } else if version == 1 {
+            db.execute_batch(UPGRADE_1)?;
             db.pragma_update(None, "user_version", SCHEMA)?;
         } else if version != SCHEMA {
             drop(db);
@@ -274,6 +314,14 @@ impl Store {
     /// The session cut back to before message `seq` (a rewind): later messages and compactions go.
     pub fn truncate(&self, id: &str, seq: i64) -> Result<()> {
         let tx = self.db.unchecked_transaction()?;
+        let sent: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM messages WHERE session = ?1 AND seq >= ?2 AND arena IS NOT NULL",
+            params![id, seq],
+            |r| r.get(0),
+        )?;
+        if sent > 0 {
+            tx.execute("UPDATE sessions SET chat_branch = 1 WHERE id = ?1", [id])?;
+        }
         tx.execute("DELETE FROM messages WHERE session = ?1 AND seq >= ?2", params![id, seq])?;
         tx.execute("DELETE FROM messages_text WHERE session = ?1 AND seq >= ?2", params![id, seq])?;
         tx.execute("DELETE FROM compactions WHERE session = ?1 AND through >= ?2", params![id, seq])?;
@@ -322,6 +370,152 @@ impl Store {
         m.reasoning = (!reasoning.is_empty()).then_some(reasoning);
         self.append(id, &m, false)?;
         Ok(Some(m))
+    }
+
+    /// Where the session stands with its chat in Arena.
+    pub fn chat_link(&self, id: &str) -> Result<ChatLink> {
+        self.db
+            .query_row("SELECT chat, chat_stamp, chat_branch, chat_off FROM sessions WHERE id = ?1", [id], |r| {
+                Ok(ChatLink {
+                    chat: r.get(0)?,
+                    stamp: r.get(1)?,
+                    branch: r.get::<_, i64>(2)? != 0,
+                    off: r.get::<_, i64>(3)? != 0,
+                })
+            })
+            .optional()?
+            .ok_or_else(|| SessionError::NotFound(id.to_string()))
+    }
+
+    /// The session is kept with this chat from now on.
+    pub fn link_chat(&self, id: &str, chat: &str) -> Result<()> {
+        self.db.execute("UPDATE sessions SET chat = ?2, chat_off = 0 WHERE id = ?1", params![id, chat])?;
+        Ok(())
+    }
+
+    /// Kept apart from Arena (or with it again).
+    pub fn set_chat_off(&self, id: &str, off: bool) -> Result<()> {
+        self.db.execute("UPDATE sessions SET chat_off = ?2 WHERE id = ?1", params![id, off as i64])?;
+        Ok(())
+    }
+
+    /// The chat is gone (deleted in Arena): what the session sent there is forgotten, so it goes again to a new one.
+    pub fn forget_chat(&self, id: &str) -> Result<()> {
+        let tx = self.db.unchecked_transaction()?;
+        tx.execute("UPDATE sessions SET chat = NULL, chat_stamp = NULL, chat_branch = 0 WHERE id = ?1", [id])?;
+        tx.execute("UPDATE messages SET arena = NULL WHERE session = ?1", [id])?;
+        tx.execute("UPDATE compactions SET sent = 0 WHERE session = ?1", [id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn set_chat_stamp(&self, id: &str, stamp: Option<&str>) -> Result<()> {
+        self.db.execute("UPDATE sessions SET chat_stamp = ?2 WHERE id = ?1", params![id, stamp])?;
+        Ok(())
+    }
+
+    pub fn set_chat_branch(&self, id: &str, branch: bool) -> Result<()> {
+        self.db.execute("UPDATE sessions SET chat_branch = ?2 WHERE id = ?1", params![id, branch as i64])?;
+        Ok(())
+    }
+
+    /// The last message Arena has, and its id there.
+    pub fn last_sent(&self, id: &str) -> Result<Option<(i64, String)>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT seq, arena FROM messages WHERE session = ?1 AND arena IS NOT NULL ORDER BY seq DESC LIMIT 1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    /// Arena's id for a message, when it has it.
+    pub fn arena_id(&self, id: &str, seq: i64) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT arena FROM messages WHERE session = ?1 AND seq = ?2", params![id, seq], |r| r.get(0))
+            .optional()?
+            .flatten())
+    }
+
+    /// The first messages Arena does not have, after the last it has, in order.
+    pub fn unsent(&self, id: &str, limit: usize) -> Result<Vec<Stored>> {
+        let after = self.last_sent(id)?.map(|(s, _)| s).unwrap_or(-1);
+        let mut q = self.db.prepare(
+            "SELECT seq, turn, body FROM messages WHERE session = ?1 AND seq > ?2 AND arena IS NULL ORDER BY seq LIMIT ?3",
+        )?;
+        let rows = q.query_map(params![id, after, limit as i64], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (seq, turn, body) = row?;
+            out.push(Stored { seq, turn, message: serde_json::from_str(&body)? });
+        }
+        Ok(out)
+    }
+
+    /// The name of the tool a call id belongs to, from the last messages before `seq` (a result's tool, for Arena).
+    pub fn call_name(&self, id: &str, before: i64, call: &str) -> Result<Option<String>> {
+        let mut q = self.db.prepare(
+            "SELECT body FROM messages WHERE session = ?1 AND seq < ?2 AND role = 'assistant' ORDER BY seq DESC LIMIT 20",
+        )?;
+        let rows = q.query_map(params![id, before], |r| r.get::<_, String>(0))?;
+        for b in rows {
+            let m: Message = serde_json::from_str(&b?)?;
+            if let Some(c) = m.tool_calls.iter().find(|c| c.id == call) {
+                return Ok(Some(c.name.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Arena took these messages: each place with its id there. What the session sends next follows them.
+    pub fn mark_sent(&self, id: &str, sent: &[(i64, String)]) -> Result<()> {
+        let tx = self.db.unchecked_transaction()?;
+        for (seq, arena) in sent {
+            tx.execute("UPDATE messages SET arena = ?3 WHERE session = ?1 AND seq = ?2", params![id, seq, arena])?;
+        }
+        tx.execute("UPDATE sessions SET chat_branch = 0 WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A message the web added, kept with its id there: the next turn's model reads it.
+    pub fn append_from_arena(&self, id: &str, message: &Message, arena: &str, begins_turn: bool) -> Result<i64> {
+        let seq = self.append(id, message, begins_turn)?;
+        self.db.execute("UPDATE messages SET arena = ?3 WHERE session = ?1 AND seq = ?2", params![id, seq, arena])?;
+        Ok(seq)
+    }
+
+    /// The last summary Arena does not have, once Arena has the message it covers up to.
+    pub fn unsent_summary(&self, id: &str) -> Result<Option<UnsentSummary>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT c.through, c.summary, m.arena FROM compactions c JOIN messages m ON m.session = c.session AND m.seq = c.through
+                 WHERE c.session = ?1 AND c.sent = 0 AND m.arena IS NOT NULL ORDER BY c.through DESC LIMIT 1",
+                [id],
+                |r| Ok(UnsentSummary { through: r.get(0)?, text: r.get(1)?, up_to: r.get(2)? }),
+            )
+            .optional()?)
+    }
+
+    /// Arena has the summary up to `through` (and every one before it).
+    pub fn summary_sent(&self, id: &str, through: i64) -> Result<()> {
+        self.db
+            .execute("UPDATE compactions SET sent = 1 WHERE session = ?1 AND through <= ?2", params![id, through])?;
+        Ok(())
+    }
+
+    /// The session kept with this chat, if there is one.
+    pub fn by_chat(&self, chat: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row("SELECT id FROM sessions WHERE chat = ?1 ORDER BY updated DESC LIMIT 1", [chat], |r| r.get(0))
+            .optional()?)
     }
 
     /// Messages of the folder's sessions that hold every word: (session, seq, a line of the text).
@@ -435,6 +629,63 @@ mod tests {
         let m = s.recover_draft(&id).expect("recover").expect("there");
         assert!(m.content.starts_with("half an ans"));
         assert!(s.recover_draft(&id).expect("again").is_none());
+    }
+
+    #[test]
+    fn what_arena_has_and_what_it_lacks() {
+        let s = Store::in_memory().expect("store");
+        let id = s.create("/w", "m", "ask").expect("create");
+        turn(&s, &id, 1);
+        assert_eq!(s.chat_link(&id).expect("link"), ChatLink::default());
+        s.link_chat(&id, "chat-1").expect("link");
+        assert_eq!(s.unsent(&id, 10).expect("unsent").len(), 4);
+        assert_eq!(s.call_name(&id, 2, "c1").expect("name").as_deref(), Some("read_file"));
+        s.mark_sent(&id, &[(0, "a0".into()), (1, "a1".into())]).expect("sent");
+        assert_eq!(s.last_sent(&id).expect("last"), Some((1, "a1".into())));
+        assert_eq!(s.unsent(&id, 10).expect("unsent").iter().map(|m| m.seq).collect::<Vec<_>>(), vec![2, 3]);
+        s.mark_sent(&id, &[(2, "a2".into()), (3, "a3".into())]).expect("sent");
+        // A summary goes once Arena has what it covers.
+        s.compact(&id, 3, "the summary").expect("compact");
+        let u = s.unsent_summary(&id).expect("summary").expect("one");
+        assert_eq!((u.through, u.up_to.as_str()), (3, "a3"));
+        s.summary_sent(&id, 3).expect("sent");
+        assert!(s.unsent_summary(&id).expect("summary").is_none());
+        // The web's message comes in with its id.
+        s.append_from_arena(&id, &Message::user("from the web"), "w4", true).expect("in");
+        assert_eq!(s.last_sent(&id).expect("last"), Some((4, "w4".into())));
+        // Going back to before what Arena has: the next send is a branch.
+        s.truncate(&id, 4).expect("rewind");
+        assert!(s.chat_link(&id).expect("link").branch);
+        s.append(&id, &Message::user("another way"), true).expect("u");
+        s.mark_sent(&id, &[(4, "b4".into())]).expect("sent");
+        assert!(!s.chat_link(&id).expect("link").branch);
+        assert_eq!(s.by_chat("chat-1").expect("by chat").as_deref(), Some(id.as_str()));
+    }
+
+    #[test]
+    fn a_0_2_store_is_upgraded_and_keeps_its_sessions() {
+        let d = tempfile::tempdir().expect("temp");
+        let path = d.path().join("sessions.db");
+        {
+            let db = Connection::open(&path).expect("open");
+            // Schema 1, as 0.2 made it.
+            let v1 = CREATE
+                .replace(",\n  chat TEXT,\n  chat_stamp TEXT,\n  chat_branch INTEGER NOT NULL DEFAULT 0,\n  chat_off INTEGER NOT NULL DEFAULT 0", "")
+                .replace("  arena TEXT,\n", "")
+                .replace("  sent INTEGER NOT NULL DEFAULT 0,\n", "");
+            assert!(!v1.contains("chat_off") && !v1.contains("arena TEXT") && !v1.contains("sent INTEGER"));
+            db.execute_batch(&v1).expect("v1");
+            db.pragma_update(None, "user_version", 1).expect("version");
+            db.execute(
+                "INSERT INTO sessions (id, folder, created, updated, messages, turns) VALUES ('s1', '/w', 0, 0, 0, 0)",
+                [],
+            )
+            .expect("session");
+        }
+        let s = Store::open(&path).expect("upgraded");
+        s.append("s1", &Message::user("still here"), true).expect("append");
+        assert_eq!(s.summary("s1").expect("kept").messages, 1);
+        assert_eq!(s.unsent("s1", 5).expect("unsent").len(), 1);
     }
 
     #[test]

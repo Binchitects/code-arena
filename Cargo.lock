@@ -197,6 +197,7 @@ dependencies = [
  "ca-mcp",
  "ca-session",
  "ca-settings",
+ "ca-sync",
  "ca-tools",
  "ca-workspace",
  "chrono",
@@ -287,6 +288,20 @@ dependencies = [
  "tempfile",
  "thiserror",
  "url",
+]
+
+[[package]]
+name = "ca-sync"
+version = "0.2.0"
+dependencies = [
+ "ca-arena",
+ "ca-core",
+ "ca-llm",
+ "ca-session",
+ "chrono",
+ "serde_json",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]

@@ -387,3 +387,95 @@ async fn the_agents_commands_run_in_the_sandbox() {
     assert!(folder.path().join("made.txt").exists(), "writes inside the folder: {result}");
     assert!(!outside.path().join("escaped.txt").exists(), "no write outside it: {result}");
 }
+
+/// Arena's chats, as far as a session's first send goes: the chat made, the messages kept.
+struct Chats(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+
+impl Respond for Chats {
+    fn respond(&self, r: &Request) -> ResponseTemplate {
+        let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+        let n = body["messages"].as_array().map(Vec::len).unwrap_or(0);
+        if let Ok(mut seen) = self.0.lock() {
+            seen.push(body);
+        }
+        let ids: Vec<String> = (0..n).map(|i| format!("m{i}")).collect();
+        ResponseTemplate::new(200).set_body_json(json!({"ids": ids, "count": n, "stamp": "s1", "summarized": false}))
+    }
+}
+
+#[tokio::test]
+async fn a_print_run_is_kept_in_a_chat_in_arena() {
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(
+            vec![sse(json!({"choices": [{"delta": {"content": "Hello from here."}, "finish_reason": "stop"}]}))],
+            AtomicUsize::new(0),
+        ))
+        .mount(&gateway)
+        .await;
+    let arena = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "c-1", "created": true})))
+        .expect(1)
+        .mount(&arena)
+        .await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/c-1/messages"))
+        .respond_with(Chats(seen.clone()))
+        .mount(&arena)
+        .await;
+    // Every probe answers: this Arena has it all.
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).mount(&arena).await;
+
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let out = code_arena(home.path())
+        .args(["-p", "say hello", "-C"])
+        .arg(project.path())
+        .env("ARENA_URL", arena.uri())
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    let seen = seen.lock().expect("seen");
+    let sent: Vec<Value> = seen.iter().flat_map(|b| b["messages"].as_array().cloned().unwrap_or_default()).collect();
+    assert_eq!(sent.len(), 2, "{seen:?}\n{stderr}");
+    assert_eq!(sent[0]["role"], "user");
+    assert_eq!(sent[0]["content"], "say hello");
+    assert_eq!(sent[1]["content"], "Hello from here.");
+    assert_eq!(sent[1]["model"], "qwen");
+}
+
+#[tokio::test]
+async fn an_arena_out_of_reach_does_not_hold_a_print_run() {
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(
+            vec![sse(json!({"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}))],
+            AtomicUsize::new(0),
+        ))
+        .mount(&gateway)
+        .await;
+    let gone = MockServer::start().await;
+    let uri = gone.uri();
+    drop(gone);
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let started = std::time::Instant::now();
+    let out = code_arena(home.path())
+        .args(["-p", "hi", "-C"])
+        .arg(project.path())
+        .env("ARENA_URL", uri)
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(started.elapsed() < std::time::Duration::from_secs(8), "{:?}", started.elapsed());
+}

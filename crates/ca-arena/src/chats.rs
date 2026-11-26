@@ -1,0 +1,380 @@
+//! A session kept in step with a chat in Arena (`/api/code-arena/chats`), both ways. The shapes are Arena's
+//! (`CodeArenaSync.cs`, the same in 8.0 and 8.1 but for `ms`, which 8.0 ignores). Every message goes with Arena's
+//! id for it: Code Arena reads what follows the last message both have, and adds after a message it names.
+
+use reqwest::{Method, StatusCode};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+use crate::client::{ArenaClient, ArenaError, refusal};
+
+/// A message as Code Arena and Arena exchange it: the model's own shape, with its model, tokens and time.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncMessage {
+    pub role: String,
+    /// Text, as both ends keep it (a read may give `null`).
+    #[serde(default)]
+    pub content: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+    /// OpenAI's form: `[{"id", "type": "function", "function": {"name", "arguments"}}]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// A tool result's tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<i64>,
+    /// RFC 3339.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+    /// Code Arena's place for it (`session:seq`), so a message sent twice is known as one.
+    #[serde(default, rename = "ref", skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    /// Arena's id for it (in what Arena gives).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// How an answer ended when not as it should: "stopped", "failed", "declined".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// "note": Code Arena's own word to its model; "meanwhile": the person's, sent while a turn worked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachments: Option<Vec<SyncAttachment>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
+    /// How long it took here (8.1 on; 8.0 ignores it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ms: Option<i64>,
+}
+
+impl SyncMessage {
+    /// Its text, whatever form the content came in.
+    pub fn text(&self) -> String {
+        match &self.content {
+            Value::String(s) => s.clone(),
+            Value::Null => String::new(),
+            Value::Array(parts) => {
+                parts.iter().filter_map(|p| p.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n")
+            }
+            other => other.to_string(),
+        }
+    }
+}
+
+/// A file that went with a question on the web: "image" (fetched with [`ArenaClient::attachment`]), "text", "file",
+/// "audio", "video".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncAttachment {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub content_type: String,
+}
+
+/// A summary of the branch down to the message `up_to`, read instead of those messages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSummary {
+    pub up_to: String,
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// The branch on screen as Code Arena reads it: the messages after `base` (the last message both have), `fork` when
+/// what Code Arena last had is not on it any more, its last summary, and whether more follow.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncRead {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub count: i64,
+    #[serde(default)]
+    pub stamp: String,
+    #[serde(default)]
+    pub base: Option<String>,
+    #[serde(default)]
+    pub fork: bool,
+    #[serde(default)]
+    pub more: bool,
+    #[serde(default)]
+    pub summary: Option<SyncSummary>,
+    #[serde(default)]
+    pub messages: Vec<SyncMessage>,
+    /// "behind", in a refused append.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// In a refused append: the ids of those it had already (sent before, their answer lost).
+    #[serde(default)]
+    pub ids: Option<Vec<String>>,
+    /// Only "nothing moved since the stamp given".
+    #[serde(default)]
+    pub unchanged: bool,
+}
+
+/// A chat of the person's, as the list gives it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatItem {
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub origin: Option<String>,
+    #[serde(default)]
+    pub origin_ref: Option<String>,
+    #[serde(default)]
+    pub origin_place: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub messages: i64,
+    /// Code Arena's turn holds it now.
+    #[serde(default)]
+    pub code_arena: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct ChatList {
+    #[serde(default)]
+    pub chats: Vec<ChatItem>,
+    #[serde(default)]
+    pub more: bool,
+}
+
+/// The chat made (or found again by the session's ref).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Made {
+    pub id: String,
+    #[serde(default)]
+    pub created: bool,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub project_name: Option<String>,
+}
+
+/// What a new chat is made with.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewChat {
+    /// The session's id: the same chat is found again by it.
+    #[serde(rename = "ref")]
+    pub reference: String,
+    /// Where it works: the folder, shown on the web.
+    pub place: String,
+    pub model: Option<String>,
+    pub title: Option<String>,
+    /// The repository's key (its memories are that project's).
+    pub project: Option<String>,
+}
+
+/// An append Arena took.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct Appended {
+    /// Arena's ids for the messages sent, in their order.
+    #[serde(default)]
+    pub ids: Vec<String>,
+    #[serde(default)]
+    pub count: i64,
+    #[serde(default)]
+    pub stamp: String,
+    #[serde(default)]
+    pub summarized: bool,
+}
+
+/// What an append came to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Append {
+    Done(Appended),
+    /// The web added after the parent, or shows another branch: what Code Arena lacks, to take in first.
+    Behind(SyncRead),
+    /// The web chat is answering: send again when its answer ends.
+    Answering,
+}
+
+/// A message the person queued on the web while Code Arena's turn worked.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Queued {
+    pub id: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub quote: Option<String>,
+}
+
+/// Whether Arena's answer is its 409 "the web chat is answering".
+fn answering(raw: &crate::client::Raw) -> bool {
+    raw.status == StatusCode::CONFLICT && raw.problem().is_some_and(|p| p.status == "answering")
+}
+
+/// Whether an error is Arena's "that chat is not there" (deleted on the web).
+pub fn gone(e: &ArenaError) -> bool {
+    matches!(e, ArenaError::Status { status: 404, code: Some(c), .. } if c == "gone")
+}
+
+const API: &str = "/api/code-arena";
+
+impl ArenaClient {
+    /// The person's chats, newest first.
+    pub async fn chats(&self, limit: usize) -> Result<ChatList, ArenaError> {
+        self.get(&format!("{API}/chats?limit={limit}")).await
+    }
+
+    /// The chat for a session: made the first time, the same one after (found by its ref).
+    pub async fn make_chat(&self, new: &NewChat) -> Result<Made, ArenaError> {
+        self.call(Method::POST, &format!("{API}/chats"), Some(&serde_json::to_value(new).unwrap_or_default())).await
+    }
+
+    /// The branch on screen after `since` (none: from the start); with `stamp`, only `unchanged` when nothing moved.
+    /// `Ok(None)` while the web chat is answering.
+    pub async fn read_chat(
+        &self,
+        chat: &str,
+        since: Option<&str>,
+        stamp: Option<&str>,
+        limit: usize,
+    ) -> Result<Option<SyncRead>, ArenaError> {
+        let mut path = format!("{API}/chats/{chat}?limit={limit}");
+        if let Some(s) = since {
+            path.push_str(&format!("&since={s}"));
+        }
+        if let Some(s) = stamp {
+            path.push_str(&format!(
+                "&stamp={}",
+                url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>()
+            ));
+        }
+        let raw = self.raw(Method::GET, &path, None).await?;
+        if answering(&raw) {
+            return Ok(None);
+        }
+        if !raw.status.is_success() {
+            return Err(refusal(&raw));
+        }
+        serde_json::from_str(&raw.body).map(Some).map_err(|e| ArenaError::Parse { path, message: e.to_string() })
+    }
+
+    /// Adds messages after `parent` (the last message Code Arena has from Arena; none: from the start). `branch`: they go
+    /// on a branch of their own from `parent` (Code Arena went back to before a turn).
+    pub async fn append(
+        &self,
+        chat: &str,
+        parent: Option<&str>,
+        branch: bool,
+        messages: &[SyncMessage],
+        summary: Option<&SyncSummary>,
+    ) -> Result<Append, ArenaError> {
+        let path = format!("{API}/chats/{chat}/messages");
+        let body = json!({"parent": parent, "branch": branch, "messages": messages, "summary": summary});
+        let raw = self.raw(Method::POST, &path, Some(&body)).await?;
+        if answering(&raw) {
+            return Ok(Append::Answering);
+        }
+        let parse = |text: &str| ArenaError::Parse { path: path.clone(), message: text.to_string() };
+        match raw.status {
+            s if s.is_success() => serde_json::from_str(&raw.body).map(Append::Done).map_err(|e| parse(&e.to_string())),
+            StatusCode::CONFLICT => {
+                serde_json::from_str(&raw.body).map(Append::Behind).map_err(|e| parse(&e.to_string()))
+            }
+            _ => Err(refusal(&raw)),
+        }
+    }
+
+    /// Code Arena's turn starts: the chat is its own until it ends the turn (or stops renewing it for 90 s). `false`
+    /// while the web chat is answering.
+    pub async fn hold_turn(&self, chat: &str) -> Result<bool, ArenaError> {
+        let raw = self.raw(Method::POST, &format!("{API}/chats/{chat}/turn"), Some(&json!({}))).await?;
+        if answering(&raw) {
+            return Ok(false);
+        }
+        if raw.status.is_success() { Ok(true) } else { Err(refusal(&raw)) }
+    }
+
+    /// The turn ended: the chat is free, and what the person queued on the web goes now.
+    pub async fn end_turn(&self, chat: &str) -> Result<(), ArenaError> {
+        let raw = self.raw(Method::DELETE, &format!("{API}/chats/{chat}/turn"), None).await?;
+        if raw.status.is_success() { Ok(()) } else { Err(refusal(&raw)) }
+    }
+
+    /// The answer being written, as it stands: the web shows it as it comes. `false` when no turn holds the chat.
+    pub async fn draft(&self, chat: &str, text: &str, reasoning: &str) -> Result<bool, ArenaError> {
+        let body = json!({"text": text, "reasoning": reasoning});
+        let raw = self.raw(Method::PUT, &format!("{API}/chats/{chat}/draft"), Some(&body)).await?;
+        match raw.status {
+            s if s.is_success() => Ok(true),
+            StatusCode::CONFLICT => Ok(false),
+            _ => Err(refusal(&raw)),
+        }
+    }
+
+    /// What the person queued on the web while this turn works, taken out of the line, in order.
+    pub async fn take_queued(&self, chat: &str) -> Result<Vec<Queued>, ArenaError> {
+        #[derive(Deserialize)]
+        struct Taken {
+            #[serde(default)]
+            messages: Vec<Queued>,
+        }
+        let t: Taken = self.call(Method::POST, &format!("{API}/chats/{chat}/queue/take"), Some(&json!({}))).await?;
+        Ok(t.messages)
+    }
+
+    /// The person continues the chat here: archived on the web, it comes back to the list.
+    pub async fn continued(&self, chat: &str) -> Result<(), ArenaError> {
+        let raw = self.raw(Method::POST, &format!("{API}/chats/{chat}/continued"), Some(&json!({}))).await?;
+        if raw.status.is_success() { Ok(()) } else { Err(refusal(&raw)) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_read_parses_as_arena_writes_it() {
+        let body = r#"{"id":"c1","title":"Fix the parser","model":"qwen","origin":"code-arena","originPlace":"/r","count":3,
+            "stamp":"m3:","base":"m1","fork":false,"more":false,"summary":null,
+            "messages":[{"role":"user","content":"and the tests?","reasoning":null,"toolCalls":null,"toolCallId":null,
+              "name":null,"model":null,"promptTokens":null,"cachedTokens":null,"completionTokens":null,
+              "at":"2026-11-26T10:00:00+00:00","ref":null,"id":"m2","status":null,"kind":null,"attachments":null,"quote":null}],
+            "status":null,"ids":null}"#;
+        let r: SyncRead = serde_json::from_str(body).expect("read");
+        assert_eq!(r.base.as_deref(), Some("m1"));
+        assert_eq!(r.messages[0].text(), "and the tests?");
+        assert_eq!(r.messages[0].id.as_deref(), Some("m2"));
+    }
+
+    #[test]
+    fn a_message_goes_with_only_what_it_has() {
+        let m = SyncMessage {
+            role: "user".into(),
+            content: json!("hi"),
+            reference: Some("s:0".into()),
+            ..Default::default()
+        };
+        assert_eq!(serde_json::to_value(&m).expect("json"), json!({"role": "user", "content": "hi", "ref": "s:0"}));
+    }
+}

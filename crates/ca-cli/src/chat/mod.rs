@@ -166,6 +166,7 @@ fn help() -> &'static str {
 /skills               the skills\n\
 /NAME [words]         a command or a skill, with your words\n\
 /mcp                  Arena's, Farzan Graph's and your MCP servers: connected or not, and why\n\
+/sync [on|off]        where this session stands with its chat in Arena; off keeps it here only\n\
 /exit                 leave (also Ctrl+D)\n\
 !command              run a command yourself; its output goes with your next message\n\
 \n\
@@ -232,6 +233,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             carry_on = true;
             job_note(&j, ui)
         } else {
+            session::say_notices(&p.notices, ui);
             draw(&ed, &mut drawn);
             match read_line(&mut ed, &mut keys, &mut ended, &mut drawn, &mut interrupted_once, ui).await {
                 Input::Line(l) => l,
@@ -649,6 +651,9 @@ async fn command(
         "/model" => {
             p.agent.model = rest.to_string();
             let _ = p.store.lock().map(|s| s.set_model(&p.session, rest, p.agent.policy.mode.name()));
+            if let Some(s) = &p.sync {
+                s.set_model(rest);
+            }
             ui.say(&format!("The model is {rest}."));
         }
         "/mode" if rest.is_empty() => {
@@ -772,6 +777,20 @@ async fn command(
             }
         }
         "/rewind" => rewind(rest, p, ui)?,
+        "/sync" => match (&p.sync, rest) {
+            (None, _) => ui.say(&ui.dim(
+                "Kept here only: sign in (code-arena login) with arena.syncChats on to keep sessions in Arena's chats.",
+            )),
+            (Some(s), "off") => {
+                s.set_on(false);
+                ui.say("This session is kept here only from now on (/sync on sends it again).");
+            }
+            (Some(s), "on") => {
+                s.set_on(true);
+                ui.say("This session is kept with its chat in Arena again: what it lacks is on its way.");
+            }
+            (Some(s), _) => ui.say(&s.describe()),
+        },
         "/tools" => tools_command(rest, p, ui),
         "/permissions" => {
             let (cmd, rule) = rest.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((rest, ""));

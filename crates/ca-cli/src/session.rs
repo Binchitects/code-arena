@@ -49,19 +49,42 @@ pub struct Prepared {
     pub sources: Vec<ca_agent::library::Source>,
     /// Tools turned off for this session (`/tools off`).
     pub disabled: Vec<Arc<dyn ca_tools::Tool>>,
+    /// The chat in Arena this session is kept with, when there is an Arena to keep it with.
+    pub sync: Option<Arc<ca_sync::ChatSync>>,
+    /// What went on in the background (the chat's sync), said at the next prompt.
+    pub notices: Notices,
+}
+
+/// Lines to say at the next prompt: each with whether it is a problem.
+pub type Notices = Arc<Mutex<Vec<(bool, String)>>>;
+
+/// Says what waited, as the person reads it between turns.
+pub fn say_notices(notices: &Notices, ui: crate::ui::Ui) {
+    let lines: Vec<(bool, String)> = notices.lock().map(|mut n| std::mem::take(&mut *n)).unwrap_or_default();
+    for (problem, line) in lines {
+        ui.say(&if problem { ui.yellow(&line) } else { ui.dim(&line) });
+    }
 }
 
 /// Keeps each message in the session's store as it is added.
 pub struct StoreRecorder {
     pub store: Arc<Mutex<Store>>,
     pub session: String,
+    /// Told of each message, to send it to Arena.
+    pub sync: Option<Arc<ca_sync::ChatSync>>,
 }
 
 impl Recorder for StoreRecorder {
     fn record(&mut self, message: &Message, begins_turn: bool) -> Option<i64> {
         let s = self.store.lock().ok()?;
         match s.append(&self.session, message, begins_turn) {
-            Ok(seq) => Some(seq),
+            Ok(seq) => {
+                drop(s);
+                if let Some(sync) = &self.sync {
+                    sync.poke();
+                }
+                Some(seq)
+            }
             Err(e) => {
                 eprintln!("The session could not be kept: {e}");
                 None
@@ -77,6 +100,10 @@ impl Recorder for StoreRecorder {
             && let Err(e) = s.compact(&self.session, through, summary)
         {
             eprintln!("The compaction could not be kept: {e}");
+        }
+        drop(s);
+        if let Some(sync) = &self.sync {
+            sync.poke();
         }
     }
 }
@@ -194,6 +221,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     let session = if session.is_empty() { store.create(&folder, &model, mode.name())? } else { session };
     store.set_model(&session, &model, mode.name())?;
     let store = Arc::new(Mutex::new(store));
+    let notices: Notices = Arc::new(Mutex::new(Vec::new()));
+    let sync = start_sync(app, &store, &session, &folder, &model, &notices);
 
     let thinking =
         Thinking::parse(&o.thinking.clone().or_else(|| app.settings.string(&schema::THINKING)).unwrap_or_default());
@@ -241,12 +270,12 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
             s
         },
         history,
-        recorder: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone() })),
+        recorder: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone(), sync: sync.clone() })),
         inbox: None,
         deferred: vec![],
         joins: None,
         window,
-        aside: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone() })),
+        aside: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone(), sync: None })),
         notes: vec![],
     };
     // The sandbox, as the settings and this system allow.
@@ -318,5 +347,38 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
             ui.say(&ui.dim(&line));
         }
     }
-    Ok(Prepared { agent, store, session, folder, resumed, servers, sources, disabled: vec![] })
+    Ok(Prepared { agent, store, session, folder, resumed, servers, sources, disabled: vec![], sync, notices })
+}
+
+/// The session kept in step with a chat in Arena, when it is signed in and `arena.syncChats` is on.
+fn start_sync(
+    app: &App,
+    store: &Arc<Mutex<Store>>,
+    session: &str,
+    folder: &str,
+    model: &str,
+    notices: &Notices,
+) -> Option<Arc<ca_sync::ChatSync>> {
+    if !app.settings.bool(&schema::SYNC_CHATS) || !app.connection.signed_in() {
+        return None;
+    }
+    let arena = app.arena().ok()?;
+    let caps = ca_arena::Kept::file(&app.paths.servers_dir(), arena.base());
+    let n = notices.clone();
+    let notice: ca_sync::Notice = Arc::new(move |problem, line| {
+        if let Ok(mut q) = n.lock() {
+            q.push((problem, line));
+        }
+    });
+    let sync = ca_sync::ChatSync::new(
+        arena,
+        store.clone(),
+        session.to_string(),
+        folder.to_string(),
+        None,
+        model.to_string(),
+        notice,
+    );
+    sync.start_checked(caps);
+    Some(sync)
 }
