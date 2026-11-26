@@ -50,6 +50,10 @@ struct Cli {
     /// Take up a saved session: its id, or none to choose from a list.
     #[arg(long, num_args = 0..=1, default_missing_value = "", global = true)]
     resume: Option<String>,
+    /// With --continue or --resume: carry on in a fork of that session (a new session with all of it), leaving it as
+    /// it was.
+    #[arg(long = "fork-session", global = true)]
+    fork_session: bool,
     /// ask, auto-edit, plan or yolo.
     #[arg(long, global = true)]
     mode: Option<String>,
@@ -181,6 +185,7 @@ struct Common {
     prompt: Option<String>,
     continue_last: bool,
     resume: Option<String>,
+    fork_session: bool,
     mode: Option<String>,
     model: Option<String>,
     thinking: Option<String>,
@@ -205,10 +210,17 @@ fn cli_opts(c: &Common) -> session::Opts {
 }
 
 fn resume_of(c: &Common) -> session::Resume {
-    match (&c.resume, c.continue_last) {
+    let r = match (&c.resume, c.continue_last) {
         (Some(id), _) if !id.is_empty() => session::Resume::Id(id.clone()),
         (_, true) => session::Resume::Latest,
         _ => session::Resume::New,
+    };
+    // Chosen from the list (--resume alone): the choice is forked once made.
+    let choosing = c.resume.as_deref() == Some("");
+    match r {
+        session::Resume::New if !choosing => r,
+        r if c.fork_session => session::Resume::Fork(Box::new(r)),
+        r => r,
     }
 }
 
@@ -233,6 +245,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
         prompt: cli.prompt,
         continue_last: cli.continue_last,
         resume: cli.resume,
+        fork_session: cli.fork_session,
         mode: cli.mode,
         model: cli.model,
         thinking: cli.thinking,

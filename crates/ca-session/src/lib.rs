@@ -22,7 +22,7 @@ pub type Result<T> = std::result::Result<T, SessionError>;
 
 /// The schema's version. Before 1.0 a store of another version is not migrated: it is moved aside and a new one
 /// begun (the plan's "no backward compatibility before 1.0").
-const SCHEMA: i64 = 3;
+const SCHEMA: i64 = 4;
 
 const CREATE: &str = r#"
 CREATE TABLE sessions (
@@ -42,7 +42,9 @@ CREATE TABLE sessions (
   plan TEXT,
   plan_sent INTEGER NOT NULL DEFAULT 1,
   goals TEXT,
-  goals_sent INTEGER NOT NULL DEFAULT 1
+  goals_sent INTEGER NOT NULL DEFAULT 1,
+  parent TEXT,
+  parent_seq INTEGER
 );
 CREATE INDEX sessions_by_folder ON sessions(folder, updated DESC);
 CREATE TABLE messages (
@@ -95,6 +97,12 @@ ALTER TABLE compactions ADD COLUMN sent INTEGER NOT NULL DEFAULT 0;
 const UPGRADE_2: &str = r#"
 ALTER TABLE sessions ADD COLUMN goals TEXT;
 ALTER TABLE sessions ADD COLUMN goals_sent INTEGER NOT NULL DEFAULT 1;
+"#;
+
+/// From schema 3 (0.4's first) to 4: the session a fork was made from.
+const UPGRADE_3: &str = r#"
+ALTER TABLE sessions ADD COLUMN parent TEXT;
+ALTER TABLE sessions ADD COLUMN parent_seq INTEGER;
 "#;
 
 /// Where a session stands with its chat in Arena.
@@ -179,11 +187,14 @@ impl Store {
         if version == 0 {
             db.execute_batch(CREATE)?;
             db.pragma_update(None, "user_version", SCHEMA)?;
-        } else if version == 1 || version == 2 {
+        } else if (1..SCHEMA).contains(&version) {
             if version == 1 {
                 db.execute_batch(UPGRADE_1)?;
             }
-            db.execute_batch(UPGRADE_2)?;
+            if version <= 2 {
+                db.execute_batch(UPGRADE_2)?;
+            }
+            db.execute_batch(UPGRADE_3)?;
             db.pragma_update(None, "user_version", SCHEMA)?;
         } else if version != SCHEMA {
             drop(db);
@@ -324,6 +335,55 @@ impl Store {
             params![id, through, summary, now()],
         )?;
         Ok(())
+    }
+
+    /// A fork: a new session in the same folder with this one's messages before `before` (all of them: `None`), its
+    /// summaries, results kept aside, plan and goals. It has no chat in Arena yet (its own is made when it syncs, with
+    /// all of it); the session it came from stays as it was. The new id.
+    pub fn fork(&self, id: &str, before: Option<i64>) -> Result<String> {
+        let s = self.summary(id)?;
+        let cut = before.unwrap_or(s.messages).clamp(0, s.messages);
+        let new = self.create(&s.folder, &s.model, &s.mode)?;
+        let tx = self.db.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO messages (session, seq, turn, role, body, at) SELECT ?2, seq, turn, role, body, at FROM messages WHERE session = ?1 AND seq < ?3",
+            params![id, new, cut],
+        )?;
+        tx.execute(
+            "INSERT INTO messages_text (text, session, seq) SELECT text, ?2, seq FROM messages_text WHERE session = ?1 AND seq < ?3",
+            params![id, new, cut],
+        )?;
+        tx.execute(
+            "INSERT INTO compactions (session, through, summary, at) SELECT ?2, through, summary, at FROM compactions WHERE session = ?1 AND through < ?3",
+            params![id, new, cut],
+        )?;
+        tx.execute(
+            "INSERT INTO results (session, id, text) SELECT ?2, id, text FROM results WHERE session = ?1",
+            params![id, new],
+        )?;
+        let turns: i64 =
+            tx.query_row("SELECT COALESCE(MAX(turn), 0) FROM messages WHERE session = ?1", [&new], |r| r.get(0))?;
+        let whole = cut == s.messages;
+        tx.execute(
+            "UPDATE sessions SET messages = ?2, turns = ?3, title = ?4, parent = ?5, parent_seq = ?6,
+               plan = CASE WHEN ?7 THEN (SELECT plan FROM sessions WHERE id = ?5) END, plan_sent = 0,
+               goals = CASE WHEN ?7 THEN (SELECT goals FROM sessions WHERE id = ?5) END, goals_sent = 0
+             WHERE id = ?1",
+            params![new, cut, turns, s.title, id, cut, whole],
+        )?;
+        tx.commit()?;
+        Ok(new)
+    }
+
+    /// The session a fork was made from, and how many of its messages it took.
+    pub fn parent(&self, id: &str) -> Result<Option<(String, i64)>> {
+        Ok(self
+            .db
+            .query_row("SELECT parent, parent_seq FROM sessions WHERE id = ?1", [id], |r| {
+                Ok(r.get::<_, Option<String>>(0)?.zip(r.get::<_, Option<i64>>(1)?))
+            })
+            .optional()?
+            .flatten())
     }
 
     /// The session cut back to before message `seq` (a rewind): later messages and compactions go.
@@ -782,7 +842,7 @@ mod tests {
             let db = Connection::open(&path).expect("open");
             // Schema 1, as 0.2 made it.
             let v1 = CREATE
-                .replace(",\n  chat TEXT,\n  chat_stamp TEXT,\n  chat_branch INTEGER NOT NULL DEFAULT 0,\n  chat_off INTEGER NOT NULL DEFAULT 0,\n  plan TEXT,\n  plan_sent INTEGER NOT NULL DEFAULT 1,\n  goals TEXT,\n  goals_sent INTEGER NOT NULL DEFAULT 1", "")
+                .replace(",\n  chat TEXT,\n  chat_stamp TEXT,\n  chat_branch INTEGER NOT NULL DEFAULT 0,\n  chat_off INTEGER NOT NULL DEFAULT 0,\n  plan TEXT,\n  plan_sent INTEGER NOT NULL DEFAULT 1,\n  goals TEXT,\n  goals_sent INTEGER NOT NULL DEFAULT 1,\n  parent TEXT,\n  parent_seq INTEGER", "")
                 .replace("  arena TEXT,\n", "")
                 .replace("  sent INTEGER NOT NULL DEFAULT 0,\n", "");
             assert!(!v1.contains("chat_off") && !v1.contains("arena TEXT") && !v1.contains("sent INTEGER"));
@@ -798,6 +858,44 @@ mod tests {
         s.append("s1", &Message::user("still here"), true).expect("append");
         assert_eq!(s.summary("s1").expect("kept").messages, 1);
         assert_eq!(s.unsent("s1", 5).expect("unsent").len(), 1);
+    }
+
+    #[test]
+    fn a_fork_takes_the_session_or_its_start_and_leaves_it_as_it_was() {
+        let s = Store::in_memory().expect("store");
+        let id = s.create("/w", "m", "ask").expect("create");
+        for n in 1..=3 {
+            turn(&s, &id, n);
+        }
+        s.compact(&id, 7, "the first two turns").expect("compact");
+        s.keep_result(&id, "a long result").expect("result");
+        s.set_plan(&id, Some("{\"title\":\"p\"}")).expect("plan");
+        s.link_chat(&id, "chat-1").expect("chat");
+        s.mark_sent(&id, &[(0, "m0".into())]).expect("sent");
+        let whole = s.fork(&id, None).expect("fork");
+        assert_ne!(whole, id);
+        let w = s.summary(&whole).expect("summary");
+        assert_eq!((w.messages, w.turns, w.title.as_str()), (12, 3, "question 1"));
+        assert_eq!(s.parent(&whole).expect("parent"), Some((id.clone(), 12)));
+        assert_eq!(s.parent(&id).expect("none"), None);
+        let (a, b) = (s.model_view(&id).expect("view"), s.model_view(&whole).expect("view"));
+        assert_eq!((a.summary, a.messages), (b.summary, b.messages));
+        assert_eq!(s.result(&whole, "r1").expect("r").as_deref(), Some("a long result"));
+        assert!(s.plan(&whole).expect("plan").is_some());
+        assert_eq!(s.plan_unsent(&whole).expect("unsent").map(|p| p.is_some()), Some(true));
+        // Its own chat, made when it syncs: all of it goes.
+        assert_eq!(s.chat_link(&whole).expect("link").chat, None);
+        assert_eq!(s.unsent(&whole, 100).expect("unsent").len(), 12);
+        assert_eq!(s.search("/w", "question 2", 10).expect("search").iter().filter(|h| h.0 == whole).count(), 1);
+        // From before the second question: the first turn only, no plan of later.
+        let start = s.fork(&id, Some(4)).expect("fork");
+        let st = s.summary(&start).expect("summary");
+        assert_eq!((st.messages, st.turns), (4, 1));
+        assert!(s.model_view(&start).expect("view").summary.is_none(), "the summary covered more");
+        assert!(s.plan(&start).expect("plan").is_none());
+        s.append(&start, &Message::user("another way"), true).expect("append");
+        assert_eq!(s.summary(&id).expect("kept").messages, 12, "the session it came from is as it was");
+        assert_eq!(s.chat_link(&id).expect("link").chat.as_deref(), Some("chat-1"));
     }
 
     #[test]

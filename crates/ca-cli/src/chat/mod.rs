@@ -166,6 +166,7 @@ fn help() -> &'static str {
 /compact              summarize the older part of the conversation now\n\
 /clear                a new session (the last stays saved)\n\
 /resume [id]          the folder's sessions, or switch to one\n\
+/fork [N]             carry on in a copy of this session (of before question N); this one stays as it was\n\
 /jobs [stop N]        commands run with no time limit or in the background; stop N stops one\n\
 /tools [on|off NAME]  the tools, by group; turn a tool or a server's tools on or off for this session\n\
 /permissions [allow|deny RULE]  the kept rules, and more for this session\n\
@@ -217,7 +218,11 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
     let approver = Arc::new(KeyApprover { ui, pending: pending.clone() });
     let mut resume = args.resume.clone();
     if args.choose {
-        resume = choose_session(app, &args.opts)?;
+        let chosen = choose_session(app, &args.opts)?;
+        resume = match (resume, chosen) {
+            (Resume::Fork(_), c @ Resume::Id(_)) => Resume::Fork(Box::new(c)),
+            (_, c) => c,
+        };
     }
     // Keys are read from the start: what is typed while the session gets ready waits for the prompt.
     let raw = RawMode::on()?;
@@ -833,6 +838,43 @@ async fn command(
             *p = session::prepare(app, &opts, approver, Resume::New).await?;
             p.agent.inbox = inbox;
             ui.say(&ui.dim(&format!("A new session: {}.", p.session)));
+        }
+        "/fork" => {
+            // All of it, or what came before question N (as /rewind numbers them).
+            let before = if rest.is_empty() {
+                None
+            } else {
+                let n: usize = rest
+                    .trim_start_matches('#')
+                    .parse()
+                    .map_err(|_| anyhow::anyhow!("/fork, or /fork N (N as /rewind lists the questions)"))?;
+                match questions(p)?.into_iter().find(|(k, _, _)| *k == n) {
+                    Some((_, seq, _)) => Some(seq),
+                    None => anyhow::bail!("there is no question {n}: /rewind lists them"),
+                }
+            };
+            let from = p.session.clone();
+            if p.store.lock().map_err(|_| anyhow::anyhow!("the store"))?.summary(&from)?.messages == 0 {
+                anyhow::bail!("this session has nothing to fork yet");
+            }
+            let new = p.store.lock().map_err(|_| anyhow::anyhow!("the store"))?.fork(&from, before)?;
+            let opts = Opts {
+                cwd: Some(p.agent.ctx.workspace.cwd().to_path_buf()),
+                add_dirs: vec![],
+                mode: Some(p.agent.policy.mode.name().into()),
+                model: Some(p.agent.model.clone()),
+                thinking: None,
+                interactive: true,
+                carry_plan: false,
+            };
+            let approver = p.agent.approver.clone();
+            let inbox = p.agent.inbox.clone();
+            *p = session::prepare(app, &opts, approver, Resume::Id(new.clone())).await?;
+            p.agent.inbox = inbox;
+            ui.say(&ui.dim(&format!(
+                "In a fork now: {new}{}. {from} stays as it was (/resume {from} goes back); the files are as they are.",
+                if before.is_some() { format!(", from before question {rest}") } else { String::new() }
+            )));
         }
         "/resume" if rest.is_empty() => {
             let list = p.store.lock().map_err(|_| anyhow::anyhow!("the store"))?.list(&p.folder, 20)?;

@@ -1482,3 +1482,58 @@ async fn the_model_runs_one_of_the_persons_arena_agents_and_reads_its_answer() {
     assert!(tools.contains(&"arena_agents") && tools.contains(&"run_arena_agent"), "{tools:?}");
     assert!(seen[1].to_string().contains("Reviewer is done: MR 12 looks right."), "{}", seen[1]);
 }
+
+#[tokio::test]
+async fn a_fork_carries_on_a_session_that_stays_as_it_was() {
+    let gateway = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    struct Heard(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+    impl Respond for Heard {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            self.0.lock().expect("lock").push(serde_json::from_slice(&r.body).unwrap_or_default());
+            let ev = json!({"choices": [{"delta": {"content": "Noted."}, "finish_reason": "stop"}]});
+            ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(sse(ev))
+        }
+    }
+    Mock::given(path("/v1/chat/completions")).respond_with(Heard(seen.clone())).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let ask = |args: &[&str]| {
+        let out = code_arena(home.path())
+            .args(args)
+            .args(["-C"])
+            .arg(folder.path())
+            .env("ARENA_URL", "https://arena.example")
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .output()
+            .expect("runs");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    };
+    let last = |seen: &std::sync::Arc<std::sync::Mutex<Vec<Value>>>| {
+        seen.lock().expect("lock").last().expect("a request")["messages"].to_string()
+    };
+    ask(&["-p", "the first way"]);
+    let said = ask(&["-p", "zebra branch", "--continue", "--fork-session"]);
+    let (from, fork) = said
+        .split("A fork of ")
+        .nth(1)
+        .and_then(|t| t.split_once(": "))
+        .map(|(a, b)| (a.to_string(), b.split('.').next().unwrap_or("").to_string()))
+        .unwrap_or_else(|| panic!("the fork is said: {said}"));
+    assert_ne!(from, fork);
+    let in_fork = last(&seen);
+    assert!(in_fork.contains("the first way") && in_fork.contains("zebra branch"), "{in_fork}");
+    // The session it came from has only its own.
+    ask(&["-p", "back on the first", "--resume", &from]);
+    let back = last(&seen);
+    assert!(back.contains("the first way") && !back.contains("zebra branch"), "{back}");
+}

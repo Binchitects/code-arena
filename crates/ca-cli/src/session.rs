@@ -37,6 +37,8 @@ pub enum Resume {
     /// This folder's last one (`--continue`).
     Latest,
     Id(String),
+    /// A fork of that one (`--fork-session`): a new session with all of it, the one it came from left as it was.
+    Fork(Box<Resume>),
 }
 
 pub struct Prepared {
@@ -633,8 +635,29 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
 
     let folder = ws.cwd().display().to_string();
     let store = open_store(app)?;
+    let resume = match resume {
+        Resume::Fork(of) => {
+            let from = match *of {
+                Resume::Id(id) => Some(store.summary(&id)?.id),
+                Resume::Latest => store.latest(&folder)?.map(|s| s.id),
+                _ => None,
+            };
+            match from {
+                Some(from) => {
+                    let new = store.fork(&from, None)?;
+                    ui.say(&ui.dim(&format!("A fork of {from}: {new}. The session it came from stays as it was.")));
+                    Resume::Id(new)
+                }
+                None => {
+                    ui.say(&ui.dim("No earlier session in this folder to fork: a new one begins."));
+                    Resume::New
+                }
+            }
+        }
+        r => r,
+    };
     let (session, history, resumed) = match &resume {
-        Resume::New => (None, vec![], None),
+        Resume::New | Resume::Fork(_) => (None, vec![], None),
         Resume::Latest => match store.latest(&folder)? {
             Some(s) => (Some(s.id), vec![], Some(())),
             None => {

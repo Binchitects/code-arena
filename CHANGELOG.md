@@ -15,6 +15,12 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or Claude Code's
   (`run_shell` or `Bash`). A project's hooks run only once you trust them as they are
   (`/hooks trust`; a change asks again). `/hooks` lists them.
+- Session forks: `/fork` carries on in a copy of the session, `/fork N` in a copy of what came
+  before question N (as `/rewind` numbers them); `--fork-session` with `--continue` or `--resume`
+  does it from the shell. The fork has the messages, summaries, results kept aside and (a whole
+  fork) the plan and goals; it gets a chat of its own in Arena when it syncs. The session it came
+  from stays as it was (`/resume ID` goes back); files are not touched. The store is upgraded in
+  place (schema 4: the session a fork came from).
 - Your agents and scheduled tasks in Arena (8.1 on; an 8.0 says it lacks them): `/arena-agents`
   lists the Agent Studio agents you may run (yours and those shared with you) and
   `/arena-agents run N [TEXT]` runs one, telling you when it ends; `/arena-tasks` lists your
