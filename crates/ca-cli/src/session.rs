@@ -66,9 +66,9 @@ pub struct Prepared {
 pub type Notices = Arc<Mutex<Vec<(bool, String)>>>;
 
 /// Before a turn: what the web added comes in (said, and read again by the model), and the chat is held.
-pub async fn begin_turn(p: &mut Prepared, ui: crate::ui::Ui) {
+pub async fn begin_turn(p: &mut Prepared, ui: crate::ui::Ui, words: &str) {
     let Some(sync) = p.sync.clone() else { return };
-    let taken = sync.begin_turn(p.agent.inbox.clone()).await;
+    let taken = sync.begin_turn(p.agent.inbox.clone(), words).await;
     if p.agent.tags.is_empty()
         && let Some(chat) = sync.chat_id()
     {

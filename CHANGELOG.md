@@ -145,6 +145,9 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   Arena's skills are read again (used from your next message).
 
 ### Fixed
+- A session's first turn did not hold its chat (the chat was made only by its first send), so the
+  web chat answered what was written there meanwhile on its own: the chat is made at the first
+  turn's start now, from the question, and held as every turn's is.
 - A CA file moved or deleted after `login --ca` broke every request: login keeps its own copy of it
   now (`arena-ca.pem` in the config folder), and a CA file that cannot be read says how to give it
   again; `doctor` says so instead of stopping with an error.

@@ -317,6 +317,20 @@ impl ChatSync {
 
     /// The chat Arena keeps this session in, made the first time.
     async fn chat(&self) -> Result<Option<String>, Pushed> {
+        self.chat_titled(None).await
+    }
+
+    /// The chat, made now when there is none yet, named by `words` (the person's first question, before the session
+    /// keeps it): a first turn holds the chat as every other does, so the web queues meanwhile.
+    pub(crate) async fn chat_for(&self, words: &str) -> Option<String> {
+        if self.unsupported.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        let _one = self.io.lock().await;
+        self.chat_titled(Some(words)).await.ok().flatten()
+    }
+
+    async fn chat_titled(&self, words: Option<&str>) -> Result<Option<String>, Pushed> {
         let (link, first) = {
             let Ok(s) = self.store.lock() else { return Err(Pushed::Off) };
             let link = s.chat_link(&self.session).map_err(|_| Pushed::Off)?;
@@ -329,8 +343,12 @@ impl ChatSync {
         if let Some(c) = link.chat {
             return Ok(Some(c));
         }
-        let Some(first) = first else { return Ok(None) };
-        let title = first.message.content.lines().find(|l| !l.trim().is_empty()).map(|l| l.chars().take(80).collect());
+        let text = match (&first, words) {
+            (Some(f), _) => f.message.content.clone(),
+            (None, Some(w)) if !w.trim().is_empty() => w.to_string(),
+            _ => return Ok(None),
+        };
+        let title = text.lines().find(|l| !l.trim().is_empty()).map(|l| l.chars().take(80).collect());
         let new = NewChat {
             reference: self.session.clone(),
             place: self.place.clone(),

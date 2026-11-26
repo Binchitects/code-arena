@@ -340,7 +340,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             Some(s) => format!("{s}\n\n{line}"),
             None => line.clone(),
         };
-        session::begin_turn(&mut p, ui).await;
+        session::begin_turn(&mut p, ui, &message).await;
         session::before_message(&mut p, &message).await;
         let started = Instant::now();
         let mut progress = Progress::new(ui, true);

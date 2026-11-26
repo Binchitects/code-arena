@@ -195,14 +195,15 @@ impl ChatSync {
     /// A turn starts here: what the web added is taken in, then the chat is the session's until the turn ends (the web
     /// queues the person's messages meanwhile, and what it queues joins the turn through `inbox`). While the web chat
     /// is answering, the turn waits for its answer, at most two minutes.
-    pub async fn begin_turn(self: &Arc<Self>, inbox: Option<Arc<Mutex<Vec<String>>>>) -> Taken {
+    pub async fn begin_turn(self: &Arc<Self>, inbox: Option<Arc<Mutex<Vec<String>>>>, words: &str) -> Taken {
         // The last turn's end first: its letting go must not let go of this one.
         let ending = self.ending.lock().ok().and_then(|mut e| e.take());
         if let Some(e) = ending {
             let _ = e.await;
         }
         let mut taken = self.take_in().await;
-        let Some(chat) = self.chat_id() else { return taken };
+        // A first turn makes the chat now, so it holds it as every turn does.
+        let Some(chat) = self.chat_id().or(self.chat_for(words).await) else { return taken };
         let deadline = tokio::time::Instant::now() + WEB_ANSWER_WAIT;
         let mut said = false;
         loop {

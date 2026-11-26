@@ -218,7 +218,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
     };
     let mut progress = Progress::new(ui, args.output == OutputFormat::Text);
     progress.plan = vec![p.agent.ctx.plan.clone()];
-    session::begin_turn(&mut p, ui).await;
+    session::begin_turn(&mut p, ui, &prompt).await;
     session::before_message(&mut p, &prompt).await;
     if args.output == OutputFormat::StreamJson {
         line(json!({"type": "start", "session": p.session, "model": model, "edition": app.edition().name()}));

@@ -338,7 +338,7 @@ async fn a_turn_holds_the_chat_takes_the_webs_queue_and_lets_it_go() {
         .mount(&server)
         .await;
     let inbox = Arc::new(Mutex::new(Vec::new()));
-    sync.begin_turn(Some(inbox.clone())).await;
+    sync.begin_turn(Some(inbox.clone()), "").await;
     // What the person queued on the web joins the turn.
     let got = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -587,4 +587,30 @@ async fn messages_arena_kept_whose_answer_was_lost_are_known_by_their_ref_not_ta
     assert_eq!(all[4], "asked on the web");
     assert!(s.unsent(&id, 10).expect("unsent").is_empty(), "nothing is sent again");
     assert_eq!(s.arena_id(&id, 0).expect("id").as_deref(), Some("k0"));
+}
+
+#[tokio::test]
+async fn a_first_turn_makes_the_chat_and_holds_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "chat-1", "created": true})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/chat-1/turn"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"until": "x"})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let id = store.lock().expect("store").create("/w", "qwen", "ask").expect("create");
+    let (sync, _) = sync(&server, &store, &id);
+    // Nothing kept yet: the question is the turn's own, and the chat is named by it.
+    sync.begin_turn(None, "what files are here?").await;
+    let reqs = server.received_requests().await.expect("requests");
+    let made: Value = serde_json::from_slice(&reqs[0].body).expect("json");
+    assert_eq!(made["title"], "what files are here?");
+    assert!(reqs.iter().any(|r| r.url.path().ends_with("/turn")), "the first turn holds the chat");
 }
