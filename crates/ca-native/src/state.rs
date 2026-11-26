@@ -141,6 +141,8 @@ pub struct Ui {
     /// A view's own menu (Move to…), open where it was right-clicked (in the window).
     pub context: RwSignal<Option<(crate::layout::View, f64, f64)>>,
     pub changes: RwSignal<Vec<Change>>,
+    /// The shell the session's terminals run (its name, for their tabs).
+    pub shell: RwSignal<String>,
     /// The terminal the panel shows, and its screen.
     pub term: RwSignal<crate::terminal::State>,
     pub term_screen: RwSignal<crate::terminal::Screen>,
@@ -250,6 +252,7 @@ impl Ui {
             loaded: create_rw_signal(false),
             pointer: create_rw_signal((0.0, 0.0)),
             changes: create_rw_signal(Vec::new()),
+            shell: create_rw_signal(String::new()),
             term: create_rw_signal(crate::terminal::State::None),
             term_screen: create_rw_signal(crate::terminal::Screen::default()),
             terms: create_rw_signal(Vec::new()),
@@ -547,6 +550,7 @@ impl Ui {
                 self.folder.set(s("folder"));
                 self.branch.set(s("branch"));
                 self.running.set(m["running"] == true);
+                self.shell.set(s("shell"));
                 self.choice.set(s("theme"));
                 self.apply_theme();
                 self.items.set(self.thread_of(m));

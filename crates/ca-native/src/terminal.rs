@@ -600,13 +600,10 @@ impl Shell {
     }
 }
 
-/// What a terminal's tab is called: the shell's name, as VS Code's ("bash", "zsh").
-fn shell_name() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .and_then(|s| s.rsplit('/').next().map(str::to_string))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "bash".to_string())
+/// What a terminal's tab is called: the shell's name, as VS Code's ("bash", "zsh"), as the session says it.
+fn shell_name(ui: Ui) -> String {
+    let s = ui.shell.get_untracked();
+    if s.is_empty() { "bash".to_string() } else { s }
 }
 
 fn palette(ui: Ui) -> Palette {
@@ -681,7 +678,7 @@ fn open(ui: Ui, send: &Send, over: Option<u64>) {
     if let Some(old) = over {
         send(json!({"type": "term_close", "id": old}));
     }
-    let shell = Shell { id, name: shell_name(), ended: None };
+    let shell = Shell { id, name: shell_name(ui), ended: None };
     ui.terms.update(|l| match over.and_then(|old| l.iter().position(|s| s.id == old)) {
         Some(at) => l[at] = shell,
         None => l.push(shell),

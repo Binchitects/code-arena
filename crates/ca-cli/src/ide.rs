@@ -148,6 +148,8 @@ fn state(p: &Prepared, app: &App, models: &[String], running: bool) -> Value {
         "folder": p.folder,
         "root": p.agent.ctx.workspace.root().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
         "terminals": cfg!(unix),
+        // The terminals' shell by its name, for their tabs ("bash", "zsh").
+        "shell": app.settings.env().get("SHELL").and_then(|s| s.rsplit('/').next().map(str::to_string)).unwrap_or_else(|| "sh".into()),
         "branch": ca_agent::instructions::git_branch(p.agent.ctx.workspace.root()),
         "theme": theme(app),
         "model": p.agent.model,
