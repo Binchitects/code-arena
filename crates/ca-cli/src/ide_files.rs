@@ -70,13 +70,21 @@ const MOST_BACKUPS: u64 = 50 * 1024 * 1024;
 /// The biggest folder that is deleted (it is kept aside first, and a bigger one is not worth keeping twice).
 const MOST_DELETED: u64 = 50 * 1024 * 1024;
 
-/// How big a file or a folder's tree is; a link counts as itself, never as what it leads to.
-fn tree_size(p: &Path) -> u64 {
+/// How big a file or a folder's tree is; a link counts as itself, never as what it leads to. Counted no further
+/// than past `most` (a huge folder is not walked whole to be refused).
+fn tree_size(p: &Path, most: u64) -> u64 {
     let Ok(meta) = std::fs::symlink_metadata(p) else { return 0 };
     if !meta.is_dir() {
         return meta.len();
     }
-    std::fs::read_dir(p).into_iter().flatten().flatten().map(|e| tree_size(&e.path())).sum()
+    let mut total = 0;
+    for e in std::fs::read_dir(p).into_iter().flatten().flatten() {
+        total += tree_size(&e.path(), most.saturating_sub(total));
+        if total > most {
+            break;
+        }
+    }
+    total
 }
 
 /// A file or a folder's tree copied; a link is copied as a link (never what it leads to).
@@ -285,11 +293,16 @@ impl Side {
             return fail(e.to_string());
         }
         let (was, now) = (self.shown(&from), self.shown(&dest));
-        // Its unsaved changes are kept under its name: they follow it.
-        let _ = std::fs::rename(
-            self.backups.join(format!("{}.json", name_of(&was))),
-            self.backups.join(format!("{}.json", name_of(&now))),
-        );
+        // Its unsaved changes are kept under its name, and say it: they follow it, under its new one.
+        let old = self.backups.join(format!("{}.json", name_of(&was)));
+        if let Some(mut kept) = std::fs::read_to_string(&old).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        {
+            kept["path"] = json!(now);
+            let new = self.backups.join(format!("{}.json", name_of(&now)));
+            if write_private(&new, &kept.to_string()).is_ok() {
+                let _ = std::fs::remove_file(&old);
+            }
+        }
         let mut folders = vec![parent_of(&was), parent_of(&now)];
         folders.dedup();
         (json!({"type": "renamed", "path": was, "to": now}), folders)
@@ -310,7 +323,7 @@ impl Side {
             Err(e) => return fail(e),
         };
         let Ok(meta) = std::fs::symlink_metadata(&real) else { return fail("not there".into()) };
-        if meta.is_dir() && tree_size(&real) > MOST_DELETED {
+        if meta.is_dir() && tree_size(&real, MOST_DELETED) > MOST_DELETED {
             return fail("a folder bigger than 50 MB is not kept aside: delete it outside the editor".into());
         }
         let shown = self.shown(&real);
@@ -1090,6 +1103,10 @@ mod tests {
         );
         assert_eq!(listed(&got), ["src", ""]);
         assert!(d.path().join("main.rs").is_file() && !d.path().join("src/main.rs").exists());
+        s.handle(&json!({"type": "backups"}));
+        let items = drain(&mut rx)[0]["items"].clone();
+        assert_eq!(items.as_array().map(Vec::len), Some(1));
+        assert_eq!((items[0]["path"].as_str(), items[0]["text"].as_str()), (Some("main.rs"), Some("unsaved")));
         assert!(s.backups.join(format!("{}.json", name_of("main.rs"))).is_file());
         // A folder, with what is in it.
         s.handle(&json!({"type": "rename", "path": "src", "to": "lib"}));
@@ -1161,7 +1178,9 @@ mod tests {
         std::fs::File::create(d.path().join("src/big.bin")).expect("f").set_len(MOST_DELETED + 1).expect("len");
         #[cfg(unix)]
         std::os::unix::fs::symlink("/", d.path().join("src/everything")).expect("link");
-        assert!(tree_size(&d.path().join("src")) < MOST_DELETED + 4096, "a link counts as itself");
+        #[cfg(unix)]
+        assert!(tree_size(&d.path().join("src/everything"), u64::MAX) < 4096, "a link counts as itself");
+        assert!(tree_size(&d.path().join("src"), u64::MAX) < MOST_DELETED + 4096);
         s.handle(&json!({"type": "delete", "path": "src"}));
         let got = drain(&mut rx);
         assert!(got.len() == 1 && got[0]["error"].as_str().is_some_and(|e| e.contains("50 MB")), "{got:?}");
