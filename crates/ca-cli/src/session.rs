@@ -552,6 +552,10 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     // What the session's store gives the model: results kept aside, and the session's own messages.
     agent.tools.extend(crate::session_tools::tools(store.clone(), session.clone(), folder.clone()));
     agent.tools.push(ca_agent::library::skill_tool(sources.clone()));
+    // Checklists are kept in Arena, with the session's chat.
+    if let Some(s) = &sync {
+        agent.tools.push(Arc::new(crate::checklist::CheckTool { sync: s.clone() }));
+    }
     // The MCP servers: those that answer within a few seconds now, the others when they do.
     let local: Vec<String> = agent.tools.iter().map(|t| t.def().name).collect();
     let (configured, notes) = crate::servers::configured(app, &local);
@@ -592,6 +596,9 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         notices,
         said_next: None,
     };
+    if prepared.resumed.is_some() {
+        crate::checklist::remind(&mut prepared).await;
+    }
     if o.carry_plan {
         match resume_plan(&mut prepared) {
             Ok(said) => {

@@ -93,13 +93,6 @@
       "body": "[]"
     },
     {
-      "method": "PUT",
-      "path": "/api/code-arena/checklists/00000000-0000-0000-0000-000000000000",
-      "status": 404,
-      "contentType": "",
-      "body": ""
-    },
-    {
       "method": "GET",
       "path": "/api/code-arena/chats/00000000-0000-0000-0000-000000000000/project-work",
       "status": 404,
@@ -117,6 +110,13 @@
       "method": "GET",
       "path": "/api/code-arena/scheduled",
       "status": 404,
+      "contentType": "",
+      "body": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/code-arena/checklists",
+      "status": 405,
       "contentType": "",
       "body": ""
     }

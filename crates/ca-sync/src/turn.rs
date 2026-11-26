@@ -43,7 +43,7 @@ impl Taken {
 }
 
 impl ChatSync {
-    pub(crate) fn chat_id(&self) -> Option<String> {
+    pub fn chat_id(&self) -> Option<String> {
         if self.unsupported.load(Ordering::Relaxed) {
             return None;
         }

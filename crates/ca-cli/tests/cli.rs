@@ -659,3 +659,78 @@ async fn a_plans_checks_are_enforced_kept_sent_and_carried_on() {
     let asked = String::from_utf8_lossy(&requests.last().expect("one").body).to_string();
     assert!(asked.contains("carried on here, 1 of 2 steps done"), "{asked}");
 }
+
+#[tokio::test]
+async fn a_checklist_on_in_the_chat_is_told_and_ticked() {
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(
+            vec![
+                sse(json!({"choices": [{"delta": {"content": "Started."}, "finish_reason": "stop"}]})),
+                call("k1", "checklist_check", json!({"item": 1, "note": "cargo test: 3 passed"})),
+                sse(json!({"choices": [{"delta": {"content": "Item 1 is ticked."}, "finish_reason": "stop"}]})),
+            ],
+            AtomicUsize::new(0),
+        ))
+        .mount(&gateway)
+        .await;
+    let arena = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "c-1", "created": true})))
+        .mount(&arena)
+        .await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/c-1/messages"))
+        .respond_with(Chats(seen.clone()))
+        .mount(&arena)
+        .await;
+    let run = json!({"name": "Before a merge", "items": [{"number": 1, "text": "the tests pass", "done": false}], "done": 0, "total": 1});
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/c-1/checklist"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(run))
+        .mount(&arena)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/c-1/checklist/tick"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"name": "Before a merge",
+            "items": [{"number": 1, "text": "the tests pass", "done": true, "note": "cargo test: 3 passed", "by": "model"}],
+            "done": 1, "total": 1})))
+        .expect(1)
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/c-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"unchanged": true, "stamp": "s"})))
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).mount(&arena).await;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).mount(&arena).await;
+    Mock::given(method("DELETE")).respond_with(ResponseTemplate::new(204)).mount(&arena).await;
+
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let run = |args: &[&str]| {
+        code_arena(home.path())
+            .args(args)
+            .arg("-C")
+            .arg(project.path())
+            .env("ARENA_URL", arena.uri())
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .output()
+            .expect("runs")
+    };
+    let first = run(&["-p", "start"]);
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let second = run(&["-p", "go through it", "--continue"]);
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(second.status.success(), "{stderr}");
+    assert!(stderr.contains("● checklist_check item 1"), "{stderr}");
+    let requests = gateway.received_requests().await.expect("requests");
+    let asked = String::from_utf8_lossy(&requests.last().expect("one").body).to_string();
+    assert!(asked.contains("The person turned on a checklist"), "{asked}");
+    assert!(asked.contains("1. [x] the tests pass (cargo test: 3 passed)"), "{asked}");
+}

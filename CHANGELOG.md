@@ -53,7 +53,17 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   after it); those steps are to do again. `/plan resume` and `code-arena --plan` carry on the plan
   an earlier session of this folder left. `/plan clear`.
 
+- Checklists, kept in Arena: `/checklist` lists yours and the repository's
+  (`.code-arena/checklists/*.md`, `# Name` and `- item` lines); `/checklist N` or `NAME` turns one
+  on in the session's chat, and the model goes through it, ticking each item with
+  `checklist_check` and how it did or checked it (the web chat shows the same ticks). `/checklist
+  tick N`, `untick N`, `off`; `new NAME: a; b`, `edit N: a; b` and `delete N` on an Arena that
+  has them (8.1 on). A resumed session with a checklist on tells the model again.
+
 ### Fixed
+- `doctor` would have said Arena 8.1 lacks `checklists.edit`: its probe asked to change an unknown
+  checklist, which 8.1 answers with the same plain 404 as 8.0's missing route. It now asks to
+  make one with no name, which 8.1 refuses with its own answer (and makes nothing).
 - The answer being written is kept every two seconds while it comes, so a crash leaves what it
   got to (0.2 recovered drafts but never kept them).
 

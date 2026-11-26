@@ -3,6 +3,7 @@
 mod account;
 mod app;
 mod chat;
+mod checklist;
 mod run;
 mod servers;
 mod session;

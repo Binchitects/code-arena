@@ -183,6 +183,20 @@ impl ChatSync {
         &self.session
     }
 
+    /// The Arena it keeps the session with.
+    pub fn arena(&self) -> &ArenaClient {
+        &self.arena
+    }
+
+    /// The chat Arena keeps this session in, made now if it is not yet (the session needs a message first).
+    pub async fn ensure_chat(&self) -> Option<String> {
+        if let Some(c) = self.chat_id() {
+            return Some(c);
+        }
+        self.flush(Duration::from_secs(10)).await;
+        self.chat_id()
+    }
+
     /// Waits at most `limit` for what the session kept to reach Arena (a one-shot run, before it ends).
     pub async fn flush(&self, limit: Duration) -> bool {
         let deadline = tokio::time::Instant::now() + limit;

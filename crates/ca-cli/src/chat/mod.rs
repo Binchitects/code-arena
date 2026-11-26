@@ -179,6 +179,7 @@ fn help() -> &'static str {
 /mcp                  Arena's, Farzan Graph's and your MCP servers: connected or not, and why\n\
 /plan                 the working plan; /plan approve [ask] | change N what | another why | reject why reviews a proposed one;\n\
                       /plan undo N puts the files back as before step N; /plan resume carries on the last session's plan\n\
+/checklist [N|NAME|off]  your checklists; turn one on (the model ticks each item), tick N, new NAME: a; b, edit N: a; b, delete N\n\
 /sync [on|off]        where this session stands with its chat in Arena; off keeps it here only\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
 /exit                 leave (also Ctrl+D)\n\
@@ -840,6 +841,7 @@ async fn command(
         }
         "/rewind" => rewind(rest, p, ui)?,
         "/web" => web(rest, p, app, ui).await?,
+        "/checklist" => ui.say(&crate::checklist::command(rest, p).await),
         "/plan" if rest.is_empty() => ui.say(&session::render_plan(&p.agent.ctx.plan.get(), ui)),
         "/plan" => {
             let (word, more) = rest.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((rest, ""));

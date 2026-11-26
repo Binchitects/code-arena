@@ -98,9 +98,10 @@ impl Feature {
             Feature::Memory => (Method::GET, format!("{api}/memories"), None),
             Feature::Skills => (Method::GET, format!("{api}/skills"), None),
             Feature::Checklists => (Method::GET, format!("{api}/checklists"), None),
-            // A change to a checklist no one has: 8.1 answers that it is not there (or that the body will not do);
-            // 8.0 has no such route.
-            Feature::ChecklistsEdit => (Method::PUT, format!("{api}/checklists/{NOBODY}"), Some(json!({}))),
+            // A checklist with no name: 8.1 refuses it with its own 400 ("A checklist needs a name") and makes nothing;
+            // 8.0 has no such route (its plain 404 or 405). A change to an unknown id would not tell them apart: 8.1
+            // answers that with a plain 404 too.
+            Feature::ChecklistsEdit => (Method::POST, format!("{api}/checklists"), Some(json!({"name": ""}))),
             Feature::Goals => (Method::GET, format!("{api}/chats/{NOBODY}/goal"), None),
             Feature::Plans => (Method::GET, format!("{api}/chats/{NOBODY}/plan"), None),
             Feature::Projects => (Method::GET, format!("{api}/projects"), None),
@@ -357,9 +358,9 @@ mod tests {
             .respond_with(ResponseTemplate::new(404).set_body_string("Status Code: 404; Not Found"))
             .mount(&server)
             .await;
-        Mock::given(method("PUT"))
-            .and(path(format!("/api/code-arena/checklists/{NOBODY}")))
-            .respond_with(ResponseTemplate::new(404).set_body_string("Status Code: 404; Not Found"))
+        Mock::given(method("POST"))
+            .and(path("/api/code-arena/checklists"))
+            .respond_with(ResponseTemplate::new(405))
             .mount(&server)
             .await;
         Mock::given(method("GET"))

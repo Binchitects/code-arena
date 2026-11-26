@@ -5,6 +5,7 @@
 
 pub mod capabilities;
 pub mod chats;
+pub mod checklists;
 mod client;
 pub mod signin;
 pub mod types;
