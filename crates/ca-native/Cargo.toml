@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+alacritty_terminal = "0.26.0"
 ca-themes.workspace = true
 crossbeam-channel = "0.5"
 floem = "0.2"

@@ -22,6 +22,7 @@ mod layout;
 mod model;
 mod search;
 mod state;
+mod terminal;
 mod widgets;
 mod workbench;
 

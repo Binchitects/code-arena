@@ -26,8 +26,8 @@ Sections used:
   the secondary side bar (answers streamed, a turn's calls in a line that opens, Allow / Always /
   Deny), and the status bar; each part resized by its sash, Ctrl+B, Ctrl+Alt+B and Ctrl+J show
   and hide them. Coloured by VS Code's colour ids from the theme in force, with VS Code's own
-  defaults where a theme names none. Outline and the terminal come to the native
-  window next; the browser face has them now.
+  defaults where a theme names none. Outline comes to the native window next; the browser
+  face has it now.
 - **The native window's views move as VS Code's.** Right-click a view's icon or its title: Move to
   Primary Side Bar, Secondary Side Bar or Panel, Hide it, or Reset View Locations. Where the views
   are and the parts' sizes are kept for the folder (in the data folder's `ide/`) and come back the
@@ -46,6 +46,13 @@ Sections used:
   namespaces, constants, parameters, escapes and more), in the browser face too. The editor takes
   VS Code's font for the system (the first of them installed), and the files open in it are
   opened again the next time.
+- **The terminal in the native window**, as VS Code's: the session's own shell (the driver's, on
+  `ca-pty`), its output understood by `alacritty_terminal`'s emulator and drawn in the theme's
+  terminal colours (xterm's 256 and true colour, bold as bright, the caret), fitted to the panel
+  as it is resized, the wheel scrolling back through 10,000 lines. Keys go as xterm's (the
+  application cursor mode too); Ctrl+Shift+V pastes (bracketed when the program asks); the
+  workbench's own keys (Ctrl+B, Ctrl+J, Ctrl+`) stay the workbench's. When the shell ends, a key
+  starts another.
 - **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,
   the editor, the panel and a secondary side bar, with VS Code's sizes and the theme's colours.
   Six views (Explorer, Search, Changes, Outline, Agent, Terminal) start where VS Code puts them:

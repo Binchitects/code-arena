@@ -19,7 +19,7 @@ use crate::icons::icon;
 use crate::layout::{View, Where};
 use crate::state::{Send, Ui};
 use crate::widgets::{UI_FONT, action, action_lit, caps, line, sash};
-use crate::{agent, changes, editor, explorer, search};
+use crate::{agent, changes, editor, explorer, search, terminal};
 
 const MENUS: [&str; 8] = ["File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Help"];
 
@@ -584,6 +584,7 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
         Some(View::Agent) => agent::view(ui, send.clone()).into_any(),
         Some(View::Search) => search::view(ui, send.clone()).into_any(),
         Some(View::Changes) => changes::view(ui, send.clone()).into_any(),
+        Some(View::Terminal) => terminal::view(ui, send.clone()).into_any(),
         Some(v) => not_yet(ui, v).into_any(),
         None => empty().into_any(),
     })

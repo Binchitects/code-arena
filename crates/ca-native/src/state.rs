@@ -110,6 +110,8 @@ pub struct Ui {
     /// A view's own menu (Move to…), open where it was right-clicked (in the window).
     pub context: RwSignal<Option<(crate::layout::View, f64, f64)>>,
     pub changes: RwSignal<Vec<Change>>,
+    pub term: RwSignal<crate::terminal::State>,
+    pub term_screen: RwSignal<crate::terminal::Screen>,
     pub search_query: RwSignal<String>,
     pub search_case: RwSignal<bool>,
     pub search_regex: RwSignal<bool>,
@@ -162,6 +164,8 @@ impl Ui {
             loaded: create_rw_signal(false),
             pointer: create_rw_signal((0.0, 0.0)),
             changes: create_rw_signal(Vec::new()),
+            term: create_rw_signal(crate::terminal::State::None),
+            term_screen: create_rw_signal(crate::terminal::Screen::default()),
             search_query: create_rw_signal(String::new()),
             search_case: create_rw_signal(false),
             search_regex: create_rw_signal(false),
@@ -209,6 +213,7 @@ impl Ui {
     fn apply_theme(&self) {
         let t = ca_themes::chosen(&self.themes.get_untracked(), &self.choice.get_untracked(), true);
         self.colors.set(Colors::of(&t));
+        crate::terminal::recolour(*self);
     }
 
     pub fn tab(&self, path: &str) -> Option<Tab> {
@@ -454,6 +459,10 @@ impl Ui {
                     }
                 }
             }
+            "term_out" => {
+                crate::terminal::output(*self, m["id"].as_u64().unwrap_or(0), m["data"].as_str().unwrap_or(""), send)
+            }
+            "term_exit" => crate::terminal::ended(*self, m["id"].as_u64().unwrap_or(0), m["code"].as_i64()),
             "user" => self.push(Kind::User(s("text"))),
             "turn_start" => self.running.set(true),
             "text" => {
