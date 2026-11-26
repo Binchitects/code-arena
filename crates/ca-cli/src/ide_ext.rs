@@ -408,7 +408,7 @@ pub struct Ctx<'a> {
     /// driver sees it is another and sends `state` and `tasks` itself.
     pub p: &'a mut Prepared,
     /// The project's side. Another may be put in its place when the folder is another (`Side::new`, then
-    /// `start_watching`).
+    /// `start_watching`): the one before ends with its last holder, its watching and its terminals with it.
     pub side: &'a mut Arc<Side>,
     pub drv: &'a mut Driver,
     /// The session as it was before this handler: made again after it.
@@ -624,40 +624,52 @@ macro_rules! areas {
     };
 }
 
-areas!(
-    ide_account,
-    ide_agents,
-    ide_arena,
-    ide_attach,
-    ide_automation,
-    ide_banners,
-    ide_chat,
-    ide_complete,
-    ide_dap,
-    ide_extensions,
-    ide_folders,
-    ide_format,
-    ide_git,
-    ide_goal,
-    ide_harness,
-    ide_lsp,
-    ide_media,
-    ide_memory,
-    ide_notebook,
-    ide_plan,
-    ide_problems,
-    ide_review,
-    ide_sessions,
-    ide_settings,
-    ide_skills,
-    ide_snippets,
-    ide_symbols,
-    ide_tasks,
-    ide_tools,
-    ide_trust,
-    ide_update,
-    ide_vm,
-);
+/// The areas, each named once. The tests add one of their own (`ide_probe`), which shows that a message reaches
+/// its area.
+macro_rules! listed {
+    ($($probe:ident)?) => {
+        areas!(
+            ide_account,
+            ide_agents,
+            ide_arena,
+            ide_attach,
+            ide_automation,
+            ide_banners,
+            ide_chat,
+            ide_complete,
+            ide_dap,
+            ide_extensions,
+            ide_folders,
+            ide_format,
+            ide_git,
+            ide_goal,
+            ide_harness,
+            ide_lsp,
+            ide_media,
+            ide_memory,
+            ide_notebook,
+            ide_plan,
+            ide_problems,
+            ide_review,
+            ide_sessions,
+            ide_settings,
+            ide_skills,
+            ide_snippets,
+            ide_symbols,
+            ide_tasks,
+            ide_tools,
+            ide_trust,
+            ide_update,
+            ide_vm,
+            $($probe,)?
+        );
+    };
+}
+
+#[cfg(not(test))]
+listed!();
+#[cfg(test)]
+listed!(ide_probe);
 
 /// Every message by its name: whose it is, and its rule. The first to claim a name has it (a test fails when a
 /// second does).

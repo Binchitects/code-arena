@@ -1804,16 +1804,25 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     assert_eq!(until(&mut page, "state").await["view_state"], look);
 }
 
-/// A model whose first answer takes a while (a turn that is still running when more is asked), the rest at once.
-struct SlowFirst(Vec<String>, AtomicUsize, std::time::Duration);
+/// What holds a model's first answer back until the test lets it go.
+type Hold = std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>;
 
-impl Respond for SlowFirst {
+/// A model whose first answer waits until it is let go (a turn that is still running while more is asked), the
+/// rest at once. The fake gateway answers on a thread of its own, so waiting here holds nothing else.
+struct HeldFirst(Vec<String>, AtomicUsize, Hold);
+
+impl Respond for HeldFirst {
     fn respond(&self, _r: &Request) -> ResponseTemplate {
         let n = self.1.fetch_add(1, Ordering::SeqCst);
-        let answer = ResponseTemplate::new(200)
+        if n == 0 {
+            let (go, told) = &*self.2;
+            let waiting = go.lock().expect("lock");
+            // Let go after a while whatever happens, so a test that fails does not hang.
+            drop(told.wait_timeout_while(waiting, std::time::Duration::from_secs(15), |go| !*go));
+        }
+        ResponseTemplate::new(200)
             .insert_header("content-type", "text/event-stream")
-            .set_body_string(self.0[n.min(self.0.len() - 1)].clone());
-        if n == 0 { answer.set_delay(self.2) } else { answer }
+            .set_body_string(self.0[n.min(self.0.len() - 1)].clone())
     }
 }
 
@@ -1824,11 +1833,12 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     use tokio_tungstenite::tungstenite::Message;
     let said = |text: &str| sse(json!({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}));
     let gateway = MockServer::start().await;
+    let hold = Hold::default();
     Mock::given(path("/v1/chat/completions"))
-        .respond_with(SlowFirst(
+        .respond_with(HeldFirst(
             vec![said("The first answer."), said("The second answer.")],
             AtomicUsize::new(0),
-            std::time::Duration::from_millis(2500),
+            hold.clone(),
         ))
         .mount(&gateway)
         .await;
@@ -1910,7 +1920,11 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     ask(&mut page, json!({"type": "set_setting", "key": "workbench.colorTheme", "value": "Light Modern"})).await;
     ask(&mut page, json!({"type": "themes"})).await;
     ask(&mut page, json!({"type": "send", "text": "and then?"})).await;
-    let meanwhile = until(&mut page, &|v| v["type"] == "turn_end").await;
+    // All of it was taken while the model had not answered yet; only then does its answer come.
+    let mut meanwhile = until(&mut page, &|v| v["type"] == "queued").await;
+    *hold.0.lock().expect("lock") = true;
+    hold.1.notify_all();
+    meanwhile.extend(until(&mut page, &|v| v["type"] == "turn_end").await);
     let at = |all: &[Value], want: &dyn Fn(&Value) -> bool| all.iter().position(want);
     assert_eq!(meanwhile.last().expect("end")["ok"], true, "{meanwhile:?}");
     // Kept for the turn's end, each said so at once; the step back refused, with why.

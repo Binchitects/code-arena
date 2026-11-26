@@ -32,6 +32,8 @@ mod ide_media;
 mod ide_memory;
 mod ide_notebook;
 mod ide_plan;
+#[cfg(test)]
+mod ide_probe;
 mod ide_problems;
 mod ide_review;
 mod ide_sessions;

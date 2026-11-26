@@ -445,9 +445,13 @@ fn own_shared(sh: &Shared, m: &Value) -> bool {
                 ide_ext::say(&sh.out, &format!("The layout was not kept: {e}"));
             }
         }
+        // The themes' folders are read off the loop: a turn is not kept waiting for them.
         "themes" => {
             let dirs = crate::ide_themes::folders(&sh.paths.config, sh.home.as_deref(), sh.workspace.root());
-            send(&sh.out, json!({"type": "themes", "items": crate::ide_themes::all(&dirs)}));
+            let out = sh.out.clone();
+            tokio::task::spawn_blocking(move || {
+                send(&out, json!({"type": "themes", "items": crate::ide_themes::all(&dirs)}));
+            });
         }
         _ => return false,
     }
