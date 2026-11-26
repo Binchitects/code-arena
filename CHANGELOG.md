@@ -25,6 +25,14 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   as a diff of before and now. Ctrl+P finds a file by the letters of its name. Back in the
   window, open files changed on disk are read again; one with changes of yours asks first (Take
   the disk's, Keep mine), and one gone says so.
+- What Coder mode shows is watched: an open file changed from outside shows at once (one with
+  changes of yours asks first), and an open folder lists a file made or removed in it. Only what
+  is on screen is looked at, once a second, so it costs little whatever the project's size.
+- Coder mode is as you left it, per folder: the tabs and the one shown, each file's cursor, the
+  open folders, the side bar's view, the terminal panel and the panes' sizes (drag the dividers).
+  Changes not saved are kept aside a second after you stop typing (in the data folder, readable
+  by you only, 5 MB a file and 50 MB a project at most) and come back with their tab; saving, or
+  closing the tab without saving, lets them go.
 - The editor opens only plain text files inside the project, up to 5 MB: paths come relative to
   the project, each part resolved as the system resolves it (a link leading out is refused), and
   a pipe, a device or a binary file is not opened.

@@ -591,7 +591,6 @@ button.small {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 380px;
 }
 
 .side {
@@ -722,7 +721,6 @@ button.small {
 }
 
 .terminals {
-  height: 240px;
   display: flex;
   flex-direction: column;
   flex: none;
@@ -766,11 +764,34 @@ button.small {
   padding: 0 12px;
 }
 
+.splitter {
+  background: transparent;
+  z-index: 1;
+}
+
+.splitter.col {
+  cursor: col-resize;
+  margin: 0 -2px;
+}
+
+.splitter.row {
+  cursor: row-resize;
+  height: 4px;
+  margin: -2px 0;
+  flex: none;
+}
+
+.splitter:hover,
+.splitter:active {
+  background: var(--accent);
+}
+
 @media (max-width: 1000px) {
   .coder {
-    grid-template-columns: 200px minmax(0, 1fr);
+    grid-template-columns: 200px 4px minmax(0, 1fr) !important;
   }
 
+  .agent-split,
   .agent-side {
     display: none;
   }

@@ -29,6 +29,52 @@ pub struct Side {
     out: broadcast::Sender<String>,
     terms: Arc<Mutex<HashMap<u64, Term>>>,
     shell: PathBuf,
+    watch: Arc<Mutex<Watch>>,
+    /// Where the unsaved changes of this project's files are kept (only the person may read them).
+    backups: PathBuf,
+}
+
+/// What the page shows, watched: each open file's and each open folder's last change (`None`: gone, or not known yet).
+#[derive(Default)]
+struct Watch {
+    files: HashMap<String, Option<u64>>,
+    folders: HashMap<String, Option<u64>>,
+}
+
+/// How often what is watched is looked at.
+const WATCH_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The unsaved changes kept per file, and per project, at most.
+const MOST_BACKUP: usize = 5 * 1024 * 1024;
+const MOST_BACKUPS: u64 = 50 * 1024 * 1024;
+
+/// A short, stable name for a text (FNV-1a): a backup's file name, a project's folder.
+fn name_of(text: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in text.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
+fn stamp(p: &Path) -> Option<u64> {
+    std::fs::metadata(p).ok().map(|m| modified(&m))
+}
+
+/// Writes a file only its owner may read.
+fn write_private(file: &Path, text: &str) -> std::io::Result<()> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(file)?;
+        f.write_all(text.as_bytes())
+    }
+    #[cfg(not(unix))]
+    std::fs::write(file, text)
 }
 
 fn send(out: &broadcast::Sender<String>, v: Value) {
@@ -49,12 +95,14 @@ impl Side {
         checkpoints: Arc<ca_tools::checkpoints::Checkpoints>,
         out: broadcast::Sender<String>,
         shell: Option<&str>,
+        data: &Path,
     ) -> Side {
         let shell = shell
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
             .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }));
-        Side { ws, checkpoints, out, terms: Arc::default(), shell }
+        let backups = data.join("ide-backups").join(name_of(&ws.root().to_string_lossy()));
+        Side { ws, checkpoints, out, terms: Arc::default(), shell, watch: Arc::default(), backups }
     }
 
     /// The real path a page's path names: relative to the project, inside it.
@@ -85,6 +133,20 @@ impl Side {
             "open" => send(&self.out, self.open(path)),
             "save" => send(&self.out, self.save(path, m["text"].as_str().unwrap_or(""))),
             "stat" => send(&self.out, self.stat(m)),
+            "watch" => self.set_watch(m),
+            "backup" => {
+                let r = self.backup(path, m["text"].as_str().unwrap_or(""));
+                if let Err(e) = r {
+                    send(
+                        &self.out,
+                        json!({"type": "notice", "text": format!("Your changes to {path} could not be kept aside: {e}")}),
+                    );
+                }
+            }
+            "backup_drop" => {
+                let _ = std::fs::remove_file(self.backups.join(format!("{}.json", name_of(path))));
+            }
+            "backups" => send(&self.out, self.list_backups()),
             "changes" => send(&self.out, self.changes()),
             "files" => {
                 let (root, out) = (self.ws.root().to_path_buf(), self.out.clone());
@@ -195,7 +257,142 @@ impl Side {
             return fail(&e.to_string());
         }
         let m = std::fs::metadata(&real).map(|m| modified(&m)).unwrap_or(0);
-        json!({"type": "saved", "path": self.shown(&real), "modified": m})
+        let shown = self.shown(&real);
+        // The watch knows this change already: it is the person's own, not one from outside.
+        if let Ok(mut w) = self.watch.lock()
+            && let Some(known) = w.files.get_mut(&shown)
+        {
+            *known = Some(m);
+        }
+        let _ = std::fs::remove_file(self.backups.join(format!("{}.json", name_of(&shown))));
+        json!({"type": "saved", "path": shown, "modified": m})
+    }
+
+    /// What to watch now: the open files and the open folders (those no longer listed stop being watched).
+    fn set_watch(&self, m: &Value) {
+        let list = |k: &str| -> Vec<String> {
+            m[k].as_array().into_iter().flatten().filter_map(Value::as_str).take(2000).map(str::to_string).collect()
+        };
+        let (files, folders) = (list("files"), list("folders"));
+        let Ok(mut w) = self.watch.lock() else { return };
+        let mut next = Watch::default();
+        for f in files {
+            let known = w.files.remove(&f).unwrap_or_else(|| self.real(&f).ok().and_then(|r| stamp(&r)));
+            next.files.insert(f, known);
+        }
+        for d in folders {
+            let known = w.folders.remove(&d).unwrap_or_else(|| self.real(&d).ok().and_then(|r| stamp(&r)));
+            next.folders.insert(d, known);
+        }
+        *w = next;
+    }
+
+    /// Looks at what is watched once a second, and tells the page what changed: a file's new stamp (or that it is
+    /// gone), a folder listed again. Only what the page shows is looked at, so it costs little whatever the project.
+    pub fn start_watching(self: &Arc<Self>) {
+        let me = Arc::downgrade(self);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(WATCH_EVERY).await;
+                let Some(s) = me.upgrade() else { break };
+                s.look();
+            }
+        });
+    }
+
+    /// One look at what is watched: what changed is told, and becomes what is known.
+    fn look(&self) {
+        let (files, folders): (Vec<_>, Vec<_>) = match self.watch.lock() {
+            Ok(w) => (
+                w.files.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+                w.folders.iter().map(|(k, v)| (k.clone(), *v)).collect(),
+            ),
+            Err(_) => return,
+        };
+        let now_of = |p: &str| self.real(p).ok().and_then(|r| stamp(&r));
+        let changed_files: Vec<(String, Option<u64>)> = files
+            .into_iter()
+            .filter_map(|(f, known)| {
+                let now = now_of(&f);
+                (now != known).then_some((f, now))
+            })
+            .collect();
+        let changed_folders: Vec<(String, Option<u64>)> = folders
+            .into_iter()
+            .filter_map(|(d, known)| {
+                let now = now_of(&d);
+                (now != known).then_some((d, now))
+            })
+            .collect();
+        if let Ok(mut w) = self.watch.lock() {
+            for (f, now) in &changed_files {
+                if let Some(k) = w.files.get_mut(f) {
+                    *k = *now;
+                }
+            }
+            for (d, now) in &changed_folders {
+                if let Some(k) = w.folders.get_mut(d) {
+                    *k = *now;
+                }
+            }
+        }
+        if !changed_files.is_empty() {
+            let items: Vec<Value> = changed_files
+                .iter()
+                .map(|(f, now)| match now {
+                    Some(m) => json!({"path": f, "modified": m}),
+                    None => json!({"path": f, "gone": true}),
+                })
+                .collect();
+            send(&self.out, json!({"type": "stats", "items": items}));
+        }
+        for (d, _) in changed_folders {
+            send(&self.out, self.ls(&d));
+        }
+    }
+
+    /// Unsaved changes of a file kept aside (the page sends them a second after typing stops).
+    fn backup(&self, path: &str, text: &str) -> Result<(), String> {
+        if text.len() > MOST_BACKUP {
+            return Err("bigger than 5 MB".into());
+        }
+        let shown = self.shown(&self.real(path)?);
+        let file = self.backups.join(format!("{}.json", name_of(&shown)));
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        write_private(&file, &json!({"path": shown, "text": text, "at": at}).to_string()).map_err(|e| e.to_string())?;
+        // The project's backups kept under 50 MB: the oldest go first.
+        let mut all: Vec<(std::time::SystemTime, u64, PathBuf)> = std::fs::read_dir(&self.backups)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let m = e.metadata().ok()?;
+                Some((m.modified().ok()?, m.len(), e.path()))
+            })
+            .collect();
+        all.sort();
+        let mut total: u64 = all.iter().map(|(_, n, _)| n).sum();
+        for (_, n, p) in all {
+            if total <= MOST_BACKUPS {
+                break;
+            }
+            let _ = std::fs::remove_file(&p);
+            total -= n;
+        }
+        Ok(())
+    }
+
+    fn list_backups(&self) -> Value {
+        let items: Vec<Value> = std::fs::read_dir(&self.backups)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| serde_json::from_str::<Value>(&std::fs::read_to_string(e.path()).ok()?).ok())
+            .collect();
+        json!({"type": "backups", "items": items})
     }
 
     /// When each file was last changed (or that it is gone): open tabs are checked so when the window comes back.
@@ -385,7 +582,7 @@ mod tests {
         std::fs::write(d.path().join("blob.bin"), [0u8, 1, 2]).expect("w");
         let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
         let (out, rx) = broadcast::channel(64);
-        (d, Side::new(ws, Arc::default(), out, None), rx)
+        (d, Side::new(ws, Arc::default(), out, None, &std::env::temp_dir()), rx)
     }
 
     #[test]
@@ -441,7 +638,7 @@ mod tests {
         let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
         let cps = Arc::new(ca_tools::checkpoints::Checkpoints::default());
         let (out, _rx) = broadcast::channel(8);
-        let s = Side::new(ws.clone(), cps.clone(), out, None);
+        let s = Side::new(ws.clone(), cps.clone(), out, None, &std::env::temp_dir());
         cps.begin(0);
         let a = ws.resolve("a.txt").expect("a");
         cps.before_write(&a);
@@ -460,6 +657,77 @@ mod tests {
         // Put back as it was: no longer a change.
         std::fs::write(&a, "one\n").expect("w");
         assert_eq!(s.changes()["files"].as_array().map(Vec::len), Some(1));
+    }
+
+    fn drain(rx: &mut broadcast::Receiver<String>) -> Vec<Value> {
+        let mut out = Vec::new();
+        while let Ok(t) = rx.try_recv() {
+            out.push(serde_json::from_str(&t).expect("json"));
+        }
+        out
+    }
+
+    #[test]
+    fn what_is_watched_says_when_it_changes_but_not_for_a_save_of_ones_own() {
+        let (d, s, mut rx) = side();
+        s.handle(&json!({"type": "watch", "files": ["src/main.rs", "gone.rs"], "folders": ["src"]}));
+        s.look();
+        assert!(drain(&mut rx).is_empty(), "nothing changed yet");
+        // The person's own save: not told as a change.
+        s.handle(&json!({"type": "save", "path": "src/main.rs", "text": "fn main() { }\n"}));
+        drain(&mut rx);
+        s.look();
+        assert!(drain(&mut rx).is_empty(), "a save of one's own is not a change on disk");
+        // From outside: the file's new stamp, and the folder listed again for the file made in it.
+        let file = d.path().join("src/main.rs");
+        let later = std::fs::metadata(&file).expect("m").modified().expect("t") + std::time::Duration::from_secs(5);
+        std::fs::write(&file, "fn main() { println!(); }\n").expect("w");
+        std::fs::File::options().write(true).open(&file).expect("f").set_modified(later).expect("touch");
+        std::fs::write(d.path().join("src/new.rs"), "").expect("w");
+        let dir_later = std::fs::metadata(d.path().join("src")).expect("m").modified().expect("t")
+            + std::time::Duration::from_secs(5);
+        std::fs::File::open(d.path().join("src")).expect("dir").set_modified(dir_later).expect("touch dir");
+        s.look();
+        let got = drain(&mut rx);
+        assert!(got.iter().any(|v| v["type"] == "stats" && v["items"][0]["path"] == "src/main.rs"), "{got:?}");
+        assert!(got.iter().any(|v| v["type"] == "ls" && v["path"] == "src"), "{got:?}");
+        // Once told, not again.
+        s.look();
+        assert!(drain(&mut rx).is_empty());
+        std::fs::remove_file(&file).expect("rm");
+        s.look();
+        let got = drain(&mut rx);
+        assert!(got.iter().any(|v| v["items"][0]["gone"] == true), "{got:?}");
+    }
+
+    #[test]
+    fn unsaved_changes_are_kept_aside_for_the_person_only_and_go_with_a_save() {
+        let d = tempfile::tempdir().expect("temp");
+        std::fs::write(d.path().join("a.txt"), "one\n").expect("w");
+        let data = tempfile::tempdir().expect("data");
+        let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
+        let (out, mut rx) = broadcast::channel(16);
+        let s = Side::new(ws, Arc::default(), out, None, data.path());
+        s.handle(&json!({"type": "backup", "path": "a.txt", "text": "one, changed\n"}));
+        s.handle(&json!({"type": "backups"}));
+        let got = drain(&mut rx);
+        let items = got.iter().find(|v| v["type"] == "backups").expect("listed")["items"].clone();
+        assert_eq!((items[0]["path"].as_str(), items[0]["text"].as_str()), (Some("a.txt"), Some("one, changed\n")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let f = std::fs::read_dir(&s.backups).expect("dir").flatten().next().expect("one").path();
+            assert_eq!(std::fs::metadata(f).expect("m").permissions().mode() & 0o777, 0o600);
+        }
+        s.handle(&json!({"type": "save", "path": "a.txt", "text": "one, changed\n"}));
+        s.handle(&json!({"type": "backups"}));
+        let got = drain(&mut rx);
+        assert_eq!(
+            got.iter().find(|v| v["type"] == "backups").expect("listed")["items"].as_array().map(Vec::len),
+            Some(0)
+        );
+        assert!(s.handle(&json!({"type": "backup", "path": "../x.txt", "text": "x"})));
+        assert!(drain(&mut rx).iter().any(|v| v["type"] == "notice"), "a path outside is refused");
     }
 
     #[cfg(unix)]

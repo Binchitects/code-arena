@@ -6,7 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import * as monaco from "monaco-editor/editor/editor.api";
 import "monaco-editor/basic-languages/monaco.contribution";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
-import { For, type JSX, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { For, type JSX, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { listen, send, session } from "./stream";
 
@@ -36,6 +36,51 @@ const [quick, setQuick] = createStore<{ open: boolean; paths: string[]; text: st
 const modifiedAt = new Map<string, number>();
 /** Where a file opened from a search should show. */
 const goTo = new Map<string, number>();
+/** Unsaved changes kept aside, waiting for their file's model. */
+const pendingBackup = new Map<string, string>();
+/** Where the cursor was in each file. */
+const cursors = new Map<string, { lineNumber: number; column: number }>();
+/** Each model's timer that keeps its unsaved changes aside a second after typing stops. */
+const backupTimers = new Map<string, number>();
+
+type Layout = { tabs: string[]; active: string; folders: string[]; view: string; panel: boolean; cursors: Record<string, { lineNumber: number; column: number }>; sizes: Sizes };
+type Sizes = { side: number; agent: number; term: number };
+export const [sizes, setSizes] = createStore<Sizes>({ side: 240, agent: 380, term: 240 });
+export const [panelOpen, setPanelOpen] = createSignal(true);
+
+const layoutKey = () => `code-arena.coder:${session.folder}`;
+
+function loadLayout(): Layout | undefined {
+  try {
+    const t = localStorage.getItem(layoutKey());
+    return t ? (JSON.parse(t) as Layout) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+let saveTimer = 0;
+/** The tabs, cursors, folders and sizes kept for the next visit (a little after each change). */
+function keepLayout() {
+  clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => {
+    const layout: Layout = {
+      tabs: tabs.filter((t) => !t.diff).map((t) => t.path),
+      active: active().startsWith("Δ ") ? "" : active(),
+      folders: Object.entries(open).filter(([p, o]) => o && p).map(([p]) => p),
+      view: view(),
+      panel: panelOpen(),
+      cursors: Object.fromEntries(cursors),
+      sizes: { ...sizes },
+    };
+    try {
+      localStorage.setItem(layoutKey(), JSON.stringify(layout));
+    } catch {
+      // Not kept: the next visit starts as a new one.
+    }
+  }, 400);
+}
+
 /** The diff tabs' models: before and now. */
 const diffs = new Map<string, { before: monaco.editor.ITextModel; after: monaco.editor.ITextModel }>();
 
@@ -121,6 +166,7 @@ function closeTab(path: string) {
     diffs.delete(path);
   }
   if (t?.dirty && !confirm(`${path} has changes not saved. Close it anyway?`)) return;
+  if (t?.dirty) send({ type: "backup_drop", path });
   const i = tabs.findIndex((x) => x.path === path);
   setTabs(produce((l) => void l.splice(i, 1)));
   models.get(path)?.model.dispose();
@@ -159,12 +205,33 @@ listen((m) => {
       const model = monaco.editor.createModel(m.text, undefined, monaco.Uri.file(`/${m.path}`));
       const entry = { model, saved: model.getAlternativeVersionId() };
       models.set(m.path, entry);
-      model.onDidChangeContent(() => setDirty(m.path, model.getAlternativeVersionId() !== entry.saved));
+      model.onDidChangeContent(() => {
+        const dirty = model.getAlternativeVersionId() !== entry.saved;
+        setDirty(m.path, dirty);
+        clearTimeout(backupTimers.get(m.path));
+        if (dirty) backupTimers.set(m.path, window.setTimeout(() => send({ type: "backup", path: m.path, text: model.getValue() }), 1000));
+      });
+      // Changes not saved when the IDE last closed: back in the tab, still to save.
+      const kept = pendingBackup.get(m.path);
+      if (kept !== undefined && kept !== m.text) model.setValue(kept);
+      pendingBackup.delete(m.path);
       if (active() === m.path) showModel(m.path);
       break;
     }
     case "files":
       setQuick("paths", m.paths);
+      break;
+    case "backups":
+      for (const b of m.items) {
+        const had = models.get(b.path);
+        if (had) {
+          if (had.model.getValue() !== b.text) had.model.setValue(b.text);
+        } else {
+          pendingBackup.set(b.path, b.text);
+          if (!tabs.some((t) => t.path === b.path)) setTabs(produce((l) => void l.push({ path: b.path, dirty: true })));
+          send({ type: "open", path: b.path });
+        }
+      }
       break;
     case "search":
       if (m.query === found.query) setFound({ hits: m.hits ?? [], files: m.files ?? 0, more: !!m.more, error: m.error, busy: false });
@@ -219,10 +286,14 @@ function showModel(path: string) {
   if (editor && m) {
     editor.setModel(m.model);
     const line = goTo.get(path);
+    const cursor = cursors.get(path);
     if (line) {
       goTo.delete(path);
       editor.setPosition({ lineNumber: line, column: 1 });
       editor.revealLineInCenter(line);
+    } else if (cursor) {
+      editor.setPosition(cursor);
+      editor.revealPositionInCenter(cursor);
     }
     editor.focus();
   }
@@ -297,6 +368,13 @@ function Editor() {
       if (active()) save(active());
     });
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => openQuick());
+    editor.onDidChangeCursorPosition((e) => {
+      const path = active();
+      if (path && !path.startsWith("Δ ")) {
+        cursors.set(path, { lineNumber: e.position.lineNumber, column: e.position.column });
+        keepLayout();
+      }
+    });
     const scheme = window.matchMedia("(prefers-color-scheme: dark)");
     const onScheme = () => monaco.editor.setTheme(dark() ? "vs-dark" : "vs");
     scheme.addEventListener("change", onScheme);
@@ -384,11 +462,16 @@ function Terminals() {
     setIds([...ids(), id]);
     setShown(id);
   };
-  onMount(() => {
-    if (session.terminals) add();
+  // The first terminal opens once Code Arena says it has terminals (its state may come after the panel).
+  let first = true;
+  createEffect(() => {
+    if (session.terminals && first) {
+      first = false;
+      add();
+    }
   });
   return (
-    <div class="terminals">
+    <div class="terminals" style={{ height: `${sizes.term}px` }}>
       <div class="term-tabs">
         <For each={ids()}>
           {(id) => (
@@ -619,8 +702,82 @@ function QuickOpen() {
 }
 
 /** Coder mode, with the agent's thread and box (given by Agent mode) beside the editor. */
+/** A divider dragged to size the pane beside it. */
+function Splitter(props: {
+  dir: "col" | "row";
+  get: () => number;
+  set: (n: number) => void;
+  min: number;
+  max: number;
+  invert?: boolean;
+  class?: string;
+}) {
+  const start = (e: PointerEvent) => {
+    e.preventDefault();
+    const from = props.dir === "col" ? e.clientX : e.clientY;
+    const was = props.get();
+    const move = (m: PointerEvent) => {
+      const d = (props.dir === "col" ? m.clientX : m.clientY) - from;
+      props.set(Math.max(props.min, Math.min(props.max, was + (props.invert ? -d : d))));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      keepLayout();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  return (
+    <div
+      class={`splitter ${props.dir} ${props.class ?? ""}`}
+      role="separator"
+      aria-orientation={props.dir === "col" ? "vertical" : "horizontal"}
+      onPointerDown={start}
+    />
+  );
+}
+
 export default function Coder(props: { agent: () => JSX.Element }) {
-  const [panel, setPanel] = createSignal(true);
+  const panel = panelOpen;
+  const setPanel = (v: boolean) => {
+    setPanelOpen(v);
+    keepLayout();
+  };
+  // Restored as it was left: the folders, the view, the panel, the sizes, the tabs and their cursors, and the
+  // changes not saved.
+  const restore = () => {
+    const l = loadLayout();
+    if (!l) return;
+    for (const f of l.folders) setOpen(f, true);
+    if (l.view === "search" || l.view === "changes" || l.view === "files") setView(l.view);
+    setPanelOpen(l.panel);
+    if (l.sizes) setSizes(l.sizes);
+    for (const [p, c] of Object.entries(l.cursors ?? {})) cursors.set(p, c);
+    for (const t of l.tabs) openFile(t);
+    if (l.active && l.tabs.includes(l.active)) setActive(l.active);
+  };
+  let restored = false;
+  createEffect(
+    on(
+      () => session.folder,
+      (folder) => {
+        if (folder && !restored) {
+          restored = true;
+          restore();
+          send({ type: "backups" });
+        }
+      },
+    ),
+  );
+  // What is on screen is watched: the open files and folders (sent again after a reconnect).
+  createEffect(() => {
+    const files = tabs.filter((t) => !t.diff).map((t) => t.path);
+    const folders = Object.entries(open).filter(([, o]) => o).map(([p]) => p);
+    if (session.connected) send({ type: "watch", files, folders });
+    keepLayout();
+  });
+  createEffect(on(view, keepLayout, { defer: true }));
   onMount(() => {
     const keys = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p" && !e.shiftKey) {
@@ -639,7 +796,7 @@ export default function Coder(props: { agent: () => JSX.Element }) {
     });
   });
   return (
-    <div class="coder">
+    <div class="coder" style={{ "grid-template-columns": `${sizes.side}px 4px minmax(0, 1fr) 4px ${sizes.agent}px` }}>
       <nav class="side" aria-label="Side bar">
         <div class="views" role="tablist">
           <button role="tab" aria-selected={view() === "files"} classList={{ on: view() === "files" }} onClick={() => setView("files")}>
@@ -665,11 +822,15 @@ export default function Coder(props: { agent: () => JSX.Element }) {
           <ChangesView />
         </Show>
       </nav>
+      <Splitter dir="col" get={() => sizes.side} set={(n) => setSizes("side", n)} min={140} max={600} />
       <Show when={quick.open}>
         <QuickOpen />
       </Show>
       <div class="center">
         <Editor />
+        <Show when={panel()}>
+          <Splitter dir="row" get={() => sizes.term} set={(n) => setSizes("term", n)} min={80} max={800} invert />
+        </Show>
         <div class="panel-bar">
           <button class="quiet small" aria-expanded={panel()} onClick={() => setPanel(!panel())}>
             {panel() ? "▾" : "▸"} Terminal
@@ -679,6 +840,7 @@ export default function Coder(props: { agent: () => JSX.Element }) {
           <Terminals />
         </Show>
       </div>
+      <Splitter dir="col" class="agent-split" get={() => sizes.agent} set={(n) => setSizes("agent", n)} min={260} max={900} invert />
       <aside class="agent-side" aria-label="Agent">
         {props.agent()}
       </aside>

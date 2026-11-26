@@ -253,7 +253,10 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
         p.agent.ctx.checkpoints.clone(),
         out.clone(),
         app.settings.env().get("SHELL"),
+        &app.paths.data,
     );
+    let side = Arc::new(side);
+    side.start_watching();
     let kept = keep_address(&app.paths.data, &server.url);
     ui.say(&format!("{} {} · {} · {}", ui.bold(ca_core::PRODUCT), ca_core::VERSION, p.agent.model, ui.dim(&p.folder)));
     ui.say(&format!("The IDE: {}", server.url));
