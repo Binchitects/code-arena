@@ -8,6 +8,7 @@ pub mod library;
 pub mod mend;
 pub mod mentions;
 pub mod policy;
+pub mod skill_transfer;
 mod turn;
 
 pub use context::Window;

@@ -99,6 +99,13 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   beside Arena's where Arena's admins allow them. `version`, `doctor` and the chat name the
   edition; `logout --provider NAME` forgets one. Tested against fake providers only so far.
 
+- Skills in and out as files: `/skills import PATH` takes a `.zip` (one skill's folder or several),
+  a folder or a lone SKILL.md, into the project (`--to project`, the default), yours (`--to
+  mine`) or Arena (`--to arena`, managed: its own checks and safeguards); one of the same name is
+  kept unless `--replace`. `/skills export NAME [PATH.zip]`. At most 50 skills and 5 MB; every
+  file stays inside its skill's folder; a file that looks like it holds a secret (an API key, a
+  token, a private key) never comes in, nor goes out.
+
 ### Fixed
 - A send Arena kept but whose answer was lost: the next take-in would have added the session's
   own messages again as the web's, and sent them twice. They are known by their ref now.

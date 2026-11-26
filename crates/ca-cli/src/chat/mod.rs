@@ -174,7 +174,8 @@ fn help() -> &'static str {
 /rewind [N] [code|chat]  your questions; /rewind N goes back to before question N\n\
 /search WORDS         earlier sessions in this folder that said these words\n\
 /commands             your own and the project's commands, sub-agents and skills\n\
-/skills               the skills\n\
+/skills               the skills; /skills import PATH [--to project|mine|arena] [--replace] (a .zip, a folder, a SKILL.md);\n\
+                      /skills export NAME [PATH.zip]\n\
 /NAME [words]         a command or a skill, with your words\n\
 /mcp                  Arena's, Farzan Graph's and your MCP servers: connected or not, and why\n\
 /plan                 the working plan; /plan approve [ask] | change N what | another why | reject why reviews a proposed one;\n\
@@ -826,6 +827,9 @@ async fn command(
                 ui.say(&ui.dim(&format!("    #{:<4} {role:<12}{:>8}  {start}", i + 1, t(chars))));
             }
         }
+        "/skills" if rest.starts_with("import") || rest.starts_with("export") => {
+            ui.say(&skills_transfer(rest, p, app).await)
+        }
         "/commands" | "/skills" => {
             let lib = ca_agent::library::load(&p.sources);
             if name == "/commands" {
@@ -999,6 +1003,115 @@ async fn command(
 }
 
 /// What a key typed at a question answers: y (or Enter), a, and anything else is a no.
+/// `/skills import PATH [--to project|mine|arena] [--replace]` and `/skills export NAME [PATH]`.
+async fn skills_transfer(rest: &str, p: &mut Prepared, app: &App) -> String {
+    use ca_agent::skill_transfer as st;
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    let cwd = p.agent.ctx.workspace.cwd().to_path_buf();
+    let at = |w: &str| {
+        let path = std::path::PathBuf::from(w);
+        if path.is_absolute() { path } else { cwd.join(path) }
+    };
+    if words.first() == Some(&"export") {
+        let Some(name) = words.get(1) else { return "/skills export NAME [PATH.zip]".into() };
+        let lib = ca_agent::library::load(&p.sources);
+        let Some(k) = lib.skills.iter().find(|k| k.name == *name) else {
+            return format!("No skill named {name}: /skills lists them.");
+        };
+        let Some(dir) = k.path.parent() else { return "That skill has no folder.".into() };
+        let to = words.get(2).map(|w| at(w)).unwrap_or_else(|| st::default_export(&cwd, name));
+        return match st::export_zip(dir, name, &to) {
+            Ok(left) if left.is_empty() => format!("/{name} is in {}.", to.display()),
+            Ok(left) => format!("/{name} is in {} (left out: {}).", to.display(), left.join("; ")),
+            Err(e) => e,
+        };
+    }
+    let Some(from) = words.get(1) else {
+        return "/skills import PATH (a .zip, a folder, or a SKILL.md) [--to project|mine|arena] [--replace]".into();
+    };
+    let to = words.iter().position(|w| *w == "--to").and_then(|i| words.get(i + 1)).copied().unwrap_or("project");
+    let replace = words.contains(&"--replace");
+    let found = match st::read(&at(from)) {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
+    let left =
+        if found.left_out.is_empty() { String::new() } else { format!(" Left out: {}.", found.left_out.join("; ")) };
+    match to {
+        "arena" => {
+            if app.edition() != ca_settings::Edition::Managed {
+                return "Skills in Arena need Farzan Arena (the managed edition): import to project or mine instead."
+                    .into();
+            }
+            let Ok(arena) = app.arena() else { return "Not signed in to Arena.".into() };
+            let folders: Vec<ca_arena::skills::Folder> = found
+                .skills
+                .iter()
+                .map(|s| ca_arena::skills::Folder { folder: s.name.clone(), files: s.files.clone() })
+                .collect();
+            let choices: Vec<serde_json::Value> = if replace {
+                found.skills.iter().map(|s| serde_json::json!({"folder": s.name, "action": "replace"})).collect()
+            } else {
+                vec![]
+            };
+            match arena.import_skills(&folders, &choices, false).await {
+                Ok(v) => {
+                    let names = |k: &str, f: &str| -> Vec<String> {
+                        v[k].as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|x| x[f].as_str().unwrap_or("?").to_string())
+                            .collect()
+                    };
+                    let skipped: Vec<String> = v["skipped"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|x| {
+                            format!("{} ({})", x["name"].as_str().unwrap_or("?"), x["reason"].as_str().unwrap_or(""))
+                        })
+                        .collect();
+                    format!(
+                        "In Arena, as yours (every project and the web chat): {}.{}{left}",
+                        if names("imported", "name").is_empty() {
+                            "none".into()
+                        } else {
+                            names("imported", "name").join(", ")
+                        },
+                        if skipped.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" Not brought in: {}.", skipped.join("; "))
+                        }
+                    )
+                }
+                Err(e) => e.to_string(),
+            }
+        }
+        where_ @ ("project" | "mine") => {
+            let dir = if where_ == "project" {
+                p.agent.ctx.workspace.root().join(".code-arena").join("skills")
+            } else {
+                app.paths.config.join("skills")
+            };
+            match st::write_into(&dir, &found.skills, replace) {
+                Ok((done, kept)) => format!(
+                    "Into {}: {}.{}{left} They are used from the next message.",
+                    dir.display(),
+                    if done.is_empty() { "none".into() } else { done.join(", ") },
+                    if kept.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" There already (kept; --replace replaces them): {}.", kept.join(", "))
+                    }
+                ),
+                Err(e) => e.to_string(),
+            }
+        }
+        other => format!("--to is project, mine or arena, not {other}."),
+    }
+}
+
 /// `/web`: the person's chats in Arena; `/web N` (or its id) continues one here, in a session of its own.
 async fn web(rest: &str, p: &mut Prepared, app: &mut App, ui: Ui) -> anyhow::Result<()> {
     if p.sync.is_none() {
