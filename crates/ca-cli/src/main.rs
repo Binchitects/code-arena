@@ -2,6 +2,7 @@
 
 mod account;
 mod app;
+mod automation;
 mod chat;
 mod checklist;
 mod commit;
@@ -119,6 +120,16 @@ enum Command {
     /// Prompts Code Arena runs on its own, on a schedule: add NAME --every 2h [--at 09:00] [--mode M] PROMPT…, list,
     /// run NAME, remove NAME, due (what a timer of the system's calls), install, uninstall.
     Schedule {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Your agents in Arena (Agent Studio, 8.1 on): list, run NAME [TEXT…] [--field K=V]… (waits for its answer).
+    Agents {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Your scheduled tasks in Arena (8.1 on): list, run NAME (now), runs NAME (how its last runs went).
+    Tasks {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -245,6 +256,8 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
             // A timer of the system's goes in the system's own home, whatever CODE_ARENA_HOME says.
             schedules::command(&app.paths.config, dirs::home_dir().as_deref(), &cwd, &args)
         }
+        Some(Command::Agents { args }) => automation::agents_cli(&app, &args).await,
+        Some(Command::Tasks { args }) => automation::tasks_cli(&app, &args).await,
         Some(Command::Plugin { args }) => {
             let file = app.paths.settings_file();
             // Only your own list: a project's is its own.

@@ -185,6 +185,8 @@ fn help() -> &'static str {
 /remember [--person] TEXT  keep a memory for this project (or, with --person, for every project)\n\
 /projects             your projects in Arena; /project N puts this session in one (off: none)\n\
 /assistant [N|off]    your assistants in Arena; work as one\n\
+/arena-agents [run N] your agents in Arena (Agent Studio); run one, told when it ends\n\
+/arena-tasks [run N|runs N] your scheduled tasks in Arena; run one now, or its last runs\n\
 /goal [TEXT | pause | resume | cancel | drop N]  goal mode: the agent works until TEXT is met; --check CMD or --when
                       CONDITION says how it is checked; --steps N --minutes N --tokens N or --until-met its budget\n\
 /commit [yes|no]      commits of the working tree's changes, grouped and written by the model; yes makes them\n\
@@ -993,6 +995,8 @@ async fn command(
         }
         "/projects" | "/project" => ui.say(&crate::projects::command(name, rest, p).await),
         "/assistant" => ui.say(&crate::projects::assistant(rest, p).await),
+        "/arena-agents" => ui.say(&crate::automation::agents_command(app, rest, &p.notices).await),
+        "/arena-tasks" => ui.say(&crate::automation::tasks_command(app, rest).await),
         "/memory" | "/remember" => ui.say(&session::memory_command(p, name, rest, ui).await),
         "/plan" if rest.is_empty() => ui.say(&session::render_plan(&p.agent.ctx.plan.get(), ui)),
         "/plan" => {

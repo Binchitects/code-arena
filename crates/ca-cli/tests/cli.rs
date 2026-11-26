@@ -1324,3 +1324,161 @@ async fn a_plugin_installed_and_enabled_brings_its_skill_hook_and_server() {
     assert!(run(&["plugin", "list"]).contains("No plugins yet"));
     assert!(!std::fs::read_to_string(home.path().join("config/settings.json")).expect("s").contains("\"kit\""));
 }
+
+/// A fake Arena 8.1 with the person's agents and scheduled tasks.
+async fn arena_with_automation() -> MockServer {
+    let arena = MockServer::start().await;
+    Mock::given(path("/api/code-arena/capabilities"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"features": ["automation.agents", "automation.scheduled"]})),
+        )
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/agents"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": "a1", "name": "Reviewer", "description": "Reviews an MR.", "enabled": true, "mine": true, "trigger": "form"},
+            {"id": "a2", "name": "Release notes", "enabled": true, "mine": false, "owner": "Sara", "trigger": "manual"}
+        ])))
+        .mount(&arena)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/agents/a1/run"))
+        .and(wiremock::matchers::body_json(json!({"text": "look closely", "fields": {"mr": "12"}})))
+        .respond_with(ResponseTemplate::new(202).set_body_json(json!({"id": "r1"})))
+        .mount(&arena)
+        .await;
+    Mock::given(path("/api/code-arena/agents/runs/r1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "r1", "workflow": "Reviewer", "status": "done",
+            "steps": [{"kind": "llm", "name": "Read", "status": "done", "output": "MR 12 looks right."}]
+        })))
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/scheduled"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": "t1", "name": "Morning summary", "cron": "0 9 * * *", "timeZone": "Asia/Tehran", "enabled": true,
+             "running": false, "nextRuns": ["2026-11-27T05:30:00Z"], "lastRun": {"id": "x", "status": "done"}, "trigger": "schedule"}
+        ])))
+        .mount(&arena)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/scheduled/t1/run"))
+        .respond_with(
+            ResponseTemplate::new(409)
+                .set_body_json(json!({"status": "running", "error": "It is running now; wait for this run to end."})),
+        )
+        .mount(&arena)
+        .await;
+    Mock::given(path("/api/code-arena/scheduled/t1/runs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"id": "x", "startedAt": "2026-11-26T05:30:00Z", "status": "failed", "error": "The model was out of reach.", "manual": false}
+        ])))
+        .mount(&arena)
+        .await;
+    arena
+}
+
+#[tokio::test]
+async fn arenas_agents_and_scheduled_tasks_are_listed_and_run_from_the_shell() {
+    let arena = arena_with_automation().await;
+    let home = tempfile::tempdir().expect("home");
+    let run = |args: &[&str]| {
+        let out = code_arena(home.path())
+            .args(args)
+            .env("ARENA_URL", arena.uri())
+            .env("ARENA_API_KEY", "sk-test-only")
+            .output()
+            .expect("runs");
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr))
+    };
+    let (code, said) = run(&["agents"]);
+    assert_eq!(code, Some(0), "{said}");
+    assert!(
+        said.contains("1. Reviewer: Reviews an MR.") && said.contains("2. Release notes (shared by Sara)"),
+        "{said}"
+    );
+    let (code, said) = run(&["agents", "run", "review", "look", "closely", "--field", "mr=12"]);
+    assert_eq!(code, Some(0), "{said}");
+    assert!(said.contains("Reviewer is done: MR 12 looks right."), "{said}");
+    let (code, said) = run(&["tasks"]);
+    assert_eq!(code, Some(0), "{said}");
+    assert!(said.contains("Morning summary (0 9 * * * Asia/Tehran, last done, next 2026-11-27T05:30:00Z)"), "{said}");
+    let (_, said) = run(&["tasks", "run", "1"]);
+    assert!(said.contains("wait for this run to end"), "{said}");
+    let (_, said) = run(&["tasks", "runs", "morning"]);
+    assert!(said.contains("failed: The model was out of reach."), "{said}");
+}
+
+#[tokio::test]
+async fn an_8_0_arena_says_it_has_no_agents_for_code_arena() {
+    let arena = MockServer::start().await;
+    let home = tempfile::tempdir().expect("home");
+    let out = code_arena(home.path())
+        .args(["agents"])
+        .env("ARENA_URL", arena.uri())
+        .env("ARENA_API_KEY", "sk-test-only")
+        .output()
+        .expect("runs");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{said}");
+    assert!(said.contains("does not give Code Arena its Agent Studio's agents (Arena 8.1 on does)"), "{said}");
+}
+
+#[tokio::test]
+async fn the_model_runs_one_of_the_persons_arena_agents_and_reads_its_answer() {
+    let arena = arena_with_automation().await;
+    let gateway = MockServer::start().await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    struct Model(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+    impl Respond for Model {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            let mut s = self.0.lock().expect("lock");
+            s.push(serde_json::from_slice(&r.body).unwrap_or_default());
+            let ev = if s.len() == 1 {
+                json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "run_arena_agent", "arguments": "{\"agent\":\"Reviewer\",\"text\":\"look closely\",\"fields\":{\"mr\":\"12\"}}"}}]}, "finish_reason": "tool_calls"}]})
+            } else {
+                json!({"choices": [{"delta": {"content": "The reviewer agrees."}, "finish_reason": "stop"}]})
+            };
+            ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(sse(ev))
+        }
+    }
+    Mock::given(path("/v1/chat/completions")).respond_with(Model(seen.clone())).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    // What the Arena has is asked once and kept (doctor, or any command that needs it, does that).
+    assert!(
+        code_arena(home.path())
+            .args(["agents"])
+            .env("ARENA_URL", arena.uri())
+            .env("ARENA_API_KEY", "sk-test-only")
+            .status()
+            .expect("runs")
+            .success()
+    );
+    let folder = tempfile::tempdir().expect("folder");
+    let out = code_arena(home.path())
+        .args(["-p", "ask the reviewer about MR 12", "--mode", "yolo", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", arena.uri())
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("The reviewer agrees."), "{stdout}");
+    let seen = seen.lock().expect("lock");
+    let tools: Vec<&str> =
+        seen[0]["tools"].as_array().expect("tools").iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+    assert!(tools.contains(&"arena_agents") && tools.contains(&"run_arena_agent"), "{tools:?}");
+    assert!(seen[1].to_string().contains("Reviewer is done: MR 12 looks right."), "{}", seen[1]);
+}

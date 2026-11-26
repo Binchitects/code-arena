@@ -879,6 +879,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     if let Some(s) = &sync {
         agent.tools.push(Arc::new(crate::checklist::CheckTool { sync: s.clone() }));
     }
+    // The person's agents in Arena (8.1 on), as its answers to the probes said.
+    agent.tools.extend(crate::automation::tools(app));
     // The MCP servers: those that answer within a few seconds now, the others when they do.
     let local: Vec<String> = agent.tools.iter().map(|t| t.def().name).collect();
     let (configured, notes) = crate::servers::configured(app, &local);

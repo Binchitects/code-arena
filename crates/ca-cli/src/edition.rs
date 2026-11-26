@@ -5,7 +5,8 @@
 use ca_settings::Edition;
 
 /// The commands that need Farzan Arena.
-pub const NEEDS_ARENA: &[&str] = &["/web", "/sync", "/checklist", "/project", "/projects", "/assistant"];
+pub const NEEDS_ARENA: &[&str] =
+    &["/web", "/sync", "/checklist", "/project", "/projects", "/assistant", "/arena-agents", "/arena-tasks"];
 
 /// What a command needing Arena says in the standalone edition; `None` when it may run.
 pub fn locked(edition: Edition, command: &str) -> Option<String> {
