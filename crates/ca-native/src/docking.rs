@@ -391,6 +391,9 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
                     ))
                     .style(|s| s.gap(2.0))
                     .into_any(),
+                    Some(View::Terminal) => {
+                        h_stack((crate::terminal::actions(ui, send), close)).style(|s| s.gap(2.0)).into_any()
+                    }
                     _ if !side_bar => close.into_any(),
                     _ => empty().into_any(),
                 }

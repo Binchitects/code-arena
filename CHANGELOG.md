@@ -81,6 +81,10 @@ Sections used:
   expressions, N of M, F3 and Shift+F3). A file changed on disk is taken in when the tab has no
   changes of its own, else a bar offers Revert or Overwrite; closing a tab with changes asks Save,
   Don't Save or Cancel. The workbench's keys work while the editor has the focus.
+- **Several terminals, and text selected in them.** New Terminal (Ctrl+Shift+` or the panel's +)
+  and Kill (its bin); with two or more, VS Code's list of them at the panel's right. Drag to
+  select (a double click a word, a triple click a line), Ctrl+Shift+C copies, a right-click copies
+  a selection or else pastes; Terminal: Clear in the palette.
 - **Quick Open and the Command Palette in the native window**, VS Code's quick input: Ctrl+P (or a
   click on the command center) finds a file among 50,000 in about 2 ms a key, its matched letters
   lit; Ctrl+Shift+P (or `>`) runs a command, its keys shown; Ctrl+K Ctrl+T picks a colour theme,

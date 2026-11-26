@@ -123,6 +123,10 @@ pub(crate) fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
             ("b", false, true) => ui.toggle_group_of(View::Agent),
             ("j", false, false) => ui.toggle_group_of(View::Terminal),
             ("`", false, false) => ui.toggle_view(View::Terminal),
+            ("`" | "~", true, false) => {
+                ui.reveal(View::Terminal);
+                crate::terminal::new_terminal(ui, send);
+            }
             ("e", true, false) => ui.reveal(View::Files),
             ("f", true, false) => ui.reveal(View::Search),
             ("i", false, true) => ui.reveal(View::Agent),

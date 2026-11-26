@@ -789,7 +789,6 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
 }
 
 /// VS Code's panel title actions for the terminal: New Terminal, Kill Terminal.
-#[allow(dead_code)]
 pub fn actions(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     let new = send.clone();
