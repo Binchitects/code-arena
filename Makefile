@@ -26,7 +26,7 @@ build: web
 dist: web
 	$(CARGO) build --release --locked -p ca-cli --no-default-features --target x86_64-unknown-linux-musl
 	mkdir -p dist
-	scripts/package.sh x86_64-unknown-linux-musl linux-x64 $(VERSION)
+	scripts/package.sh x86_64-unknown-linux-musl linux-x64-static $(VERSION)
 
 # Every system this image builds: Linux x64 with the native window (glibc 2.36 and later), Linux x64 and arm64 static
 # (the IDE served to a browser), Windows x64 with the native window. macOS is built on macOS.
@@ -38,7 +38,7 @@ dist-all: web
 	mkdir -p dist
 	scripts/package.sh x86_64-unknown-linux-gnu linux-x64 $(VERSION)
 	scripts/package.sh x86_64-unknown-linux-musl linux-x64-static $(VERSION)
-	scripts/package.sh aarch64-unknown-linux-musl linux-arm64 $(VERSION)
+	scripts/package.sh aarch64-unknown-linux-musl linux-arm64-static $(VERSION)
 	scripts/package.sh x86_64-pc-windows-gnu win-x64 $(VERSION)
 
 clean:

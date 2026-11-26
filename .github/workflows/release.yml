@@ -17,8 +17,13 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { rid: linux-x64, os: ubuntu-24.04, target: x86_64-unknown-linux-musl }
-          - { rid: linux-arm64, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          # The native window needs the system's C library (to open the GPU's and the display's libraries), so the
+          # Linux packages with it are built on the oldest runner (glibc 2.35); the static ones serve the IDE to a
+          # browser and run anywhere.
+          - { rid: linux-x64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { rid: linux-arm64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
+          - { rid: linux-x64-static, os: ubuntu-24.04, target: x86_64-unknown-linux-musl, flags: --no-default-features }
+          - { rid: linux-arm64-static, os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, flags: --no-default-features }
           - { rid: osx-arm64, os: macos-15, target: aarch64-apple-darwin }
           - { rid: osx-x64, os: macos-15-intel, target: x86_64-apple-darwin }
           - { rid: win-x64, os: windows-2025, target: x86_64-pc-windows-msvc }
@@ -32,7 +37,7 @@ jobs:
           rustup show active-toolchain || rustup toolchain install
           rustup target add ${{ matrix.target }}
       - name: musl for a static Linux binary
-        if: startsWith(matrix.rid, 'linux-')
+        if: endsWith(matrix.target, '-musl')
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: actions/setup-node@v4
         with:
@@ -48,7 +53,7 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
       - name: Build
-        run: cargo build --release --locked -p ca-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p ca-cli ${{ matrix.flags }} --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: scripts/package.sh ${{ matrix.target }} ${{ matrix.rid }} "${GITHUB_REF_NAME#v}"

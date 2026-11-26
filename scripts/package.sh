@@ -18,10 +18,17 @@ stage=$root/dist/$name
 rm -rf "$stage" && mkdir -p "$stage"
 cp "$bin" "$stage/"
 cp "$root/LICENSE" "$stage/LICENSE"
+case $rid in
+  *-static) note="This build serves the IDE to a browser (code-arena ide); it runs on any Linux." ;;
+  linux-*) note="code-arena ide opens its own window (it needs glibc 2.35 or later and a GPU driver with Vulkan or
+OpenGL); the -static package runs on any Linux and serves the IDE to a browser instead." ;;
+  *) note="code-arena ide opens its own window; code-arena ide --browser serves it to a browser instead." ;;
+esac
 cat > "$stage/README.txt" <<TXT
 Code Arena $version ($rid)
 
 Farzan Arena's coding agent. One program, nothing to install.
+$note
 
   1. Put $exe on your PATH.
   2. Sign in:      code-arena login --url https://YOUR-ARENA
