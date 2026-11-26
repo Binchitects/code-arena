@@ -187,6 +187,7 @@ fn help() -> &'static str {
 /assistant [N|off]    your assistants in Arena; work as one\n\
 /goal [TEXT | pause | resume | cancel | drop N]  goal mode: the agent works until TEXT is met; --check CMD or --when
                       CONDITION says how it is checked; --steps N --minutes N --tokens N or --until-met its budget\n\
+/commit [yes|no]      commits of the working tree's changes, grouped and written by the model; yes makes them\n\
 /hooks [trust]        the hooks that run; trust runs the project's own\n\
 /sync [on|off|all]    where this session stands with its chat in Arena; off keeps it here only; all sends every session here\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
@@ -343,6 +344,8 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             Some(s) => format!("{s}\n\n{line}"),
             None => line.clone(),
         };
+        let auto_commit = app.settings.bool(&ca_settings::schema::AUTO_COMMIT);
+        let dirty_before = if auto_commit { crate::commit::dirty(&p).await } else { vec![] };
         session::begin_turn(&mut p, ui, &message).await;
         // A turn of the person's own takes the settings' steps; a goal turn may take fewer (its budget).
         if !carry_on {
@@ -439,6 +442,16 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         }
         if let Some(s) = &p.sync {
             s.end_turn_soon();
+        }
+        // git.autoCommit: the turn's own changes, as commits the model groups.
+        if auto_commit
+            && let Some(o) = &outcome
+            && !o.wrote.is_empty()
+        {
+            let review = app.settings.bool(&ca_settings::schema::AUTO_COMMIT_REVIEW);
+            if let Some(said) = crate::commit::after_turn(&mut p, &o.wrote, &dirty_before, review, ui).await {
+                ui.say(&said);
+            }
         }
         // Goal mode: the check runs, and the next goal turn starts by itself while the goal is worked on.
         if let Some(next) =
@@ -937,6 +950,7 @@ async fn command(
         "/rewind" => rewind(rest, p, ui)?,
         "/web" => web(rest, p, app, ui).await?,
         "/checklist" => ui.say(&crate::checklist::command(rest, p).await),
+        "/commit" => ui.say(&crate::commit::command(rest, p, ui).await),
         "/goal" => {
             ui.say(&crate::goals::command(rest, p));
             // A goal set (or resumed) is worked on at once.
@@ -1287,13 +1301,8 @@ async fn sync_all(p: &mut Prepared, app: &App) -> String {
         if before == 0 {
             continue;
         }
-        loop {
-            match s.push().await {
-                ca_sync::Pushed::Done | ca_sync::Pushed::Off | ca_sync::Pushed::Behind => break,
-                // Out of reach, or the web answering: the rest goes later.
-                ca_sync::Pushed::Retry(_) => break,
-            }
-        }
+        // One send: what it could not send (Arena out of reach, the web answering) goes later.
+        let _ = s.push().await;
         let after = s.pending();
         if after < before {
             sessions += 1;

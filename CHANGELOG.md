@@ -28,6 +28,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   `/goal` says where it stands; `pause`, `resume` (Ctrl+C pauses), `cancel`; more `/goal TEXT`
   wait their turn (`drop N`). Kept with the session (a 0.3 store is upgraded in place) and shown
   above the web chat.
+- Commits the model groups and writes: `/commit` proposes commits of the working tree's changes
+  (by hunk, in the repository's own style of messages: a subject under 72 characters and a
+  body that says why); they are shown, and `/commit yes` makes them, each staged by its own
+  lines alone, your identity the author, with `Co-Authored-By: Code Arena` and
+  `Code-Arena-Session:` trailers. With `git.autoCommit` on (off by default), each turn's own
+  changes (what it wrote, minus files that held your changes when it began) are proposed after
+  it (`git.autoCommit.review`, on: shown first). Never during a merge, rebase, cherry-pick or
+  revert, nor while the session's commands run; a `PreCommit` hook (or git's own) that refuses
+  stops the series. A proposal that leaves a hunk out is asked once more, then made one commit.
 
 ## 0.3.0 (2026-11-26)
 

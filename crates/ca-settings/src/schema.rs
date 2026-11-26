@@ -180,6 +180,16 @@ pub static AUTO_COMMIT: Setting = Setting {
     section: "Git",
 };
 
+pub static AUTO_COMMIT_REVIEW: Setting = Setting {
+    key: "git.autoCommit.review",
+    kind: Kind::Bool,
+    default: "true",
+    description: "With git.autoCommit on, the commits the model proposes after a turn are shown first, for /commit yes (or no); off: they are made at once.",
+    scope: Scope::User,
+    env: None,
+    section: "Git",
+};
+
 pub static PROJECT_FOLDER: Setting = Setting {
     key: "workspace.projectFolder",
     kind: Kind::Bool,
@@ -374,6 +384,7 @@ pub static ALL: &[&Setting] = &[
     &ALLOWED_PATHS,
     &PERMISSIONS,
     &AUTO_COMMIT,
+    &AUTO_COMMIT_REVIEW,
     &PROJECT_FOLDER,
     &UPDATE_CHECK,
     &COLOR,

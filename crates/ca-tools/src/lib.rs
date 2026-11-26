@@ -1,6 +1,7 @@
 //! The agent's own tools: files, search, commands and git, inside the folders it may use.
 
 pub mod checkpoints;
+pub mod commits;
 mod files;
 mod git;
 pub mod jobs;

@@ -934,15 +934,7 @@ impl Agent {
                     let allowed = match decision {
                         Decision::Run => Ok(()),
                         Decision::Refuse(why) => Err(why),
-                        Decision::Ask => match {
-                            if self.hooks.has("Notification") {
-                                let _ = self
-                                    .hooks
-                                    .run("Notification", "", serde_json::json!({"message": format!("Code Arena asks to run {}: {subject}", m.name)}))
-                                    .await;
-                            }
-                            self.approver.ask(&m.name, &subject).await
-                        } {
+                        Decision::Ask => match Self::ask(self.hooks.clone(), self.approver.clone(), &m.name, &subject).await {
                             Some(Answer::Yes) => Ok(()),
                             Some(Answer::Always) => {
                                 self.policy.remember(&m.name, kind, &subject);
@@ -975,6 +967,25 @@ impl Agent {
             }
             i += 1;
         }
+    }
+
+    /// The person asked about a call (their Notification hooks told first).
+    async fn ask(
+        hooks: Arc<crate::hooks::Hooks>,
+        approver: Arc<dyn Approver>,
+        name: &str,
+        subject: &str,
+    ) -> Option<Answer> {
+        if hooks.has("Notification") {
+            let _ = hooks
+                .run(
+                    "Notification",
+                    "",
+                    serde_json::json!({"message": format!("Code Arena asks to run {name}: {subject}")}),
+                )
+                .await;
+        }
+        approver.ask(name, subject).await
     }
 
     async fn pre_tool(

@@ -20,8 +20,11 @@ struct Inner {
     /// By the question's place: each file as it was before that turn wrote it (`None`: it was not there).
     turns: BTreeMap<i64, BTreeMap<PathBuf, Option<Vec<u8>>>>,
     /// The plan's steps in the order they began in this run: each file as it was before that step wrote it.
-    steps: Vec<(u32, BTreeMap<PathBuf, Option<Vec<u8>>>)>,
+    steps: Vec<(u32, Before)>,
 }
+
+/// Each file as it was before something wrote it (`None`: it was not there).
+type Before = BTreeMap<PathBuf, Option<Vec<u8>>>;
 
 /// What a rewind of the code did.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -78,7 +81,7 @@ impl Checkpoints {
     pub fn undo_step(&self, number: u32) -> Option<(Vec<u32>, Restored)> {
         let Ok(mut g) = self.inner.lock() else { return None };
         let at = g.steps.iter().position(|(n, _)| *n == number)?;
-        let undone: Vec<(u32, BTreeMap<PathBuf, Option<Vec<u8>>>)> = g.steps.drain(at..).collect();
+        let undone: Vec<(u32, Before)> = g.steps.drain(at..).collect();
         drop(g);
         let mut first_state: BTreeMap<PathBuf, Option<Vec<u8>>> = BTreeMap::new();
         for (_, files) in undone.iter().rev() {

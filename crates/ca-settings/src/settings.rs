@@ -275,7 +275,7 @@ pub fn keep(file: &Path, key: &str, value: &Value) -> std::io::Result<()> {
             match head.rfind('\n').map(|n| (n, &head[n + 1..])) {
                 Some((n, last)) if last.contains("//") && !last.trim_start().starts_with("//") => {
                     let at = last.find("//").unwrap_or(last.len());
-                    format!("{}\n{},{}", &head[..n], last[..at].trim_end(), format!(" {}", &last[at..]))
+                    format!("{}\n{}, {}", &head[..n], last[..at].trim_end(), &last[at..])
                 }
                 _ if head.trim_end().lines().last().is_some_and(|l| l.trim_start().starts_with("//")) => {
                     head.to_string()

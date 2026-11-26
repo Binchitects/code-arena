@@ -4,6 +4,7 @@ mod account;
 mod app;
 mod chat;
 mod checklist;
+mod commit;
 mod edition;
 mod goals;
 mod projects;

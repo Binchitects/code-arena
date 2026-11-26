@@ -67,6 +67,8 @@ pub struct Prepared {
     /// The steps a turn may take, as the settings say (a goal turn takes fewer when its budget says so).
     pub max_steps: usize,
     pub ui: crate::ui::Ui,
+    /// Commits the model proposed, waiting for `/commit yes`.
+    pub pending_commits: Option<crate::commit::Pending>,
 }
 
 /// The sub-agents' starting point, as the session is now (its model, mode, tools and instructions).
@@ -909,6 +911,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         goals,
         max_steps,
         ui,
+        pending_commits: None,
     };
     refresh_crew(&mut prepared, ui);
     // SessionStart: what the person's hooks say goes to the model first.

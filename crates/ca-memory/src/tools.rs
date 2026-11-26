@@ -52,10 +52,8 @@ impl Tool for Remember {
     }
     async fn run(&self, a: Value, _ctx: &Context) -> Output {
         let person = s(&a, "scope") == Some("person");
-        let kind = match s(&a, "kind") {
-            Some(k @ ("preference" | "decision" | "howto" | "lesson")) => k,
-            _ => "fact",
-        };
+        let kind =
+            s(&a, "kind").filter(|k| matches!(*k, "preference" | "decision" | "howto" | "lesson")).unwrap_or("fact");
         match self.memory.remember(person, s(&a, "memory").unwrap_or_default(), kind).await {
             Ok((true, place)) => Output::ok(format!("Remembered {place}.")),
             Ok((false, place)) => Output::ok(format!("Already remembered {place}.")),

@@ -189,7 +189,7 @@ pub(crate) async fn filters_off(dir: &std::path::Path) -> Result<Vec<String>, St
         .output()
         .await
         .map_err(|e| format!("git could not start: {e}"))?;
-    Ok(off_from(&String::from_utf8_lossy(&out.stdout))?)
+    off_from(&String::from_utf8_lossy(&out.stdout))
 }
 
 /// What [`filters_off`] gives, from `git config -z --get-regexp` (KEY\nVALUE entries, or KEY alone).

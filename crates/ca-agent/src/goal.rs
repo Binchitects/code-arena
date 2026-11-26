@@ -277,11 +277,14 @@ impl Goals {
     }
 }
 
+/// What the session does when the goals change: keep them, and send them to Arena.
+pub type OnChange = Arc<dyn Fn(&Goals) + Send + Sync>;
+
 /// The session's goals, shared by `goal_check`, the session and its turns.
 #[derive(Default)]
 pub struct GoalBook {
     goals: Mutex<Goals>,
-    on_change: Mutex<Option<Arc<dyn Fn(&Goals) + Send + Sync>>>,
+    on_change: Mutex<Option<OnChange>>,
 }
 
 impl std::fmt::Debug for GoalBook {
@@ -301,7 +304,7 @@ impl GoalBook {
         }
     }
 
-    pub fn on_change(&self, f: Arc<dyn Fn(&Goals) + Send + Sync>) {
+    pub fn on_change(&self, f: OnChange) {
         if let Ok(mut c) = self.on_change.lock() {
             *c = Some(f);
         }
@@ -372,7 +375,7 @@ pub async fn after_turn(book: &GoalBook, spent: TurnSpent, checker: &dyn Checker
     goal.passed = Some(passed);
     goal.said = Some(said.clone());
     let one_line =
-        |s: &str| s.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("").chars().take(300).collect::<String>();
+        |s: &str| s.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").chars().take(300).collect::<String>();
     book.change(|g| {
         g.current = Some(goal.clone());
         if passed {
