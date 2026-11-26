@@ -159,7 +159,30 @@ fn state(p: &Prepared, app: &App, models: &[String], running: bool) -> Value {
         "version": ca_core::VERSION,
         "running": running,
         "messages": messages,
+        "view_state": std::fs::read_to_string(view_state_file(app, p.agent.ctx.workspace.root()))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .unwrap_or(Value::Null),
     })
+}
+
+/// Where the workbench's look for a folder is kept (where its views are, its parts' sizes): the data folder's
+/// `ide/`, one file per folder, named by the folder's path (FNV-1a, so the same folder finds it again).
+pub fn view_state_file(app: &App, root: &Path) -> PathBuf {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in root.to_string_lossy().bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    app.paths.data.join("ide").join(format!("{h:016x}.json"))
+}
+
+fn keep_view_state(app: &App, root: &Path, value: &Value) -> std::io::Result<()> {
+    let file = view_state_file(app, root);
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(file, serde_json::to_string_pretty(value).unwrap_or_default())
 }
 
 fn thinking_name(t: &ca_llm::Thinking) -> String {
@@ -395,6 +418,11 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                 send(&out, status(&p));
             }
             "context" => send(&out, context_detail(&p)),
+            "keep_view_state" => {
+                if let Err(e) = keep_view_state(app, p.agent.ctx.workspace.root(), &msg["state"]) {
+                    send(&out, json!({"type": "notice", "text": format!("The layout was not kept: {e}")}));
+                }
+            }
             "themes" => {
                 let dirs =
                     crate::ide_themes::folders(&app.paths.config, app.home.as_deref(), p.agent.ctx.workspace.root());

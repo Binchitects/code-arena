@@ -1,8 +1,5 @@
 //! The workbench's layout as VS Code's, the very rules of the page's `web/src/layout.ts`: views in three containers
 //! (the primary side bar, the secondary side bar, the panel), each with the view it shows and whether it is shown.
-//! Moving a view and keeping the layout per folder are drawn in the workbench's next step; their rules are here now,
-//! with the page's tests.
-#![cfg_attr(not(test), allow(dead_code))]
 
 use serde_json::{Value, json};
 

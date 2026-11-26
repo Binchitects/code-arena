@@ -28,6 +28,10 @@ Sections used:
   and hide them. Coloured by VS Code's colour ids from the theme in force, with VS Code's own
   defaults where a theme names none. Search, Changes, Outline and the terminal come to the native
   window next; the browser face has them now.
+- **The native window's views move as VS Code's.** Right-click a view's icon or its title: Move to
+  Primary Side Bar, Secondary Side Bar or Panel, Hide it, or Reset View Locations. Where the views
+  are and the parts' sizes are kept for the folder (in the data folder's `ide/`) and come back the
+  next time it opens.
 - **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,
   the editor, the panel and a secondary side bar, with VS Code's sizes and the theme's colours.
   Six views (Explorer, Search, Changes, Outline, Agent, Terminal) start where VS Code puts them:

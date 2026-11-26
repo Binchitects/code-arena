@@ -46,8 +46,14 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     stack((
         v_stack((title_bar(ui), body, status_bar(ui))).style(|s| s.size_full()),
         menu_overlay(ui, send.clone()),
+        view_menu(ui),
         resize_edges(),
     ))
+    .on_event_cont(EventListener::PointerMove, move |e| {
+        if let Event::PointerMove(p) = e {
+            ui.pointer.set((p.pos.x, p.pos.y));
+        }
+    })
     .on_event_cont(EventListener::KeyDown, move |e| {
         if let Event::KeyDown(k) = e {
             key(ui, &keys, &k.key.logical_key, k.modifiers);
@@ -104,7 +110,10 @@ fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
             }
             _ => {}
         },
-        Key::Named(NamedKey::Escape) => ui.menu.set(None),
+        Key::Named(NamedKey::Escape) => {
+            ui.menu.set(None);
+            ui.context.set(None);
+        }
         _ => {}
     }
 }
@@ -334,6 +343,95 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
     })
 }
 
+/// A view's menu opened where it was right-clicked (the event's point is the clicked view's own, so the place is
+/// the pointer's as the window's root last saw it).
+fn open_view_menu(ui: Ui, v: View, _: &Event) {
+    let (x, y) = ui.pointer.get_untracked();
+    ui.context.set(Some((v, x, y)));
+    ui.menu.set(None);
+}
+
+type ViewMenuItem = (usize, String, std::rc::Rc<dyn Fn()>);
+
+/// A view's own menu, as VS Code's: move it to another container, hide it, put every view back.
+fn view_menu(ui: Ui) -> impl IntoView {
+    let t = ui.colors;
+    dyn_container(
+        move || ui.context.get(),
+        move |open| {
+            let Some((v, x, y)) = open else { return empty().into_any() };
+            let here = ui.layout.with_untracked(|l| l.where_is(v));
+            let mut items: Vec<(String, Box<dyn Fn()>)> = Vec::new();
+            for (to, name) in [
+                (Where::Primary, "Primary Side Bar"),
+                (Where::Secondary, "Secondary Side Bar"),
+                (Where::Panel, "Panel"),
+            ] {
+                if here != Some(to) {
+                    items.push((
+                        format!("Move to {name}"),
+                        Box::new(move || ui.layout.update(|l| *l = l.moved(v, to, None))),
+                    ));
+                }
+            }
+            if let Some(w) = here {
+                items.push((format!("Hide {}", v.title()), Box::new(move || ui.layout.update(|l| *l = l.toggled(w)))));
+            }
+            items.push((
+                "Reset View Locations".into(),
+                Box::new(move || ui.layout.set(crate::layout::Layout::default())),
+            ));
+            let items: Vec<ViewMenuItem> =
+                items.into_iter().enumerate().map(|(i, (s, f))| (i, s, std::rc::Rc::from(f))).collect();
+            let list = dyn_stack(
+                move || items.clone(),
+                |(i, _, _)| *i,
+                move |(_, text, run)| {
+                    label(move || text.clone())
+                        .on_click_stop(move |_| {
+                            ui.context.set(None);
+                            run();
+                        })
+                        .style(move |s| {
+                            let c = t.get();
+                            s.height(26.0)
+                                .items_center()
+                                .padding_left(26.0)
+                                .padding_right(26.0)
+                                .border_radius(4.0)
+                                .margin_horiz(4.0)
+                                .color(c.menu_fg)
+                                .hover(|s| s.background(c.menu_selected).color(c.menu_selected_fg))
+                        })
+                },
+            )
+            .style(move |s| {
+                let c = t.get();
+                s.flex_col()
+                    .position(Position::Absolute)
+                    .inset_left(x)
+                    .inset_top(y)
+                    .min_width(220.0)
+                    .padding_vert(4.0)
+                    .border(1.0)
+                    .border_color(c.menu_border)
+                    .border_radius(6.0)
+                    .background(c.menu_bg)
+                    .box_shadow_blur(8.0)
+                    .box_shadow_color(c.shadow)
+                    .font_size(13.0)
+                    .selectable(false)
+            });
+            stack((empty().on_click_stop(move |_| ui.context.set(None)).style(|s| s.size_full()), list))
+                .style(|s| s.position(Position::Absolute).inset(0.0).size_full())
+                .into_any()
+        },
+    )
+    .style(move |s| {
+        s.position(Position::Absolute).inset(0.0).apply_if(ui.context.with(|m| m.is_none()), |s| s.hide()).z_index(100)
+    })
+}
+
 /// The window's edges: it has no frame of the system's, so it is resized by these (each a strip of its own, so the
 /// rest of the window gets its clicks).
 fn resize_edges() -> impl IntoView {
@@ -363,6 +461,7 @@ fn activity_bar(ui: Ui) -> impl IntoView {
             empty().style(|s| s.width(2.0)),
         ))
         .on_click_stop(move |_| ui.layout.update(|l| *l = l.view_toggled(v)))
+        .on_secondary_click_stop(move |e| open_view_menu(ui, v, e))
         .style(move |s| {
             let c = t.get();
             s.width(48.0)
@@ -428,6 +527,7 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
                             }),
                         ))
                         .on_click_stop(move |_| ui.layout.update(|l| *l = l.revealed(v)))
+                        .on_secondary_click_stop(move |e| open_view_menu(ui, v, e))
                         .style(move |s| {
                             let c = t.get();
                             s.gap(5.0)
@@ -443,6 +543,11 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
                 .into_any()
             } else {
                 label(move || active.map(|v| v.title().to_uppercase()).unwrap_or_default())
+                    .on_secondary_click_stop(move |e| {
+                        if let Some(v) = active {
+                            open_view_menu(ui, v, e)
+                        }
+                    })
                     .style(move |s| caps(s).padding_left(20.0).color(t.get().side_title))
                     .into_any()
             }

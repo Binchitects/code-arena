@@ -62,6 +62,12 @@ pub struct Ui {
     pub panel_height: RwSignal<f64>,
     /// The title bar's menu open, by its place.
     pub menu: RwSignal<Option<usize>>,
+    /// A view's own menu (Move to…), open where it was right-clicked (in the window).
+    pub context: RwSignal<Option<(crate::layout::View, f64, f64)>>,
+    /// Where the pointer is in the window (for a menu opened by a right-click).
+    pub pointer: RwSignal<(f64, f64)>,
+    /// The layout kept for the folder has been read: from then on a change is kept.
+    pub loaded: RwSignal<bool>,
 
     pub tree: RwSignal<HashMap<String, Vec<Entry>>>,
     pub expanded: RwSignal<HashSet<String>>,
@@ -99,6 +105,9 @@ impl Ui {
             secondary_width: create_rw_signal(380.0),
             panel_height: create_rw_signal(230.0),
             menu: create_rw_signal(None),
+            context: create_rw_signal(None),
+            loaded: create_rw_signal(false),
+            pointer: create_rw_signal((0.0, 0.0)),
             tree: create_rw_signal(HashMap::new()),
             expanded: create_rw_signal(HashSet::new()),
             selected: create_rw_signal(String::new()),
@@ -172,6 +181,35 @@ impl Ui {
         }
     }
 
+    /// The look kept for this folder: where its views are, its parts' sizes.
+    pub fn view_state(&self) -> Value {
+        json!({
+            "layout": self.layout.get_untracked().to_json(),
+            "sizes": {
+                "primary": self.primary_width.get_untracked(),
+                "secondary": self.secondary_width.get_untracked(),
+                "panel": self.panel_height.get_untracked(),
+            },
+        })
+    }
+
+    fn restore(&self, v: &Value) {
+        if !v.is_object() {
+            return;
+        }
+        self.layout.set(Layout::normalize(&v["layout"]));
+        let size = |k: &str, lo: f64, hi: f64| v["sizes"][k].as_f64().map(|x| x.clamp(lo, hi));
+        if let Some(w) = size("primary", 170.0, 800.0) {
+            self.primary_width.set(w);
+        }
+        if let Some(w) = size("secondary", 220.0, 900.0) {
+            self.secondary_width.set(w);
+        }
+        if let Some(h) = size("panel", 100.0, 900.0) {
+            self.panel_height.set(h);
+        }
+    }
+
     /// A folder in the Explorer opened or closed; its entries asked for the first time it opens.
     pub fn toggle_folder(&self, path: &str, send: &Send) {
         let open = self.expanded.with_untracked(|e| e.contains(path));
@@ -200,6 +238,10 @@ impl Ui {
                 self.choice.set(s("theme"));
                 self.apply_theme();
                 self.items.set(self.thread_of(m));
+                if !self.loaded.get_untracked() {
+                    self.restore(&m["view_state"]);
+                    self.loaded.set(true);
+                }
                 send(json!({"type": "themes"}));
                 send(json!({"type": "ls", "path": ""}));
             }
@@ -410,5 +452,26 @@ impl Ui {
             }
         }
         items
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::{View, Where};
+
+    #[test]
+    fn the_look_kept_comes_back_as_it_was_and_sizes_within_bounds() {
+        let ui = Ui::new();
+        ui.layout.update(|l| *l = l.moved(View::Search, Where::Panel, None));
+        ui.primary_width.set(333.0);
+        let kept = ui.view_state();
+        let again = Ui::new();
+        again.restore(&kept);
+        assert_eq!(again.layout.get_untracked(), ui.layout.get_untracked());
+        assert_eq!(again.primary_width.get_untracked(), 333.0);
+        again.restore(&json!({"layout": {}, "sizes": {"panel": 5.0}}));
+        assert_eq!(again.panel_height.get_untracked(), 100.0);
+        assert_eq!(again.layout.get_untracked(), Layout::default());
     }
 }

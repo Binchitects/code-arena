@@ -1796,4 +1796,10 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     assert!(
         until(&mut page, "notice").await["text"].as_str().is_some_and(|t| t.starts_with("Back to before: say hello"))
     );
+    // The workbench's look is kept for the folder and comes back with the state.
+    assert_eq!(st["view_state"], Value::Null, "nothing kept yet");
+    let look = json!({"layout": {"primary": ["files"], "panel": ["terminal", "search"]}, "sizes": {"primary": 300.0}});
+    page.send(Message::text(json!({"type": "keep_view_state", "state": look}).to_string())).await.expect("send");
+    page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
+    assert_eq!(until(&mut page, "state").await["view_state"], look);
 }

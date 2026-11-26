@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use floem::IntoView;
-use floem::reactive::{SignalGet, create_effect, create_rw_signal};
+use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, create_effect, create_rw_signal};
 use floem::window::WindowConfig;
 use serde_json::{Value, json};
 
@@ -63,6 +63,37 @@ pub fn launch(hub: Hub) {
     floem::Application::new().window(move |_| app(out, rx), Some(config)).run();
 }
 
+/// The layout and the parts' sizes kept for the folder when they change: a moment after the last change (a sash
+/// dragged sends one, not one a pixel), and after the turn when one is running (the driver keeps it then).
+fn keep_view_state(ui: Ui, send: Send) {
+    let generation = create_rw_signal(0u64);
+    let waiting = create_rw_signal(false);
+    create_effect(move |_| {
+        ui.layout.track();
+        ui.primary_width.track();
+        ui.secondary_width.track();
+        ui.panel_height.track();
+        if ui.loaded.get_untracked() {
+            generation.update(|g| *g += 1);
+            waiting.set(true);
+        }
+    });
+    create_effect(move |_| {
+        let g = generation.get();
+        let running = ui.running.get();
+        if !waiting.get_untracked() || running {
+            return;
+        }
+        let send = send.clone();
+        floem::action::exec_after(std::time::Duration::from_millis(500), move |_| {
+            if generation.get_untracked() == g && !ui.running.get_untracked() && waiting.get_untracked() {
+                waiting.set(false);
+                send(json!({"type": "keep_view_state", "state": ui.view_state()}));
+            }
+        });
+    });
+}
+
 fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_channel::Receiver<Value>) -> impl IntoView {
     let ui = Ui::new();
     let send: Send = Rc::new(move |v: Value| {
@@ -79,5 +110,6 @@ fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_chan
         });
     }
     send(json!({"type": "hello"}));
+    keep_view_state(ui, send.clone());
     workbench::view(ui, send)
 }
