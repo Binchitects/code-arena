@@ -183,6 +183,8 @@ fn help() -> &'static str {
 /checklist [N|NAME|off]  your checklists; turn one on (the model ticks each item), tick N, new NAME: a; b, edit N: a; b, delete N\n\
 /memory [forget N]    what is remembered (Arena's, else this machine's); forget N forgets one\n\
 /remember [--person] TEXT  keep a memory for this project (or, with --person, for every project)\n\
+/projects             your projects in Arena; /project N puts this session in one (off: none)\n\
+/assistant [N|off]    your assistants in Arena; work as one\n\
 /sync [on|off]        where this session stands with its chat in Arena; off keeps it here only\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
 /exit                 leave (also Ctrl+D)\n\
@@ -855,6 +857,8 @@ async fn command(
         "/rewind" => rewind(rest, p, ui)?,
         "/web" => web(rest, p, app, ui).await?,
         "/checklist" => ui.say(&crate::checklist::command(rest, p).await),
+        "/projects" | "/project" => ui.say(&crate::projects::command(name, rest, p).await),
+        "/assistant" => ui.say(&crate::projects::assistant(rest, p).await),
         "/memory" | "/remember" => ui.say(&session::memory_command(p, name, rest, ui).await),
         "/plan" if rest.is_empty() => ui.say(&session::render_plan(&p.agent.ctx.plan.get(), ui)),
         "/plan" => {

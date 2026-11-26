@@ -106,6 +106,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   file stays inside its skill's folder; a file that looks like it holds a secret (an API key, a
   token, a private key) never comes in, nor goes out.
 
+- Projects (managed): `/projects` lists yours, `/project N` puts the session's chat in one (`off`:
+  none). On an Arena with project work (8.1 on) the model keeps the project's goals and tasks
+  true to the work with `project_plan`, `project_goal` and `project_task`, told the project's
+  instructions; a resumed session in a project takes it up again. Requests carry `chat:` and
+  `project:` tags for Arena's usage log. A session's chat names its repository, so Arena can put
+  it in that repository's project.
+- Assistants (managed): `/assistant` lists yours; `/assistant N` works as one (its instructions,
+  model, thinking and skills) from the next message; `/assistant off`.
+
 ### Fixed
 - A send Arena kept but whose answer was lost: the next take-in would have added the session's
   own messages again as the web's, and sent them twice. They are known by their ref now.

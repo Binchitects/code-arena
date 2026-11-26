@@ -5,6 +5,7 @@ mod app;
 mod chat;
 mod checklist;
 mod edition;
+mod projects;
 mod run;
 mod servers;
 mod session;

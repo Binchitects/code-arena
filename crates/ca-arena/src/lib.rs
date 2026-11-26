@@ -8,6 +8,7 @@ pub mod chats;
 pub mod checklists;
 mod client;
 pub mod memory;
+pub mod projects;
 pub mod signin;
 pub mod skills;
 pub mod types;

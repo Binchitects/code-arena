@@ -840,3 +840,61 @@ fn with_nothing_set_up_both_editions_are_named() {
     assert!(!out.status.success());
     assert!(stderr.contains("login --provider NAME") && stderr.contains("managed edition"), "{stderr}");
 }
+
+#[tokio::test]
+async fn a_session_in_a_project_keeps_its_goals_and_tags_its_requests() {
+    let gateway = MockServer::start().await;
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(path("/v1/chat/completions")).respond_with(Heard(heard.clone())).mount(&gateway).await;
+    let arena = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "c-1", "created": true})))
+        .mount(&arena)
+        .await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/c-1/messages"))
+        .respond_with(Chats(seen))
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/c-1/project-work"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "project": {"id": "p-7", "name": "Payments"}, "mayChange": true,
+            "instructions": "This chat is in the project \"Payments\".", "functions": ["project_plan", "project_goal", "project_task"]
+        })))
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/c-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"unchanged": true, "stamp": "s"})))
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).mount(&arena).await;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(200).set_body_json(json!({}))).mount(&arena).await;
+    Mock::given(method("DELETE")).respond_with(ResponseTemplate::new(204)).mount(&arena).await;
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let run = |args: &[&str]| {
+        code_arena(home.path())
+            .args(args)
+            .arg("-C")
+            .arg(project.path())
+            .env("ARENA_URL", arena.uri())
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .output()
+            .expect("runs")
+    };
+    assert!(run(&["-p", "start"]).status.success());
+    let second = run(&["-p", "go on", "--continue"]);
+    assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
+    let heard = heard.lock().expect("heard");
+    let last = heard.last().expect("asked");
+    let tools = last["tools"].to_string();
+    assert!(tools.contains("project_goal") && tools.contains("project_task"), "{tools}");
+    assert!(last.to_string().contains("in the project \\\"Payments\\\""), "{last}");
+    assert_eq!(last["metadata"]["tags"], json!(["chat:c-1", "project:p-7"]));
+}

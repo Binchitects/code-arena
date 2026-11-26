@@ -131,6 +131,8 @@ pub struct Agent {
     pub aside: Option<Box<dyn Aside>>,
     /// Which history entries are Code Arena's own notes (read by the model, not kept in the session).
     pub notes: Vec<bool>,
+    /// `chat:<id>`, `project:<id>`: where Arena's usage log counts the requests.
+    pub tags: Vec<String>,
 }
 
 /// Keeps a result aside and names it (`r1`), for `read_result`.
@@ -310,7 +312,7 @@ impl Agent {
             tools,
             thinking: self.thinking.clone(),
             max_tokens: self.max_tokens,
-            tags: vec![],
+            tags: self.tags.clone(),
             tool_choice: tool_choice.map(str::to_string),
         }
     }
@@ -752,6 +754,7 @@ mod tests {
             window: Window::default(),
             aside: None,
             notes: vec![],
+            tags: vec![],
         };
         (server, a, dir, seen)
     }

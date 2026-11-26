@@ -69,6 +69,11 @@ pub type Notices = Arc<Mutex<Vec<(bool, String)>>>;
 pub async fn begin_turn(p: &mut Prepared, ui: crate::ui::Ui) {
     let Some(sync) = p.sync.clone() else { return };
     let taken = sync.begin_turn(p.agent.inbox.clone()).await;
+    if p.agent.tags.is_empty()
+        && let Some(chat) = sync.chat_id()
+    {
+        p.agent.tags = vec![format!("chat:{chat}")];
+    }
     say_notices(&p.notices, ui);
     for line in &taken.said {
         ui.say(&ui.dim(line));
@@ -624,6 +629,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         window,
         aside: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone(), sync: None })),
         notes: vec![],
+        tags: vec![],
     };
     // The sandbox, as the settings and this system allow.
     let sandbox_mode = app.settings.string(&schema::SANDBOX).unwrap_or_else(|| "auto".into());
@@ -743,6 +749,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     };
     if prepared.resumed.is_some() {
         crate::checklist::remind(&mut prepared).await;
+        crate::projects::take_up(&mut prepared, false).await;
     }
     if o.carry_plan {
         match resume_plan(&mut prepared) {
