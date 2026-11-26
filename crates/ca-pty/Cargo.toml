@@ -1,0 +1,21 @@
+[package]
+name = "ca-pty"
+description = "A program on a pseudo-terminal: the IDE's terminals."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+nix = { version = "0.30", default-features = false, features = ["term", "process", "signal"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# A pseudo-terminal needs the system's own calls (the new session, the controlling terminal, the size): this crate,
+# and only it, may use unsafe for them.
+[lints.clippy]
+unwrap_used = "deny"
+dbg_macro = "deny"

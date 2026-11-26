@@ -105,6 +105,8 @@ fn state(p: &Prepared, app: &App, models: &[String], running: bool) -> Value {
         "type": "state",
         "session": p.session,
         "folder": p.folder,
+        "root": p.agent.ctx.workspace.root().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        "terminals": cfg!(unix),
         "model": p.agent.model,
         "mode": p.agent.policy.mode.name(),
         "thinking": thinking_name(&p.agent.thinking),
@@ -246,6 +248,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
     let mut p = session::prepare(app, &Opts { interactive: true, ..args.opts.clone() }, approver, args.resume).await?;
     let inbox = Arc::new(Mutex::new(Vec::<String>::new()));
     p.agent.inbox = Some(inbox.clone());
+    let side = crate::ide_files::Side::new(p.agent.ctx.workspace.clone(), out.clone(), app.settings.env().get("SHELL"));
     let kept = keep_address(&app.paths.data, &server.url);
     ui.say(&format!("{} {} · {} · {}", ui.bold(ca_core::PRODUCT), ca_core::VERSION, p.agent.model, ui.dim(&p.folder)));
     ui.say(&format!("The IDE: {}", server.url));
@@ -265,6 +268,9 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             _ => vec![p.agent.model.clone()],
         };
     while let Some((_, msg)) = server.from_page.recv().await {
+        if side.handle(&msg) {
+            continue;
+        }
         match msg["type"].as_str().unwrap_or("") {
             "hello" | "state" => send(&out, state(&p, app, &models, false)),
             "model" => {
@@ -314,7 +320,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                         send(&out, json!({"type": "notice", "text": said.join(" ")}));
                         let text = msg["text"].as_str().unwrap_or("").trim().to_string();
                         if msg["type"] == "again" && !text.is_empty() {
-                            turn(&mut p, &mut server.from_page, &out, &pending, &inbox, text).await;
+                            turn(&mut p, &mut server.from_page, &out, &pending, &inbox, &side, text).await;
                             session::keep_window(app, &p);
                             send(&out, status(&p));
                         }
@@ -331,7 +337,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             "send" => {
                 let text = msg["text"].as_str().unwrap_or("").trim().to_string();
                 if !text.is_empty() {
-                    turn(&mut p, &mut server.from_page, &out, &pending, &inbox, text).await;
+                    turn(&mut p, &mut server.from_page, &out, &pending, &inbox, &side, text).await;
                     session::keep_window(app, &p);
                     send(&out, status(&p));
                 }
@@ -349,6 +355,7 @@ async fn turn(
     out: &broadcast::Sender<String>,
     pending: &Pending,
     inbox: &Arc<Mutex<Vec<String>>>,
+    side: &crate::ide_files::Side,
     text: String,
 ) {
     let ui = p.ui;
@@ -383,7 +390,7 @@ async fn turn(
         loop {
             tokio::select! {
                 r = &mut running => break Some(r),
-                Some((_, m)) = from_page.recv() => match m["type"].as_str().unwrap_or("") {
+                Some((_, m)) = from_page.recv() => if side.handle(&m) {} else { match m["type"].as_str().unwrap_or("") {
                     "answer" => {
                         let id = m["id"].as_u64().unwrap_or(0);
                         let answer = match m["answer"].as_str().unwrap_or("") {
@@ -413,7 +420,7 @@ async fn turn(
                     "hello" | "state" => send(out, json!({"type": "busy"})),
                     "context" => {}
                     _ => {}
-                },
+                } },
             }
         }
     };

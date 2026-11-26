@@ -9,6 +9,7 @@ mod commit;
 mod edition;
 mod goals;
 mod ide;
+mod ide_files;
 mod loops;
 mod plugins;
 mod projects;

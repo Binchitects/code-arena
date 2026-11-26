@@ -30,6 +30,8 @@ export type Session = {
   mode: string;
   folder: string;
   session: string;
+  root: string;
+  terminals: boolean;
   edition: string;
   version: string;
   lastTurn?: { ms: number; prompt: number; cached: number; completion: number };
@@ -46,6 +48,8 @@ export const [session, setSession] = createStore<Session>({
   mode: "",
   folder: "",
   session: "",
+  root: "",
+  terminals: false,
   edition: "",
   version: "",
 });
@@ -85,7 +89,17 @@ function fromStored(messages: Stored[]): Item[] {
   return out;
 }
 
+type Listener = (m: any) => void;
+const listeners = new Set<Listener>();
+
+/** Every message from Code Arena, for the parts of the page that load later (Coder mode). */
+export function listen(f: Listener): () => void {
+  listeners.add(f);
+  return () => listeners.delete(f);
+}
+
 function onMessage(m: any): void {
+  for (const f of listeners) f(m);
   switch (m.type) {
     case "state":
       setSession({
@@ -93,6 +107,8 @@ function onMessage(m: any): void {
         mode: m.mode,
         folder: m.folder,
         session: m.session,
+        root: m.root ?? "",
+        terminals: !!m.terminals,
         edition: m.edition,
         version: m.version,
         running: m.running,

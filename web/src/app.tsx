@@ -1,6 +1,6 @@
 // Agent mode: the conversation in one column, the box, one status line. A turn's tool calls fold into a line, and
 // the questions the agent asks are cards in the thread.
-import { For, Match, Show, Switch, createEffect, createSignal, onMount } from "solid-js";
+import { For, Match, Show, Suspense, Switch, createEffect, createSignal, lazy, onMount } from "solid-js";
 import { produce } from "solid-js/store";
 import { type Item, type Tool, detail, items, send, session, setDetail, setItems } from "./stream";
 
@@ -383,61 +383,117 @@ function Status() {
   );
 }
 
-export function App() {
+/** The conversation, kept at its end while the person is there. */
+function Thread() {
   let thread!: HTMLDivElement;
   let stick = true;
   createEffect(() => {
-    // Read on each change of the thread: kept at its end while the person is there.
+    // Read on each change of the thread.
     JSON.stringify(items);
     if (stick) queueMicrotask(() => (thread.scrollTop = thread.scrollHeight));
   });
   return (
-    <div class="app">
-      <main
-        class="thread"
-        ref={thread}
-        onScroll={() => (stick = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60)}
-        aria-live="polite"
-      >
-        <div class="column">
-          <Show when={!items.length}>
-            <div class="empty">
-              <h1>Code Arena</h1>
-              <p>Ask about this project, or ask for a change. The agent reads, edits and runs commands as your mode allows.</p>
-            </div>
-          </Show>
-          <For each={items}>
-            {(item, i) => (
-              <Switch>
-                <Match when={item.kind === "user" && item}>{(u) => <User item={u()} />}</Match>
-                <Match when={item.kind === "assistant" && item}>{(a) => <Assistant item={a()} index={i()} />}</Match>
-                <Match when={item.kind === "ask" && item}>{(a) => <Ask item={a()} />}</Match>
-                <Match when={item.kind === "queued" && item}>
-                  {(q) => (
-                    <div class="user queued">
-                      {q().text}
-                      <span class="tag">Sent while it worked</span>
-                    </div>
-                  )}
-                </Match>
-                <Match when={item.kind === "notice" && item}>{(n) => <div class="notice">{n().text}</div>}</Match>
-                <Match when={item.kind === "error" && item}>{(e) => <div class="error">{e().text}</div>}</Match>
-              </Switch>
-            )}
-          </For>
-          <Show when={session.running && !items.some((x, i) => i === items.length - 1 && x.kind === "assistant" && x.text)}>
-            <div class="working">
-              <span class="spinner" /> Working…
-            </div>
-          </Show>
-        </div>
-      </main>
+    <main
+      class="thread"
+      ref={thread}
+      onScroll={() => (stick = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 60)}
+      aria-live="polite"
+    >
+      <div class="column">
+        <Show when={!items.length}>
+          <div class="empty">
+            <h1>Code Arena</h1>
+            <p>Ask about this project, or ask for a change. The agent reads, edits and runs commands as your mode allows.</p>
+          </div>
+        </Show>
+        <For each={items}>
+          {(item, i) => (
+            <Switch>
+              <Match when={item.kind === "user" && item}>{(u) => <User item={u()} />}</Match>
+              <Match when={item.kind === "assistant" && item}>{(a) => <Assistant item={a()} index={i()} />}</Match>
+              <Match when={item.kind === "ask" && item}>{(a) => <Ask item={a()} />}</Match>
+              <Match when={item.kind === "queued" && item}>
+                {(q) => (
+                  <div class="user queued">
+                    {q().text}
+                    <span class="tag">Sent while it worked</span>
+                  </div>
+                )}
+              </Match>
+              <Match when={item.kind === "notice" && item}>{(n) => <div class="notice">{n().text}</div>}</Match>
+              <Match when={item.kind === "error" && item}>{(e) => <div class="error">{e().text}</div>}</Match>
+            </Switch>
+          )}
+        </For>
+        <Show when={session.running && !items.some((x, i) => i === items.length - 1 && x.kind === "assistant" && x.text)}>
+          <div class="working">
+            <span class="spinner" /> Working…
+          </div>
+        </Show>
+      </div>
+    </main>
+  );
+}
+
+/** The agent: its thread, then the Context panel when open and the box. */
+function Agent() {
+  return (
+    <>
+      <Thread />
       <div class="bottom">
         <div class="column">
           <Show when={detail.open}>
             <ContextPanel />
           </Show>
           <Box />
+        </div>
+      </div>
+    </>
+  );
+}
+
+const Coder = lazy(() => import("./coder"));
+
+/** Which face the IDE shows, kept for the next visit. */
+const [face, setFace] = createSignal<"agent" | "coder">(
+  (() => {
+    try {
+      return localStorage.getItem("code-arena.face") === "coder" ? "coder" : "agent";
+    } catch {
+      return "agent";
+    }
+  })(),
+);
+
+function choose(f: "agent" | "coder") {
+  setFace(f);
+  try {
+    localStorage.setItem("code-arena.face", f);
+  } catch {
+    // Not kept: the next visit opens Agent mode.
+  }
+}
+
+export function App() {
+  return (
+    <div class="app">
+      <header class="top">
+        <div class="faces" role="tablist" aria-label="Mode">
+          <button role="tab" aria-selected={face() === "agent"} classList={{ on: face() === "agent" }} onClick={() => choose("agent")}>
+            Agent
+          </button>
+          <button role="tab" aria-selected={face() === "coder"} classList={{ on: face() === "coder" }} onClick={() => choose("coder")}>
+            Coder
+          </button>
+        </div>
+      </header>
+      <Show when={face() === "coder"} fallback={<div class="agent-face"><Agent /></div>}>
+        <Suspense fallback={<div class="loading muted">Opening the editor…</div>}>
+          <Coder agent={() => <Agent />} />
+        </Suspense>
+      </Show>
+      <div class="status-row">
+        <div class="column wide">
           <Status />
         </div>
       </div>

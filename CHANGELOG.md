@@ -13,6 +13,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   cards in the thread (Allow, Always for this session, Deny), messages sent while it works marked
   so, Stop (or Esc), and one status line: model, mode (click to change it), folder, the last
   turn's time and tokens. `--continue` and `--resume` take up a session.
+- Coder mode in the IDE (Agent | Coder at its top, kept for the next visit): the project's files
+  in a tree, files in tabs of Monaco (VS Code's editor) with their languages' colours, Ctrl+S
+  saves, a dot on a tab with changes not saved; a file the agent edits that is open takes the
+  change by its changed lines only (the cursor stays). Terminals in a panel (xterm.js on a
+  pseudo-terminal, your shell, as many as you open; not on Windows yet). The agent stays beside
+  them. Coder mode loads only when it is first opened, so Agent mode's page stays small.
+- The editor opens only plain text files inside the project, up to 5 MB: paths come relative to
+  the project, each part resolved as the system resolves it (a link leading out is refused), and
+  a pipe, a device or a binary file is not opened.
 - In the IDE: the model, thinking and mode pickers in the status line; the context ring, which
   opens the Context panel (what fills the next request by kind, its biggest messages, Compact
   now); and on each of your messages Edit (back to before it, the message in the box to change),

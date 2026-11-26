@@ -223,6 +223,7 @@ dependencies = [
  "ca-mcp",
  "ca-memory",
  "ca-net",
+ "ca-pty",
  "ca-server",
  "ca-session",
  "ca-settings",
@@ -313,6 +314,15 @@ dependencies = [
  "thiserror",
  "tokio",
  "wiremock",
+]
+
+[[package]]
+name = "ca-pty"
+version = "0.4.0"
+dependencies = [
+ "libc",
+ "nix",
+ "tempfile",
 ]
 
 [[package]]
