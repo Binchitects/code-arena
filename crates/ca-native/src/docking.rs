@@ -432,7 +432,7 @@ fn view_body(ui: Ui, send: Send, v: View) -> floem::AnyView {
         View::Search => crate::search::view(ui, send).into_any(),
         View::Changes => crate::changes::view(ui, send).into_any(),
         View::Terminal => crate::terminal::view(ui, send).into_any(),
-        v => crate::workbench::not_yet(ui, v).into_any(),
+        View::Outline => crate::outline::view(ui, send).into_any(),
     }
 }
 

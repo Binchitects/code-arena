@@ -26,8 +26,7 @@ Sections used:
   the secondary side bar (answers streamed, a turn's calls in a line that opens, Allow / Always /
   Deny), and the status bar; each part resized by its sash, Ctrl+B, Ctrl+Alt+B and Ctrl+J show
   and hide them. Coloured by VS Code's colour ids from the theme in force, with VS Code's own
-  defaults where a theme names none. Outline comes to the native window next; the browser
-  face has it now.
+  defaults where a theme names none.
 - **The native window's views move as VS Code's.** Right-click a view's icon or its title: Move to
   Primary Side Bar, Secondary Side Bar or Panel, Hide it, or Reset View Locations. Where the views
   are and the parts' sizes are kept for the folder (in the data folder's `ide/`) and come back the
@@ -75,6 +74,13 @@ Sections used:
   and italic, inline code, fenced code in a box with the theme's syntax colours, lists, quotes and
   links; as an answer streams in, only its last block is drawn again. The mode, the model and the
   thinking are picked from menus over the input (as the page offers them; not while a turn runs).
+- **The Outline, find, and files changed on disk, in the native window.** The Outline lists the
+  file's symbols from its grammar (functions, methods, types, traits, modules, constants,
+  headings) with VS Code's symbol icons, nested, the one at the caret lit, a click going there;
+  it is read off the UI thread. Ctrl+F opens VS Code's find widget (match case, regular
+  expressions, N of M, F3 and Shift+F3). A file changed on disk is taken in when the tab has no
+  changes of its own, else a bar offers Revert or Overwrite; closing a tab with changes asks Save,
+  Don't Save or Cancel. The workbench's keys work while the editor has the focus.
 - **Quick Open and the Command Palette in the native window**, VS Code's quick input: Ctrl+P (or a
   click on the command center) finds a file among 50,000 in about 2 ms a key, its matched letters
   lit; Ctrl+Shift+P (or `>`) runs a command, its keys shown; Ctrl+K Ctrl+T picks a colour theme,

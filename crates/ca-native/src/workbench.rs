@@ -101,7 +101,7 @@ thread_local! {
 }
 
 /// VS Code's keys for the workbench.
-fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
+pub(crate) fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
     let ctrl = m.contains(Modifiers::CONTROL);
     let shift = m.contains(Modifiers::SHIFT);
     let alt = m.contains(Modifiers::ALT);
@@ -116,6 +116,7 @@ fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
     match key {
         Key::Character(c) if ctrl => match (c.to_lowercase().as_str(), shift, alt) {
             ("k", false, false) => CHORD.with(|c| c.set(true)),
+            ("f", false, false) => crate::editor::find_show(ui),
             ("p", false, false) => crate::palette::open(ui, send, crate::palette::Mode::Files),
             ("p", true, false) => crate::palette::open(ui, send, crate::palette::Mode::Commands),
             ("b", false, false) => ui.toggle_group_of(View::Files),
@@ -515,17 +516,6 @@ fn activity_bar(ui: Ui) -> impl IntoView {
     .style(move |s| {
         let c = t.get();
         line(s, c.activity_border, 'r').width(48.0).height_full().background(c.activity_bg)
-    })
-}
-
-/// A view not drawn natively yet: said so, and where it is meanwhile.
-pub fn not_yet(ui: Ui, v: View) -> impl IntoView {
-    let t = ui.colors;
-    label(move || {
-        format!("{} comes to the native window in a later step; `code-arena ide --browser` has it now.", v.title())
-    })
-    .style(move |s| {
-        s.padding_horiz(20.0).padding_vert(8.0).color(t.get().desc).text_overflow(floem::style::TextOverflow::Wrap)
     })
 }
 

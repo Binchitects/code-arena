@@ -67,6 +67,17 @@ pub fn char_of(name: &str) -> char {
         "screen-full" => 0xeb4c,
         "case-sensitive" => 0xeab1,
         "regex" => 0xeb38,
+        "arrow-up" => 0xeaa1,
+        "arrow-down" => 0xea9a,
+        "symbol-method" => 0xea8c,
+        "symbol-struct" => 0xea91,
+        "symbol-enum" => 0xea95,
+        "symbol-interface" => 0xeb61,
+        "symbol-namespace" => 0xea8b,
+        "symbol-constant" => 0xeb5d,
+        "symbol-variable" => 0xea88,
+        "symbol-string" => 0xeb8d,
+        "symbol-field" => 0xeb5f,
         _ => 0xea74, // "info"
     };
     char::from_u32(code).unwrap_or('?')

@@ -60,6 +60,28 @@ pub fn action_lit(t: Theme, name: impl Fn() -> &'static str + 'static, on: impl 
     })
 }
 
+/// An option of a search box (Match Case, Use Regular Expression): a 20 px square, lit while it is on.
+pub fn toggle(t: Theme, name: &'static str, on: RwSignal<bool>, tip: &'static str) -> impl IntoView {
+    let button = container(icon(name, 16.0)).on_click_stop(move |_| on.update(|b| *b = !*b)).style(move |s| {
+        let c = t.get();
+        let lit = on.get();
+        s.width(20.0)
+            .height(20.0)
+            .items_center()
+            .justify_center()
+            .border(1.0)
+            .border_radius(3.0)
+            .font_size(12.0)
+            .cursor(CursorStyle::Pointer)
+            .selectable(false)
+            .border_color(if lit { c.focus } else { Color::TRANSPARENT })
+            .background(if lit { c.focus.multiply_alpha(0.35) } else { Color::TRANSPARENT })
+            .color(c.input_fg)
+            .hover(|s| s.background(c.toolbar_hover))
+    });
+    floem::views::tooltip(button, move || label(move || tip))
+}
+
 /// A button: the primary one (`button.background`) or the secondary.
 pub fn button(t: Theme, text: &'static str, primary: bool, on: impl Fn() + 'static) -> impl IntoView {
     label(move || text).on_click_stop(move |_| on()).style(move |s| {
