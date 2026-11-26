@@ -3,7 +3,7 @@
 Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
 versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
 
-## Unreleased (0.3.0)
+## 0.3.0 (2026-11-26)
 
 ### Added
 - What an Arena has is kept per server (`servers/HOST.json` in the data folder) and asked again
@@ -35,6 +35,7 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   comes from Arena's stream of the person's chats' changes; where that cannot be had (a proxy
   that drops it), the chat is asked every 5 s with its stamp, which costs Arena nothing when
   nothing moved.
+- `code-arena --web N` (or an id) starts the conversation in one of your chats in Arena.
 - `/web` lists your chats in Arena; `/web N` continues one here, in a session of its own (or the
   one this folder already keeps with it), and brings it back to the web's list if it was archived.
 - Leaving the chat waits a few seconds for the last turn's messages to reach Arena.
@@ -153,6 +154,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   make one with no name, which 8.1 refuses with its own answer (and makes nothing).
 - The answer being written is kept every two seconds while it comes, so a crash leaves what it
   got to (0.2 recovered drafts but never kept them).
+
+### Measured
+- The static Linux binary is 11.1 MB; `code-arena version` takes 1.9 ms; a 10,000-message
+  session opens with its last 30 turns in 0.6 ms. See [docs/measurements/0.3.md](docs/measurements/0.3.md).
+
+### Moved to 0.4
+- A cut tool call redone in parts, files held open by others on Windows, llama.cpp's shared
+  cache asked again and the engine's own window learned, assistants' tool groups, making a
+  project and its views. The plan's checklist names each.
 
 ## 0.2.0 (2026-11-26)
 
