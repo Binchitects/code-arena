@@ -83,6 +83,14 @@ impl Tab {
     }
 }
 
+/// A picker of the Agent view's input: which of its menus is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Picker {
+    Mode,
+    Model,
+    Thinking,
+}
+
 #[derive(Clone, Copy)]
 pub struct Ui {
     pub colors: RwSignal<Colors>,
@@ -94,6 +102,14 @@ pub struct Ui {
     pub running: RwSignal<bool>,
     pub model: RwSignal<String>,
     pub mode: RwSignal<String>,
+    /// The models the session can be given, by their ids, and how much it thinks (`default`, `off`, or a level).
+    pub models: RwSignal<Vec<String>>,
+    pub thinking: RwSignal<String>,
+    /// The input's picker that is open, and the item in it the keys are at.
+    pub picker: RwSignal<Option<Picker>>,
+    pub picker_at: RwSignal<usize>,
+    /// The theme's token colours, made once for a theme (an answer's code is coloured with them).
+    pub tokens: RwSignal<Rc<syntect::highlighting::Theme>>,
     pub folder: RwSignal<String>,
     pub branch: RwSignal<String>,
     pub plan: RwSignal<Option<(String, usize, usize)>>,
@@ -164,6 +180,11 @@ impl Ui {
             running: create_rw_signal(false),
             model: create_rw_signal(String::new()),
             mode: create_rw_signal(String::new()),
+            models: create_rw_signal(Vec::new()),
+            thinking: create_rw_signal(String::new()),
+            picker: create_rw_signal(None),
+            picker_at: create_rw_signal(0),
+            tokens: create_rw_signal(Rc::new(crate::highlight::theme_of(&start.json))),
             folder: create_rw_signal(String::new()),
             branch: create_rw_signal(String::new()),
             plan: create_rw_signal(None),
@@ -235,6 +256,7 @@ impl Ui {
     fn apply_theme(&self) {
         let t = ca_themes::chosen(&self.themes.get_untracked(), &self.choice.get_untracked(), true);
         self.colors.set(Colors::of(&t));
+        self.tokens.set(Rc::new(crate::highlight::theme_of(&t.json)));
         crate::terminal::recolour(*self);
     }
 
@@ -377,6 +399,16 @@ impl Ui {
             "state" => {
                 self.model.set(s("model"));
                 self.mode.set(s("mode"));
+                self.thinking.set(s("thinking"));
+                self.models.set(
+                    m["models"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect(),
+                );
                 self.folder.set(s("folder"));
                 self.branch.set(s("branch"));
                 self.running.set(m["running"] == true);
@@ -393,6 +425,9 @@ impl Ui {
             "status" => {
                 self.model.set(s("model"));
                 self.mode.set(s("mode"));
+                if m["thinking"].is_string() {
+                    self.thinking.set(s("thinking"));
+                }
                 self.running.set(m["running"] == true);
                 if m["branch"].is_string() {
                     self.branch.set(s("branch"));
@@ -685,6 +720,24 @@ mod tests {
         assert_eq!(fresh.dock.get_untracked(), crate::dock::Dock::default());
         let opened: Vec<_> = asked.borrow().iter().filter_map(|v| v["path"].as_str().map(str::to_string)).collect();
         assert_eq!(opened, ["a.rs", "b.rs", "a.rs"]);
+    }
+
+    #[test]
+    fn the_session_says_its_models_and_how_much_it_thinks() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        ui.take(
+            &json!({"type": "state", "model": "m-large", "mode": "ask", "thinking": "default",
+                    "models": ["m-small", "m-large"]}),
+            &send,
+        );
+        assert_eq!(ui.models.get_untracked(), ["m-small", "m-large"]);
+        assert_eq!(ui.thinking.get_untracked(), "default");
+        // A status names the three in force, not the models there are.
+        ui.take(&json!({"type": "status", "model": "m-small", "mode": "plan", "thinking": "high"}), &send);
+        assert_eq!(ui.thinking.get_untracked(), "high");
+        assert_eq!(ui.mode.get_untracked(), "plan");
+        assert_eq!(ui.models.get_untracked().len(), 2);
     }
 
     #[test]

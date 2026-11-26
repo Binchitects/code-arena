@@ -71,6 +71,10 @@ Sections used:
   every guide, or right-click it and Float: it opens in a window of its own (in the theme, with a
   button that docks it back). Closing that window docks the view back beside the editor; floating
   views open again with the folder.
+- **The Agent's answers drawn from their Markdown**, as VS Code's chat draws them: headings, bold
+  and italic, inline code, fenced code in a box with the theme's syntax colours, lists, quotes and
+  links; as an answer streams in, only its last block is drawn again. The mode, the model and the
+  thinking are picked from menus over the input (as the page offers them; not while a turn runs).
 - **Quick Open and the Command Palette in the native window**, VS Code's quick input: Ctrl+P (or a
   click on the command center) finds a file among 50,000 in about 2 ms a key, its matched letters
   lit; Ctrl+Shift+P (or `>`) runs a command, its keys shown; Ctrl+K Ctrl+T picks a colour theme,

@@ -21,9 +21,10 @@ mod explorer;
 mod highlight;
 mod icons;
 mod layout;
+mod markdown;
 mod model;
-// Not joined to the workbench yet (its root stack and its keys): this allow goes when it is.
 mod palette;
+mod prose;
 mod search;
 mod state;
 mod terminal;
