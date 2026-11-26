@@ -10,6 +10,7 @@ pub mod mend;
 pub mod mentions;
 pub mod policy;
 pub mod skill_transfer;
+pub mod task;
 mod turn;
 
 pub use context::Window;

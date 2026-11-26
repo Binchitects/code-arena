@@ -1022,3 +1022,53 @@ async fn the_persons_hooks_block_rewrite_add_and_send_the_model_on() {
     assert!(second.contains("A hook blocked this call: no rm -rf"), "{second}");
     assert!(heard[2].to_string().contains("the work is not done: run the tests"));
 }
+
+#[tokio::test]
+async fn a_task_goes_to_a_sub_agent_that_reports_back() {
+    let gateway = MockServer::start().await;
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    struct Model(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+    impl Respond for Model {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+            self.0.lock().expect("heard").push(body.clone());
+            let text = body.to_string();
+            let ev = if text.contains("# You are a sub-agent") {
+                json!({"choices": [{"delta": {"content": "No bugs found in a.txt."}, "finish_reason": "stop"}]})
+            } else if text.contains("No bugs found") {
+                json!({"choices": [{"delta": {"content": "The reviewer found nothing."}, "finish_reason": "stop"}]})
+            } else {
+                json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "t1", "function": {"name": "task", "arguments": "{\"description\":\"review a.txt\",\"prompt\":\"Review a.txt for bugs.\",\"agent\":\"reviewer\"}"}}]}, "finish_reason": "tool_calls"}]})
+            };
+            ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(sse(ev))
+        }
+    }
+    Mock::given(path("/v1/chat/completions")).respond_with(Model(heard.clone())).mount(&gateway).await;
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    std::fs::create_dir(project.path().join(".git")).expect("a repository");
+    std::fs::write(project.path().join("a.txt"), "x\n").expect("w");
+    let out = code_arena(home.path())
+        .args(["-p", "have it reviewed", "-C"])
+        .arg(project.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("The reviewer found nothing."), "{stdout}\n{stderr}");
+    assert!(stderr.contains("reviewer starts: review a.txt") && stderr.contains("reviewer is done"), "{stderr}");
+    let heard = heard.lock().expect("heard");
+    let sub = heard.iter().find(|b| b.to_string().contains("# You are a sub-agent")).expect("the sub-agent asked");
+    let sub_text = sub.to_string();
+    assert!(sub_text.contains("Your instructions (reviewer)"), "its own instructions");
+    let tools: Vec<&str> =
+        sub["tools"].as_array().expect("tools").iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+    assert!(!tools.contains(&"task") && !tools.contains(&"plan"), "{tools:?}");
+    assert!(sub["messages"].to_string().contains("Review a.txt for bugs."));
+    assert!(!sub["messages"].to_string().contains("have it reviewed"), "it does not see the conversation");
+}

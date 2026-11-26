@@ -15,6 +15,11 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or Claude Code's
   (`run_shell` or `Bash`). A project's hooks run only once you trust them as they are
   (`/hooks trust`; a change asks again). `/hooks` lists them.
+- The `task` tool: the model hands a piece of work to a sub-agent (one of the project's or your
+  `agents/NAME.md`, with its instructions, model and tools, or a general one), which works in a
+  context of its own and reports back; several in one answer run at once (four at most). Its
+  calls ask as the session's do; it has no `task` of its own, nor the session's plan. Its steps
+  show as lines of their own; a `SubagentStop` hook may send it on, once.
 
 ## 0.3.0 (2026-11-26)
 

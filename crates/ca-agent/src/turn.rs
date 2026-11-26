@@ -870,7 +870,7 @@ impl Agent {
             if !reads.is_empty() {
                 let mut ready = Vec::new();
                 for (idx, mut m, t) in reads {
-                    let pre = self.pre_tool(&m.name, &m.args, events).await;
+                    let pre = Self::pre_tool(&self.hooks.clone(), &m.name, &m.args, events).await;
                     if let Some(why) = pre.block {
                         self.push_result(&calls[idx], Output::error(format!("A hook blocked this call: {why}")), None);
                         continue;
@@ -897,7 +897,7 @@ impl Agent {
                 let results = futures_util::future::join_all(runs).await;
                 for ((idx, m, t), o) in ready.into_iter().zip(results) {
                     events.tool_end(&m.name, &t.subject(&m.args), &o);
-                    let o = self.post_tool(&m.name, &m.args, o, events).await;
+                    let o = Self::post_tool(&self.hooks.clone(), &m.name, &m.args, o, events).await;
                     self.push_result(&calls[idx], o, mend::note(&m));
                 }
                 i = j;
@@ -909,7 +909,7 @@ impl Agent {
                 Err(why) => self.push_result(call, Output::error(why.0), None),
                 Ok(mut m) => {
                     self.load(&m.name);
-                    let pre = self.pre_tool(&m.name, &m.args, events).await;
+                    let pre = Self::pre_tool(&self.hooks.clone(), &m.name, &m.args, events).await;
                     if let Some(why) = pre.block {
                         self.push_result(call, Output::error(format!("A hook blocked this call: {why}")), None);
                         i += 1;
@@ -962,7 +962,7 @@ impl Agent {
                             events.tool_start(&m.name, &subject);
                             let o = tool.run(m.args.clone(), &self.ctx).await;
                             events.tool_end(&m.name, &subject, &o);
-                            let o = self.post_tool(&m.name, &m.args, o, events).await;
+                            let o = Self::post_tool(&self.hooks.clone(), &m.name, &m.args, o, events).await;
                             for w in &o.wrote {
                                 if !out.wrote.contains(w) {
                                     out.wrote.push(w.clone());
@@ -977,11 +977,16 @@ impl Agent {
         }
     }
 
-    async fn pre_tool(&self, name: &str, args: &Value, events: &mut dyn Events) -> crate::hooks::Said {
-        if !self.hooks.has("PreToolUse") {
+    async fn pre_tool(
+        hooks: &crate::hooks::Hooks,
+        name: &str,
+        args: &Value,
+        events: &mut dyn Events,
+    ) -> crate::hooks::Said {
+        if !hooks.has("PreToolUse") {
             return crate::hooks::Said::default();
         }
-        let said = self.hooks.run("PreToolUse", name, serde_json::json!({"tool_name": name, "tool_input": args})).await;
+        let said = hooks.run("PreToolUse", name, serde_json::json!({"tool_name": name, "tool_input": args})).await;
         for n in &said.notes {
             events.notice(n);
         }
@@ -989,12 +994,17 @@ impl Agent {
     }
 
     /// A `PostToolUse` hook's word goes with the result to the model.
-    async fn post_tool(&self, name: &str, args: &Value, mut o: Output, events: &mut dyn Events) -> Output {
-        if !self.hooks.has("PostToolUse") {
+    async fn post_tool(
+        hooks: &crate::hooks::Hooks,
+        name: &str,
+        args: &Value,
+        mut o: Output,
+        events: &mut dyn Events,
+    ) -> Output {
+        if !hooks.has("PostToolUse") {
             return o;
         }
-        let said = self
-            .hooks
+        let said = hooks
             .run(
                 "PostToolUse",
                 name,

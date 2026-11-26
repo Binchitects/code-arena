@@ -60,6 +60,31 @@ pub struct Prepared {
     pub memory: Arc<ca_memory::Memory>,
     /// The last turn was long: the next is reminded to keep what it worked out.
     pub nudge: bool,
+    /// What the task tool's sub-agents start from.
+    pub crew: Arc<Mutex<Option<ca_agent::task::Crew>>>,
+}
+
+/// The sub-agents' starting point, as the session is now (its model, mode, tools and instructions).
+pub fn refresh_crew(p: &mut Prepared, ui: crate::ui::Ui) {
+    let a = &p.agent;
+    let crew = ca_agent::task::Crew {
+        gateway: a.gateway.clone(),
+        model: a.model.clone(),
+        thinking: a.thinking.clone(),
+        ctx: a.ctx.clone(),
+        policy: a.policy.clone(),
+        approver: a.approver.clone(),
+        system: a.system.clone(),
+        tools: a.tools.clone(),
+        sources: p.sources.clone(),
+        hooks: a.hooks.clone(),
+        max_steps: a.max_steps,
+        window: a.window.clone(),
+        say: Arc::new(move |line| ui.say(&ui.dim(&line))),
+    };
+    if let Ok(mut c) = p.crew.lock() {
+        *c = Some(crew);
+    }
 }
 
 /// Lines to say at the next prompt: each with whether it is a problem.
@@ -67,6 +92,7 @@ pub type Notices = Arc<Mutex<Vec<(bool, String)>>>;
 
 /// Before a turn: what the web added comes in (said, and read again by the model), and the chat is held.
 pub async fn begin_turn(p: &mut Prepared, ui: crate::ui::Ui, words: &str) {
+    refresh_crew(p, ui);
     let Some(sync) = p.sync.clone() else { return };
     let taken = sync.begin_turn(p.agent.inbox.clone(), words).await;
     if p.agent.tags.is_empty()
@@ -848,6 +874,9 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         }
     }
     agent.joins = Some(later);
+    // Sub-agents: the task tool, starting from the session as it is at each turn.
+    let crew: Arc<Mutex<Option<ca_agent::task::Crew>>> = Arc::new(Mutex::new(None));
+    agent.tools.push(Arc::new(ca_agent::task::TaskTool::new(crew.clone())));
     for line in crate::servers::describe(&servers) {
         if !line.contains("connected,") {
             ui.say(&ui.dim(&line));
@@ -867,7 +896,9 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         said_next: None,
         memory,
         nudge: false,
+        crew,
     };
+    refresh_crew(&mut prepared, ui);
     // SessionStart: what the person's hooks say goes to the model first.
     if prepared.agent.hooks.has("SessionStart") {
         let source = if prepared.resumed.is_some() { "resume" } else { "startup" };
