@@ -15,7 +15,9 @@ pub enum NetError {
     Timeout { url: String },
     #[error("{url} could not be reached: {message}")]
     Connect { url: String, message: String },
-    #[error("the CA file {path} could not be read: {message}")]
+    #[error(
+        "the CA file {path} could not be read: {message}. Give it again with code-arena login --ca PATH (Code Arena keeps its own copy from then on), or ARENA_CA_CERT=PATH for one run"
+    )]
     CaFile { path: String, message: String },
     #[error("{0}")]
     Other(String),

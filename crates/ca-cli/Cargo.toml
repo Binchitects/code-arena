@@ -17,6 +17,7 @@ ca-arena.workspace = true
 ca-core.workspace = true
 ca-llm.workspace = true
 ca-memory.workspace = true
+ca-net.workspace = true
 ca-mcp.workspace = true
 ca-session.workspace = true
 ca-sync.workspace = true

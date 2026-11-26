@@ -935,3 +935,20 @@ async fn stream_json_says_each_event_on_a_line_then_the_result() {
     assert_eq!(kinds.last(), Some(&"result"));
     assert_eq!(lines.last().expect("result")["result"], "It says hi.");
 }
+
+#[test]
+fn doctor_says_how_to_give_a_ca_file_that_is_gone() {
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/credentials.json"),
+        json!({"url": "https://arena.example", "apiKey": "sk-test-only", "ca": home.path().join("gone.crt")})
+            .to_string(),
+    )
+    .expect("credentials");
+    let out = code_arena(home.path()).arg("doctor").output().expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("could not be read") && stdout.contains("code-arena login --ca PATH"), "{stdout}");
+    assert!(!stdout.contains("sk-test-only"));
+}

@@ -145,6 +145,9 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   Arena's skills are read again (used from your next message).
 
 ### Fixed
+- A CA file moved or deleted after `login --ca` broke every request: login keeps its own copy of it
+  now (`arena-ca.pem` in the config folder), and a CA file that cannot be read says how to give it
+  again; `doctor` says so instead of stopping with an error.
 - The agent's git ran the repository's own filters and merge drivers (commands its settings name,
   such as a clean filter in `.gitattributes`): they are switched off for every git call now.
 - A send Arena kept but whose answer was lost: the next take-in would have added the session's

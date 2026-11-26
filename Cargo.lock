@@ -212,6 +212,7 @@ dependencies = [
  "ca-llm",
  "ca-mcp",
  "ca-memory",
+ "ca-net",
  "ca-session",
  "ca-settings",
  "ca-sync",

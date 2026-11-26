@@ -106,6 +106,20 @@ pub fn logout_provider(app: &App, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The company's CA, copied into the config folder (`arena-ca.pem`): the copy is what Code Arena reads from then on.
+fn keep_ca(app: &App, given: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let pem = std::fs::read(given).with_context(|| format!("the CA file {}", given.display()))?;
+    let kept = app.paths.config.join("arena-ca.pem");
+    std::fs::create_dir_all(&app.paths.config)?;
+    std::fs::write(&kept, &pem)?;
+    // It must be one: read as every request will read it.
+    if let Err(e) = ca_net::client(Some(&kept)) {
+        let _ = std::fs::remove_file(&kept);
+        anyhow::bail!("the CA file {}: {e}", given.display());
+    }
+    Ok(kept)
+}
+
 pub async fn login(app: &App, args: LoginArgs) -> anyhow::Result<()> {
     let ui = app.ui;
     if let Some(name) = args.provider.clone() {
@@ -116,9 +130,10 @@ pub async fn login(app: &App, args: LoginArgs) -> anyhow::Result<()> {
         None => ui::ask_line("The Arena's address (https://…): ")?,
     };
     let url = normalize_url(&url)?;
-    let ca = match args.ca.or_else(|| app.connection.ca.clone()) {
-        Some(p) => Some(std::fs::canonicalize(&p).with_context(|| format!("the CA file {}", p.display()))?),
-        None => None,
+    // A CA given now is kept as Code Arena's own copy, so moving or deleting the file given does not break it.
+    let ca = match args.ca {
+        Some(p) => Some(keep_ca(app, &p)?),
+        None => app.connection.ca.clone(),
     };
     let mut conn = Connection {
         url: Some(url.clone()),
@@ -307,7 +322,13 @@ pub async fn doctor(app: &App) -> anyhow::Result<()> {
     if let Some(ca) = &c.ca {
         println!("  CA        {}", ca.display());
     }
-    let arena = app.arena()?;
+    let arena = match app.arena() {
+        Ok(a) => a,
+        Err(e) => {
+            println!("\n{}", ui.red(&format_chain(&e)));
+            return Ok(());
+        }
+    };
     match arena.info().await {
         Ok(info) => println!(
             "  server    {} {}",
@@ -352,4 +373,8 @@ pub async fn doctor(app: &App) -> anyhow::Result<()> {
         Err(e) => println!("  {}", ui.red(&e.to_string())),
     }
     Ok(())
+}
+
+fn format_chain(e: &anyhow::Error) -> String {
+    e.chain().map(|c| c.to_string()).collect::<Vec<_>>().join(": ")
 }
