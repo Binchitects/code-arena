@@ -55,6 +55,9 @@ colors! {
     widget: ["editorWidget.background"], "#252526", "#F3F3F3";
     widget_border: ["editorWidget.border", "widget.border"], "#454545", "#C8C8C8";
     code: ["textCodeBlock.background"], "#0A0A0A66", "#DCDCDC66";
+    preformat: ["textPreformat.foreground"], "#D7BA7D", "#A31515";
+    preformat_bg: ["textPreformat.background"], "#FFFFFF1A", "#0000001A";
+    quote_border: ["textBlockQuote.border"], "#007ACC80", "#007ACC80";
     ok: ["testing.iconPassed", "terminal.ansiGreen"], "#73C991", "#388A34";
 
     title_bg: ["titleBar.activeBackground"], "#3C3C3C", "#DDDDDD";

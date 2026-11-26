@@ -89,6 +89,105 @@ pub fn syntax_for(path: &str, first_line: &str) -> Option<&'static SyntaxReferen
     (s.name != "Plain Text").then_some(s)
 }
 
+/// The grammar a fence names: a language's name or a file ending (`rust`, `rs`, `ts`), or what answers often call it.
+pub fn syntax_named(lang: &str) -> Option<&'static SyntaxReference> {
+    let lang = match lang {
+        "" => return None,
+        "typescript" | "tsx" | "jsx" | "javascriptreact" | "typescriptreact" => "js",
+        "shell" | "shellscript" | "zsh" | "console" => "sh",
+        "golang" => "go",
+        other => other,
+    };
+    let s = SYNTAXES.find_syntax_by_token(lang).or_else(|| syntax_for(&format!("a.{lang}"), ""))?;
+    (s.name != "Plain Text").then_some(s)
+}
+
+/// A run of a fenced block's line in its colour.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Run {
+    pub range: std::ops::Range<usize>,
+    pub colour: Color,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+/// A line of a fenced block: its text, its runs, and a number of its own, another each time the line is parsed
+/// (so what draws it knows a line it has drawn from one that changed).
+#[derive(Debug, PartialEq)]
+pub struct Line {
+    pub id: u64,
+    pub text: String,
+    pub runs: Vec<Run>,
+}
+
+/// A line as it was parsed: whether a line follows it, and the parse after it.
+struct Kept {
+    line: Rc<Line>,
+    ended: bool,
+    after: Option<(ParseState, HighlightState)>,
+}
+
+/// A fenced block's lines in their colours, kept a line at a time: while the block is being written, only the
+/// lines that changed (its last) are parsed again, and the others are the very lines given before.
+pub struct Snippet {
+    syntax: Option<&'static SyntaxReference>,
+    theme: Option<Rc<Theme>>,
+    lines: Vec<Kept>,
+    next: u64,
+}
+
+impl Snippet {
+    pub fn new(lang: &str) -> Snippet {
+        Snippet { syntax: syntax_named(lang), theme: None, lines: Vec::new(), next: 0 }
+    }
+
+    /// The text's lines with their runs in the theme's colours (no runs for a language not known: drawn plain).
+    pub fn lines(&mut self, text: &str, theme: &Rc<Theme>) -> Vec<Rc<Line>> {
+        if !self.theme.as_ref().is_some_and(|t| Rc::ptr_eq(t, theme)) {
+            self.theme = Some(theme.clone());
+            self.lines.clear();
+        }
+        let highlighter = Highlighter::new(theme);
+        let mut count = 0;
+        for (n, raw) in text.split_inclusive('\n').enumerate() {
+            count = n + 1;
+            let ended = raw.ends_with('\n');
+            let shown = raw.strip_suffix('\n').unwrap_or(raw);
+            if self.lines.get(n).is_some_and(|k| k.ended == ended && k.line.text == shown) {
+                continue;
+            }
+            self.lines.truncate(n);
+            let (mut runs, mut after) = (Vec::new(), None);
+            if let Some(syntax) = self.syntax {
+                let (mut ps, mut hs) = match n.checked_sub(1).and_then(|p| self.lines[p].after.clone()) {
+                    Some(before) => before,
+                    None => (ParseState::new(syntax), HighlightState::new(&highlighter, ScopeStack::new())),
+                };
+                if let Ok(ops) = ps.parse_line(raw, &SYNTAXES) {
+                    for (s, _, range) in RangedHighlightIterator::new(&mut hs, &ops, raw, &highlighter) {
+                        // The line's end is not drawn.
+                        let range = range.start.min(shown.len())..range.end.min(shown.len());
+                        if !range.is_empty() {
+                            runs.push(Run {
+                                range,
+                                colour: Color::rgba8(s.foreground.r, s.foreground.g, s.foreground.b, s.foreground.a),
+                                bold: s.font_style.contains(FontStyle::BOLD),
+                                italic: s.font_style.contains(FontStyle::ITALIC),
+                            });
+                        }
+                    }
+                }
+                after = Some((ps, hs));
+            }
+            self.next += 1;
+            let line = Rc::new(Line { id: self.next, text: shown.to_string(), runs });
+            self.lines.push(Kept { line, ended, after });
+        }
+        self.lines.truncate(count);
+        self.lines.iter().map(|k| k.line.clone()).collect()
+    }
+}
+
 /// The parse after each line (`after[n]` is the state at the start of line n + 1).
 struct Parsed {
     after: Vec<(ParseState, HighlightState)>,
@@ -233,6 +332,57 @@ mod tests {
         assert_eq!(syntax_for("src/main.rs", "").map(|s| s.name.as_str()), Some("Rust"));
         assert_eq!(syntax_for("run", "#!/bin/bash").map(|s| s.name.as_str()), Some("Bourne Again Shell (bash)"));
         assert!(syntax_for("notes.txt", "hello").is_none());
+    }
+
+    #[test]
+    fn a_fence_names_its_grammar_as_answers_do() {
+        let name = |lang| syntax_named(lang).map(|s| s.name.as_str());
+        assert_eq!(name("rust"), Some("Rust"));
+        assert_eq!(name("rs"), Some("Rust"));
+        assert_eq!(name("python"), Some("Python"));
+        assert_eq!(name("ts"), Some("JavaScript"));
+        assert_eq!(name("typescript"), Some("JavaScript"));
+        assert_eq!(name("bash"), Some("Bourne Again Shell (bash)"));
+        assert_eq!(name("shell"), Some("Bourne Again Shell (bash)"));
+        assert_eq!(name("json"), Some("JSON"));
+        assert!(name("yaml").is_some() && name("go").is_some() && name("golang").is_some());
+        assert!(name("").is_none() && name("no-such-language").is_none());
+    }
+
+    #[test]
+    fn a_fenced_block_is_coloured_and_only_its_new_lines_parsed_again() {
+        let all = ca_themes::built_in();
+        let theme = Rc::new(theme_of(&ca_themes::chosen(&all, "dark-modern", true).json));
+        let text = "// a note\nfn main() {\n\n    let a = 1;\n}";
+        let whole = Snippet::new("rust").lines(text, &theme);
+        let texts: Vec<&str> = whole.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["// a note", "fn main() {", "", "    let a = 1;", "}"]);
+        let colour = |l: &Line, at: usize| l.runs.iter().find(|r| r.range.contains(&at)).map(|r| r.colour);
+        // Dark Modern's comments are green, #6A9955; a keyword is not.
+        assert_eq!(colour(&whole[0], 0), Some(Color::rgb8(0x6A, 0x99, 0x55)));
+        assert_ne!(colour(&whole[1], 0), colour(&whole[0], 0));
+        assert!(whole.iter().all(|l| l.runs.iter().all(|r| r.range.end <= l.text.len())));
+        // Written a piece at a time, it is coloured the same, and the lines before the last are the lines given
+        // before: nothing draws them again.
+        let mut grown = Snippet::new("rust");
+        let mut before = Vec::new();
+        for end in 1..=text.len() {
+            let now = grown.lines(&text[..end], &theme);
+            for (old, new) in before.iter().zip(&now).take(now.len().saturating_sub(2)) {
+                assert!(Rc::ptr_eq(old, new));
+            }
+            before = now;
+        }
+        let same = |a: &[Rc<Line>], b: &[Rc<Line>]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.text == b.text && a.runs == b.runs)
+        };
+        assert!(same(&before, &whole));
+        // A language not known is drawn plain, a line at a time all the same; another theme colours all again.
+        let plain = Snippet::new("").lines(text, &theme);
+        assert!(plain.len() == 5 && plain.iter().all(|l| l.runs.is_empty()));
+        let other = Rc::new((*theme).clone());
+        let again = grown.lines(text, &other);
+        assert!(again.iter().zip(&before).all(|(a, b)| a.id != b.id));
     }
 
     #[test]
