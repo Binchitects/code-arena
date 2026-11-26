@@ -2,9 +2,20 @@
 // the questions the agent asks are cards in the thread.
 import { For, Match, Show, Switch, createEffect, createSignal, onMount } from "solid-js";
 import { produce } from "solid-js/store";
-import { type Item, type Tool, items, send, session, setItems } from "./stream";
+import { type Item, type Tool, detail, items, send, session, setDetail, setItems } from "./stream";
 
 const MODES = ["ask", "auto-edit", "plan", "yolo"];
+const THINKING = ["default", "off", "low", "medium", "high", "xhigh"];
+
+/** What the box holds: Edit puts a question back in it. */
+const [draft, setDraft] = createSignal("");
+
+/** Tokens as people read them: 900, 18.2k, 131k. */
+export function short(n: number): string {
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return k >= 100 || Math.abs(k - Math.round(k)) < 0.05 ? `${Math.round(k)}k` : `${k.toFixed(1)}k`;
+}
 
 /** A turn's calls in a line: "Read 4 files, ran 2 commands, edited cart.rs". */
 export function summary(tools: Tool[]): string {
@@ -56,7 +67,11 @@ function Ask(props: { item: Extract<Item, { kind: "ask" }> }) {
       </div>
       <Show
         when={!props.item.answer}
-        fallback={<div class="answered">{props.item.answer === "no" ? "Denied" : props.item.answer === "always" ? "Allowed for this session" : "Allowed"}</div>}
+        fallback={
+          <div class="answered">
+            {{ no: "Denied", always: "Allowed for this session", yes: "Allowed", gone: "No longer asked: the turn ended" }[props.item.answer ?? ""] ?? ""}
+          </div>
+        }
       >
         <div class="buttons">
           <button class="primary" onClick={() => answer("yes")}>Allow</button>
@@ -116,8 +131,156 @@ function Assistant(props: { item: Extract<Item, { kind: "assistant" }>; index: n
   );
 }
 
+/** One of the person's messages, with what can be done from it: Edit, Answer again, Rewind to here. */
+function User(props: { item: Extract<Item, { kind: "user" }> }) {
+  const [choosing, setChoosing] = createSignal(false);
+  const q = () => props.item.q;
+  const rewind = (what: string) => {
+    setChoosing(false);
+    send({ type: "rewind", q: q(), what });
+  };
+  return (
+    <div class="user-wrap">
+      <div class="user">{props.item.text}</div>
+      <Show when={q() && !session.running}>
+        <div class="user-actions">
+          <button
+            class="quiet small"
+            title="Go back to before this message, and put it in the box to change it"
+            onClick={() => {
+              send({ type: "rewind", q: q(), what: "both" });
+              setDraft(props.item.text);
+            }}
+          >
+            Edit
+          </button>
+          <button
+            class="quiet small"
+            title="Go back to before this message, and ask it again"
+            onClick={() => send({ type: "again", q: q(), text: props.item.text })}
+          >
+            Answer again
+          </button>
+          <button class="quiet small" onClick={() => setChoosing(!choosing())} aria-expanded={choosing()}>
+            Rewind to here
+          </button>
+        </div>
+      </Show>
+      <Show when={choosing()}>
+        <div class="card rewind" role="group" aria-label="Rewind to before this message">
+          <p>Go back to before this message? What came after it goes; the files its turns changed are put back.</p>
+          <div class="buttons">
+            <button class="primary" onClick={() => rewind("both")}>Conversation and code</button>
+            <button onClick={() => rewind("chat")}>Conversation only</button>
+            <button onClick={() => rewind("code")}>Code only</button>
+            <button class="quiet" onClick={() => setChoosing(false)}>Cancel</button>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+/** How full the window is, as a ring; the share at which it compacts marked. */
+function Ring() {
+  const share = () => {
+    const c = session.context;
+    return c && c.size ? Math.min(1, c.used / c.size) : 0;
+  };
+  const r = 7;
+  const around = 2 * Math.PI * r;
+  return (
+    <button
+      class="ring"
+      title={session.context ? `Context: ${short(session.context.used)} of ${short(session.context.size)} tokens${session.context.compact_at ? `, compacts at ${session.context.compact_at}%` : ""}` : "Context"}
+      aria-label="Context"
+      aria-expanded={detail.open}
+      onClick={() => {
+        const open = !detail.open;
+        setDetail("open", open);
+        if (open) send({ type: "context" });
+      }}
+    >
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+        <circle cx="9" cy="9" r={r} class="ring-back" />
+        <circle
+          cx="9"
+          cy="9"
+          r={r}
+          class="ring-used"
+          classList={{ high: share() * 100 >= (session.context?.compact_at ?? 90) }}
+          stroke-dasharray={`${share() * around} ${around}`}
+          transform="rotate(-90 9 9)"
+        />
+      </svg>
+      <span>{Math.round(share() * 100)}%</span>
+    </button>
+  );
+}
+
+/** What fills the next request: by kind, the biggest messages, and Compact now. */
+function ContextPanel() {
+  const total = () => (detail.data?.kinds ?? []).reduce((a, k) => a + k.tokens, 0) || 1;
+  return (
+    <section class="context-panel" aria-label="Context">
+      <header>
+        <strong>Context</strong>
+        <Show when={detail.data}>
+          {(d) => (
+            <span class="muted">
+              {short(d().context.used)} of {short(d().context.size)} tokens
+              {d().context.compact_at ? ` · compacts at ${d().context.compact_at}%` : ""}
+            </span>
+          )}
+        </Show>
+        <span class="grow" />
+        <button class="small" disabled={session.running} onClick={() => send({ type: "compact" })}>
+          Compact now
+        </button>
+        <button class="quiet small" aria-label="Close" onClick={() => setDetail("open", false)}>
+          ✕
+        </button>
+      </header>
+      <Show when={detail.data} fallback={<p class="muted">Counting…</p>}>
+        {(d) => (
+          <>
+            <ul class="kinds">
+              <For each={d().kinds.filter((k) => k.tokens > 0)}>
+                {(k) => (
+                  <li>
+                    <span class="kind">{k.kind}</span>
+                    <span class="bar">
+                      <span style={{ width: `${(100 * k.tokens) / total()}%` }} />
+                    </span>
+                    <span class="num">{short(k.tokens)}</span>
+                  </li>
+                )}
+              </For>
+            </ul>
+            <Show when={d().biggest.length}>
+              <p class="muted small-heading">The biggest messages</p>
+              <ul class="biggest">
+                <For each={d().biggest}>
+                  {(b) => (
+                    <li>
+                      <span class="num">{short(b.tokens)}</span>
+                      <span class="role">{b.role}</span>
+                      <span class="start">{b.start}</span>
+                    </li>
+                  )}
+                </For>
+              </ul>
+            </Show>
+          </>
+        )}
+      </Show>
+    </section>
+  );
+}
+
 function Box() {
-  const [text, setText] = createSignal("");
+  const text = draft;
+  const setText = setDraft;
   let area!: HTMLTextAreaElement;
   const grow = () => {
     area.style.height = "auto";
@@ -131,6 +294,14 @@ function Box() {
     queueMicrotask(grow);
   };
   onMount(() => area.focus());
+  // A question put back by Edit: the box grows to it and takes the focus.
+  createEffect(() => {
+    draft();
+    queueMicrotask(() => {
+      grow();
+      if (document.activeElement !== area) area.focus();
+    });
+  });
   return (
     <form
       class="box"
@@ -175,16 +346,30 @@ function Box() {
 }
 
 function Status() {
-  const nextMode = () => MODES[(MODES.indexOf(session.mode) + 1) % MODES.length];
   return (
     <footer class="status">
       <span class="dot" classList={{ on: session.connected }} title={session.connected ? "Connected" : "Connecting…"} />
-      <span>{session.model || "…"}</span>
-      <span class="sep">·</span>
-      <button class="link" title="Change the mode" onClick={() => send({ type: "mode", mode: nextMode() })}>
-        {session.mode}
-      </button>
-      <span class="sep">·</span>
+      <label class="pick" title="The model">
+        <span class="sr">Model</span>
+        <select value={session.model} disabled={session.running} onChange={(e) => send({ type: "model", model: e.currentTarget.value })}>
+          <For each={session.models.includes(session.model) ? session.models : [session.model, ...session.models]}>
+            {(m) => <option value={m}>{m}</option>}
+          </For>
+        </select>
+      </label>
+      <label class="pick" title="Thinking">
+        <span class="sr">Thinking</span>
+        <select value={session.thinking} disabled={session.running} onChange={(e) => send({ type: "thinking", level: e.currentTarget.value })}>
+          <For each={THINKING}>{(t) => <option value={t}>{t === "default" ? "thinking: default" : `thinking: ${t}`}</option>}</For>
+        </select>
+      </label>
+      <label class="pick" title="The mode: what runs without asking">
+        <span class="sr">Mode</span>
+        <select value={session.mode} onChange={(e) => send({ type: "mode", mode: e.currentTarget.value })}>
+          <For each={MODES}>{(m) => <option value={m}>{m}</option>}</For>
+        </select>
+      </label>
+      <Ring />
       <span class="folder" title={session.folder}>{session.folder.split("/").pop()}</span>
       <Show when={session.lastTurn}>
         {(t) => (
@@ -224,7 +409,7 @@ export function App() {
           <For each={items}>
             {(item, i) => (
               <Switch>
-                <Match when={item.kind === "user" && item}>{(u) => <div class="user">{u().text}</div>}</Match>
+                <Match when={item.kind === "user" && item}>{(u) => <User item={u()} />}</Match>
                 <Match when={item.kind === "assistant" && item}>{(a) => <Assistant item={a()} index={i()} />}</Match>
                 <Match when={item.kind === "ask" && item}>{(a) => <Ask item={a()} />}</Match>
                 <Match when={item.kind === "queued" && item}>
@@ -249,6 +434,9 @@ export function App() {
       </main>
       <div class="bottom">
         <div class="column">
+          <Show when={detail.open}>
+            <ContextPanel />
+          </Show>
           <Box />
           <Status />
         </div>

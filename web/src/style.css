@@ -367,3 +367,171 @@ pre {
 .dot.on {
   background: var(--ok);
 }
+
+button.small {
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.user-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin: 18px 0 10px;
+}
+
+.user-wrap .user {
+  margin: 0;
+}
+
+.user-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  margin-top: 2px;
+}
+
+.user-wrap:hover .user-actions,
+.user-actions:focus-within {
+  opacity: 1;
+}
+
+.rewind {
+  align-self: stretch;
+}
+
+.rewind p {
+  margin: 0 0 10px;
+}
+
+.pick select {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
+  max-width: 220px;
+  cursor: pointer;
+}
+
+.pick select:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.ring {
+  border: 0;
+  background: none;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  font-size: 12px;
+}
+
+.ring-back {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 3;
+}
+
+.ring-used {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.ring-used.high {
+  stroke: var(--danger);
+}
+
+.context-panel {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.context-panel header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.grow {
+  flex: 1;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small-heading {
+  font-size: 12px;
+  margin: 10px 0 4px;
+}
+
+.kinds,
+.biggest {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+}
+
+.kinds li {
+  display: grid;
+  grid-template-columns: 120px 1fr 56px;
+  gap: 10px;
+  align-items: center;
+  margin: 4px 0;
+}
+
+.bar {
+  height: 6px;
+  background: var(--code);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.biggest li {
+  display: grid;
+  grid-template-columns: 56px 80px 1fr;
+  gap: 10px;
+  margin: 3px 0;
+}
+
+.biggest .start {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.biggest .role {
+  color: var(--muted);
+}

@@ -5,15 +5,26 @@ import { createStore, produce } from "solid-js/store";
 export type Tool = { name: string; subject: string; done: boolean; ok?: boolean; text?: string; cut?: boolean };
 
 export type Item =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; q?: number }
   | { kind: "assistant"; text: string; reasoning: string; tools: Tool[]; open: boolean }
   | { kind: "notice"; text: string }
   | { kind: "error"; text: string }
   | { kind: "queued"; text: string }
   | { kind: "ask"; id: number; tool: string; subject: string; answer?: string };
 
+export type Context = { used: number; size: number; compact_at?: number | null };
+
+export type Detail = {
+  context: Context;
+  kinds: { kind: string; tokens: number }[];
+  biggest: { at: number; role: string; tokens: number; start: string }[];
+};
+
 export type Session = {
   connected: boolean;
+  thinking: string;
+  models: string[];
+  context?: Context;
   running: boolean;
   model: string;
   mode: string;
@@ -24,10 +35,12 @@ export type Session = {
   lastTurn?: { ms: number; prompt: number; cached: number; completion: number };
 };
 
-type Stored = { role: string; text: string; tools: string[] };
+type Stored = { role: string; text: string; tools: string[]; q?: number | null };
 
 export const [session, setSession] = createStore<Session>({
   connected: false,
+  thinking: "default",
+  models: [],
   running: false,
   model: "",
   mode: "",
@@ -38,6 +51,8 @@ export const [session, setSession] = createStore<Session>({
 });
 
 export const [items, setItems] = createStore<Item[]>([]);
+
+export const [detail, setDetail] = createStore<{ open: boolean; data?: Detail }>({ open: false });
 
 let socket: WebSocket | undefined;
 let wait = 500;
@@ -60,7 +75,7 @@ function fromStored(messages: Stored[]): Item[] {
   for (const m of messages) {
     if (m.role === "user") {
       if (m.text.startsWith("(Code Arena")) continue;
-      out.push({ kind: "user", text: m.text });
+      out.push({ kind: "user", text: m.text, q: m.q ?? undefined });
     } else if (m.role === "assistant") {
       const a = current(out);
       if (m.text) a.text += (a.text ? "\n\n" : "") + m.text;
@@ -81,14 +96,22 @@ function onMessage(m: any): void {
         edition: m.edition,
         version: m.version,
         running: m.running,
+        thinking: m.thinking,
+        models: m.models ?? [],
+        context: m.context,
       });
       setItems(fromStored(m.messages ?? []));
       break;
     case "status":
-      setSession({ model: m.model, mode: m.mode, running: m.running });
+      setSession({ model: m.model, mode: m.mode, running: m.running, thinking: m.thinking, context: m.context });
+      if (detail.open) send({ type: "context" });
+      break;
+    case "context_detail":
+      setDetail("data", m);
+      setSession("context", m.context);
       break;
     case "user":
-      setItems(produce((l) => void l.push({ kind: "user", text: m.text })));
+      setItems(produce((l) => void l.push({ kind: "user", text: m.text, q: m.q })));
       break;
     case "turn_start":
       setSession("running", true);
@@ -133,6 +156,12 @@ function onMessage(m: any): void {
       break;
     case "turn_end":
       setSession("running", false);
+      // A question the turn no longer waits on (it was stopped, or ended): its card says so.
+      setItems(
+        produce((l) => {
+          for (const x of l) if (x.kind === "ask" && !x.answer) x.answer = "gone";
+        }),
+      );
       if (m.ok) setSession("lastTurn", { ms: m.ms, ...m.usage });
       else if (m.stopped) setItems(produce((l) => void l.push({ kind: "notice", text: "Stopped." })));
       else setItems(produce((l) => void l.push({ kind: "error", text: m.error ?? "The turn failed." })));

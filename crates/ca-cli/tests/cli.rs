@@ -1758,4 +1758,40 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     let text: String = seen.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
     assert_eq!(text, "Hello from the IDE.");
     assert_eq!(seen.last().expect("end")["ok"], true, "{seen:?}");
+    assert_eq!(seen.iter().find(|v| v["type"] == "user").expect("user")["q"], 1);
+    // What the page asks between turns, each answered by its kind.
+    let until = async |page: &mut tokio_tungstenite::WebSocketStream<_>, kind: &str| -> Value {
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            let Message::Text(t) = m else { continue };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            if v["type"] == kind {
+                return v;
+            }
+        }
+    };
+    page.send(Message::text(json!({"type": "context"}).to_string())).await.expect("send");
+    let d = until(&mut page, "context_detail").await;
+    assert!(
+        d["kinds"]
+            .as_array()
+            .is_some_and(|k| k.iter().any(|x| x["kind"] == "Instructions" && x["tokens"].as_u64() > Some(0))),
+        "{d}"
+    );
+    assert!(d["context"]["size"].as_u64() > Some(0), "{d}");
+    page.send(Message::text(json!({"type": "model", "model": "qwen-large"}).to_string())).await.expect("send");
+    assert_eq!(until(&mut page, "status").await["model"], "qwen-large");
+    page.send(Message::text(json!({"type": "thinking", "level": "high"}).to_string())).await.expect("send");
+    assert_eq!(until(&mut page, "status").await["thinking"], "high");
+    // Back to before the first question: the thread is empty again.
+    page.send(Message::text(json!({"type": "rewind", "q": 1, "what": "chat"}).to_string())).await.expect("send");
+    let st = until(&mut page, "state").await;
+    assert_eq!(st["messages"].as_array().map(Vec::len), Some(0), "{st}");
+    assert!(
+        until(&mut page, "notice").await["text"].as_str().is_some_and(|t| t.starts_with("Back to before: say hello"))
+    );
 }

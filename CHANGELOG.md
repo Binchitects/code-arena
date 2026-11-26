@@ -13,6 +13,11 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   cards in the thread (Allow, Always for this session, Deny), messages sent while it works marked
   so, Stop (or Esc), and one status line: model, mode (click to change it), folder, the last
   turn's time and tokens. `--continue` and `--resume` take up a session.
+- In the IDE: the model, thinking and mode pickers in the status line; the context ring, which
+  opens the Context panel (what fills the next request by kind, its biggest messages, Compact
+  now); and on each of your messages Edit (back to before it, the message in the box to change),
+  Answer again, and Rewind to here (the conversation, the code, or both). A question the turn no
+  longer waits on says so.
 - The IDE's server is for this machine only: 127.0.0.1, a key for the run in the address it
   prints (kept in `ide.json` in the data folder, readable by you only), which the first visit
   turns into an HttpOnly SameSite=Strict cookie; the Host, the Origin and Sec-Fetch-Site are

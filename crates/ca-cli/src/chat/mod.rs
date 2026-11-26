@@ -638,34 +638,10 @@ fn tools_command(rest: &str, p: &mut Prepared, ui: Ui) {
     }
 }
 
-/// The person's questions in this session: (number, its place in the session, its first line).
-fn questions(p: &Prepared) -> anyhow::Result<Vec<(usize, i64, String)>> {
-    let store = p.store.lock().map_err(|_| anyhow::anyhow!("the session's store"))?;
-    let turns = store.summary(&p.session)?.turns;
-    let page = store.page(&p.session, turns.max(1), None)?;
-    let mut out = Vec::new();
-    let mut last_turn = 0;
-    for m in page.messages {
-        if m.turn != last_turn {
-            last_turn = m.turn;
-            // A turn a job's end started is no question of the person's.
-            if m.message.content.starts_with("(Code Arena: job ") {
-                continue;
-            }
-            out.push((
-                out.len() + 1,
-                m.seq,
-                m.message.content.lines().next().unwrap_or("").chars().take(100).collect(),
-            ));
-        }
-    }
-    Ok(out)
-}
-
 /// `/rewind`: the questions, with which have a checkpoint; `/rewind N [code|chat]` goes back to before question N:
 /// the files put back (a file a turn made is removed) and the conversation cut there, or only one of them.
 fn rewind(rest: &str, p: &mut Prepared, ui: Ui) -> anyhow::Result<()> {
-    let qs = questions(p)?;
+    let qs = session::questions(p)?;
     let mut words = rest.split_whitespace();
     let Some(n) = words.next().and_then(|w| w.parse::<usize>().ok()) else {
         for (n, seq, text) in &qs {
@@ -676,38 +652,22 @@ fn rewind(rest: &str, p: &mut Prepared, ui: Ui) -> anyhow::Result<()> {
         ui.say(&ui.dim("/rewind N goes back to before question N: the code and the conversation; /rewind N code or /rewind N chat for one."));
         return Ok(());
     };
-    let Some((_, seq, text)) = qs.iter().find(|(k, _, _)| *k == n).cloned() else {
-        anyhow::bail!("there is no question {n}: /rewind lists them");
-    };
     let what = words.next().unwrap_or("both");
-    if what == "code" || what == "both" {
-        let r = p.agent.ctx.checkpoints.rewind(seq);
-        let ws = p.agent.ctx.workspace.clone();
-        for f in &r.put_back {
-            ui.say(&format!("  put back {}", ws.display(f)));
-        }
-        for f in &r.removed {
-            ui.say(&format!("  removed {} (a turn made it)", ws.display(f)));
-        }
-        for (f, e) in &r.failed {
-            ui.say(&ui.red(&format!("  {}: {e}", ws.display(f))));
-        }
-        if r.put_back.is_empty() && r.removed.is_empty() {
-            ui.say(&ui.dim("  No file to put back (what commands changed is not put back: git has it)."));
-        }
+    let r = session::rewind_to(p, n, what == "code" || what == "both", what == "chat" || what == "both")?;
+    for f in &r.put_back {
+        ui.say(&format!("  put back {f}"));
     }
-    if what == "chat" || what == "both" {
-        let store = p.store.lock().map_err(|_| anyhow::anyhow!("the session's store"))?;
-        store.truncate(&p.session, seq)?;
-        let (history, _) = session::model_history(&store, &p.session)?;
-        drop(store);
-        p.agent.notes = history
-            .iter()
-            .enumerate()
-            .map(|(i, m)| i == 0 && m.content.starts_with("(Code Arena: the earlier part"))
-            .collect();
-        p.agent.history = history;
-        ui.say(&format!("Back to before question {n}: {text}"));
+    for f in &r.removed {
+        ui.say(&format!("  removed {f} (a turn made it)"));
+    }
+    for f in &r.failed {
+        ui.say(&ui.red(&format!("  {f}")));
+    }
+    if r.code && r.put_back.is_empty() && r.removed.is_empty() {
+        ui.say(&ui.dim("  No file to put back (what commands changed is not put back: git has it)."));
+    }
+    if r.chat {
+        ui.say(&format!("Back to before question {n}: {}", r.text));
     }
     Ok(())
 }
@@ -915,7 +875,7 @@ async fn command(
                     .trim_start_matches('#')
                     .parse()
                     .map_err(|_| anyhow::anyhow!("/fork, or /fork N (N as /rewind lists the questions)"))?;
-                match questions(p)?.into_iter().find(|(k, _, _)| *k == n) {
+                match session::questions(p)?.into_iter().find(|(k, _, _)| *k == n) {
                     Some((_, seq, _)) => Some(seq),
                     None => anyhow::bail!("there is no question {n}: /rewind lists them"),
                 }

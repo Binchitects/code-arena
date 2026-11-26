@@ -1085,3 +1085,67 @@ fn start_sync(
     sync.start_checked(caps);
     Some(sync)
 }
+
+/// The person's questions in this session: (number, its place in the session, its first line).
+pub fn questions(p: &Prepared) -> anyhow::Result<Vec<(usize, i64, String)>> {
+    let store = p.store.lock().map_err(|_| anyhow::anyhow!("the session's store"))?;
+    let turns = store.summary(&p.session)?.turns;
+    let page = store.page(&p.session, turns.max(1), None)?;
+    let mut out = Vec::new();
+    let mut last_turn = 0;
+    for m in page.messages {
+        if m.turn != last_turn {
+            last_turn = m.turn;
+            // A turn a job's end started is no question of the person's.
+            if m.message.content.starts_with("(Code Arena: job ") {
+                continue;
+            }
+            out.push((
+                out.len() + 1,
+                m.seq,
+                m.message.content.lines().next().unwrap_or("").chars().take(100).collect(),
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// What going back to before a question did.
+pub struct Rewound {
+    pub code: bool,
+    pub chat: bool,
+    /// The question's first line.
+    pub text: String,
+    pub put_back: Vec<String>,
+    pub removed: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// Back to before question `n` (as [`questions`] numbers them): the files its turns and those after changed put back
+/// (`code`), and the conversation cut there (`chat`).
+pub fn rewind_to(p: &mut Prepared, n: usize, code: bool, chat: bool) -> anyhow::Result<Rewound> {
+    let Some((_, seq, text)) = questions(p)?.into_iter().find(|(k, _, _)| *k == n) else {
+        anyhow::bail!("there is no question {n}: /rewind lists them");
+    };
+    let mut out = Rewound { code, chat, text, put_back: vec![], removed: vec![], failed: vec![] };
+    if code {
+        let r = p.agent.ctx.checkpoints.rewind(seq);
+        let ws = p.agent.ctx.workspace.clone();
+        out.put_back = r.put_back.iter().map(|f| ws.display(f)).collect();
+        out.removed = r.removed.iter().map(|f| ws.display(f)).collect();
+        out.failed = r.failed.iter().map(|(f, e)| format!("{}: {e}", ws.display(f))).collect();
+    }
+    if chat {
+        let store = p.store.lock().map_err(|_| anyhow::anyhow!("the session's store"))?;
+        store.truncate(&p.session, seq)?;
+        let (history, _) = model_history(&store, &p.session)?;
+        drop(store);
+        p.agent.notes = history
+            .iter()
+            .enumerate()
+            .map(|(i, m)| i == 0 && m.content.starts_with("(Code Arena: the earlier part"))
+            .collect();
+        p.agent.history = history;
+    }
+    Ok(out)
+}

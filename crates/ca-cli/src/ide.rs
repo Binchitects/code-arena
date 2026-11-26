@@ -77,7 +77,9 @@ impl Events for PageEvents {
 }
 
 /// The session as a page that just connected needs it: who and where, and its last turns.
-fn state(p: &Prepared, app: &App, running: bool) -> Value {
+fn state(p: &Prepared, app: &App, models: &[String], running: bool) -> Value {
+    let numbers: HashMap<i64, usize> =
+        session::questions(p).unwrap_or_default().into_iter().map(|(n, seq, _)| (seq, n)).collect();
     let messages: Vec<Value> = p
         .store
         .lock()
@@ -93,6 +95,7 @@ fn state(p: &Prepared, app: &App, running: bool) -> Value {
                         "text": m.message.content,
                         "tools": m.message.tool_calls.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
                         "turn": m.turn,
+                        "q": numbers.get(&m.seq),
                     })
                 })
                 .collect()
@@ -104,6 +107,9 @@ fn state(p: &Prepared, app: &App, running: bool) -> Value {
         "folder": p.folder,
         "model": p.agent.model,
         "mode": p.agent.policy.mode.name(),
+        "thinking": thinking_name(&p.agent.thinking),
+        "models": models,
+        "context": context(p),
         "edition": app.edition().name(),
         "version": ca_core::VERSION,
         "running": running,
@@ -111,9 +117,44 @@ fn state(p: &Prepared, app: &App, running: bool) -> Value {
     })
 }
 
-/// What the status line shows, without the thread (after a turn, or a change of mode: the page keeps its thread).
+fn thinking_name(t: &ca_llm::Thinking) -> String {
+    match t {
+        ca_llm::Thinking::Default => "default".into(),
+        ca_llm::Thinking::Off => "off".into(),
+        ca_llm::Thinking::Level(l) => l.clone(),
+    }
+}
+
+/// How full the window is: the ring in the status line.
+fn context(p: &Prepared) -> Value {
+    let w = &p.agent.window;
+    json!({"used": p.agent.context_used(), "size": w.size, "compact_at": w.compact_at})
+}
+
+/// What fills the next request, by kind and its biggest messages: the Context panel.
+fn context_detail(p: &Prepared) -> Value {
+    let b = p.agent.context_breakdown();
+    let w = &p.agent.window;
+    let kinds = [
+        ("Instructions", b.system),
+        ("Tools", b.tools),
+        ("Your messages", b.you),
+        ("Answers", b.answers),
+        ("Tool results", b.tool_results),
+        ("Notes", b.notes),
+    ];
+    json!({
+        "type": "context_detail",
+        "context": context(p),
+        "kinds": kinds.iter().map(|(k, c)| json!({"kind": k, "tokens": w.tokens(*c)})).collect::<Vec<_>>(),
+        "biggest": b.biggest.iter().map(|(at, role, chars, start)| json!({"at": at, "role": role, "tokens": w.tokens(*chars), "start": start})).collect::<Vec<_>>(),
+    })
+}
+
+/// What the status line shows, without the thread (after a turn, or a change: the page keeps its thread).
 fn status(p: &Prepared) -> Value {
-    json!({"type": "status", "model": p.agent.model, "mode": p.agent.policy.mode.name(), "running": false})
+    json!({"type": "status", "model": p.agent.model, "mode": p.agent.policy.mode.name(),
+           "thinking": thinking_name(&p.agent.thinking), "context": context(p), "running": false})
 }
 
 /// A browser in app mode (a window of its own, its own profile), else the system's way to open an address.
@@ -217,9 +258,70 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             b => ui.say(&ui.dim(&format!("Opened with {b}."))),
         }
     }
+    // The models the pickers offer: the gateway's (and the providers' of one's own), asked once.
+    let models: Vec<String> =
+        match tokio::time::timeout(std::time::Duration::from_secs(15), p.agent.gateway.models()).await {
+            Ok(Ok(ms)) => ms.into_iter().map(|m| m.id).collect(),
+            _ => vec![p.agent.model.clone()],
+        };
     while let Some((_, msg)) = server.from_page.recv().await {
         match msg["type"].as_str().unwrap_or("") {
-            "hello" | "state" => send(&out, state(&p, app, false)),
+            "hello" | "state" => send(&out, state(&p, app, &models, false)),
+            "model" => {
+                if let Some(m) = msg["model"].as_str().filter(|m| !m.is_empty()) {
+                    p.agent.model = m.to_string();
+                    let _ = p.store.lock().map(|s| s.set_model(&p.session, m, p.agent.policy.mode.name()));
+                    if let Some(s) = &p.sync {
+                        s.set_model(m);
+                    }
+                    send(&out, status(&p));
+                }
+            }
+            "thinking" => {
+                p.agent.thinking = ca_llm::Thinking::parse(msg["level"].as_str().unwrap_or(""));
+                send(&out, status(&p));
+            }
+            "context" => send(&out, context_detail(&p)),
+            "compact" => {
+                let mut events = PageEvents { out: out.clone() };
+                let said = match p.agent.compact(&mut events, true).await {
+                    Ok(Some(_)) => "Compacted: the model reads a summary of the earlier part from now on.".to_string(),
+                    Ok(None) => "Nothing older to summarize.".to_string(),
+                    Err(e) => format!("The model gave no summary ({e}): the conversation is as it was."),
+                };
+                send(&out, json!({"type": "notice", "text": said}));
+                send(&out, context_detail(&p));
+                send(&out, status(&p));
+            }
+            // Back to before question q: the conversation, the files, or both; again: then that question once more.
+            "rewind" | "again" => {
+                let q = msg["q"].as_u64().unwrap_or(0) as usize;
+                let what = msg["what"].as_str().unwrap_or("both");
+                let (code, chat) = if msg["type"] == "again" { (true, true) } else { (what != "chat", what != "code") };
+                match session::rewind_to(&mut p, q, code, chat) {
+                    Ok(r) => {
+                        send(&out, state(&p, app, &models, false));
+                        let mut said = vec![format!("Back to before: {}", r.text)];
+                        if !r.put_back.is_empty() {
+                            said.push(format!("Put back {}.", r.put_back.join(", ")));
+                        }
+                        if !r.removed.is_empty() {
+                            said.push(format!("Removed {} (a turn made it).", r.removed.join(", ")));
+                        }
+                        if !r.failed.is_empty() {
+                            said.push(format!("Could not put back: {}.", r.failed.join("; ")));
+                        }
+                        send(&out, json!({"type": "notice", "text": said.join(" ")}));
+                        let text = msg["text"].as_str().unwrap_or("").trim().to_string();
+                        if msg["type"] == "again" && !text.is_empty() {
+                            turn(&mut p, &mut server.from_page, &out, &pending, &inbox, text).await;
+                            session::keep_window(app, &p);
+                            send(&out, status(&p));
+                        }
+                    }
+                    Err(e) => send(&out, json!({"type": "notice", "text": e.to_string()})),
+                }
+            }
             "mode" => {
                 if let Some(m) = msg["mode"].as_str().and_then(ca_agent::Mode::parse) {
                     p.agent.policy.mode = m;
@@ -265,7 +367,8 @@ async fn turn(
     } else {
         text.clone()
     };
-    send(out, json!({"type": "user", "text": text}));
+    let q = session::questions(p).map(|qs| qs.len() + 1).unwrap_or(0);
+    send(out, json!({"type": "user", "text": text, "q": q}));
     send(out, json!({"type": "turn_start"}));
     session::begin_turn(p, ui, &message).await;
     p.agent.max_steps = p.max_steps;
@@ -308,6 +411,7 @@ async fn turn(
                         }
                     }
                     "hello" | "state" => send(out, json!({"type": "busy"})),
+                    "context" => {}
                     _ => {}
                 },
             }
