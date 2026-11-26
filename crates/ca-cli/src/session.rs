@@ -630,6 +630,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         aside: Some(Box::new(StoreRecorder { store: store.clone(), session: session.clone(), sync: None })),
         notes: vec![],
         tags: vec![],
+        skip: Arc::default(),
     };
     // The sandbox, as the settings and this system allow.
     let sandbox_mode = app.settings.string(&schema::SANDBOX).unwrap_or_else(|| "auto".into());

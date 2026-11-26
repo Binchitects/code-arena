@@ -190,7 +190,7 @@ fn help() -> &'static str {
 /exit                 leave (also Ctrl+D)\n\
 !command              run a command yourself; its output goes with your next message\n\
 \n\
-Keys: Enter sends; Alt+Enter (or a line ending in \\) starts a new line; ↑ ↓ bring back what you sent;\n\
+Keys: Tab while the model thinks skips its thinking for that turn; Enter sends; Alt+Enter (or a line ending in \\) starts a new line; ↑ ↓ bring back what you sent;\n\
 Ctrl+C stops a turn (at the prompt it clears the line; twice on an empty one leaves); Ctrl+Z stops code-arena."
 }
 
@@ -337,6 +337,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         progress.plan = vec![p.agent.ctx.plan.clone()];
         let mut typed = Editor::default();
         let jobs = p.agent.ctx.jobs.clone();
+        let skip = p.agent.skip.clone();
         let result = {
             let turn = p.agent.turn(&message, &mut progress);
             tokio::pin!(turn);
@@ -356,6 +357,11 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
                                 }
                             }
                             break None;
+                        }
+                        // Tab: the model stops thinking and answers (and thinks no more this turn).
+                        if k.code == KeyCode::Tab && pending.lock().map(|g| g.is_none()).unwrap_or(true) {
+                            skip.ask();
+                            continue;
                         }
                         let waiting = pending.lock().ok().and_then(|mut g| g.take());
                         if let Some(tx) = waiting {

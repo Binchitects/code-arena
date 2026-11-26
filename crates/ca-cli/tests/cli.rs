@@ -898,3 +898,40 @@ async fn a_session_in_a_project_keeps_its_goals_and_tags_its_requests() {
     assert!(last.to_string().contains("in the project \\\"Payments\\\""), "{last}");
     assert_eq!(last["metadata"]["tags"], json!(["chat:c-1", "project:p-7"]));
 }
+
+#[tokio::test]
+async fn stream_json_says_each_event_on_a_line_then_the_result() {
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(
+            vec![
+                call("c1", "read_file", json!({"path": "a.txt"})),
+                sse(json!({"choices": [{"delta": {"content": "It says hi."}, "finish_reason": "stop"}]})),
+            ],
+            AtomicUsize::new(0),
+        ))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    std::fs::write(project.path().join("a.txt"), "hi\n").expect("w");
+    let out = code_arena(home.path())
+        .args(["-p", "read a.txt", "--output", "stream-json", "-C"])
+        .arg(project.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+    let lines: Vec<Value> = stdout.lines().map(|l| serde_json::from_str(l).expect("a JSON line")).collect();
+    let kinds: Vec<&str> = lines.iter().map(|l| l["type"].as_str().unwrap_or("")).collect();
+    assert_eq!(kinds.first(), Some(&"start"));
+    assert!(kinds.contains(&"tool_end"), "{kinds:?}");
+    let tool = lines.iter().find(|l| l["type"] == "tool_end").expect("tool");
+    assert_eq!(tool["name"], "read_file");
+    assert_eq!(kinds.last(), Some(&"result"));
+    assert_eq!(lines.last().expect("result")["result"], "It says hi.");
+}

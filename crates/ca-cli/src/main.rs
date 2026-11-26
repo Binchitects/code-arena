@@ -62,6 +62,8 @@ struct Cli {
 enum Output {
     Text,
     Json,
+    /// One JSON object a line, as the turn goes.
+    StreamJson,
 }
 
 #[derive(Subcommand)]
@@ -224,6 +226,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
                 let output = match cli_common.output {
                     Output::Text => run::OutputFormat::Text,
                     Output::Json => run::OutputFormat::Json,
+                    Output::StreamJson => run::OutputFormat::StreamJson,
                 };
                 let resume = resume_of(&cli_common);
                 let o = cli_opts(&cli_common);

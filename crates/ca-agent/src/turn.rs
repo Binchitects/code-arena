@@ -32,6 +32,33 @@ pub trait Events: Send {
 /// How often the answer being written is kept as a draft (the session's store; the web chat).
 const DRAFT_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// "Skip thinking" for the turn running (Tab in the terminal, the web's "Answer now"): the thinking stops and the model
+/// answers at once, and the rest of the turn does not think.
+#[derive(Debug, Default)]
+pub struct Skip {
+    asked: std::sync::atomic::AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl Skip {
+    /// Asked for the turn running; `false` when it was asked already.
+    pub fn ask(&self) -> bool {
+        let first = !self.asked.swap(true, std::sync::atomic::Ordering::SeqCst);
+        if first {
+            self.notify.notify_one();
+        }
+        first
+    }
+
+    pub fn asked(&self) -> bool {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn reset(&self) {
+        self.asked.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// The stream's words to the person, and every two seconds to the recorder as a draft.
 struct EventSink<'a> {
     events: &'a mut dyn Events,
@@ -39,6 +66,8 @@ struct EventSink<'a> {
     text: String,
     reasoning: String,
     kept: std::time::Instant,
+    /// The answer's words began (a skip then does not cut it).
+    said: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl EventSink<'_> {
@@ -55,6 +84,9 @@ impl EventSink<'_> {
 
 impl Sink for EventSink<'_> {
     fn text(&mut self, d: &str) {
+        if !d.trim().is_empty() {
+            self.said.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         self.events.text(d);
         self.text.push_str(d);
         self.keep();
@@ -133,6 +165,8 @@ pub struct Agent {
     pub notes: Vec<bool>,
     /// `chat:<id>`, `project:<id>`: where Arena's usage log counts the requests.
     pub tags: Vec<String>,
+    /// The person's "skip thinking" for the turn running.
+    pub skip: Arc<Skip>,
 }
 
 /// Keeps a result aside and names it (`r1`), for `read_result`.
@@ -235,6 +269,7 @@ impl Agent {
         let mut out = TurnOutcome::default();
         let mut carried = 0;
         let mut overflowed = false;
+        self.skip.reset();
         loop {
             self.take_joins(events);
             // A plan made in plan mode is proposed, for the person's review.
@@ -255,16 +290,55 @@ impl Agent {
             self.condense_used_results();
             self.make_room(events, false).await;
             let defs = self.defs();
-            let request = self.request(defs.clone(), None);
+            let mut request = self.request(defs.clone(), None);
+            // Skipped: this turn thinks no more.
+            if self.skip.asked() {
+                request.thinking = Thinking::Off;
+            }
             let chars = context::request_chars(&self.system, &self.history, &defs);
-            let mut sink = EventSink {
-                events: &mut *events,
-                recorder: self.recorder.as_mut(),
-                text: String::new(),
-                reasoning: String::new(),
-                kept: std::time::Instant::now(),
+            let said = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let answered = {
+                let mut sink = EventSink {
+                    events: &mut *events,
+                    recorder: self.recorder.as_mut(),
+                    text: String::new(),
+                    reasoning: String::new(),
+                    kept: std::time::Instant::now(),
+                    said: said.clone(),
+                };
+                let skip = self.skip.clone();
+                let thinking = request.thinking != Thinking::Off;
+                let asking = self.gateway.complete(&request, &mut sink);
+                tokio::pin!(asking);
+                loop {
+                    tokio::select! {
+                        r = &mut asking => break Some(r),
+                        _ = skip.notify.notified(), if thinking => {
+                            // Still only thinking: cut, and asked again at once without it.
+                            if !said.load(std::sync::atomic::Ordering::SeqCst) {
+                                break None;
+                            }
+                        }
+                    }
+                }
             };
-            let c = match self.gateway.complete(&request, &mut sink).await {
+            let answered = match answered {
+                Some(r) => r,
+                None => {
+                    events.notice("Thinking skipped: the model answers now.");
+                    request.thinking = Thinking::Off;
+                    let mut sink = EventSink {
+                        events: &mut *events,
+                        recorder: self.recorder.as_mut(),
+                        text: String::new(),
+                        reasoning: String::new(),
+                        kept: std::time::Instant::now(),
+                        said,
+                    };
+                    self.gateway.complete(&request, &mut sink).await
+                }
+            };
+            let c = match answered {
                 Err(LlmError::ContextOverflow(why)) if !overflowed => {
                     // The window refused it: compacted at once and asked again, once.
                     overflowed = true;
@@ -755,6 +829,7 @@ mod tests {
             aside: None,
             notes: vec![],
             tags: vec![],
+            skip: Arc::default(),
         };
         (server, a, dir, seen)
     }
@@ -970,5 +1045,90 @@ mod tests {
         let (_s, mut a, _d, _) = agent(vec![call("list_dir", "{}")], Mode::Ask).await;
         a.max_steps = 3;
         assert!(matches!(a.turn("loop", &mut Quiet).await, Err(TurnError::Steps(3))));
+    }
+
+    /// Events that say when the model began to think.
+    struct Watch(tokio::sync::mpsc::UnboundedSender<()>, String);
+    impl Events for Watch {
+        fn reasoning(&mut self, _d: &str) {
+            let _ = self.0.send(());
+        }
+        fn text(&mut self, d: &str) {
+            self.1.push_str(d);
+        }
+    }
+
+    #[tokio::test]
+    async fn tab_cuts_the_thinking_and_the_model_answers_at_once() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // A model that thinks without end the first time, and answers when asked not to think.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let bodies = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let b2 = bodies.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let b3 = b2.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 65536];
+                    let mut got = Vec::new();
+                    // The headers and the body, by its length.
+                    loop {
+                        let n = sock.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        got.extend_from_slice(&buf[..n]);
+                        let text = String::from_utf8_lossy(&got).to_string();
+                        if let Some(end) = text.find("\r\n\r\n") {
+                            let len = text[..end]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                                })
+                                .unwrap_or(0);
+                            if got.len() >= end + 4 + len {
+                                let body = String::from_utf8_lossy(&got[end + 4..end + 4 + len]).to_string();
+                                b3.lock().expect("bodies").push(body.clone());
+                                let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n";
+                                let _ = sock.write_all(head.as_bytes()).await;
+                                if body.contains("enable_thinking") {
+                                    let ev =
+                                        r#"{"choices":[{"delta":{"content":"The answer."},"finish_reason":"stop"}]}"#;
+                                    let _ = sock.write_all(format!("data: {ev}\n\ndata: [DONE]\n\n").as_bytes()).await;
+                                    return;
+                                }
+                                let ev = r#"{"choices":[{"delta":{"reasoning_content":"Let me think about it"}}]}"#;
+                                let _ = sock.write_all(format!("data: {ev}\n\n").as_bytes()).await;
+                                let _ = sock.flush().await;
+                                // Thinks on, until cut.
+                                tokio::time::sleep(Duration::from_secs(60)).await;
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        let (_server, mut a, _dir, _seen) = agent(vec![], Mode::Ask).await;
+        a.gateway = Gateway::new(&format!("http://{addr}"), Secret::new("sk-test"), None).expect("gw");
+        let skip = a.skip.clone();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut w = Watch(tx, String::new());
+        let turn = a.turn("why?", &mut w);
+        tokio::pin!(turn);
+        let out = loop {
+            tokio::select! {
+                r = &mut turn => break r.expect("answered"),
+                Some(()) = rx.recv() => { skip.ask(); }
+            }
+        };
+        assert_eq!(out.answer, "The answer.");
+        let bodies = bodies.lock().expect("bodies");
+        assert_eq!(bodies.len(), 2);
+        assert!(bodies[1].contains("\"enable_thinking\":false"), "{}", bodies[1]);
     }
 }

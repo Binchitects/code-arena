@@ -13,4 +13,4 @@ mod turn;
 
 pub use context::Window;
 pub use policy::{Answer, Approver, Decision, Mode, NoAsking, Rules};
-pub use turn::{Agent, Aside, Events, Joined, Recorder, TurnError, TurnOutcome};
+pub use turn::{Agent, Aside, Events, Joined, Recorder, Skip, TurnError, TurnOutcome};

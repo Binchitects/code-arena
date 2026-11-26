@@ -115,6 +115,11 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 - Assistants (managed): `/assistant` lists yours; `/assistant N` works as one (its instructions,
   model, thinking and skills) from the next message; `/assistant off`.
 
+- Tab while the model thinks skips its thinking: still only thinking, the request is cut and asked
+  again without it, so the model answers at once; the rest of the turn does not think.
+- `-p --output stream-json`: one JSON object a line on stdout as the turn goes (`start`, `text`,
+  `thinking`, `tool_start`, `tool_end`, `notice`, `step_end`), then the `result`.
+
 ### Fixed
 - A send Arena kept but whose answer was lost: the next take-in would have added the session's
   own messages again as the web's, and sent them twice. They are known by their ref now.

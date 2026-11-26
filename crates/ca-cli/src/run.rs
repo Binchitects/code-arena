@@ -18,6 +18,40 @@ use crate::ui::{self, Ui};
 pub enum OutputFormat {
     Text,
     Json,
+    /// One JSON object a line on stdout, as the turn goes: its words, thinking, calls and notices, then the result.
+    StreamJson,
+}
+
+/// `--output stream-json`'s lines.
+struct Lines;
+
+fn line(v: serde_json::Value) {
+    use std::io::Write;
+    let mut o = std::io::stdout().lock();
+    let _ = writeln!(o, "{v}");
+    let _ = o.flush();
+}
+
+impl Events for Lines {
+    fn text(&mut self, d: &str) {
+        line(json!({"type": "text", "text": d}));
+    }
+    fn reasoning(&mut self, d: &str) {
+        line(json!({"type": "thinking", "text": d}));
+    }
+    fn notice(&mut self, t: &str) {
+        line(json!({"type": "notice", "text": t}));
+    }
+    fn tool_start(&mut self, name: &str, subject: &str) {
+        line(json!({"type": "tool_start", "name": name, "subject": subject}));
+    }
+    fn tool_end(&mut self, name: &str, subject: &str, o: &Output) {
+        let shown: String = o.text.chars().take(2000).collect();
+        line(json!({"type": "tool_end", "name": name, "subject": subject, "is_error": o.is_error, "output": shown}));
+    }
+    fn step_end(&mut self) {
+        line(json!({"type": "step_end"}));
+    }
 }
 
 pub struct RunArgs {
@@ -186,7 +220,14 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
     progress.plan = vec![p.agent.ctx.plan.clone()];
     session::begin_turn(&mut p, ui).await;
     session::before_message(&mut p, &prompt).await;
-    let result = p.agent.turn(&prompt, &mut progress).await;
+    if args.output == OutputFormat::StreamJson {
+        line(json!({"type": "start", "session": p.session, "model": model, "edition": app.edition().name()}));
+    }
+    let result = if args.output == OutputFormat::StreamJson {
+        p.agent.turn(&prompt, &mut Lines).await
+    } else {
+        p.agent.turn(&prompt, &mut progress).await
+    };
     // The turn's messages reach the chat in Arena before the run ends (or are sent with the next session's).
     if let Some(sync) = &p.sync
         && !sync.flush(std::time::Duration::from_secs(10)).await
@@ -213,7 +254,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
             ui.say(&ui.red(&e.to_string()));
             Ok(1)
         }
-        (OutputFormat::Json, r) => {
+        (OutputFormat::Json | OutputFormat::StreamJson, r) => {
             let (result, is_error, usage) = match r {
                 Ok(o) => (o.answer, false, o.usage),
                 Err(e) => (e.to_string(), true, Default::default()),
@@ -225,6 +266,13 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
                 "model": model,
                 "usage": {"input_tokens": usage.prompt, "cached_tokens": usage.cached, "output_tokens": usage.completion},
             });
+            let body = if args.output == OutputFormat::StreamJson {
+                let mut b = body;
+                b["type"] = json!("result");
+                b
+            } else {
+                body
+            };
             println!("{body}");
             Ok(i32::from(is_error))
         }
