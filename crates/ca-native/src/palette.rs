@@ -227,7 +227,9 @@ impl Lower {
     }
 }
 
-/// How well `text` matches `path`, as the page's `score` says it: -1 when it does not.
+/// How well `text` matches `path`, as the page's `score` says it: -1 when it does not (the ranking's own measure,
+/// kept to test it against the page's numbers).
+#[cfg(test)]
 pub fn score(path: &str, text: &str) -> i64 {
     let mut all = String::new();
     Lower::of(path, &mut all).score(&all, &Query::of(text)).unwrap_or(-1)

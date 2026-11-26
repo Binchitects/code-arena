@@ -23,7 +23,6 @@ mod icons;
 mod layout;
 mod model;
 // Not joined to the workbench yet (its root stack and its keys): this allow goes when it is.
-#[allow(dead_code)]
 mod palette;
 mod search;
 mod state;
@@ -125,6 +124,12 @@ fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_chan
     }
     send(json!({"type": "hello"}));
     docking::set_send(send.clone());
+    palette::set_runner(Rc::new(workbench::run_command));
+    // The dock's own commands, as Visual Studio's Window menu has them.
+    palette::add("View: Reset View Locations", "", |ui, _| ui.reset_dock());
+    for v in layout::VIEWS {
+        palette::add(&format!("View: Float {}", v.title()), "", move |ui, _| ui.float(v));
+    }
     keep_view_state(ui, send.clone());
     workbench::view(ui, send)
 }

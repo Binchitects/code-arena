@@ -71,6 +71,10 @@ Sections used:
   every guide, or right-click it and Float: it opens in a window of its own (in the theme, with a
   button that docks it back). Closing that window docks the view back beside the editor; floating
   views open again with the folder.
+- **Quick Open and the Command Palette in the native window**, VS Code's quick input: Ctrl+P (or a
+  click on the command center) finds a file among 50,000 in about 2 ms a key, its matched letters
+  lit; Ctrl+Shift+P (or `>`) runs a command, its keys shown; Ctrl+K Ctrl+T picks a colour theme,
+  shown as the arrows move and kept on Enter.
 - **Development builds optimise their dependencies**, so the native window built for trying it is
   as quick as the released one (Floem's layout, text and drawing are far too slow unoptimised).
 - **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,

@@ -29,11 +29,12 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let body = h_stack((activity_bar(ui), crate::docking::tree(ui, send.clone())))
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     stack((
-        v_stack((title_bar(ui), body, status_bar(ui))).style(|s| s.size_full()),
+        v_stack((title_bar(ui, send.clone()), body, status_bar(ui))).style(|s| s.size_full()),
         menu_overlay(ui, send.clone()),
         view_menu(ui),
         crate::docking::overlay(ui),
         crate::docking::ghost(ui),
+        crate::palette::view(ui, send.clone()),
         resize_edges(),
     ))
     .on_resize(move |r| {
@@ -78,13 +79,45 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     })
 }
 
+/// The palette's commands that act on the layout, by VS Code's ids.
+pub fn run_command(ui: Ui, _: &Send, id: &str) {
+    use crate::palette as p;
+    match id {
+        p::TOGGLE_PRIMARY => ui.toggle_group_of(View::Files),
+        p::TOGGLE_SECONDARY => ui.toggle_group_of(View::Agent),
+        p::TOGGLE_PANEL => ui.toggle_group_of(View::Terminal),
+        p::FOCUS_EXPLORER => ui.reveal(View::Files),
+        p::FOCUS_SEARCH => ui.reveal(View::Search),
+        p::FOCUS_CHANGES => ui.reveal(View::Changes),
+        p::FOCUS_TERMINAL => ui.reveal(View::Terminal),
+        p::FOCUS_AGENT => ui.reveal(View::Agent),
+        _ => {}
+    }
+}
+
+thread_local! {
+    /// Ctrl+K pressed: the next key ends VS Code's chord (Ctrl+K Ctrl+T: the theme pick).
+    static CHORD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// VS Code's keys for the workbench.
 fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
     let ctrl = m.contains(Modifiers::CONTROL);
     let shift = m.contains(Modifiers::SHIFT);
     let alt = m.contains(Modifiers::ALT);
+    let chord = CHORD.with(|c| c.replace(false));
+    if let (true, Key::Character(c)) = (chord, key)
+        && ctrl
+        && c.eq_ignore_ascii_case("t")
+    {
+        crate::palette::open(ui, send, crate::palette::Mode::Themes);
+        return;
+    }
     match key {
         Key::Character(c) if ctrl => match (c.to_lowercase().as_str(), shift, alt) {
+            ("k", false, false) => CHORD.with(|c| c.set(true)),
+            ("p", false, false) => crate::palette::open(ui, send, crate::palette::Mode::Files),
+            ("p", true, false) => crate::palette::open(ui, send, crate::palette::Mode::Commands),
             ("b", false, false) => ui.toggle_group_of(View::Files),
             ("b", false, true) => ui.toggle_group_of(View::Agent),
             ("j", false, false) => ui.toggle_group_of(View::Terminal),
@@ -110,7 +143,7 @@ fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
     }
 }
 
-fn title_bar(ui: Ui) -> impl IntoView {
+fn title_bar(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     let menus = h_stack((dyn_stack(
         || MENUS.into_iter().enumerate().collect::<Vec<_>>(),
@@ -142,6 +175,8 @@ fn title_bar(ui: Ui) -> impl IntoView {
         icon("search", 16.0),
         label(move || ui.folder.get().rsplit('/').next().unwrap_or("").to_string()).style(|s| s.font_size(12.0)),
     ))
+    // VS Code's command center: a click is Quick Open.
+    .on_click_stop(move |_| crate::palette::open(ui, &send, crate::palette::Mode::Files))
     .style(move |s| {
         let c = t.get();
         s.gap(6.0)
