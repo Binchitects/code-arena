@@ -20,6 +20,21 @@ pub struct Entry {
     pub dir: bool,
 }
 
+/// A line the Search view found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hit {
+    pub path: String,
+    pub line: usize,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Found {
+    pub hits: Vec<Hit>,
+    pub more: bool,
+    pub error: String,
+}
+
 /// An open editor: its file, its text (kept while another tab is shown), whether it has changes not saved.
 #[derive(Clone)]
 pub struct Tab {
@@ -64,6 +79,13 @@ pub struct Ui {
     pub menu: RwSignal<Option<usize>>,
     /// A view's own menu (Move to…), open where it was right-clicked (in the window).
     pub context: RwSignal<Option<(crate::layout::View, f64, f64)>>,
+    pub search_query: RwSignal<String>,
+    pub search_case: RwSignal<bool>,
+    pub search_regex: RwSignal<bool>,
+    pub search: RwSignal<Option<Found>>,
+    /// A line to show in a file once its editor is drawn: the file, the line (from 1), and a number of its own so
+    /// the same line asked again is gone to again.
+    pub goto: RwSignal<Option<(String, usize, u64)>>,
     /// Where the pointer is in the window (for a menu opened by a right-click).
     pub pointer: RwSignal<(f64, f64)>,
     /// The layout kept for the folder has been read: from then on a change is kept.
@@ -108,6 +130,11 @@ impl Ui {
             context: create_rw_signal(None),
             loaded: create_rw_signal(false),
             pointer: create_rw_signal((0.0, 0.0)),
+            search_query: create_rw_signal(String::new()),
+            search_case: create_rw_signal(false),
+            search_regex: create_rw_signal(false),
+            search: create_rw_signal(None),
+            goto: create_rw_signal(None),
             tree: create_rw_signal(HashMap::new()),
             expanded: create_rw_signal(HashSet::new()),
             selected: create_rw_signal(String::new()),
@@ -159,6 +186,13 @@ impl Ui {
         } else {
             send(json!({"type": "open", "path": path}));
         }
+    }
+
+    /// A file opened at a line (a search's hit).
+    pub fn open_at(&self, path: &str, line: usize, send: &Send) {
+        let n = self.goto.with_untracked(|g| g.as_ref().map(|g| g.2 + 1).unwrap_or(0));
+        self.goto.set(Some((path.to_string(), line, n)));
+        self.open(path, send);
     }
 
     pub fn close(&self, path: &str) {
@@ -295,6 +329,26 @@ impl Ui {
                     self.tabs.update(|t| t.push(Tab { path: path.clone(), doc, dirty }));
                 }
                 self.active.set(Some(path));
+            }
+            "search" => {
+                if m["query"].as_str() != Some(self.search_query.get_untracked().as_str()) {
+                    return; // an answer to what was typed before
+                }
+                if self.search_query.with_untracked(|q| q.is_empty()) {
+                    self.search.set(None);
+                    return;
+                }
+                let hits = m["hits"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|h| Hit {
+                        path: h["path"].as_str().unwrap_or("").into(),
+                        line: h["line"].as_u64().unwrap_or(1) as usize,
+                        text: h["text"].as_str().unwrap_or("").into(),
+                    })
+                    .collect();
+                self.search.set(Some(Found { hits, more: m["more"] == true, error: s("error") }));
             }
             "saved" => {
                 let path = s("path");

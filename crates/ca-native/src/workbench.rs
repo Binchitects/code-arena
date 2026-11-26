@@ -19,7 +19,7 @@ use crate::icons::icon;
 use crate::layout::{View, Where};
 use crate::state::{Send, Ui};
 use crate::widgets::{UI_FONT, action, action_lit, caps, line, sash};
-use crate::{agent, editor, explorer};
+use crate::{agent, editor, explorer, search};
 
 const MENUS: [&str; 8] = ["File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Help"];
 
@@ -582,6 +582,7 @@ fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
     let body = dyn_container(shows, move |v| match v {
         Some(View::Files) => explorer::view(ui, send.clone()).into_any(),
         Some(View::Agent) => agent::view(ui, send.clone()).into_any(),
+        Some(View::Search) => search::view(ui, send.clone()).into_any(),
         Some(v) => not_yet(ui, v).into_any(),
         None => empty().into_any(),
     })

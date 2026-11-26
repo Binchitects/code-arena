@@ -65,6 +65,8 @@ pub fn char_of(name: &str) -> char {
         "circle-large-filled" => 0xebb4,
         "file" => 0xea7b,
         "screen-full" => 0xeb4c,
+        "case-sensitive" => 0xeab1,
+        "regex" => 0xeb38,
         _ => 0xea74, // "info"
     };
     char::from_u32(code).unwrap_or('?')

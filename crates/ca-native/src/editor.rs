@@ -134,8 +134,8 @@ fn breadcrumbs(ui: Ui) -> impl IntoView {
 fn body(ui: Ui) -> impl IntoView {
     let t = ui.colors;
     dyn_container(
-        move || (ui.active.get(), t.get()),
-        move |(path, c)| match path.and_then(|p| ui.tab(&p)) {
+        move || (ui.active.get(), t.get(), ui.goto.get()),
+        move |(path, c, goto)| match path.and_then(|p| ui.tab(&p)) {
             None => watermark(ui).into_any(),
             Some(tab) => {
                 let styling = SimpleStyling::builder()
@@ -168,6 +168,13 @@ fn body(ui: Ui) -> impl IntoView {
                             .color(c.editor_fg)
                     });
                 let editor = ed.editor().clone();
+                if let Some((_, line, _)) = goto.filter(|g| g.0 == tab.path) {
+                    let at = editor.offset_of_line(line.saturating_sub(1));
+                    editor.cursor.update(|c| c.set_offset(at, false, false));
+                    // Once it is laid out: the line in the middle, as VS Code shows a search's hit.
+                    let e = editor.clone();
+                    floem::action::exec_after(std::time::Duration::from_millis(30), move |_| e.center_window());
+                }
                 let cursor = editor.cursor;
                 floem::reactive::create_effect(move |_| {
                     let offset = cursor.with(|c| c.offset());

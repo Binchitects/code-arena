@@ -17,6 +17,7 @@ mod explorer;
 mod icons;
 mod layout;
 mod model;
+mod search;
 mod state;
 mod widgets;
 mod workbench;
