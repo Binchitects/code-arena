@@ -510,6 +510,23 @@ impl Store {
         Ok(())
     }
 
+    /// The place of the message Arena knows by this id.
+    pub fn seq_by_arena(&self, id: &str, arena: &str) -> Result<Option<i64>> {
+        Ok(self
+            .db
+            .query_row("SELECT seq FROM messages WHERE session = ?1 AND arena = ?2", params![id, arena], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// A summary the web's compaction wrote, kept as Arena has it already.
+    pub fn compact_from_arena(&self, id: &str, through: i64, summary: &str) -> Result<()> {
+        self.db.execute(
+            "INSERT OR REPLACE INTO compactions (session, through, summary, at, sent) VALUES (?1, ?2, ?3, ?4, 1)",
+            params![id, through, summary, now()],
+        )?;
+        Ok(())
+    }
+
     /// The session kept with this chat, if there is one.
     pub fn by_chat(&self, chat: &str) -> Result<Option<String>> {
         Ok(self

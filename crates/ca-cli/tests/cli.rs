@@ -398,7 +398,12 @@ impl Respond for Chats {
         if let Ok(mut seen) = self.0.lock() {
             seen.push(body);
         }
-        let ids: Vec<String> = (0..n).map(|i| format!("m{i}")).collect();
+        let before: usize = self
+            .0
+            .lock()
+            .map(|s| s.iter().map(|b| b["messages"].as_array().map(Vec::len).unwrap_or(0)).sum())
+            .unwrap_or(0);
+        let ids: Vec<String> = (0..n).map(|i| format!("m{}", before - n + i)).collect();
         ResponseTemplate::new(200).set_body_json(json!({"ids": ids, "count": n, "stamp": "s1", "summarized": false}))
     }
 }
@@ -478,4 +483,87 @@ async fn an_arena_out_of_reach_does_not_hold_a_print_run() {
         .expect("runs");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(started.elapsed() < std::time::Duration::from_secs(8), "{:?}", started.elapsed());
+}
+
+/// A model that keeps what each request asked.
+struct Heard(std::sync::Arc<std::sync::Mutex<Vec<Value>>>);
+
+impl Respond for Heard {
+    fn respond(&self, r: &Request) -> ResponseTemplate {
+        if let Ok(mut h) = self.0.lock() {
+            h.push(serde_json::from_slice(&r.body).unwrap_or_default());
+        }
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "text/event-stream")
+            .set_body_string(sse(json!({"choices": [{"delta": {"content": "noted"}, "finish_reason": "stop"}]})))
+    }
+}
+
+#[tokio::test]
+async fn what_the_web_added_is_read_at_the_next_turn() {
+    let gateway = MockServer::start().await;
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(path("/v1/chat/completions")).respond_with(Heard(heard.clone())).mount(&gateway).await;
+    let arena = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"id": "c-1", "created": true})))
+        .mount(&arena)
+        .await;
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/c-1/messages"))
+        .respond_with(Chats(seen.clone()))
+        .mount(&arena)
+        .await;
+    // After the first run's two messages (m0, m1), the person asked something on the web.
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/c-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "c-1", "title": "t", "count": 3, "stamp": "w", "base": "m1", "fork": false, "more": false,
+            "summary": null, "messages": [{"role": "user", "content": "asked on the web meanwhile", "id": "w2"}]
+        })))
+        .mount(&arena)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/c-1/turn"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"until": "2026-11-26T10:00:00Z"})))
+        .mount(&arena)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/code-arena/chats/c-1/turn"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&arena)
+        .await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(200).set_body_json(json!([]))).mount(&arena).await;
+
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let run = |args: &[&str]| {
+        code_arena(home.path())
+            .args(args)
+            .arg("-C")
+            .arg(project.path())
+            .env("ARENA_URL", arena.uri())
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .output()
+            .expect("runs")
+    };
+    let first = run(&["-p", "first question"]);
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let second = run(&["-p", "second question", "--continue"]);
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(second.status.success(), "{stderr}");
+    assert!(stderr.contains("From the web: asked on the web meanwhile"), "{stderr}");
+    let heard = heard.lock().expect("heard");
+    let last = heard.last().expect("a request").to_string();
+    let web = last.find("asked on the web meanwhile").expect("the web's message was read");
+    let mine = last.find("second question").expect("this run's question");
+    assert!(web < mine, "the web's message comes before this run's question");
+    // This run's question went after the web's.
+    let seen = seen.lock().expect("seen");
+    let asked = seen.iter().find(|b| b["messages"][0]["content"] == "second question").expect("the question was sent");
+    assert_eq!(asked["parent"], "w2", "{seen:?}");
 }

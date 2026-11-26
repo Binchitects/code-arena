@@ -281,6 +281,7 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             Some(s) => format!("{s}\n\n{line}"),
             None => line.clone(),
         };
+        session::begin_turn(&mut p, ui).await;
         let started = Instant::now();
         let mut progress = Progress::new(ui, true);
         progress.show_thinking = true;
@@ -343,6 +344,9 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             }
             Some(Err(TurnError::Llm(e))) => ui.say(&ui.red(&e.to_string())),
             Some(Err(e)) => ui.say(&ui.red(&e.to_string())),
+        }
+        if let Some(s) = &p.sync {
+            s.end_turn_soon();
         }
         // A line typed as the turn ended waits in the prompt.
         let left: Vec<String> = inbox.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();

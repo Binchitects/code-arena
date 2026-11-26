@@ -29,17 +29,43 @@ pub trait Events: Send {
     fn step_end(&mut self) {}
 }
 
-struct EventSink<'a>(&'a mut dyn Events);
+/// How often the answer being written is kept as a draft (the session's store; the web chat).
+const DRAFT_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The stream's words to the person, and every two seconds to the recorder as a draft.
+struct EventSink<'a> {
+    events: &'a mut dyn Events,
+    recorder: Option<&'a mut Box<dyn Recorder>>,
+    text: String,
+    reasoning: String,
+    kept: std::time::Instant,
+}
+
+impl EventSink<'_> {
+    fn keep(&mut self) {
+        if self.kept.elapsed() < DRAFT_EVERY {
+            return;
+        }
+        self.kept = std::time::Instant::now();
+        if let Some(r) = self.recorder.as_mut() {
+            r.draft(&self.text, &self.reasoning);
+        }
+    }
+}
 
 impl Sink for EventSink<'_> {
     fn text(&mut self, d: &str) {
-        self.0.text(d);
+        self.events.text(d);
+        self.text.push_str(d);
+        self.keep();
     }
     fn reasoning(&mut self, d: &str) {
-        self.0.reasoning(d);
+        self.events.reasoning(d);
+        self.reasoning.push_str(d);
+        self.keep();
     }
     fn notice(&mut self, t: &str) {
-        self.0.notice(t);
+        self.events.notice(t);
     }
 }
 
@@ -136,6 +162,8 @@ pub trait Recorder: Send {
     fn record(&mut self, message: &Message, begins_turn: bool) -> Option<i64>;
     /// A compaction: the model reads `summary` in place of every kept message but the last `kept`.
     fn compacted(&mut self, _summary: &str, _kept: usize) {}
+    /// The answer being written, as it stands (every two seconds while it comes); its message replaces it.
+    fn draft(&mut self, _text: &str, _reasoning: &str) {}
 }
 
 impl Agent {
@@ -225,7 +253,14 @@ impl Agent {
             let defs = self.defs();
             let request = self.request(defs.clone(), None);
             let chars = context::request_chars(&self.system, &self.history, &defs);
-            let c = match self.gateway.complete(&request, &mut EventSink(events)).await {
+            let mut sink = EventSink {
+                events: &mut *events,
+                recorder: self.recorder.as_mut(),
+                text: String::new(),
+                reasoning: String::new(),
+                kept: std::time::Instant::now(),
+            };
+            let c = match self.gateway.complete(&request, &mut sink).await {
                 Err(LlmError::ContextOverflow(why)) if !overflowed => {
                     // The window refused it: compacted at once and asked again, once.
                     overflowed = true;

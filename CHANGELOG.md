@@ -20,6 +20,19 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   waits up to 10 s for its messages to arrive (not at all when Arena is out of reach); what is
   left goes with the session's next run. `/sync` says where a session stands; `/sync off` keeps
   it here only. Sessions from 0.2 are kept (the store is upgraded in place) and sent when resumed.
+- What the web added comes in at the next turn's start: the person's questions and the web's
+  answers are written into the session (and said: `From the web: …`), and the model reads them
+  before your next words. When the web went another way (a question edited, an answer written
+  again), the session follows it from where they part; messages not yet sent go after the web's.
+  A summary the web's compaction wrote is read as the session's own.
+- While a turn runs it holds the chat: the web queues the person's messages, and those it may
+  take join the turn at its next step. A turn waits for the web chat's own answer to end (at
+  most 2 min). The answer being written is shown on the web as it comes. The chat is let go
+  once Arena has the turn's messages.
+
+### Fixed
+- The answer being written is kept every two seconds while it comes, so a crash leaves what it
+  got to (0.2 recovered drafts but never kept them).
 
 ## 0.2.0 (2026-11-26)
 

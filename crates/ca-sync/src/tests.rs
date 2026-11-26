@@ -202,3 +202,167 @@ fn the_webs_messages_come_back_as_the_model_reads_them() {
     assert_eq!(back.tool_calls[0].arguments, "{\"q\":\"x\"}");
     assert!(from_arena(&ca_arena::chats::SyncMessage { role: "system".into(), ..Default::default() }).is_none());
 }
+
+/// A session Arena has whole: its four messages are `a{id}:0`…`a{id}:3` there.
+async fn sent_session(server: &MockServer, store: &Arc<Mutex<Store>>) -> (String, Arc<ChatSync>) {
+    let id = session(&store.lock().expect("store"));
+    let (sync, _) = sync(server, store, &id);
+    assert_eq!(sync.push().await, Pushed::Done);
+    (id, sync)
+}
+
+fn read_answer(base: Option<String>, fork: bool, messages: Value) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "id": "chat-1", "title": "t", "count": 9, "stamp": "web-1", "base": base, "fork": fork, "more": false,
+        "summary": null, "messages": messages
+    }))
+}
+
+#[tokio::test]
+async fn what_the_web_added_comes_in_after_the_last_message_both_have() {
+    let (server, _) = arena().await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let (id, sync) = sent_session(&server, &store).await;
+    // Something of the session's that Arena does not have yet.
+    store.lock().expect("store").append(&id, &Message::user("mine, not sent"), true).expect("u");
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/chat-1"))
+        .respond_with(read_answer(
+            Some(format!("a{id}:3")),
+            false,
+            json!([{"role": "user", "content": "asked on the web", "id": "w1"},
+                   {"role": "assistant", "content": "answered on the web", "id": "w2", "model": "qwen"}]),
+        ))
+        .mount(&server)
+        .await;
+    let taken = sync.take_in().await;
+    assert_eq!(taken.added.len(), 2);
+    assert!(taken.rebuilt, "the session's own message moved after the web's");
+    assert_eq!(taken.said, vec!["From the web: asked on the web".to_string()]);
+    let s = store.lock().expect("store");
+    let all: Vec<String> =
+        s.page(&id, 100, None).expect("page").messages.into_iter().map(|m| m.message.content).collect();
+    assert_eq!(&all[4..], ["asked on the web", "answered on the web", "mine, not sent"]);
+    assert_eq!(s.last_sent(&id).expect("last"), Some((5, "w2".into())));
+    assert_eq!(s.unsent(&id, 10).expect("unsent").len(), 1);
+    assert_eq!(s.chat_link(&id).expect("link").stamp.as_deref(), Some("web-1"));
+}
+
+#[tokio::test]
+async fn when_the_web_went_another_way_the_session_follows_it() {
+    let (server, _) = arena().await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let (id, sync) = sent_session(&server, &store).await;
+    // The web wrote the first answer again: the branch on screen parts after the question.
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/chat-1"))
+        .respond_with(read_answer(
+            Some(format!("a{id}:0")),
+            true,
+            json!([{"role": "assistant", "content": "another answer", "id": "w9"}]),
+        ))
+        .mount(&server)
+        .await;
+    let taken = sync.take_in().await;
+    assert!(taken.rebuilt);
+    let s = store.lock().expect("store");
+    let all: Vec<String> =
+        s.page(&id, 100, None).expect("page").messages.into_iter().map(|m| m.message.content).collect();
+    assert_eq!(all, ["read the parser", "another answer"]);
+    // Following the web is no branch of the session's own.
+    assert!(!s.chat_link(&id).expect("link").branch);
+    assert_eq!(s.last_sent(&id).expect("last"), Some((1, "w9".into())));
+}
+
+#[tokio::test]
+async fn nothing_new_on_the_web_changes_nothing() {
+    let (server, _) = arena().await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let (_id, sync) = sent_session(&server, &store).await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/chat-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"unchanged": true, "stamp": "s"})))
+        .mount(&server)
+        .await;
+    assert!(!sync.take_in().await.any());
+}
+
+#[tokio::test]
+async fn a_turn_holds_the_chat_takes_the_webs_queue_and_lets_it_go() {
+    let (server, _) = arena().await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let (_id, sync) = sent_session(&server, &store).await;
+    Mock::given(method("GET"))
+        .and(path("/api/code-arena/chats/chat-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"unchanged": true, "stamp": "s"})))
+        .mount(&server)
+        .await;
+    // The web chat is answering at first: the turn waits for it.
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/chat-1/turn"))
+        .respond_with(
+            ResponseTemplate::new(409).set_body_json(json!({"status": "answering", "error": "The chat is answering."})),
+        )
+        .up_to_n_times(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/chat-1/turn"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"until": "2026-11-26T10:00:00Z"})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/chat-1/queue/take"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"messages": [{"id": "q1", "content": "also the docs"}]})),
+        )
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats/chat-1/queue/take"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"messages": []})))
+        .mount(&server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/api/code-arena/chats/chat-1/draft"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/code-arena/chats/chat-1/turn"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let inbox = Arc::new(Mutex::new(Vec::new()));
+    sync.begin_turn(Some(inbox.clone())).await;
+    // What the person queued on the web joins the turn.
+    let got = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(t) = inbox.lock().expect("inbox").first().cloned() {
+                return t;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the queued message came");
+    assert_eq!(got, "also the docs");
+    // The answer being written reaches the web while the turn holds the chat.
+    sync.draft("half an ans", "");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let reqs = server.received_requests().await.unwrap_or_default();
+            if reqs.iter().any(|r| r.method.as_str() == "PUT" && r.url.path().ends_with("/draft")) {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the draft was sent");
+    sync.end_turn().await;
+    let reqs = server.received_requests().await.expect("requests");
+    assert_eq!(reqs.iter().filter(|r| r.method.as_str() == "DELETE").count(), 1);
+}

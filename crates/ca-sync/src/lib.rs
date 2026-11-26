@@ -7,6 +7,7 @@
 //! sending waits for it to be taken in at the next turn's start.
 
 mod convert;
+mod turn;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,6 +18,7 @@ use ca_session::Store;
 use tokio::sync::Notify;
 
 pub use convert::{from_arena, to_arena};
+pub use turn::Taken;
 
 /// The most messages one request sends.
 pub const BATCH: usize = 200;
@@ -53,6 +55,14 @@ pub struct ChatSync {
     notice: Notice,
     /// The server has no chat sync: nothing is sent.
     unsupported: std::sync::atomic::AtomicBool,
+    /// A turn holds the chat now.
+    holding: std::sync::atomic::AtomicBool,
+    hold_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The answer being written, waiting to go; and whether one is on its way.
+    draft_next: Mutex<Option<(String, String)>>,
+    drafting: std::sync::atomic::AtomicBool,
+    /// The last turn's end, under way.
+    ending: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 /// How a push ended.
@@ -90,6 +100,11 @@ impl ChatSync {
             idle: Notify::new(),
             notice,
             unsupported: std::sync::atomic::AtomicBool::new(false),
+            holding: std::sync::atomic::AtomicBool::new(false),
+            hold_task: Mutex::new(None),
+            draft_next: Mutex::new(None),
+            drafting: std::sync::atomic::AtomicBool::new(false),
+            ending: Mutex::new(None),
         })
     }
 

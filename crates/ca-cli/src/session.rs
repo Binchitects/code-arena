@@ -58,6 +58,32 @@ pub struct Prepared {
 /// Lines to say at the next prompt: each with whether it is a problem.
 pub type Notices = Arc<Mutex<Vec<(bool, String)>>>;
 
+/// Before a turn: what the web added comes in (said, and read again by the model), and the chat is held.
+pub async fn begin_turn(p: &mut Prepared, ui: crate::ui::Ui) {
+    let Some(sync) = p.sync.clone() else { return };
+    let taken = sync.begin_turn(p.agent.inbox.clone()).await;
+    say_notices(&p.notices, ui);
+    for line in &taken.said {
+        ui.say(&ui.dim(line));
+    }
+    if taken.any() {
+        reload_history(p);
+    }
+}
+
+/// What the model reads, from the session's store again (after the web's messages came in).
+pub fn reload_history(p: &mut Prepared) {
+    let Ok(store) = p.store.lock() else { return };
+    let Ok((history, _)) = model_history(&store, &p.session) else { return };
+    drop(store);
+    p.agent.notes = history
+        .iter()
+        .enumerate()
+        .map(|(i, m)| i == 0 && m.content.starts_with("(Code Arena: the earlier part"))
+        .collect();
+    p.agent.history = history;
+}
+
 /// Says what waited, as the person reads it between turns.
 pub fn say_notices(notices: &Notices, ui: crate::ui::Ui) {
     let lines: Vec<(bool, String)> = notices.lock().map(|mut n| std::mem::take(&mut *n)).unwrap_or_default();
@@ -104,6 +130,21 @@ impl Recorder for StoreRecorder {
         drop(s);
         if let Some(sync) = &self.sync {
             sync.poke();
+        }
+    }
+
+    fn draft(&mut self, text: &str, reasoning: &str) {
+        self.draft_kept(text, reasoning);
+    }
+}
+
+impl StoreRecorder {
+    fn draft_kept(&mut self, text: &str, reasoning: &str) {
+        if let Ok(s) = self.store.lock() {
+            let _ = s.draft(&self.session, text, reasoning);
+        }
+        if let Some(sync) = &self.sync {
+            sync.draft(text, reasoning);
         }
     }
 }
