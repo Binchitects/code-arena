@@ -3,7 +3,7 @@
 Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
 versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
 
-## Unreleased (0.4.0)
+## 0.4.0 (2026-11-26)
 
 ### Added
 - Hooks, in Claude Code's shape (`"hooks"` in settings.json; Claude Code's `~/.claude/settings.json`

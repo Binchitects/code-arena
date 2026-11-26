@@ -167,7 +167,7 @@ checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
 name = "ca-agent"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "ca-core",
@@ -186,7 +186,7 @@ dependencies = [
 
 [[package]]
 name = "ca-arena"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ca-core",
  "ca-net",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "ca-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "ca-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "dirs",
  "serde",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "ca-llm"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ca-core",
  "ca-net",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "ca-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "ca-core",
@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "ca-memory"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "ca-arena",
@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "ca-net"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ca-core",
  "reqwest",
@@ -305,7 +305,7 @@ dependencies = [
 
 [[package]]
 name = "ca-session"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ca-llm",
  "chrono",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "ca-settings"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ca-core",
  "serde",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "ca-sync"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ca-agent",
  "ca-arena",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "ca-tools"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "ca-llm",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "ca-workspace"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "tempfile",
  "thiserror",
