@@ -9,7 +9,7 @@ pub mod connection;
 pub mod env;
 pub mod jsonc;
 pub mod schema;
-mod settings;
+pub mod settings;
 
 pub use connection::{Connection, Edition, ProviderEntry};
 pub use env::Env;

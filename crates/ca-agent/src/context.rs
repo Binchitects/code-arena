@@ -93,6 +93,28 @@ pub struct Breakdown {
     pub biggest: Vec<(usize, &'static str, usize, String)>,
 }
 
+/// What fills the request, by kind, as text: for a tokenizer to count (the same kinds as [`breakdown`]).
+pub fn kinds_text(system: &str, history: &[Message], notes: &[bool], tools: &[ToolDef]) -> [String; 6] {
+    let mut k: [String; 6] = Default::default();
+    k[0] = system.to_string();
+    k[1] = tools.iter().map(|t| t.to_wire().to_string()).collect::<Vec<_>>().join("\n");
+    for (i, m) in history.iter().enumerate() {
+        let at = match m.role {
+            ca_llm::Role::User if notes.get(i).copied().unwrap_or(false) => 5,
+            ca_llm::Role::User | ca_llm::Role::System => 2,
+            ca_llm::Role::Assistant => 3,
+            ca_llm::Role::Tool => 4,
+        };
+        k[at].push_str(&m.content);
+        for c in &m.tool_calls {
+            k[at].push_str(&c.name);
+            k[at].push_str(&c.arguments);
+        }
+        k[at].push('\n');
+    }
+    k
+}
+
 pub fn breakdown(system: &str, history: &[Message], notes: &[bool], tools: &[ToolDef]) -> Breakdown {
     let mut b = Breakdown {
         system: system.len(),

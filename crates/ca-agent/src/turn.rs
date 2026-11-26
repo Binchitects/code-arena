@@ -396,6 +396,11 @@ impl Agent {
         self.window.tokens(context::request_chars(&self.system, &self.history, &self.defs()))
     }
 
+    /// What fills the next request, by kind, as text (for a tokenizer).
+    pub fn context_texts(&self) -> [String; 6] {
+        context::kinds_text(&self.system, &self.history, &self.notes, &self.defs())
+    }
+
     /// What fills the next request, by kind.
     pub fn context_breakdown(&self) -> context::Breakdown {
         context::breakdown(&self.system, &self.history, &self.notes, &self.defs())
@@ -517,6 +522,12 @@ impl Agent {
         if kept_from >= self.history.len() || force {
             kept_from = last_persons;
         }
+        // One long turn past the target on its own: its older steps are summarized, the person's message kept.
+        let turn_chars: usize = self.history[last_persons..].iter().map(context::message_chars).sum();
+        let only_notes_before = (0..last_persons).all(|i| self.notes.get(i).copied().unwrap_or(false));
+        if kept_from == last_persons && turn_chars > budget_chars && (only_notes_before || force) {
+            return self.compact_steps(events, last_persons, budget_chars).await;
+        }
         if kept_from == 0 {
             return Ok(None);
         }
@@ -559,6 +570,74 @@ impl Agent {
         };
         self.note(format!(
             "(Code Arena: the earlier part of this conversation is summarized here; every message is kept.)\n\n{summary}{plan_text}"
+        ));
+        self.history.extend(kept);
+        self.notes.extend(kept_notes);
+        events.notice(&format!("Compacted: the model now reads about {} tokens.", self.context_used()));
+        Ok(Some(summary))
+    }
+
+    /// The steps of the turn running, after the person's message at `from`, summarized but the last ones (within
+    /// `budget_chars`, from an answer of the model's, so no result is parted from its call). Only what the model reads
+    /// changes; the session keeps every step.
+    async fn compact_steps(
+        &mut self,
+        events: &mut dyn Events,
+        from: usize,
+        budget_chars: usize,
+    ) -> Result<Option<String>, LlmError> {
+        self.sync_notes();
+        let mut keep_from = self.history.len();
+        let mut chars = 0;
+        for i in (from + 1..self.history.len()).rev() {
+            chars += context::message_chars(&self.history[i]);
+            if chars > budget_chars && keep_from < self.history.len() {
+                break;
+            }
+            if self.history[i].role == ca_llm::Role::Assistant {
+                keep_from = i;
+            }
+        }
+        // The last answer alone is past the target: it stays whole all the same, the steps before it go.
+        if keep_from >= self.history.len() {
+            keep_from = (from + 1..self.history.len())
+                .rev()
+                .find(|&i| self.history[i].role == ca_llm::Role::Assistant)
+                .unwrap_or(self.history.len());
+        }
+        if keep_from <= from + 2 {
+            return Ok(None);
+        }
+        events.notice("Compacting this turn's earlier steps: the work so far is summarized, your message kept.");
+        let older: Vec<Message> = self.history[from + 1..keep_from].to_vec();
+        let mut ask = self.request(self.defs(), Some("none"));
+        ask.messages.truncate(1);
+        ask.messages.push(self.history[from].clone());
+        ask.messages.extend(older.iter().cloned());
+        ask.messages.push(Message::user(
+            "(Code Arena: summarize the steps above, of the task this message gave you, for yourself to go on from: what was found, what was changed (files, and how), what was tried and failed, and what is left. Facts, not a story; keep paths, names, commands and numbers.)",
+        ));
+        ask.max_tokens = Some(self.window.reserve.clamp(1024, 8192) as u32);
+        let summary = match self.gateway.complete(&ask, &mut ca_llm::Quiet).await {
+            Ok(c)
+                if !c.message.content.trim().is_empty()
+                    && !context::looped(&c.message.content)
+                    && c.finish != Finish::Length =>
+            {
+                c.message.content
+            }
+            Ok(_) | Err(_) => fallback_summary(&older, &vec![false; older.len()]),
+        };
+        let kept: Vec<Message> = self.history.drain(keep_from..).collect();
+        let kept_notes: Vec<bool> = if self.notes.len() > keep_from {
+            self.notes.drain(keep_from..).collect()
+        } else {
+            vec![false; kept.len()]
+        };
+        self.history.truncate(from + 1);
+        self.notes.truncate(from + 1);
+        self.note(format!(
+            "(Code Arena: the earlier steps of this turn are summarized here; every step is kept.)\n\n{summary}"
         ));
         self.history.extend(kept);
         self.notes.extend(kept_notes);
@@ -1130,5 +1209,46 @@ mod tests {
         let bodies = bodies.lock().expect("bodies");
         assert_eq!(bodies.len(), 2);
         assert!(bodies[1].contains("\"enable_thinking\":false"), "{}", bodies[1]);
+    }
+
+    /// A model that reads four times, then answers; asked for a summary (no tools to call), it gives one.
+    struct Steps(AtomicUsize, Arc<std::sync::Mutex<Vec<Value>>>);
+    impl wiremock::Respond for Steps {
+        fn respond(&self, r: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let body: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+            self.1.lock().expect("seen").push(body.clone());
+            let ev = if body["tool_choice"] == "none" {
+                serde_json::json!({"choices": [{"delta": {"content": "Read notes.txt four times: it says 42."}, "finish_reason": "stop"}]})
+            } else if self.0.fetch_add(1, Ordering::SeqCst) < 4 {
+                serde_json::json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": format!("c{}", self.0.load(Ordering::SeqCst)), "function": {"name": "read_file", "arguments": "{\"path\":\"notes.txt\"}"}}]}, "finish_reason": "tool_calls"}]})
+            } else {
+                serde_json::json!({"choices": [{"delta": {"content": "It is 42."}, "finish_reason": "stop"}]})
+            };
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(format!("data: {ev}\n\ndata: [DONE]\n\n"))
+        }
+    }
+
+    #[tokio::test]
+    async fn one_long_turn_compacts_its_own_steps_and_keeps_the_question() {
+        let server = MockServer::start().await;
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        Mock::given(wiremock::matchers::path("/v1/chat/completions"))
+            .respond_with(Steps(AtomicUsize::new(0), seen.clone()))
+            .mount(&server)
+            .await;
+        let (_s, mut a, d, _) = agent(vec![], Mode::Ask).await;
+        a.gateway = Gateway::new(&server.uri(), Secret::new("sk-test"), None).expect("gw");
+        std::fs::write(d.path().join("notes.txt"), "the answer is 42\n".repeat(150)).expect("big");
+        a.window = Window::new(Some(3_000), Some(200), Some(80), 25);
+        let out = a.turn("what do the notes say?", &mut Quiet).await.expect("turn");
+        assert_eq!(out.answer, "It is 42.");
+        let seen = seen.lock().expect("seen");
+        assert!(seen.iter().any(|b| b["tool_choice"] == "none"), "a summary was asked");
+        let last = seen.last().expect("last")["messages"].to_string();
+        assert!(last.contains("what do the notes say?"), "the question is kept");
+        assert!(last.contains("the earlier steps of this turn are summarized"), "{last}");
+        assert!(last.contains("it says 42"), "{last}");
     }
 }

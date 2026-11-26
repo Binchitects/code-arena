@@ -816,18 +816,46 @@ async fn command(
         }
         "/context" => {
             let b = p.agent.context_breakdown();
+            // Arena's own tokenizer for its models, when it has one; else estimated from characters.
+            let counted = match (app.edition(), p.agent.model.contains(':')) {
+                (ca_settings::Edition::Managed, false) => match app.arena() {
+                    Ok(a) => tokio::time::timeout(
+                        Duration::from_secs(20),
+                        a.tokenize(&p.agent.model, &p.agent.context_texts()),
+                    )
+                    .await
+                    .ok()
+                    .and_then(|r| r.ok())
+                    .filter(|(c, _)| c.len() == 6),
+                    Err(_) => None,
+                },
+                _ => None,
+            };
             let w = &p.agent.window;
             let t = |c: usize| ui::short(w.tokens(c));
             ui.say(&context_line(&p.agent));
-            for (label, chars) in [
+            for (i, (label, chars)) in [
                 ("system prompt and instructions", b.system),
                 ("tools' definitions", b.tools),
                 ("your messages", b.you),
                 ("answers and calls", b.answers),
                 ("tool results", b.tool_results),
                 ("Code Arena's notes", b.notes),
-            ] {
-                ui.say(&format!("  {:<32}{:>8}", label, t(chars)));
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let n = match &counted {
+                    Some((c, _)) => ui::short(c[i]),
+                    None => t(chars),
+                };
+                ui.say(&format!("  {:<32}{:>8}", label, n));
+            }
+            match &counted {
+                Some((_, total)) => ui.say(
+                    &ui.dim(&format!("  counted by the model's own tokenizer, in Arena: {} in all", ui::short(*total))),
+                ),
+                None => ui.say(&ui.dim("  estimated from characters (about the gateway's own counts)")),
             }
             ui.say(&format!("  {:<32}{:>8}", "kept for the answer", ui::short(w.reserve)));
             ui.say(&ui.dim("  the biggest:"));
@@ -944,20 +972,43 @@ async fn command(
                 None => ui.say(&context_line(&p.agent)),
                 Some("off") => {
                     p.agent.window.compact_at = None;
-                    ui.say("For this session: compacts only when a request would not fit.");
+                    let kept = ca_settings::settings::keep(
+                        &app.paths.settings_file(),
+                        schema_key_compact_at(),
+                        &serde_json::json!(0),
+                    );
+                    ui.say(&format!(
+                        "Compacts only when a request would not fit{}.",
+                        if kept.is_ok() { " (kept in settings.json)" } else { ", for this session" }
+                    ));
                 }
-                Some(n) => {
-                    match n.trim_end_matches('%').parse::<u64>() {
-                        Ok(v) if (20..=95).contains(&v) => {
-                            p.agent.window.compact_at = Some(v);
-                            if let Some(t) = words.next().and_then(|t| t.trim_end_matches('%').parse::<u64>().ok()) {
-                                p.agent.window.target = t.clamp(5, v.saturating_sub(10).max(5));
-                            }
-                            ui.say(&format!("For this session: {} (agent.compactAt and agent.compactTarget in settings.json keep it).", context_line(&p.agent)));
+                Some(n) => match n.trim_end_matches('%').parse::<u64>() {
+                    Ok(v) if (20..=95).contains(&v) => {
+                        p.agent.window.compact_at = Some(v);
+                        if let Some(t) = words.next().and_then(|t| t.trim_end_matches('%').parse::<u64>().ok()) {
+                            p.agent.window.target = t.clamp(5, v.saturating_sub(10).max(5));
                         }
-                        _ => ui.say(&ui.red("A share from 20 to 95, or off.")),
+                        let file = app.paths.settings_file();
+                        let mut kept =
+                            ca_settings::settings::keep(&file, schema_key_compact_at(), &serde_json::json!(v));
+                        if kept.is_ok() {
+                            kept = ca_settings::settings::keep(
+                                &file,
+                                ca_settings::schema::COMPACT_TARGET.key,
+                                &serde_json::json!(p.agent.window.target),
+                            );
+                        }
+                        ui.say(&format!(
+                            "{} ({}).",
+                            context_line(&p.agent),
+                            match kept {
+                                Ok(()) => format!("kept in {}", file.display()),
+                                Err(e) => format!("for this session: {e}"),
+                            }
+                        ));
                     }
-                }
+                    _ => ui.say(&ui.red("A share from 20 to 95, or off.")),
+                },
             }
         }
         "/sandbox" => match &p.agent.ctx.sandbox {
@@ -1197,6 +1248,10 @@ async fn web(rest: &str, p: &mut Prepared, app: &mut App, ui: Ui) -> anyhow::Res
     )));
     show_last_turns(p, ui);
     Ok(())
+}
+
+fn schema_key_compact_at() -> &'static str {
+    ca_settings::schema::COMPACT_AT.key
 }
 
 fn answer_of(k: KeyEvent) -> Answer {

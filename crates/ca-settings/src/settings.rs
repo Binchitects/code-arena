@@ -148,6 +148,11 @@ impl Settings {
             .unwrap_or_default()
     }
 
+    /// Whether the person (or the project, a variable, a flag) gave it, rather than its default.
+    pub fn given(&self, setting: &Setting) -> bool {
+        !matches!(self.resolve(setting).1, Source::Default)
+    }
+
     pub fn env(&self) -> &Env {
         &self.env
     }
@@ -232,5 +237,82 @@ mod tests {
         let mut s = Settings::defaults(Env::from_pairs([("CODE_ARENA_MODE", "plan")]));
         s.set_flag(&MODE, json!("yolo"));
         assert_eq!(s.resolve(&MODE), (json!("yolo"), Source::Flag));
+    }
+}
+
+/// Keeps one setting in a settings file (the person's `settings.json`), the rest of it as it is: its comments, its
+/// order, its other settings. A file not there yet is made.
+pub fn keep(file: &Path, key: &str, value: &Value) -> std::io::Result<()> {
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let val = serde_json::to_string(value).unwrap_or_else(|_| "null".into());
+    let quoted = format!("\"{key}\"");
+    let out = if text.trim().is_empty() {
+        format!("{{\n  {quoted}: {val}\n}}\n")
+    } else if let Some(i) = text.lines().position(|l| l.trim_start().starts_with(&format!("{quoted}:"))) {
+        // In place: its line, its comma kept.
+        let lines: Vec<String> = text
+            .lines()
+            .enumerate()
+            .map(|(n, l)| {
+                if n != i {
+                    return l.to_string();
+                }
+                let indent: String = l.chars().take_while(|c| c.is_whitespace()).collect();
+                let comma = if l.trim_end().ends_with(',') { "," } else { "" };
+                format!("{indent}{quoted}: {val}{comma}")
+            })
+            .collect();
+        lines.join("\n") + "\n"
+    } else {
+        // Before the closing brace, with a comma after the setting before it.
+        let Some(close) = text.rfind('}') else {
+            return Err(std::io::Error::other(format!("{}: not a settings object", file.display())));
+        };
+        let head = text[..close].trim_end();
+        let needs_comma = !(head.ends_with('{') || head.ends_with(','));
+        // The last line with a value may end in a comment: the comma goes before it.
+        let head = if needs_comma {
+            match head.rfind('\n').map(|n| (n, &head[n + 1..])) {
+                Some((n, last)) if last.contains("//") && !last.trim_start().starts_with("//") => {
+                    let at = last.find("//").unwrap_or(last.len());
+                    format!("{}\n{},{}", &head[..n], last[..at].trim_end(), format!(" {}", &last[at..]))
+                }
+                _ if head.trim_end().lines().last().is_some_and(|l| l.trim_start().starts_with("//")) => {
+                    head.to_string()
+                }
+                _ => format!("{head},"),
+            }
+        } else {
+            head.to_string()
+        };
+        format!("{head}\n  {quoted}: {val}\n{}", &text[close..])
+    };
+    if let Some(d) = file.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    std::fs::write(file, out)
+}
+
+#[cfg(test)]
+mod keep_tests {
+    use super::*;
+
+    #[test]
+    fn one_setting_kept_the_rest_as_it_was() {
+        let d = tempfile::tempdir().expect("temp");
+        let f = d.path().join("settings.json");
+        keep(&f, "agent.compactAt", &serde_json::json!(70)).expect("made");
+        assert_eq!(crate::jsonc::parse(&std::fs::read_to_string(&f).expect("r")).expect("json")["agent.compactAt"], 70);
+        std::fs::write(&f, "{\n  // mine\n  \"model\": \"qwen\", // the usual\n  \"agent.compactAt\": 70\n}\n")
+            .expect("w");
+        keep(&f, "agent.compactAt", &serde_json::json!(60)).expect("changed");
+        keep(&f, "agent.compactTarget", &serde_json::json!(20)).expect("added");
+        let t = std::fs::read_to_string(&f).expect("r");
+        assert!(t.contains("// mine") && t.contains("// the usual"), "{t}");
+        let v = crate::jsonc::parse(&t).expect("still JSONC");
+        assert_eq!(
+            (v["model"].as_str(), v["agent.compactAt"].as_i64(), v["agent.compactTarget"].as_i64()),
+            (Some("qwen"), Some(60), Some(20))
+        );
     }
 }

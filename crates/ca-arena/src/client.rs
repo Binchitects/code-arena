@@ -132,6 +132,22 @@ impl ArenaClient {
         self.get("/api/code-arena/config").await
     }
 
+    /// Tokens of each text by the model's own tokenizer (`POST /api/code-arena/tokenize`), and their total.
+    pub async fn tokenize(&self, model: &str, texts: &[String]) -> Result<(Vec<u64>, u64), ArenaError> {
+        let body = serde_json::json!({"model": model, "texts": texts});
+        let v: Value = self.call(Method::POST, "/api/code-arena/tokenize", Some(&body)).await?;
+        let counts =
+            v["counts"].as_array().map(|a| a.iter().map(|c| c.as_u64().unwrap_or(0)).collect()).unwrap_or_default();
+        Ok((counts, v["total"].as_u64().unwrap_or(0)))
+    }
+
+    /// When the person's chats compact (Your account → Chat), in percent of the window: theirs, else the company's
+    /// default; 0 for only when a request would not fit. `None` when Arena says neither.
+    pub async fn compact_at(&self) -> Result<Option<i64>, ArenaError> {
+        let v: Value = self.get("/api/code-arena/preferences").await?;
+        Ok(v["compactAt"].as_i64().or_else(|| v["compactAtDefault"].as_i64()))
+    }
+
     /// `POST /api/code-arena/sign-out`: the key Code Arena signed in with is revoked.
     pub async fn sign_out(&self) -> Result<(), ArenaError> {
         let raw = self.raw(Method::POST, "/api/code-arena/sign-out", Some(&Value::Object(Default::default()))).await?;

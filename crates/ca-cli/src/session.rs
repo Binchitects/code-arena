@@ -535,7 +535,16 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     let info = listed.iter().find(|m| m.id == model);
     let configured = app.settings.integer(&schema::CONTEXT).max(0) as u64;
     let size = info.and_then(|m| m.context).or((configured > 0).then_some(configured));
-    let compact_at = match app.settings.integer(&schema::COMPACT_AT) {
+    // When it compacts: as the person set it here, else as their Arena account says (Your account → Chat).
+    let mut compact_at_setting = app.settings.integer(&schema::COMPACT_AT);
+    if !app.settings.given(&schema::COMPACT_AT)
+        && app.edition() == ca_settings::Edition::Managed
+        && let Ok(a) = app.arena()
+        && let Ok(Ok(Some(account))) = tokio::time::timeout(Duration::from_secs(8), a.compact_at()).await
+    {
+        compact_at_setting = account;
+    }
+    let compact_at = match compact_at_setting {
         0 => None,
         p => Some(p.clamp(20, 95) as u64),
     };

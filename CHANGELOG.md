@@ -120,6 +120,15 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
 - `-p --output stream-json`: one JSON object a line on stdout as the turn goes (`start`, `text`,
   `thinking`, `tool_start`, `tool_end`, `notice`, `step_end`), then the `result`.
 
+- `/context` counts with the model's own tokenizer, in Arena (managed, Arena's models); else it
+  estimates from characters, and says which.
+- When a session compacts follows your Arena account (Your account → Chat), unless you set
+  `agent.compactAt` here; `/compact-at` keeps what you give it in your settings.json (its comments
+  and other settings as they were).
+- One long turn past the target on its own compacts its own earlier steps: your message stays,
+  a summary of the work so far follows it, the last steps stay whole (no result parted from its
+  call). The session keeps every step.
+
 ### Fixed
 - A send Arena kept but whose answer was lost: the next take-in would have added the session's
   own messages again as the web's, and sent them twice. They are known by their ref now.
