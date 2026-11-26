@@ -13,6 +13,7 @@ kept = []       # what Arena was sent, in order, with the ids it gave
 web = []        # what the web added, given at the next read
 watchers = []   # the watch streams' wakers
 news = threading.Event()
+done = threading.Event()  # the test is over: the streams end
 
 class H(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -31,7 +32,7 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close"); self.end_headers()
             try:
                 self.wfile.write(b'data: {"type":"watching"}\n\n'); self.wfile.flush()
-                while True:
+                while not done.is_set():
                     if news.wait(1):
                         news.clear()
                         self.wfile.write(b'data: {"type":"chat","id":"c-1","what":"messages"}\n\n'); self.wfile.flush()
@@ -131,6 +132,10 @@ assert "asked on the web" in last and last.index("asked on the web") < last.inde
 assert wait_for(lambda: any(m.get("content") == "second question" for m in kept)), kept
 os.write(fd, b"\x04")
 _, status = os.waitpid(pid, 0)
+# The fake Arena stops before Python does: no thread writes while it goes.
+done.set()
+srv.shutdown()
+srv.server_close()
 # Leaving waits for the last answer to reach Arena.
 assert any(m.get("content") == "Answer 2." for m in kept), kept
 assert [m["content"] for m in kept].count("first question") == 1, kept
