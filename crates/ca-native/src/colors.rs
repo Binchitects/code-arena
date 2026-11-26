@@ -131,6 +131,8 @@ colors! {
     input_fg: ["input.foreground", "foreground"], "#CCCCCC", "#616161";
     input_border: ["input.border"], "#00000000", "#00000000";
     placeholder: ["input.placeholderForeground"], "#A6A6A6", "#767676";
+    input_error: ["inputValidation.errorBorder"], "#BE1100", "#BE1100";
+    input_error_bg: ["inputValidation.errorBackground"], "#5A1D1D", "#F2DEDE";
 
     button_bg: ["button.background"], "#0E639C", "#007ACC";
     button_fg: ["button.foreground"], "#FFFFFF", "#FFFFFF";
