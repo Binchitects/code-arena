@@ -185,6 +185,7 @@ fn help() -> &'static str {
 /remember [--person] TEXT  keep a memory for this project (or, with --person, for every project)\n\
 /projects             your projects in Arena; /project N puts this session in one (off: none)\n\
 /assistant [N|off]    your assistants in Arena; work as one\n\
+/hooks [trust]        the hooks that run; trust runs the project's own\n\
 /sync [on|off|all]    where this session stands with its chat in Arena; off keeps it here only; all sends every session here\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
 /exit                 leave (also Ctrl+D)\n\
@@ -920,6 +921,34 @@ async fn command(
         "/rewind" => rewind(rest, p, ui)?,
         "/web" => web(rest, p, app, ui).await?,
         "/checklist" => ui.say(&crate::checklist::command(rest, p).await),
+        "/hooks" => {
+            let root = p.agent.ctx.workspace.root().to_path_buf();
+            if rest == "trust" {
+                let project = session::project_hooks(&root);
+                if project.as_object().is_none_or(|o| o.is_empty()) {
+                    ui.say("This project has no hooks.");
+                } else {
+                    match ca_agent::hooks::trust(&app.paths.data, &root, &project) {
+                        Ok(()) => ui.say("The project's hooks run from the next session on (/clear starts one now); a change to them asks again."),
+                        Err(e) => ui.say(&ui.red(&e.to_string())),
+                    }
+                }
+            } else {
+                if p.agent.hooks.is_empty() {
+                    ui.say(&ui.dim("No hooks run in this session."));
+                }
+                for h in &p.agent.hooks.list {
+                    ui.say(&format!("{:<17} {}  {}", h.event, h.command, ui.dim(&format!("({})", h.from))));
+                }
+                let project = session::project_hooks(&root);
+                if project.as_object().is_some_and(|o| !o.is_empty())
+                    && !ca_agent::hooks::trusted(&app.paths.data, &root, &project)
+                {
+                    ui.say(&ui.yellow("The project's hooks, not trusted yet (/hooks trust runs them):"));
+                    ui.say(&serde_json::to_string_pretty(&project).unwrap_or_default());
+                }
+            }
+        }
         "/projects" | "/project" => ui.say(&crate::projects::command(name, rest, p).await),
         "/assistant" => ui.say(&crate::projects::assistant(rest, p).await),
         "/memory" | "/remember" => ui.say(&session::memory_command(p, name, rest, ui).await),

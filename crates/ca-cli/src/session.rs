@@ -83,6 +83,61 @@ pub async fn begin_turn(p: &mut Prepared, ui: crate::ui::Ui, words: &str) {
     }
 }
 
+/// A settings file's `hooks`, read as JSONC; none when it has none (or is not there).
+fn hooks_in(file: &std::path::Path) -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let v = ca_settings::jsonc::parse(&text).ok()?;
+    v.get("hooks").filter(|h| h.as_object().is_some_and(|o| !o.is_empty())).cloned()
+}
+
+/// The project's hooks as it declares them: `.code-arena/settings.json`'s, Claude Code's `.claude/settings.json` and
+/// `.claude/settings.local.json`'s, by file.
+pub fn project_hooks(root: &std::path::Path) -> serde_json::Value {
+    let mut by = serde_json::Map::new();
+    for rel in [".code-arena/settings.json", ".claude/settings.json", ".claude/settings.local.json"] {
+        if let Some(h) = hooks_in(&root.join(rel)) {
+            by.insert(rel.to_string(), h);
+        }
+    }
+    serde_json::Value::Object(by)
+}
+
+/// The session's hooks: the person's (Code Arena's settings, Claude Code's `~/.claude/settings.json`) always; the
+/// project's when trusted as they are. What to say of them.
+fn load_hooks(
+    app: &App,
+    root: &std::path::Path,
+    cwd: &std::path::Path,
+    session: &str,
+) -> (ca_agent::hooks::Hooks, Vec<String>) {
+    let mut list = Vec::new();
+    let mut said = Vec::new();
+    let mut add = |v: &serde_json::Value, from: &str| {
+        let (h, problems) = ca_agent::hooks::parse(v, from);
+        list.extend(h);
+        said.extend(problems);
+    };
+    if let Some(h) = hooks_in(&app.paths.settings_file()) {
+        add(&h, "your settings.json");
+    }
+    if let Some(home) = &app.home
+        && let Some(h) = hooks_in(&home.join(".claude").join("settings.json"))
+    {
+        add(&h, "your ~/.claude/settings.json");
+    }
+    let project = project_hooks(root);
+    if project.as_object().is_some_and(|o| !o.is_empty()) {
+        if ca_agent::hooks::trusted(&app.paths.data, root, &project) {
+            for (file, h) in project.as_object().into_iter().flatten() {
+                add(h, &format!("the project's {file}"));
+            }
+        } else {
+            said.push("This project has hooks that do not run until you trust them: /hooks shows them, /hooks trust runs them.".into());
+        }
+    }
+    (ca_agent::hooks::Hooks { list, cwd: cwd.to_path_buf(), session: session.to_string() }, said)
+}
+
 /// Built-in skills an Arena admin turned off, as Arena last said.
 fn arena_off(data: &std::path::Path) -> Vec<String> {
     std::fs::read_to_string(ca_agent::library::arena_dir(data).join("off.json"))
@@ -688,6 +743,13 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         tags: vec![],
         skip: Arc::default(),
         second_reading: app.settings.bool(&schema::PLAN_SECOND_READING),
+        hooks: {
+            let (h, said) = load_hooks(app, &ws_root, std::path::Path::new(&folder), &session);
+            for s in said {
+                ui.say(&ui.yellow(&s));
+            }
+            Arc::new(h)
+        },
         repo_key: Some(ca_memory::keys::project_key(&ws_root)).filter(|k| !k.starts_with("local/")),
     };
     // The sandbox, as the settings and this system allow.
@@ -806,6 +868,17 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         memory,
         nudge: false,
     };
+    // SessionStart: what the person's hooks say goes to the model first.
+    if prepared.agent.hooks.has("SessionStart") {
+        let source = if prepared.resumed.is_some() { "resume" } else { "startup" };
+        let said = prepared.agent.hooks.run("SessionStart", source, json!({"source": source})).await;
+        for n in &said.notes {
+            ui.say(&ui.yellow(n));
+        }
+        for c in said.context {
+            prepared.agent.note(format!("(Code Arena: a hook of the person's says: {c})"));
+        }
+    }
     if prepared.resumed.is_some() {
         crate::checklist::remind(&mut prepared).await;
         crate::projects::take_up(&mut prepared, false).await;

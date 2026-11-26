@@ -159,6 +159,8 @@ pub enum TurnError {
     Llm(LlmError),
     /// It took more requests than a turn may.
     Steps(usize),
+    /// A hook blocked the person's message (`UserPromptSubmit`), or stopped the session.
+    Blocked(String),
 }
 
 impl std::fmt::Display for TurnError {
@@ -166,6 +168,7 @@ impl std::fmt::Display for TurnError {
         match self {
             TurnError::Llm(e) => write!(f, "{e}"),
             TurnError::Steps(n) => write!(f, "the turn stopped after {n} requests to the model (agent.maxSteps)"),
+            TurnError::Blocked(why) => write!(f, "{why}"),
         }
     }
 }
@@ -224,6 +227,8 @@ pub struct Agent {
     pub second_reading: bool,
     /// The repository's key (`host/group/name`), for Farzan Graph's impact of a plan's symbols.
     pub repo_key: Option<String>,
+    /// The person's hooks (and a project's they trusted).
+    pub hooks: Arc<crate::hooks::Hooks>,
 }
 
 /// Keeps a result aside and names it (`r1`), for `read_result`.
@@ -316,8 +321,19 @@ impl Agent {
     }
 
     pub async fn turn(&mut self, text: &str, events: &mut dyn Events) -> Result<TurnOutcome, TurnError> {
+        let said = self.hooks.run("UserPromptSubmit", "", serde_json::json!({"prompt": text})).await;
+        for n in &said.notes {
+            events.notice(n);
+        }
+        if let Some(why) = said.block.or(said.stop) {
+            return Err(TurnError::Blocked(format!("A hook blocked the message: {why}")));
+        }
         let text = crate::mentions::attach(text, &self.ctx.workspace);
         let seq = self.add(Message::user(text), true).unwrap_or(self.history.len() as i64);
+        for c in said.context {
+            self.note(format!("(Code Arena: a hook of the person's says: {c})"));
+        }
+        let mut stops_blocked = 0;
         // The turn's checkpoint: what each file holds before the turn first writes it.
         self.ctx.checkpoints.begin(seq);
         if let Some(j) = &self.ctx.jobs {
@@ -433,6 +449,24 @@ impl Agent {
             // A plan proposed in this turn: grounded in Farzan Graph, and read again before the person's review.
             if self.read_plan_again(&plan_at_start, events).await {
                 continue;
+            }
+            // A Stop hook may send the model on (three times at most a turn).
+            if self.hooks.has("Stop") {
+                let said = self
+                    .hooks
+                    .run("Stop", "", serde_json::json!({"stop_hook_active": stops_blocked > 0, "last_answer": words}))
+                    .await;
+                for n in &said.notes {
+                    events.notice(n);
+                }
+                if let Some(why) = said.block
+                    && stops_blocked < 3
+                {
+                    stops_blocked += 1;
+                    events.notice(&format!("A Stop hook sends the model on: {why}"));
+                    self.note(format!("(Code Arena: a hook of the person's says the work is not done: {why})"));
+                    continue;
+                }
             }
             return Ok(out);
         }
@@ -673,6 +707,14 @@ impl Agent {
         if kept_from == 0 {
             return Ok(None);
         }
+        let _ = self
+            .hooks
+            .run(
+                "PreCompact",
+                if force { "auto" } else { "manual" },
+                serde_json::json!({"trigger": if force { "auto" } else { "manual" }}),
+            )
+            .await;
         events.notice("Compacting: the older part of the conversation is being summarized.");
         let older: Vec<Message> = self.history[..kept_from].to_vec();
         let mut ask = self.request(self.defs(), Some("none"));
@@ -827,7 +869,15 @@ impl Agent {
             }
             if !reads.is_empty() {
                 let mut ready = Vec::new();
-                for (idx, m, t) in reads {
+                for (idx, mut m, t) in reads {
+                    let pre = self.pre_tool(&m.name, &m.args, events).await;
+                    if let Some(why) = pre.block {
+                        self.push_result(&calls[idx], Output::error(format!("A hook blocked this call: {why}")), None);
+                        continue;
+                    }
+                    if let Some(u) = pre.updated_input {
+                        m.args = u;
+                    }
                     let subject = t.subject(&m.args);
                     match self.policy.decide(&m.name, Kind::Read, &subject) {
                         Decision::Refuse(why) => self.push_result(&calls[idx], Output::error(why), None),
@@ -847,6 +897,7 @@ impl Agent {
                 let results = futures_util::future::join_all(runs).await;
                 for ((idx, m, t), o) in ready.into_iter().zip(results) {
                     events.tool_end(&m.name, &t.subject(&m.args), &o);
+                    let o = self.post_tool(&m.name, &m.args, o, events).await;
                     self.push_result(&calls[idx], o, mend::note(&m));
                 }
                 i = j;
@@ -856,8 +907,17 @@ impl Agent {
             let call = &calls[i];
             match mend::mend(&call.name, &call.arguments, &schemas) {
                 Err(why) => self.push_result(call, Output::error(why.0), None),
-                Ok(m) => {
+                Ok(mut m) => {
                     self.load(&m.name);
+                    let pre = self.pre_tool(&m.name, &m.args, events).await;
+                    if let Some(why) = pre.block {
+                        self.push_result(call, Output::error(format!("A hook blocked this call: {why}")), None);
+                        i += 1;
+                        continue;
+                    }
+                    if let Some(u) = pre.updated_input {
+                        m.args = u;
+                    }
                     let Some(tool) = self.tool(&m.name) else {
                         self.push_result(call, Output::error(format!("There is no tool named {}.", m.name)), None);
                         i += 1;
@@ -865,10 +925,24 @@ impl Agent {
                     };
                     let kind = tool.kind();
                     let subject = tool.subject(&m.args);
-                    let allowed = match self.policy.decide(&m.name, kind, &subject) {
+                    // A hook's "allow" spares the question (not a mode's refusal); its "ask" asks whatever the mode.
+                    let decision = match (self.policy.decide(&m.name, kind, &subject), pre.permission.as_deref()) {
+                        (Decision::Ask, Some("allow")) => Decision::Run,
+                        (Decision::Run, Some("ask")) => Decision::Ask,
+                        (d, _) => d,
+                    };
+                    let allowed = match decision {
                         Decision::Run => Ok(()),
                         Decision::Refuse(why) => Err(why),
-                        Decision::Ask => match self.approver.ask(&m.name, &subject).await {
+                        Decision::Ask => match {
+                            if self.hooks.has("Notification") {
+                                let _ = self
+                                    .hooks
+                                    .run("Notification", "", serde_json::json!({"message": format!("Code Arena asks to run {}: {subject}", m.name)}))
+                                    .await;
+                            }
+                            self.approver.ask(&m.name, &subject).await
+                        } {
                             Some(Answer::Yes) => Ok(()),
                             Some(Answer::Always) => {
                                 self.policy.remember(&m.name, kind, &subject);
@@ -888,6 +962,7 @@ impl Agent {
                             events.tool_start(&m.name, &subject);
                             let o = tool.run(m.args.clone(), &self.ctx).await;
                             events.tool_end(&m.name, &subject, &o);
+                            let o = self.post_tool(&m.name, &m.args, o, events).await;
                             for w in &o.wrote {
                                 if !out.wrote.contains(w) {
                                     out.wrote.push(w.clone());
@@ -900,6 +975,42 @@ impl Agent {
             }
             i += 1;
         }
+    }
+
+    async fn pre_tool(&self, name: &str, args: &Value, events: &mut dyn Events) -> crate::hooks::Said {
+        if !self.hooks.has("PreToolUse") {
+            return crate::hooks::Said::default();
+        }
+        let said = self.hooks.run("PreToolUse", name, serde_json::json!({"tool_name": name, "tool_input": args})).await;
+        for n in &said.notes {
+            events.notice(n);
+        }
+        said
+    }
+
+    /// A `PostToolUse` hook's word goes with the result to the model.
+    async fn post_tool(&self, name: &str, args: &Value, mut o: Output, events: &mut dyn Events) -> Output {
+        if !self.hooks.has("PostToolUse") {
+            return o;
+        }
+        let said = self
+            .hooks
+            .run(
+                "PostToolUse",
+                name,
+                serde_json::json!({"tool_name": name, "tool_input": args, "tool_response": {"output": o.text, "is_error": o.is_error}}),
+            )
+            .await;
+        for n in &said.notes {
+            events.notice(n);
+        }
+        if let Some(why) = said.block {
+            o.text.push_str(&format!("\n(A hook of the person's says: {why})"));
+        }
+        for c in said.context {
+            o.text.push_str(&format!("\n(A hook of the person's adds: {c})"));
+        }
+        o
     }
 
     fn add(&mut self, m: Message, begins_turn: bool) -> Option<i64> {
@@ -1053,6 +1164,7 @@ mod tests {
             skip: Arc::default(),
             second_reading: false,
             repo_key: None,
+            hooks: Arc::default(),
         };
         (server, a, dir, seen)
     }

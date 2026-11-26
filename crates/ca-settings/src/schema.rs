@@ -290,6 +290,16 @@ pub static PLAN_SECOND_READING: Setting = Setting {
     section: "Agent",
 };
 
+pub static HOOKS: Setting = Setting {
+    key: "hooks",
+    kind: Kind::Object,
+    default: "{}",
+    description: "Commands run at the agent's moments, in Claude Code's shape: {\"PreToolUse\": [{\"matcher\": \"run_shell|Bash\", \"hooks\": [{\"type\": \"command\", \"command\": \"...\", \"timeout\": 60}]}]}. The moments: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, SubagentStop, PreCompact, PreCommit. Each gets the moment as JSON on stdin; exit code 2 blocks (its stderr says why), or it answers JSON. A project's hooks (.code-arena/settings.json, .claude/settings.json) run only once you trust them (/hooks trust).",
+    scope: Scope::User,
+    env: None,
+    section: "Hooks",
+};
+
 pub static SERVER_WAIT: Setting = Setting {
     key: "mcp.startWait",
     kind: Kind::Integer { min: 0, max: 120 },
@@ -376,6 +386,7 @@ pub static ALL: &[&Setting] = &[
     &PROJECT_MEMORY,
     &BUILTIN_SKILLS,
     &PLAN_SECOND_READING,
+    &HOOKS,
     &SANDBOX,
     &SANDBOX_NETWORK,
     &SANDBOX_WRITABLE,

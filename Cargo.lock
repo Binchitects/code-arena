@@ -175,6 +175,7 @@ dependencies = [
  "ca-tools",
  "ca-workspace",
  "futures-util",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

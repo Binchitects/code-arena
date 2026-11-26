@@ -3,6 +3,19 @@
 Code Arena's versions, newest first. Before 1.0 the product's own formats may change between
 versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout.
 
+## Unreleased (0.4.0)
+
+### Added
+- Hooks, in Claude Code's shape (`"hooks"` in settings.json; Claude Code's `~/.claude/settings.json`
+  and a project's `.claude/settings.json` read as they are): `SessionStart`, `UserPromptSubmit`,
+  `PreToolUse` (block, allow without asking, ask whatever the mode, or rewrite the arguments),
+  `PostToolUse` (a word to the model with the result), `Notification` (when Code Arena asks you),
+  `Stop` (send the model on: three times a turn at most) and `PreCompact`. Each runs a command
+  that gets the moment as JSON on stdin and answers by its exit code (2 blocks, its stderr says
+  why) or with JSON. A matcher is a pattern over the tool's name, Code Arena's or Claude Code's
+  (`run_shell` or `Bash`). A project's hooks run only once you trust them as they are
+  (`/hooks trust`; a change asks again). `/hooks` lists them.
+
 ## 0.3.0 (2026-11-26)
 
 ### Added

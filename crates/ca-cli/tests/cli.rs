@@ -952,3 +952,73 @@ fn doctor_says_how_to_give_a_ca_file_that_is_gone() {
     assert!(stdout.contains("could not be read") && stdout.contains("code-arena login --ca PATH"), "{stdout}");
     assert!(!stdout.contains("sk-test-only"));
 }
+
+#[tokio::test]
+async fn the_persons_hooks_block_rewrite_add_and_send_the_model_on() {
+    let gateway = MockServer::start().await;
+    let heard = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    // The model: a dangerous command, then an answer, then (sent on by the Stop hook) a last answer.
+    struct Model(std::sync::Arc<std::sync::Mutex<Vec<Value>>>, AtomicUsize);
+    impl Respond for Model {
+        fn respond(&self, r: &Request) -> ResponseTemplate {
+            self.0.lock().expect("heard").push(serde_json::from_slice(&r.body).unwrap_or_default());
+            let ev = match self.1.fetch_add(1, Ordering::SeqCst) {
+                0 => {
+                    json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c1", "function": {"name": "run_shell", "arguments": "{\"command\":\"rm -rf build\"}"}}]}, "finish_reason": "tool_calls"}]})
+                }
+                1 => json!({"choices": [{"delta": {"content": "Done."}, "finish_reason": "stop"}]}),
+                _ => json!({"choices": [{"delta": {"content": "Tests run too."}, "finish_reason": "stop"}]}),
+            };
+            ResponseTemplate::new(200).insert_header("content-type", "text/event-stream").set_body_string(sse(ev))
+        }
+    }
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Model(heard.clone(), AtomicUsize::new(0)))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let marker = project.path().join("stopped-once");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    let stop = format!("test -f {m} && exit 0; touch {m}; echo 'run the tests' >&2; exit 2", m = marker.display());
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"hooks": {
+            "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "echo 'Builds go in build/.'"}]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "grep -q 'rm -rf' && { echo 'no rm -rf' >&2; exit 2; } || exit 0"}]}],
+            "Stop": [{"hooks": [{"type": "command", "command": stop}]}]
+        }})
+        .to_string(),
+    )
+    .expect("settings");
+    // A project's own hooks do not run before they are trusted.
+    std::fs::create_dir_all(project.path().join(".code-arena")).expect("p");
+    let theirs = project.path().join("theirs-ran");
+    std::fs::write(
+        project.path().join(".code-arena/settings.json"),
+        json!({"hooks": {"UserPromptSubmit": [{"hooks": [{"command": format!("touch {}", theirs.display())}]}]}})
+            .to_string(),
+    )
+    .expect("project settings");
+    let out = code_arena(home.path())
+        .args(["-p", "clean the build", "--mode", "yolo", "-C"])
+        .arg(project.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("Tests run too."), "the Stop hook sent the model on: {stdout}\n{stderr}");
+    assert!(stderr.contains("hooks that do not run until you trust them"), "{stderr}");
+    assert!(!theirs.exists(), "the project's hook ran untrusted");
+    let heard = heard.lock().expect("heard");
+    let first = heard[0].to_string();
+    assert!(first.contains("Builds go in build/."), "UserPromptSubmit's context: {first}");
+    let second = heard[1].to_string();
+    assert!(second.contains("A hook blocked this call: no rm -rf"), "{second}");
+    assert!(heard[2].to_string().contains("the work is not done: run the tests"));
+}
