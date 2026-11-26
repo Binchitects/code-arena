@@ -4,7 +4,7 @@
 
 use floem::IntoView;
 use floem::action::{minimize_window, toggle_window_maximized};
-use floem::event::{Event, EventListener, EventPropagation};
+use floem::event::{Event, EventListener};
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::peniko::Color;
 use floem::reactive::{SignalGet, SignalUpdate, SignalWith};
@@ -15,44 +15,31 @@ use floem::views::{
 };
 use floem::window::ResizeDirection;
 
+use crate::dock::{EDITOR, Node, Side};
 use crate::icons::icon;
-use crate::layout::{View, Where};
+use crate::layout::View;
 use crate::state::{Send, Ui};
-use crate::widgets::{UI_FONT, action, action_lit, caps, line, sash};
-use crate::{agent, changes, editor, explorer, search, terminal};
+use crate::widgets::{UI_FONT, action_lit, line};
 
 const MENUS: [&str; 8] = ["File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Help"];
 
 pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     let keys = send.clone();
-    let body = h_stack((
-        activity_bar(ui),
-        container_view(ui, send.clone(), Where::Primary),
-        sash(t, true, 1.0, ui.primary_width, move |w| resize(ui, Where::Primary, w))
-            .style(move |s| s.apply_if(!ui.layout.with(|l| l.shown(Where::Primary)), |s| s.hide())),
-        v_stack((
-            editor::view(ui),
-            sash(t, false, -1.0, ui.panel_height, move |h| resize(ui, Where::Panel, h))
-                .style(move |s| s.apply_if(!ui.layout.with(|l| l.shown(Where::Panel)), |s| s.hide())),
-            container_view(ui, send.clone(), Where::Panel),
-        ))
-        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full()),
-        sash(t, true, -1.0, ui.secondary_width, move |w| resize(ui, Where::Secondary, w))
-            .style(move |s| s.apply_if(!ui.layout.with(|l| l.shown(Where::Secondary)), |s| s.hide())),
-        container_view(ui, send.clone(), Where::Secondary),
-    ))
-    .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
+    let body = h_stack((activity_bar(ui), crate::docking::tree(ui, send.clone())))
+        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     stack((
         v_stack((title_bar(ui), body, status_bar(ui))).style(|s| s.size_full()),
         menu_overlay(ui, send.clone()),
         view_menu(ui),
-        drop_edges(ui),
+        crate::docking::overlay(ui),
+        crate::docking::ghost(ui),
         resize_edges(),
     ))
     .on_resize(move |r| {
         ui.window.set((r.width(), r.height()));
-        fit(ui);
+        // Once the parts are laid out at the window's new size, they are fitted into it.
+        floem::action::exec_after(std::time::Duration::ZERO, move |_| crate::docking::fit(ui));
     })
     .on_event_cont(EventListener::PointerMove, move |e| {
         if let Event::PointerMove(p) = e {
@@ -91,81 +78,20 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     })
 }
 
-/// VS Code's own sizes: a side bar at least 170 px and the panel 77, the editor kept at least 220 wide and 70 high;
-/// dragged below half its least, a part closes (VS Code's snap), and a double-click on its sash gives it its first
-/// size again.
-pub const LEAST: [f64; 3] = [170.0, 170.0, 77.0];
-const FIRST: [f64; 3] = [260.0, 380.0, 230.0];
-
-pub fn resize(ui: Ui, w: Where, size: f64) {
-    let i = w as usize;
-    let signal = [ui.primary_width, ui.secondary_width, ui.panel_height][i];
-    if size.is_nan() {
-        signal.set(FIRST[i]);
-        return;
-    }
-    if size < LEAST[i] / 2.0 {
-        ui.layout.update(|l| {
-            if l.shown(w) {
-                *l = l.toggled(w)
-            }
-        });
-        return;
-    }
-    let (width, height) = ui.window.get_untracked();
-    let shown = |w: Where| ui.layout.with_untracked(|l| l.shown(w));
-    let most = match w {
-        Where::Primary => {
-            width - 48.0 - 220.0 - if shown(Where::Secondary) { ui.secondary_width.get_untracked() } else { 0.0 }
-        }
-        Where::Secondary => {
-            width - 48.0 - 220.0 - if shown(Where::Primary) { ui.primary_width.get_untracked() } else { 0.0 }
-        }
-        Where::Panel => height - 35.0 - 22.0 - 35.0 - 70.0,
-    };
-    signal.set(size.min(most).max(LEAST[i]));
-}
-
-/// The parts fitted to the window, the editor kept at its least: the secondary side bar gives room first, then the
-/// primary, then the panel, each down to its own least (after the window is resized, or a layout is read back).
-pub fn fit(ui: Ui) {
-    let (width, height) = ui.window.get_untracked();
-    let shown = |w: Where| ui.layout.with_untracked(|l| l.shown(w));
-    let mut over = 48.0
-        + 220.0
-        + if shown(Where::Primary) { ui.primary_width.get_untracked() } else { 0.0 }
-        + if shown(Where::Secondary) { ui.secondary_width.get_untracked() } else { 0.0 }
-        - width;
-    for (w, s) in [(Where::Secondary, ui.secondary_width), (Where::Primary, ui.primary_width)] {
-        if over > 0.0 && shown(w) {
-            let now = s.get_untracked();
-            let to = (now - over).max(LEAST[w as usize]);
-            over -= now - to;
-            s.set(to);
-        }
-    }
-    let most = height - 35.0 - 22.0 - 35.0 - 70.0;
-    if shown(Where::Panel) && ui.panel_height.get_untracked() > most {
-        ui.panel_height.set(most.max(LEAST[2]));
-    }
-}
-
 /// VS Code's keys for the workbench.
 fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
     let ctrl = m.contains(Modifiers::CONTROL);
     let shift = m.contains(Modifiers::SHIFT);
     let alt = m.contains(Modifiers::ALT);
-    let toggle = |w: Where| ui.layout.update(|l| *l = l.toggled(w));
-    let view = |v: View| ui.layout.update(|l| *l = l.revealed(v));
     match key {
         Key::Character(c) if ctrl => match (c.to_lowercase().as_str(), shift, alt) {
-            ("b", false, false) => toggle(Where::Primary),
-            ("b", false, true) => toggle(Where::Secondary),
-            ("j", false, false) => toggle(Where::Panel),
-            ("`", false, false) => ui.layout.update(|l| *l = l.view_toggled(View::Terminal)),
-            ("e", true, false) => view(View::Files),
-            ("f", true, false) => view(View::Search),
-            ("i", false, true) => view(View::Agent),
+            ("b", false, false) => ui.toggle_group_of(View::Files),
+            ("b", false, true) => ui.toggle_group_of(View::Agent),
+            ("j", false, false) => ui.toggle_group_of(View::Terminal),
+            ("`", false, false) => ui.toggle_view(View::Terminal),
+            ("e", true, false) => ui.reveal(View::Files),
+            ("f", true, false) => ui.reveal(View::Search),
+            ("i", false, true) => ui.reveal(View::Agent),
             ("s", false, false) => ui.save(send),
             ("w", false, false) => {
                 if let Some(p) = ui.active.get_untracked() {
@@ -177,6 +103,8 @@ fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
         Key::Named(NamedKey::Escape) => {
             ui.menu.set(None);
             ui.context.set(None);
+            // A drag given up: the view stays where it was.
+            ui.drag.set(None);
         }
         _ => {}
     }
@@ -231,34 +159,14 @@ fn title_bar(ui: Ui) -> impl IntoView {
             .selectable(false)
             .hover(|s| s.background(c.command_hover))
     });
+    // VS Code's layout buttons: the groups holding the Explorer, the Terminal and the Agent shown or hidden.
+    let toggle = move |on: &'static str, off: &'static str, v: View| {
+        action_lit(t, move || if ui.group_shown(v) { on } else { off }, move || ui.toggle_group_of(v))
+    };
     let layout_buttons = h_stack((
-        action_lit(
-            t,
-            move || {
-                if ui.layout.with(|l| l.shown(Where::Primary)) {
-                    "layout-sidebar-left"
-                } else {
-                    "layout-sidebar-left-off"
-                }
-            },
-            move || ui.layout.update(|l| *l = l.toggled(Where::Primary)),
-        ),
-        action_lit(
-            t,
-            move || if ui.layout.with(|l| l.shown(Where::Panel)) { "layout-panel" } else { "layout-panel-off" },
-            move || ui.layout.update(|l| *l = l.toggled(Where::Panel)),
-        ),
-        action_lit(
-            t,
-            move || {
-                if ui.layout.with(|l| l.shown(Where::Secondary)) {
-                    "layout-sidebar-right"
-                } else {
-                    "layout-sidebar-right-off"
-                }
-            },
-            move || ui.layout.update(|l| *l = l.toggled(Where::Secondary)),
-        ),
+        toggle("layout-sidebar-left", "layout-sidebar-left-off", View::Files),
+        toggle("layout-panel", "layout-panel-off", View::Terminal),
+        toggle("layout-sidebar-right", "layout-sidebar-right-off", View::Agent),
     ))
     .style(|s| s.gap(2.0).items_center().padding_right(8.0));
     let window = |name: &'static str, close: bool, on: fn()| {
@@ -314,14 +222,18 @@ fn menu_items(n: usize) -> Vec<MenuItem> {
         1 => vec![("Undo", "Ctrl+Z", None), ("Redo", "Ctrl+Y", None), ("-", "", None), ("Find", "Ctrl+F", None)],
         2 => vec![("Select All", "Ctrl+A", None)],
         3 => vec![
-            ("Explorer", "Ctrl+Shift+E", Some(|ui, _| ui.layout.update(|l| *l = l.revealed(View::Files)))),
-            ("Search", "Ctrl+Shift+F", Some(|ui, _| ui.layout.update(|l| *l = l.revealed(View::Search)))),
-            ("Chat", "Ctrl+Alt+I", Some(|ui, _| ui.layout.update(|l| *l = l.revealed(View::Agent)))),
-            ("Terminal", "Ctrl+`", Some(|ui, _| ui.layout.update(|l| *l = l.revealed(View::Terminal)))),
+            ("Explorer", "Ctrl+Shift+E", Some(|ui, _| ui.reveal(View::Files))),
+            ("Search", "Ctrl+Shift+F", Some(|ui, _| ui.reveal(View::Search))),
+            ("Changes", "", Some(|ui, _| ui.reveal(View::Changes))),
+            ("Outline", "", Some(|ui, _| ui.reveal(View::Outline))),
+            ("Chat", "Ctrl+Alt+I", Some(|ui, _| ui.reveal(View::Agent))),
+            ("Terminal", "Ctrl+`", Some(|ui, _| ui.reveal(View::Terminal))),
             ("-", "", None),
-            ("Primary Side Bar", "Ctrl+B", Some(|ui, _| ui.layout.update(|l| *l = l.toggled(Where::Primary)))),
-            ("Secondary Side Bar", "Ctrl+Alt+B", Some(|ui, _| ui.layout.update(|l| *l = l.toggled(Where::Secondary)))),
-            ("Panel", "Ctrl+J", Some(|ui, _| ui.layout.update(|l| *l = l.toggled(Where::Panel)))),
+            ("Primary Side Bar", "Ctrl+B", Some(|ui, _| ui.toggle_group_of(View::Files))),
+            ("Secondary Side Bar", "Ctrl+Alt+B", Some(|ui, _| ui.toggle_group_of(View::Agent))),
+            ("Panel", "Ctrl+J", Some(|ui, _| ui.toggle_group_of(View::Terminal))),
+            ("-", "", None),
+            ("Reset View Locations", "", Some(|ui, _| ui.reset_dock())),
         ],
         4 => vec![("Go to File...", "Ctrl+P", None)],
         5 => vec![("Start Debugging", "F5", None)],
@@ -409,7 +321,7 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
 
 /// A view's menu opened where it was right-clicked (the event's point is the clicked view's own, so the place is
 /// the pointer's as the window's root last saw it).
-fn open_view_menu(ui: Ui, v: View, _: &Event) {
+pub fn open_view_menu(ui: Ui, v: View) {
     let (x, y) = ui.pointer.get_untracked();
     ui.context.set(Some((v, x, y)));
     ui.menu.set(None);
@@ -424,27 +336,28 @@ fn view_menu(ui: Ui) -> impl IntoView {
         move || ui.context.get(),
         move |open| {
             let Some((v, x, y)) = open else { return empty().into_any() };
-            let here = ui.layout.with_untracked(|l| l.where_is(v));
+            // Visual Studio's Dock: beside the editor on any side, or into the tabs of another group.
             let mut items: Vec<(String, Box<dyn Fn()>)> = Vec::new();
-            for (to, name) in [
-                (Where::Primary, "Primary Side Bar"),
-                (Where::Secondary, "Secondary Side Bar"),
-                (Where::Panel, "Panel"),
+            for (side, name) in [
+                (Side::Left, "Dock Left of the Editor"),
+                (Side::Right, "Dock Right of the Editor"),
+                (Side::Bottom, "Dock Below the Editor"),
+                (Side::Top, "Dock Above the Editor"),
             ] {
-                if here != Some(to) {
+                items.push((name.into(), Box::new(move || ui.dock_view(v, EDITOR, side))));
+            }
+            let mine = ui.dock.with_untracked(|d| d.group_of(v));
+            for other in [View::Files, View::Agent, View::Terminal] {
+                let to = ui.dock.with_untracked(|d| d.group_of(other));
+                if let Some(g) = to.filter(|g| Some(*g) != mine) {
                     items.push((
-                        format!("Move to {name}"),
-                        Box::new(move || ui.layout.update(|l| *l = l.moved(v, to, None))),
+                        format!("Dock with {}", other.title()),
+                        Box::new(move || ui.dock_view(v, g, Side::Center)),
                     ));
                 }
             }
-            if let Some(w) = here {
-                items.push((format!("Hide {}", v.title()), Box::new(move || ui.layout.update(|l| *l = l.toggled(w)))));
-            }
-            items.push((
-                "Reset View Locations".into(),
-                Box::new(move || ui.layout.set(crate::layout::Layout::default())),
-            ));
+            items.push((format!("Hide {}", v.title()), Box::new(move || ui.toggle_group_of(v))));
+            items.push(("Reset View Locations".into(), Box::new(move || ui.reset_dock())));
             let items: Vec<ViewMenuItem> =
                 items.into_iter().enumerate().map(|(i, (s, f))| (i, s, std::rc::Rc::from(f))).collect();
             let list = dyn_stack(
@@ -511,10 +424,12 @@ fn resize_edges() -> impl IntoView {
     )
 }
 
+/// The activity bar: the side bar's views (all of them when no group is at the window's left), each dragged to
+/// dock it elsewhere.
 fn activity_bar(ui: Ui) -> impl IntoView {
     let t = ui.colors;
     let item = move |v: View| {
-        let lit = move || ui.layout.with(|l| l.shown(Where::Primary) && l.active(Where::Primary) == Some(v));
+        let lit = move || ui.view_shown(v);
         let button = h_stack((
             empty().style(move |s| {
                 let c = t.get();
@@ -523,10 +438,8 @@ fn activity_bar(ui: Ui) -> impl IntoView {
             container(icon(v.icon(), 24.0))
                 .style(|s| s.flex_grow(1.0_f32).height_full().items_center().justify_center()),
             empty().style(|s| s.width(2.0)),
-        ))
-        .on_click_stop(move |_| ui.layout.update(|l| *l = l.view_toggled(v)))
-        .on_secondary_click_stop(move |e| open_view_menu(ui, v, e));
-        let button = drag_source(ui, v, button).style(move |s| {
+        ));
+        let button = crate::docking::handle(ui, v, button, move || ui.toggle_view(v)).style(move |s| {
             let c = t.get();
             s.width(48.0)
                 .height(48.0)
@@ -551,213 +464,26 @@ fn activity_bar(ui: Ui) -> impl IntoView {
                 .hover(|s| s.color(c.activity_fg))
         })
     };
-    let bar = v_stack((
-        dyn_stack(move || ui.layout.with(|l| l.of(Where::Primary).to_vec()), |v: &View| *v, item)
-            .style(|s| s.flex_col()),
+    let listed = move || {
+        ui.dock.with(|d| match d.side_bar().and_then(|g| d.find(g)) {
+            Some(Node::Tabs { views, .. }) => views.clone(),
+            _ => crate::layout::VIEWS.to_vec(),
+        })
+    };
+    v_stack((
+        dyn_stack(listed, |v: &View| *v, item).style(|s| s.flex_col()),
         empty().style(|s| s.flex_grow(1.0_f32)),
         bottom("account"),
         bottom("settings-gear"),
     ))
     .style(move |s| {
         let c = t.get();
-        line(s, c.activity_border, 'r')
-            .width(48.0)
-            .height_full()
-            .background(c.activity_bg)
-            .apply_if(ui.drop_on.get() == Some(Where::Primary), |s| s.background(c.drop_bg))
-    });
-    drop_target(ui, Where::Primary, bar)
-}
-
-/// A container (a side bar or the panel): its title (the view's, or the panel's tabs) and the view it shows.
-fn container_view(ui: Ui, send: Send, w: Where) -> impl IntoView {
-    let t = ui.colors;
-    let shows = move || ui.layout.with(|l| if l.shown(w) { l.active(w) } else { None });
-    let send2 = send.clone();
-    let header = dyn_container(
-        move || (ui.layout.with(|l| l.of(w).to_vec()), shows()),
-        move |(views, active)| {
-            if w == Where::Panel || views.len() > 1 && w == Where::Secondary {
-                // The panel's tabs: its views' titles in capitals, the shown one underlined.
-                h_stack((dyn_stack(
-                    move || views.clone(),
-                    |v: &View| *v,
-                    move |v: View| {
-                        let on = active == Some(v);
-                        let tab = v_stack((
-                            label(move || v.title().to_uppercase()).style(caps),
-                            empty().style(move |s| {
-                                let c = t.get();
-                                s.height(1.0).width_full().background(if on {
-                                    c.panel_title_border
-                                } else {
-                                    Color::TRANSPARENT
-                                })
-                            }),
-                        ))
-                        .on_click_stop(move |_| ui.layout.update(|l| *l = l.revealed(v)))
-                        .on_secondary_click_stop(move |e| open_view_menu(ui, v, e));
-                        drag_source(ui, v, tab).style(move |s| {
-                            let c = t.get();
-                            s.gap(5.0)
-                                .padding_top(6.0)
-                                .margin_horiz(10.0)
-                                .cursor(CursorStyle::Pointer)
-                                .color(if on { c.panel_title } else { c.panel_title_inactive })
-                                .hover(|s| s.color(c.panel_title))
-                        })
-                    },
-                )
-                .style(|s| s.flex_row()),))
-                .into_any()
-            } else {
-                let title = label(move || active.map(|v| v.title().to_uppercase()).unwrap_or_default())
-                    .on_secondary_click_stop(move |e| {
-                        if let Some(v) = active {
-                            open_view_menu(ui, v, e)
-                        }
-                    })
-                    .style(move |s| caps(s).padding_left(20.0).color(t.get().side_title));
-                match active {
-                    Some(v) => drag_source(ui, v, title).into_any(),
-                    None => title.into_any(),
-                }
-            }
-        },
-    );
-    let title = h_stack((
-        header.style(|s| s.flex_grow(1.0_f32)),
-        dyn_container(shows, move |v| match v {
-            Some(View::Files) => {
-                let send = send2.clone();
-                h_stack((
-                    action(t, "refresh", move || {
-                        ui.tree.update(|t| t.clear());
-                        send(serde_json::json!({"type": "ls", "path": ""}));
-                        for p in ui.expanded.get_untracked() {
-                            send(serde_json::json!({"type": "ls", "path": p}));
-                        }
-                    }),
-                    action(t, "collapse-all", move || ui.expanded.update(|e| e.clear())),
-                ))
-                .style(|s| s.gap(2.0))
-                .into_any()
-            }
-            Some(_) if w == Where::Panel => {
-                action(t, "close", move || ui.layout.update(|l| *l = l.toggled(Where::Panel))).into_any()
-            }
-            _ => empty().into_any(),
-        })
-        .style(|s| s.padding_right(8.0)),
-    ))
-    .style(move |s| s.height(35.0).width_full().items_center().selectable(false));
-    let body = dyn_container(shows, move |v| match v {
-        Some(View::Files) => explorer::view(ui, send.clone()).into_any(),
-        Some(View::Agent) => agent::view(ui, send.clone()).into_any(),
-        Some(View::Search) => search::view(ui, send.clone()).into_any(),
-        Some(View::Changes) => changes::view(ui, send.clone()).into_any(),
-        Some(View::Terminal) => terminal::view(ui, send.clone()).into_any(),
-        Some(v) => not_yet(ui, v).into_any(),
-        None => empty().into_any(),
+        line(s, c.activity_border, 'r').width(48.0).height_full().background(c.activity_bg)
     })
-    .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
-    let lit = empty().style(move |s| {
-        let c = t.get();
-        s.position(Position::Absolute)
-            .inset(0.0)
-            .background(c.drop_bg)
-            .apply_if(ui.drop_on.get() != Some(w), |s| s.hide())
-    });
-    let part = stack((v_stack((title, body)).style(|s| s.size_full()), lit)).style(move |s| {
-        let c = t.get();
-        let shown = ui.layout.with(|l| l.shown(w));
-        let s = s.apply_if(!shown, |s| s.hide());
-        match w {
-            Where::Primary => line(s, c.side_border, 'r')
-                .width(ui.primary_width.get())
-                .height_full()
-                .background(c.side_bg)
-                .color(c.side_fg),
-            Where::Secondary => line(s, c.side_border, 'l')
-                .width(ui.secondary_width.get())
-                .height_full()
-                .background(c.side_bg)
-                .color(c.side_fg),
-            Where::Panel => {
-                line(s, c.panel_border, 't').height(ui.panel_height.get()).width_full().background(c.panel_bg)
-            }
-        }
-    });
-    drop_target(ui, w, part)
-}
-
-/// A view's icon or tab, dragged to another container as in VS Code (drawn under the pointer while it goes).
-fn drag_source<V: IntoView + 'static>(ui: Ui, v: View, view: V) -> impl IntoView {
-    let t = ui.colors;
-    view.into_view()
-        .draggable()
-        .on_event_cont(EventListener::DragStart, move |_| {
-            ui.dragging.set(Some(v));
-            ui.menu.set(None);
-            ui.context.set(None);
-        })
-        .on_event_cont(EventListener::DragEnd, move |_| {
-            ui.dragging.set(None);
-            ui.drop_on.set(None);
-        })
-        .dragging_style(move |s| {
-            let c = t.get();
-            s.background(c.list_selected).color(c.list_selected_fg).border_radius(4.0).box_shadow_blur(6.0)
-        })
-}
-
-/// Where a dragged view may go: lit while it is over it, and the view moved there when it is dropped.
-fn drop_target<V: IntoView + 'static>(ui: Ui, w: Where, view: V) -> impl IntoView {
-    view.into_view()
-        .on_event(EventListener::DragOver, move |_| {
-            if ui.dragging.get_untracked().is_some() && ui.drop_on.get_untracked() != Some(w) {
-                ui.drop_on.set(Some(w));
-            }
-            EventPropagation::Continue
-        })
-        .on_event_cont(EventListener::DragLeave, move |_| {
-            if ui.drop_on.get_untracked() == Some(w) {
-                ui.drop_on.set(None);
-            }
-        })
-        .on_event(EventListener::Drop, move |_| match ui.dragging.get_untracked() {
-            Some(v) => {
-                ui.layout.update(|l| *l = l.moved(v, w, None));
-                ui.dragging.set(None);
-                ui.drop_on.set(None);
-                EventPropagation::Stop
-            }
-            None => EventPropagation::Continue,
-        })
-}
-
-/// While a view is dragged, a hidden container takes it at its edge of the window (its place when shown).
-fn drop_edges(ui: Ui) -> impl IntoView {
-    let t = ui.colors;
-    let edge = move |w: Where| {
-        let zone = empty().style(move |s| {
-            let c = t.get();
-            let open = ui.dragging.get().is_some() && !ui.layout.with(|l| l.shown(w));
-            let s = s.position(Position::Absolute).z_index(150).apply_if(!open, |s| s.hide());
-            let s = match w {
-                Where::Primary => s.inset_left(48.0).inset_top(35.0).inset_bottom(22.0).width(90.0),
-                Where::Secondary => s.inset_right(0.0).inset_top(35.0).inset_bottom(22.0).width(90.0),
-                Where::Panel => s.inset_left(48.0).inset_right(0.0).inset_bottom(22.0).height(90.0),
-            };
-            s.background(if ui.drop_on.get() == Some(w) { c.drop_bg } else { c.drop_bg.multiply_alpha(0.35) })
-        });
-        drop_target(ui, w, zone)
-    };
-    (edge(Where::Primary), edge(Where::Secondary), edge(Where::Panel))
 }
 
 /// A view not drawn natively yet: said so, and where it is meanwhile.
-fn not_yet(ui: Ui, v: View) -> impl IntoView {
+pub fn not_yet(ui: Ui, v: View) -> impl IntoView {
     let t = ui.colors;
     label(move || {
         format!("{} comes to the native window in a later step; `code-arena ide --browser` has it now.", v.title())

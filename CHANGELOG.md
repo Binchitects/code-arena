@@ -60,6 +60,13 @@ Sections used:
   the editor keeps 220 × 70; dragged under half its least, a part closes, and a double-click on
   its sash gives it its first size. The parts fit the window again when it is resized. Long lines
   in the editor scroll, as VS Code's, instead of wrapping.
+- **Views dock as in Visual Studio.** The native window's layout is a dock tree: drag a view by its
+  icon, title or tab and Visual Studio's guide shows on the part under the pointer (dock left,
+  right, above, below, or into its tabs) and at the window's four edges, the place it would take
+  shaded; release to dock it there, Escape to give up. Any number of groups, in rows and columns;
+  each part keeps its size, the editor takes the rest. Right-click a view to dock it beside the
+  editor or with another group. Where everything is, what is hidden and each part's size are kept
+  per folder; Reset View Locations gives VS Code's layout back.
 - **Development builds optimise their dependencies**, so the native window built for trying it is
   as quick as the released one (Floem's layout, text and drawing are far too slow unoptimised).
 - **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,

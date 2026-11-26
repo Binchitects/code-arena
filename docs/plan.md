@@ -160,7 +160,8 @@ which an MIT product cannot take; Slint's licences do not fit an MIT product.
    centre to join its tabs) and at the window's four edges, the place it would take shaded, and
    it docks there. Sizes are kept apart from the tree, so a sash only sets a size: in a split the
    child holding the editor flexes, the others keep their pixels. VS Code's controls mean: the
-   activity bar lists every view (a click shows it, again hides its group); Ctrl+B, Ctrl+Alt+B and
+   activity bar lists the views of the side bar (the group at the window's left; every view when
+   there is none), a click shows one and again hides its group; Ctrl+B, Ctrl+Alt+B and
    Ctrl+J hide or show the group holding the Explorer, the Agent and the Terminal; Reset View
    Locations gives the default tree, which draws as the three containers did. A layout kept in the
    old form is read as the default. Floating windows (a view in a window of its own) and auto-hide

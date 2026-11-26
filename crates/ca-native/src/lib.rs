@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use floem::IntoView;
-use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, create_effect, create_rw_signal};
+use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::window::WindowConfig;
 use serde_json::{Value, json};
 
@@ -14,6 +14,8 @@ mod agent;
 mod changes;
 mod colors;
 mod diff;
+mod dock;
+mod docking;
 mod editor;
 mod explorer;
 mod highlight;
@@ -77,10 +79,9 @@ fn keep_view_state(ui: Ui, send: Send) {
     let generation = create_rw_signal(0u64);
     let waiting = create_rw_signal(false);
     create_effect(move |_| {
-        ui.layout.track();
-        ui.primary_width.track();
-        ui.secondary_width.track();
-        ui.panel_height.track();
+        ui.dock.track();
+        ui.hidden.track();
+        ui.sizes.with(|m| m.values().for_each(|s| s.track()));
         ui.tabs.track();
         ui.active.track();
         if ui.loaded.get_untracked() {

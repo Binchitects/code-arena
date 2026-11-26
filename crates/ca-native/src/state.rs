@@ -10,7 +10,7 @@ use floem::views::editor::text_document::TextDocument;
 use serde_json::{Value, json};
 
 use crate::colors::Colors;
-use crate::layout::Layout;
+use crate::dock::Dock;
 use crate::model::{Item, Kind, Tool};
 
 pub type Send = Rc<dyn Fn(Value)>;
@@ -101,10 +101,12 @@ pub struct Ui {
     pub jobs: RwSignal<Vec<(u64, String)>>,
     pub draft: RwSignal<String>,
 
-    pub layout: RwSignal<Layout>,
-    pub primary_width: RwSignal<f64>,
-    pub secondary_width: RwSignal<f64>,
-    pub panel_height: RwSignal<f64>,
+    /// Where the views are (the dock tree), the groups hidden, and each part's size by its number.
+    pub dock: RwSignal<Dock>,
+    pub hidden: RwSignal<HashSet<u32>>,
+    pub sizes: RwSignal<HashMap<u32, RwSignal<f64>>>,
+    /// A view being dragged to dock it.
+    pub drag: RwSignal<Option<crate::docking::Drag>>,
     /// The window's size (the parts' sizes are bounded by it).
     pub window: RwSignal<(f64, f64)>,
     /// The title bar's menu open, by its place.
@@ -122,8 +124,6 @@ pub struct Ui {
     /// the same line asked again is gone to again.
     pub goto: RwSignal<Option<(String, usize, u64)>>,
     /// The view being dragged, and the container it is over.
-    pub dragging: RwSignal<Option<crate::layout::View>>,
-    pub drop_on: RwSignal<Option<crate::layout::Where>>,
     /// Where the pointer is in the window (for a menu opened by a right-click).
     pub pointer: RwSignal<(f64, f64)>,
     /// The layout kept for the folder has been read: from then on a change is kept.
@@ -160,17 +160,15 @@ impl Ui {
             goal: create_rw_signal(None),
             jobs: create_rw_signal(Vec::new()),
             draft: create_rw_signal(String::new()),
-            layout: create_rw_signal(Layout::default()),
-            primary_width: create_rw_signal(260.0),
-            secondary_width: create_rw_signal(380.0),
-            panel_height: create_rw_signal(230.0),
+            dock: create_rw_signal(Dock::default()),
+            hidden: create_rw_signal(HashSet::new()),
+            sizes: create_rw_signal(HashMap::new()),
+            drag: create_rw_signal(None),
             window: create_rw_signal((1280.0, 800.0)),
             menu: create_rw_signal(None),
             context: create_rw_signal(None),
             loaded: create_rw_signal(false),
             pointer: create_rw_signal((0.0, 0.0)),
-            dragging: create_rw_signal(None),
-            drop_on: create_rw_signal(None),
             changes: create_rw_signal(Vec::new()),
             term: create_rw_signal(crate::terminal::State::None),
             term_screen: create_rw_signal(crate::terminal::Screen::default()),
@@ -293,12 +291,11 @@ impl Ui {
         json!({
             "editors": editors,
             "active": active,
-            "layout": self.layout.get_untracked().to_json(),
-            "sizes": {
-                "primary": self.primary_width.get_untracked(),
-                "secondary": self.secondary_width.get_untracked(),
-                "panel": self.panel_height.get_untracked(),
-            },
+            "dock": self.dock.get_untracked().to_json(),
+            "hidden": self.hidden.with_untracked(|h| { let mut h: Vec<u32> = h.iter().copied().collect(); h.sort(); h }),
+            "sizes": self.sizes.with_untracked(|m| {
+                m.iter().map(|(id, s)| (id.to_string(), json!(s.get_untracked()))).collect::<serde_json::Map<_, _>>()
+            }),
         })
     }
 
@@ -314,16 +311,24 @@ impl Ui {
         if let Some(a) = v["active"].as_str() {
             send(json!({"type": "open", "path": a}));
         }
-        self.layout.set(Layout::normalize(&v["layout"]));
-        let size = |k: &str, lo: f64| v["sizes"][k].as_f64().filter(|x| x.is_finite()).map(|x| x.clamp(lo, 4000.0));
-        if let Some(w) = size("primary", 170.0) {
-            self.primary_width.set(w);
-        }
-        if let Some(w) = size("secondary", 170.0) {
-            self.secondary_width.set(w);
-        }
-        if let Some(h) = size("panel", 77.0) {
-            self.panel_height.set(h);
+        // A layout kept in the old form (three containers) is read as the default.
+        let dock = Dock::from_json(&v["dock"]);
+        let mut groups = Vec::new();
+        dock.root.groups(&mut groups);
+        self.hidden.set(
+            v["hidden"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|x| x.as_u64().map(|x| x as u32))
+                .filter(|g| groups.contains(g))
+                .collect(),
+        );
+        self.dock.set(dock);
+        for (id, size) in v["sizes"].as_object().into_iter().flatten() {
+            if let (Ok(id), Some(x)) = (id.parse::<u32>(), size.as_f64().filter(|x| x.is_finite())) {
+                self.size(id).set(x.clamp(77.0, 4000.0));
+            }
         }
     }
 
@@ -357,7 +362,6 @@ impl Ui {
                 self.items.set(self.thread_of(m));
                 if !self.loaded.get_untracked() {
                     self.restore(&m["view_state"], send);
-                    crate::workbench::fit(*self);
                     self.loaded.set(true);
                 }
                 send(json!({"type": "themes"}));
@@ -623,13 +627,14 @@ impl Ui {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{View, Where};
+    use crate::layout::View;
 
     #[test]
-    fn the_look_kept_comes_back_as_it_was_and_sizes_within_bounds() {
+    fn the_look_kept_comes_back_as_it_was() {
         let ui = Ui::new();
-        ui.layout.update(|l| *l = l.moved(View::Search, Where::Panel, None));
-        ui.primary_width.set(333.0);
+        ui.dock_view(View::Search, crate::dock::EDITOR, crate::dock::Side::Right);
+        ui.size(2).set(333.0);
+        ui.toggle_group_of(View::Terminal);
         let kept = ui.view_state();
         let again = Ui::new();
         let asked = Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -638,33 +643,28 @@ mod tests {
             Rc::new(move |v: Value| asked.borrow_mut().push(v))
         };
         again.restore(&kept, &send);
-        assert_eq!(again.layout.get_untracked(), ui.layout.get_untracked());
-        assert_eq!(again.primary_width.get_untracked(), 333.0);
-        again.restore(
-            &json!({"editors": ["a.rs", "b.rs"], "active": "a.rs", "layout": {}, "sizes": {"panel": 5.0}}),
-            &send,
-        );
-        // In their order, then the one shown last once more, so it is the one shown.
+        assert_eq!(again.dock.get_untracked(), ui.dock.get_untracked());
+        assert_eq!(again.size(2).get_untracked(), 333.0);
+        assert!(!again.group_shown(View::Terminal), "hidden, as it was");
+        // An old layout (three containers): the default dock; the files open again in their order, the one shown
+        // last asked once more so it is the one shown.
+        let old = json!({"editors": ["a.rs", "b.rs"], "active": "a.rs", "layout": {"primary": ["files"]}});
+        let fresh = Ui::new();
+        fresh.restore(&old, &send);
+        assert_eq!(fresh.dock.get_untracked(), crate::dock::Dock::default());
         let opened: Vec<_> = asked.borrow().iter().filter_map(|v| v["path"].as_str().map(str::to_string)).collect();
         assert_eq!(opened, ["a.rs", "b.rs", "a.rs"]);
-        assert_eq!(again.panel_height.get_untracked(), 77.0);
-        assert_eq!(again.layout.get_untracked(), Layout::default());
     }
 
     #[test]
-    fn the_editor_keeps_its_room_and_a_part_dragged_small_closes() {
+    fn a_view_shown_hidden_and_its_group_toggled() {
         let ui = Ui::new();
-        ui.window.set((1000.0, 700.0));
-        ui.primary_width.set(300.0);
-        ui.secondary_width.set(900.0);
-        crate::workbench::fit(ui);
-        // 1000 = 48 + 220 (the editor) + 300 + 432: the secondary side bar gave the room.
-        assert_eq!(ui.secondary_width.get_untracked(), 432.0);
-        crate::workbench::resize(ui, Where::Primary, 2000.0);
-        assert_eq!(ui.primary_width.get_untracked(), 1000.0 - 48.0 - 220.0 - 432.0);
-        crate::workbench::resize(ui, Where::Primary, 100.0);
-        assert_eq!(ui.primary_width.get_untracked(), 170.0, "held at its least");
-        crate::workbench::resize(ui, Where::Primary, 60.0);
-        assert!(!ui.layout.get_untracked().shown(Where::Primary), "under half its least, it closes");
+        assert!(ui.view_shown(View::Files));
+        ui.toggle_view(View::Search);
+        assert!(ui.view_shown(View::Search) && !ui.view_shown(View::Files));
+        ui.toggle_view(View::Search);
+        assert!(!ui.group_shown(View::Search), "clicked again: its group hidden");
+        ui.reveal(View::Changes);
+        assert!(ui.view_shown(View::Changes));
     }
 }
