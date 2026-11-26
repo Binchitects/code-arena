@@ -20,6 +20,14 @@ versions; compatibility with Farzan Arena servers from 8.0 on is kept throughout
   context of its own and reports back; several in one answer run at once (four at most). Its
   calls ask as the session's do; it has no `task` of its own, nor the session's plan. Its steps
   show as lines of their own; a `SubagentStop` hook may send it on, once.
+- Goal mode: `/goal TEXT` (or `code-arena -p "…" --goal TEXT`) and the agent works turn after turn
+  until the goal is met as its check says: `--check CMD` (its exit code) or `--when CONDITION` (a
+  fresh sub-agent reads the files), else the agent writes one down first with `goal_check`. A
+  budget (`--steps`, `--minutes`, `--tokens`; or `--until-met`); it stops when the budget is
+  spent, after three turns that do nothing while the check fails, or three turns with no check.
+  `/goal` says where it stands; `pause`, `resume` (Ctrl+C pauses), `cancel`; more `/goal TEXT`
+  wait their turn (`drop N`). Kept with the session (a 0.3 store is upgraded in place) and shown
+  above the web chat.
 
 ## 0.3.0 (2026-11-26)
 

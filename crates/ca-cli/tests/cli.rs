@@ -1072,3 +1072,39 @@ async fn a_task_goes_to_a_sub_agent_that_reports_back() {
     assert!(sub["messages"].to_string().contains("Review a.txt for bugs."));
     assert!(!sub["messages"].to_string().contains("have it reviewed"), "it does not see the conversation");
 }
+
+#[tokio::test]
+async fn a_goal_is_worked_on_turn_after_turn_until_its_check_passes() {
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(
+            vec![
+                sse(json!({"choices": [{"delta": {"content": "Looking at it first."}, "finish_reason": "stop"}]})),
+                call("w1", "write_file", json!({"path": "done.txt", "content": "yes\n"})),
+                sse(json!({"choices": [{"delta": {"content": "Wrote done.txt."}, "finish_reason": "stop"}]})),
+            ],
+            AtomicUsize::new(0),
+        ))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    let project = tempfile::tempdir().expect("project");
+    let out = code_arena(home.path())
+        .args(["-p", "go", "--goal", "make done.txt --check test -f done.txt", "--mode", "yolo", "-C"])
+        .arg(project.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .output()
+        .expect("runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stderr.contains("The goal is not met yet (`test -f done.txt` failed)"), "{stderr}");
+    assert!(stderr.contains("Goal met: `test -f done.txt` succeeded"), "{stderr}");
+    assert!(project.path().join("done.txt").is_file());
+    let requests = gateway.received_requests().await.expect("requests");
+    let second = requests.iter().filter(|r| r.url.path().ends_with("/chat/completions")).nth(1).expect("a second turn");
+    assert!(String::from_utf8_lossy(&second.body).contains("Goal (turn 2): make done.txt"));
+}

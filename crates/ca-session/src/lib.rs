@@ -22,7 +22,7 @@ pub type Result<T> = std::result::Result<T, SessionError>;
 
 /// The schema's version. Before 1.0 a store of another version is not migrated: it is moved aside and a new one
 /// begun (the plan's "no backward compatibility before 1.0").
-const SCHEMA: i64 = 2;
+const SCHEMA: i64 = 3;
 
 const CREATE: &str = r#"
 CREATE TABLE sessions (
@@ -40,7 +40,9 @@ CREATE TABLE sessions (
   chat_branch INTEGER NOT NULL DEFAULT 0,
   chat_off INTEGER NOT NULL DEFAULT 0,
   plan TEXT,
-  plan_sent INTEGER NOT NULL DEFAULT 1
+  plan_sent INTEGER NOT NULL DEFAULT 1,
+  goals TEXT,
+  goals_sent INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX sessions_by_folder ON sessions(folder, updated DESC);
 CREATE TABLE messages (
@@ -87,6 +89,12 @@ ALTER TABLE sessions ADD COLUMN plan TEXT;
 ALTER TABLE sessions ADD COLUMN plan_sent INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE messages ADD COLUMN arena TEXT;
 ALTER TABLE compactions ADD COLUMN sent INTEGER NOT NULL DEFAULT 0;
+"#;
+
+/// From schema 2 (0.3) to 3: the session's goals.
+const UPGRADE_2: &str = r#"
+ALTER TABLE sessions ADD COLUMN goals TEXT;
+ALTER TABLE sessions ADD COLUMN goals_sent INTEGER NOT NULL DEFAULT 1;
 "#;
 
 /// Where a session stands with its chat in Arena.
@@ -171,8 +179,11 @@ impl Store {
         if version == 0 {
             db.execute_batch(CREATE)?;
             db.pragma_update(None, "user_version", SCHEMA)?;
-        } else if version == 1 {
-            db.execute_batch(UPGRADE_1)?;
+        } else if version == 1 || version == 2 {
+            if version == 1 {
+                db.execute_batch(UPGRADE_1)?;
+            }
+            db.execute_batch(UPGRADE_2)?;
             db.pragma_update(None, "user_version", SCHEMA)?;
         } else if version != SCHEMA {
             drop(db);
@@ -558,6 +569,28 @@ impl Store {
         Ok(())
     }
 
+    /// The session's goals changed (JSON; none: cleared): kept, and to be sent to Arena.
+    pub fn set_goals(&self, id: &str, goals: Option<&str>) -> Result<()> {
+        self.db.execute("UPDATE sessions SET goals = ?2, goals_sent = 0 WHERE id = ?1", params![id, goals])?;
+        Ok(())
+    }
+
+    pub fn goals(&self, id: &str) -> Result<Option<String>> {
+        Ok(self.db.query_row("SELECT goals FROM sessions WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+    }
+
+    pub fn goals_unsent(&self, id: &str) -> Result<Option<Option<String>>> {
+        Ok(self
+            .db
+            .query_row("SELECT goals FROM sessions WHERE id = ?1 AND goals_sent = 0", [id], |r| r.get(0))
+            .optional()?)
+    }
+
+    pub fn goals_sent(&self, id: &str, goals: Option<&str>) -> Result<()> {
+        self.db.execute("UPDATE sessions SET goals_sent = 1 WHERE id = ?1 AND goals IS ?2", params![id, goals])?;
+        Ok(())
+    }
+
     /// The last plan another session of the folder left (with its session and when), for `/plan resume`.
     pub fn plan_left(&self, folder: &str, except: &str) -> Result<Option<(String, i64, String)>> {
         Ok(self
@@ -749,7 +782,7 @@ mod tests {
             let db = Connection::open(&path).expect("open");
             // Schema 1, as 0.2 made it.
             let v1 = CREATE
-                .replace(",\n  chat TEXT,\n  chat_stamp TEXT,\n  chat_branch INTEGER NOT NULL DEFAULT 0,\n  chat_off INTEGER NOT NULL DEFAULT 0,\n  plan TEXT,\n  plan_sent INTEGER NOT NULL DEFAULT 1", "")
+                .replace(",\n  chat TEXT,\n  chat_stamp TEXT,\n  chat_branch INTEGER NOT NULL DEFAULT 0,\n  chat_off INTEGER NOT NULL DEFAULT 0,\n  plan TEXT,\n  plan_sent INTEGER NOT NULL DEFAULT 1,\n  goals TEXT,\n  goals_sent INTEGER NOT NULL DEFAULT 1", "")
                 .replace("  arena TEXT,\n", "")
                 .replace("  sent INTEGER NOT NULL DEFAULT 0,\n", "");
             assert!(!v1.contains("chat_off") && !v1.contains("arena TEXT") && !v1.contains("sent INTEGER"));

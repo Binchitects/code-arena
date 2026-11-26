@@ -185,6 +185,8 @@ fn help() -> &'static str {
 /remember [--person] TEXT  keep a memory for this project (or, with --person, for every project)\n\
 /projects             your projects in Arena; /project N puts this session in one (off: none)\n\
 /assistant [N|off]    your assistants in Arena; work as one\n\
+/goal [TEXT | pause | resume | cancel | drop N]  goal mode: the agent works until TEXT is met; --check CMD or --when
+                      CONDITION says how it is checked; --steps N --minutes N --tokens N or --until-met its budget\n\
 /hooks [trust]        the hooks that run; trust runs the project's own\n\
 /sync [on|off|all]    where this session stands with its chat in Arena; off keeps it here only; all sends every session here\n\
 /web [N]              your chats in Arena; /web N continues one here\n\
@@ -342,6 +344,10 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
             None => line.clone(),
         };
         session::begin_turn(&mut p, ui, &message).await;
+        // A turn of the person's own takes the settings' steps; a goal turn may take fewer (its budget).
+        if !carry_on {
+            p.agent.max_steps = p.max_steps;
+        }
         session::before_message(&mut p, &message).await;
         let started = Instant::now();
         let mut progress = Progress::new(ui, true);
@@ -408,6 +414,10 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         if !progress.at_line_start {
             ui::out("\n");
         }
+        let outcome = match &result {
+            Some(Ok(o)) => Some(o.clone()),
+            _ => None,
+        };
         match result {
             None => {
                 if let Ok(mut g) = pending.lock() {
@@ -429,6 +439,12 @@ pub async fn run(app: &mut App, args: ChatArgs) -> anyhow::Result<i32> {
         }
         if let Some(s) = &p.sync {
             s.end_turn_soon();
+        }
+        // Goal mode: the check runs, and the next goal turn starts by itself while the goal is worked on.
+        if let Some(next) =
+            crate::goals::after_turn(&mut p, outcome.as_ref(), started.elapsed(), &|s| ui.say(&ui.yellow(&s))).await
+        {
+            p.said_next = Some(next);
         }
         // A line typed as the turn ended waits in the prompt.
         let left: Vec<String> = inbox.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default();
@@ -921,6 +937,13 @@ async fn command(
         "/rewind" => rewind(rest, p, ui)?,
         "/web" => web(rest, p, app, ui).await?,
         "/checklist" => ui.say(&crate::checklist::command(rest, p).await),
+        "/goal" => {
+            ui.say(&crate::goals::command(rest, p));
+            // A goal set (or resumed) is worked on at once.
+            if !rest.is_empty() && !matches!(rest, "pause" | "cancel") && !rest.starts_with("drop") {
+                p.said_next = p.goals.get().prompt();
+            }
+        }
         "/hooks" => {
             let root = p.agent.ctx.workspace.root().to_path_buf();
             if rest == "trust" {

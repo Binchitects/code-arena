@@ -64,6 +64,8 @@ pub struct RunArgs {
     pub output: OutputFormat,
     pub resume: Resume,
     pub carry_plan: bool,
+    /// `--goal TEXT`: the run works until the goal is met.
+    pub goal: Option<String>,
 }
 
 /// The progress of a turn on stderr; the answer's words on stdout as they come (text output).
@@ -223,11 +225,38 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
     if args.output == OutputFormat::StreamJson {
         line(json!({"type": "start", "session": p.session, "model": model, "edition": app.edition().name()}));
     }
-    let result = if args.output == OutputFormat::StreamJson {
-        p.agent.turn(&prompt, &mut Lines).await
-    } else {
-        p.agent.turn(&prompt, &mut progress).await
-    };
+    // Goal mode: the prompt is the goal (and its check); turns go on until it is met, stops or is out of budget.
+    let mut prompt = prompt;
+    if let Some(text) = &args.goal {
+        let g = crate::goals::parse(text).map_err(anyhow::Error::msg)?;
+        let said = p.goals.change(|b| b.set(g)).map_err(anyhow::Error::msg)?;
+        ui.say(&ui.dim(&said));
+        if let Some(first) = p.goals.get().prompt() {
+            prompt = format!("{first}\n\n{prompt}");
+        }
+    }
+    let mut result;
+    loop {
+        let started = std::time::Instant::now();
+        result = if args.output == OutputFormat::StreamJson {
+            p.agent.turn(&prompt, &mut Lines).await
+        } else {
+            p.agent.turn(&prompt, &mut progress).await
+        };
+        if args.goal.is_none() {
+            break;
+        }
+        let next =
+            crate::goals::after_turn(&mut p, result.as_ref().ok(), started.elapsed(), &|s| ui.say(&ui.yellow(&s)))
+                .await;
+        match next {
+            Some(n) if result.is_ok() => {
+                session::begin_turn(&mut p, ui, &n).await;
+                prompt = n;
+            }
+            _ => break,
+        }
+    }
     // The turn's messages reach the chat in Arena before the run ends (or are sent with the next session's).
     if let Some(sync) = &p.sync
         && !sync.flush(std::time::Duration::from_secs(10)).await

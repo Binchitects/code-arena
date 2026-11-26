@@ -357,6 +357,21 @@ impl ArenaClient {
         }
     }
 
+    /// The session's goal, whole, shown above the web chat (`None`: none, taken off). `Ok(false)` when this Arena keeps
+    /// no goals for Code Arena's chats.
+    pub async fn put_goal(&self, chat: &str, goal: Option<&Value>) -> Result<bool, ArenaError> {
+        let path = format!("{API}/chats/{chat}/goal");
+        let raw = match goal {
+            Some(g) => self.raw(Method::PUT, &path, Some(g)).await?,
+            None => self.raw(Method::DELETE, &path, None).await?,
+        };
+        match raw.status {
+            s if s.is_success() => Ok(true),
+            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED if raw.problem().is_none() => Ok(false),
+            _ => Err(refusal(&raw)),
+        }
+    }
+
     /// The person continues the chat here: archived on the web, it comes back to the list.
     pub async fn continued(&self, chat: &str) -> Result<(), ArenaError> {
         let raw = self.raw(Method::POST, &format!("{API}/chats/{chat}/continued"), Some(&json!({}))).await?;

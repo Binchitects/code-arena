@@ -435,6 +435,24 @@ impl ChatSync {
         }
     }
 
+    /// The goal as it stands, when Arena lacks its latest change.
+    async fn push_goal(&self, chat: &str) -> Pushed {
+        let unsent = self.store.lock().ok().and_then(|s| s.goals_unsent(&self.session).ok().flatten());
+        let Some(json) = unsent else { return Pushed::Done };
+        let goals: Option<ca_agent::goal::Goals> = json.as_deref().and_then(|j| serde_json::from_str(j).ok());
+        let body = goals.and_then(|g| g.current).map(|g| g.to_arena());
+        match self.arena.put_goal(chat, body.as_ref()).await {
+            Ok(_) | Err(ca_arena::ArenaError::Status { status: 400, .. }) => {
+                if let Ok(s) = self.store.lock() {
+                    let _ = s.goals_sent(&self.session, json.as_deref());
+                }
+                Pushed::Done
+            }
+            Err(e) if chats::gone(&e) => self.gone(),
+            Err(e) => self.fail(e.to_string()),
+        }
+    }
+
     /// The plan, whole, when Arena lacks its latest change.
     async fn push_plan(&self, chat: &str) -> Pushed {
         let unsent = self.store.lock().ok().and_then(|s| s.plan_unsent(&self.session).ok().flatten());
@@ -446,7 +464,7 @@ impl ChatSync {
                 if let Ok(s) = self.store.lock() {
                     let _ = s.plan_sent(&self.session, json.as_deref());
                 }
-                Pushed::Done
+                self.push_goal(chat).await
             }
             Err(e) if chats::gone(&e) => self.gone(),
             // Arena refused this plan (its rules): said once, and not sent again until it changes.

@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ca-agent.workspace = true
 ca-arena.workspace = true
 ca-llm.workspace = true
 ca-session.workspace = true

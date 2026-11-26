@@ -5,6 +5,7 @@ mod app;
 mod chat;
 mod checklist;
 mod edition;
+mod goals;
 mod projects;
 mod run;
 mod servers;
@@ -35,6 +36,9 @@ struct Cli {
     /// A new session that carries on the plan an earlier one of this folder left.
     #[arg(long = "plan", global = true)]
     carry_plan: bool,
+    /// Goal mode: work until this goal is met (with -p: the run ends when it is met, stops or is out of budget).
+    #[arg(long, value_name = "TEXT")]
+    goal: Option<String>,
     /// Start the conversation in one of your chats in Arena: its number in /web's list, or its id.
     #[arg(long, value_name = "N|ID")]
     web: Option<String>,
@@ -158,6 +162,7 @@ struct Common {
     add_dir: Vec<PathBuf>,
     carry_plan: bool,
     web: Option<String>,
+    goal: Option<String>,
 }
 
 fn cli_opts(c: &Common) -> session::Opts {
@@ -209,6 +214,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
         add_dir: cli.add_dir,
         carry_plan: cli.carry_plan,
         web: cli.web,
+        goal: cli.goal,
     };
     match cli.command {
         Some(Command::Login { provider, kind, url, user, gateway, ca }) => {
@@ -248,6 +254,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
                         output,
                         resume,
                         carry_plan: cli_common.carry_plan,
+                        goal: cli_common.goal.clone(),
                     },
                 )
                 .await

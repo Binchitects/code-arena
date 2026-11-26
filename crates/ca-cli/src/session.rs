@@ -62,6 +62,11 @@ pub struct Prepared {
     pub nudge: bool,
     /// What the task tool's sub-agents start from.
     pub crew: Arc<Mutex<Option<ca_agent::task::Crew>>>,
+    /// The session's goals (goal mode).
+    pub goals: Arc<ca_agent::goal::GoalBook>,
+    /// The steps a turn may take, as the settings say (a goal turn takes fewer when its budget says so).
+    pub max_steps: usize,
+    pub ui: crate::ui::Ui,
 }
 
 /// The sub-agents' starting point, as the session is now (its model, mode, tools and instructions).
@@ -874,6 +879,10 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         }
     }
     agent.joins = Some(later);
+    // Goal mode: the session's goals, kept and sent to Arena; goal_check for the agent.
+    let goals = crate::goals::book(&store, &session, sync.clone());
+    agent.tools.push(Arc::new(ca_agent::goal::GoalCheckTool { book: goals.clone() }));
+    let max_steps = agent.max_steps;
     // Sub-agents: the task tool, starting from the session as it is at each turn.
     let crew: Arc<Mutex<Option<ca_agent::task::Crew>>> = Arc::new(Mutex::new(None));
     agent.tools.push(Arc::new(ca_agent::task::TaskTool::new(crew.clone())));
@@ -897,6 +906,9 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         memory,
         nudge: false,
         crew,
+        goals,
+        max_steps,
+        ui,
     };
     refresh_crew(&mut prepared, ui);
     // SessionStart: what the person's hooks say goes to the model first.
