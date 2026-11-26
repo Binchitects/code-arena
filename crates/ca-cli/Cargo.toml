@@ -11,7 +11,13 @@ rust-version.workspace = true
 name = "code-arena"
 path = "src/main.rs"
 
+[features]
+# The native window (Floem, on the GPU). Left out of the static builds, whose `ide` serves the browser page.
+default = ["native"]
+native = ["dep:ca-native"]
+
 [dependencies]
+ca-native = { workspace = true, optional = true }
 ca-server.workspace = true
 ca-pty.workspace = true
 ignore.workspace = true

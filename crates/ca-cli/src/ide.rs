@@ -309,17 +309,28 @@ fn keep_address(data: &Path, url: &str) -> Option<PathBuf> {
     Some(file)
 }
 
+/// Where the IDE is shown: the native window (its messages in-process), or a browser (its page and its WebSocket).
+pub enum Face {
+    Native { from_ui: tokio::sync::mpsc::UnboundedReceiver<ca_server::FromPage>, to_ui: broadcast::Sender<String> },
+    Browser { port: u16, open: bool },
+}
+
 pub struct IdeArgs {
     pub opts: Opts,
     pub resume: Resume,
-    pub port: u16,
-    pub open: bool,
+    pub face: Face,
 }
 
 pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
     let ui = app.ui;
-    let mut server = ca_server::start(args.port, ca_server::built_page()).await?;
-    let out = server.to_pages.clone();
+    // The face's messages in, the session's out: the same for the native window and a browser's page.
+    let (mut from_page, out, served) = match args.face {
+        Face::Native { from_ui, to_ui } => (from_ui, to_ui, None),
+        Face::Browser { port, open } => {
+            let s = ca_server::start(port, ca_server::built_page()).await?;
+            (s.from_page, s.to_pages, Some((s.url, open)))
+        }
+    };
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
     let approver = Arc::new(PageApprover { out: out.clone(), pending: pending.clone(), next: AtomicU64::new(1) });
     let mut p = session::prepare(app, &Opts { interactive: true, ..args.opts.clone() }, approver, args.resume).await?;
@@ -334,16 +345,18 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
     );
     let side = Arc::new(side);
     side.start_watching();
-    let kept = keep_address(&app.paths.data, &server.url);
     ui.say(&format!("{} {} · {} · {}", ui.bold(ca_core::PRODUCT), ca_core::VERSION, p.agent.model, ui.dim(&p.folder)));
-    ui.say(&format!("The IDE: {}", server.url));
-    if let Some(f) = kept {
-        ui.say(&ui.dim(&format!("(the address is kept in {}; Ctrl+C stops the IDE)", f.display())));
-    }
-    if args.open {
-        match open(&server.url, &app.paths.data) {
-            b if b.is_empty() => ui.say(&ui.yellow("No browser could be opened here: open the address above.")),
-            b => ui.say(&ui.dim(&format!("Opened with {b}."))),
+    if let Some((url, open_it)) = &served {
+        let kept = keep_address(&app.paths.data, url);
+        ui.say(&format!("The IDE: {url}"));
+        if let Some(f) = kept {
+            ui.say(&ui.dim(&format!("(the address is kept in {}; Ctrl+C stops the IDE)", f.display())));
+        }
+        if *open_it {
+            match open(url, &app.paths.data) {
+                b if b.is_empty() => ui.say(&ui.yellow("No browser could be opened here: open the address above.")),
+                b => ui.say(&ui.dim(&format!("Opened with {b}."))),
+            }
         }
     }
     // The models the pickers offer: the gateway's (and the providers' of one's own), asked once.
@@ -352,7 +365,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             Ok(Ok(ms)) => ms.into_iter().map(|m| m.id).collect(),
             _ => vec![p.agent.model.clone()],
         };
-    while let Some((_, msg)) = server.from_page.recv().await {
+    while let Some((_, msg)) = from_page.recv().await {
         if side.handle(&msg) {
             continue;
         }
@@ -435,7 +448,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                         send(&out, json!({"type": "notice", "text": said.join(" ")}));
                         let text = msg["text"].as_str().unwrap_or("").trim().to_string();
                         if msg["type"] == "again" && !text.is_empty() {
-                            turn(&mut p, &mut server.from_page, &out, &pending, &inbox, &side, text).await;
+                            turn(&mut p, &mut from_page, &out, &pending, &inbox, &side, text).await;
                             session::keep_window(app, &p);
                             send(&out, status(&p));
                         }
@@ -452,7 +465,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             "send" => {
                 let text = msg["text"].as_str().unwrap_or("").trim().to_string();
                 if !text.is_empty() {
-                    turn(&mut p, &mut server.from_page, &out, &pending, &inbox, &side, text).await;
+                    turn(&mut p, &mut from_page, &out, &pending, &inbox, &side, text).await;
                     session::keep_window(app, &p);
                     send(&out, status(&p));
                 }

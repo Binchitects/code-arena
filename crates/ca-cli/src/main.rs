@@ -131,12 +131,15 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// The IDE: the session in a window of its own (a browser in app mode), on this machine only.
+    /// The IDE: a native window of its own; with --browser, served to a browser instead (on this machine only).
     Ide {
-        /// The port to listen on, on 127.0.0.1 (any free one when not given).
+        /// Serve the IDE to a browser instead of opening its native window.
+        #[arg(long)]
+        browser: bool,
+        /// With --browser: the port to listen on, on 127.0.0.1 (any free one when not given).
         #[arg(long)]
         port: Option<u16>,
-        /// Print the address only; open no window.
+        /// With --browser: print the address only; open no browser.
         #[arg(long)]
         no_open: bool,
     },
@@ -282,13 +285,36 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
             // A timer of the system's goes in the system's own home, whatever CODE_ARENA_HOME says.
             schedules::command(&app.paths.config, dirs::home_dir().as_deref(), &cwd, &args)
         }
-        Some(Command::Ide { port, no_open }) => {
-            let args = ide::IdeArgs {
-                opts: cli_opts(&cli_common),
-                resume: resume_of(&cli_common),
-                port: port.unwrap_or(0),
-                open: !no_open,
-            };
+        Some(Command::Ide { browser, port, no_open }) => {
+            let (opts, resume) = (cli_opts(&cli_common), resume_of(&cli_common));
+            #[cfg(feature = "native")]
+            if !browser && port.is_none() && !no_open {
+                // The native window has the main thread (the system's windows want it); the session's driver runs on
+                // the runtime's other threads, and their messages go between them in-process.
+                let (to_driver, from_ui) = tokio::sync::mpsc::unbounded_channel();
+                let (to_ui, _) = tokio::sync::broadcast::channel(4096);
+                let recv = to_ui.subscribe();
+                let args = ide::IdeArgs { opts, resume, face: ide::Face::Native { from_ui, to_ui } };
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build();
+                    match rt {
+                        Ok(rt) => {
+                            if let Err(e) = rt.block_on(ide::run(&mut app, args)) {
+                                eprintln!("{}", format_error(&e));
+                            }
+                        }
+                        Err(e) => eprintln!("code-arena could not start the session: {e}"),
+                    }
+                });
+                tokio::task::block_in_place(|| ca_native::launch(ca_native::Hub { send: to_driver, recv }));
+                return Ok(0);
+            }
+            #[cfg(not(feature = "native"))]
+            if !browser {
+                eprintln!("This Code Arena was built without its native window: the IDE is served to a browser.");
+            }
+            let args =
+                ide::IdeArgs { opts, resume, face: ide::Face::Browser { port: port.unwrap_or(0), open: !no_open } };
             ide::run(&mut app, args).await
         }
         Some(Command::Agents { args }) => automation::agents_cli(&app, &args).await,
