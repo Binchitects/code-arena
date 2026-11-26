@@ -100,7 +100,8 @@ fn breadcrumbs(ui: Ui) -> impl IntoView {
     dyn_container(
         move || ui.active.get(),
         move |path| {
-            let parts: Vec<String> = path.unwrap_or_default().split('/').map(str::to_string).collect();
+            let file = path.and_then(|p| ui.tab(&p)).map(|t| t.file).unwrap_or_default();
+            let parts: Vec<String> = file.split('/').map(str::to_string).collect();
             let last = parts.len().saturating_sub(1);
             h_stack((dyn_stack(
                 move || parts.clone().into_iter().enumerate().collect::<Vec<_>>(),
@@ -137,6 +138,7 @@ fn body(ui: Ui) -> impl IntoView {
         move || (ui.active.get(), t.get(), ui.goto.get()),
         move |(path, c, goto)| match path.and_then(|p| ui.tab(&p)) {
             None => watermark(ui).into_any(),
+            Some(Tab { diff: Some(lines), .. }) => crate::changes::diff_view(ui, lines).into_any(),
             Some(tab) => {
                 let styling = SimpleStyling::builder()
                     .font_size(14)

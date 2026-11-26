@@ -26,7 +26,7 @@ Sections used:
   the secondary side bar (answers streamed, a turn's calls in a line that opens, Allow / Always /
   Deny), and the status bar; each part resized by its sash, Ctrl+B, Ctrl+Alt+B and Ctrl+J show
   and hide them. Coloured by VS Code's colour ids from the theme in force, with VS Code's own
-  defaults where a theme names none. Changes, Outline and the terminal come to the native
+  defaults where a theme names none. Outline and the terminal come to the native
   window next; the browser face has them now.
 - **The native window's views move as VS Code's.** Right-click a view's icon or its title: Move to
   Primary Side Bar, Secondary Side Bar or Panel, Hide it, or Reset View Locations. Where the views
@@ -35,6 +35,10 @@ Sections used:
 - **Search in the native window**, as VS Code's: it searches as you type (Match Case and Regular
   Expression toggles), says how many results in how many files, lists them by file with the match
   lit, and a click opens the file at that line.
+- **The agent's changes in the native window**, as VS Code's Source Control list: each file it
+  changed this session with its letter (M, A, D) in VS Code's colours, read again after each
+  turn; a click opens the file's changes as an inline diff (removed lines red, added green, the
+  numbers before and after).
 - **Coder mode is VS Code's workbench.** An activity bar (VS Code's own icons), the primary side bar,
   the editor, the panel and a secondary side bar, with VS Code's sizes and the theme's colours.
   Six views (Explorer, Search, Changes, Outline, Agent, Terminal) start where VS Code puts them:

@@ -501,6 +501,7 @@ dependencies = [
  "ca-themes",
  "crossbeam-channel",
  "floem",
+ "im",
  "serde_json",
  "tokio",
 ]

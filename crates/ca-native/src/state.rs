@@ -14,6 +14,10 @@ use crate::model::{Item, Kind, Tool};
 
 pub type Send = Rc<dyn Fn(Value)>;
 
+fn s_of(v: &Value, k: &str) -> String {
+    v[k].as_str().unwrap_or("").to_string()
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub name: String,
@@ -35,17 +39,40 @@ pub struct Found {
     pub error: String,
 }
 
-/// An open editor: its file, its text (kept while another tab is shown), whether it has changes not saved.
+/// A file the agent changed in this session: what it was, what it is (none: it was not there, or is gone).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Change {
+    pub path: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+impl Change {
+    /// VS Code's letter for it: Added, Deleted, Modified.
+    pub fn letter(&self) -> &'static str {
+        match (&self.before, &self.after) {
+            (None, _) => "A",
+            (_, None) => "D",
+            _ => "M",
+        }
+    }
+}
+
+/// An open editor: its file, its text (kept while another tab is shown), whether it has changes not saved; or a
+/// file's changes, shown as a diff (its `path`, the tab's own name among the tabs, is then `changes:` and the file).
 #[derive(Clone)]
 pub struct Tab {
     pub path: String,
+    pub file: String,
     pub doc: Rc<TextDocument>,
     pub dirty: RwSignal<bool>,
+    pub diff: Option<Rc<Vec<crate::diff::Line>>>,
 }
 
 impl Tab {
     pub fn name(&self) -> String {
-        self.path.rsplit('/').next().unwrap_or(&self.path).to_string()
+        let name = self.file.rsplit('/').next().unwrap_or(&self.file).to_string();
+        if self.diff.is_some() { format!("{name} (changes)") } else { name }
     }
 
     pub fn text(&self) -> String {
@@ -79,6 +106,7 @@ pub struct Ui {
     pub menu: RwSignal<Option<usize>>,
     /// A view's own menu (Move to…), open where it was right-clicked (in the window).
     pub context: RwSignal<Option<(crate::layout::View, f64, f64)>>,
+    pub changes: RwSignal<Vec<Change>>,
     pub search_query: RwSignal<String>,
     pub search_case: RwSignal<bool>,
     pub search_regex: RwSignal<bool>,
@@ -130,6 +158,7 @@ impl Ui {
             context: create_rw_signal(None),
             loaded: create_rw_signal(false),
             pointer: create_rw_signal((0.0, 0.0)),
+            changes: create_rw_signal(Vec::new()),
             search_query: create_rw_signal(String::new()),
             search_case: create_rw_signal(false),
             search_regex: create_rw_signal(false),
@@ -188,6 +217,24 @@ impl Ui {
         }
     }
 
+    /// A file's changes in a tab of their own (made again from what the session said last).
+    pub fn open_changes(&self, c: &Change) {
+        let id = format!("changes:{}", c.path);
+        let lines = crate::diff::lines(c.before.as_deref().unwrap_or(""), c.after.as_deref().unwrap_or(""));
+        let tab = Tab {
+            path: id.clone(),
+            file: c.path.clone(),
+            doc: Rc::new(TextDocument::new(self.scope, "")),
+            dirty: self.scope.create_rw_signal(false),
+            diff: Some(Rc::new(lines)),
+        };
+        self.tabs.update(|t| match t.iter_mut().find(|t| t.path == id) {
+            Some(old) => *old = tab,
+            None => t.push(tab),
+        });
+        self.active.set(Some(id));
+    }
+
     /// A file opened at a line (a search's hit).
     pub fn open_at(&self, path: &str, line: usize, send: &Send) {
         let n = self.goto.with_untracked(|g| g.as_ref().map(|g| g.2 + 1).unwrap_or(0));
@@ -210,6 +257,7 @@ impl Ui {
     pub fn save(&self, send: &Send) {
         if let Some(path) = self.active.get_untracked()
             && let Some(tab) = self.tab(&path)
+            && tab.diff.is_none()
         {
             send(json!({"type": "save", "path": path, "text": tab.text()}));
         }
@@ -326,7 +374,8 @@ impl Ui {
                     let doc = Rc::new(TextDocument::new(self.scope, text));
                     let dirty = self.scope.create_rw_signal(false);
                     doc.add_on_update(move |_| dirty.set(true));
-                    self.tabs.update(|t| t.push(Tab { path: path.clone(), doc, dirty }));
+                    self.tabs
+                        .update(|t| t.push(Tab { path: path.clone(), file: path.clone(), doc, dirty, diff: None }));
                 }
                 self.active.set(Some(path));
             }
@@ -349,6 +398,17 @@ impl Ui {
                     })
                     .collect();
                 self.search.set(Some(Found { hits, more: m["more"] == true, error: s("error") }));
+            }
+            "changes" => {
+                let text = |v: &Value| v.as_str().map(str::to_string);
+                self.changes.set(
+                    m["files"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(|f| Change { path: s_of(f, "path"), before: text(&f["before"]), after: text(&f["after"]) })
+                        .collect(),
+                );
             }
             "saved" => {
                 let path = s("path");
@@ -424,6 +484,7 @@ impl Ui {
             "queued" => self.push(Kind::Queued(s("text"))),
             "turn_end" => {
                 self.running.set(false);
+                send(json!({"type": "changes"}));
                 self.items.with_untracked(|l| {
                     for i in l {
                         if let Kind::Ask { answer, .. } = &i.kind

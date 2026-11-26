@@ -11,7 +11,9 @@ use floem::window::WindowConfig;
 use serde_json::{Value, json};
 
 mod agent;
+mod changes;
 mod colors;
+mod diff;
 mod editor;
 mod explorer;
 mod icons;
