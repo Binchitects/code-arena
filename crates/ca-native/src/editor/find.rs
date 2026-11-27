@@ -553,7 +553,17 @@ fn find_box(
                 });
                 return CommandExecuted::Yes;
             }
-            _ => return default_key(&map, editor, press, mods),
+            _ => {
+                return match default_key(&map, editor, press, mods) {
+                    // Not the box's: the workbench's keys (Ctrl+S, Ctrl+P, Ctrl+B…) work while it has the keys.
+                    CommandExecuted::No if crate::keys_hook::editor(key, mods) => {
+                        let key = key.clone();
+                        super::tell(ui, |send| crate::workbench::key(ui, send, &key, mods));
+                        CommandExecuted::Yes
+                    }
+                    done => done,
+                };
+            }
         };
         let current = into.get_untracked();
         if let Some((n, text)) = history.with_untracked(|h| recall(h, at.get_untracked(), &current, up)) {
@@ -688,7 +698,10 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
     back.set(Some(editor.clone()));
     // Asked for (Ctrl+F, Ctrl+H): the box takes the keys, with the editor's selection in it when it is within a line
     // (the word at the caret when nothing is selected), and all of it selected, so what is typed takes its place.
-    // Asked for with the replace row and something to look for, the replace box takes them.
+    // Asked for with the replace row, the replace box takes them when the editor had a selection or the find box
+    // had the keys already (as in VS Code).
+    let focused = focus_lit(&editor);
+    let replace_focused = focus_lit(&replacer);
     {
         let (editor, replacer) = (editor.clone(), replacer.clone());
         create_effect(move |first: Option<()>| {
@@ -698,9 +711,12 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
             }
             let doc = editor.doc();
             // The text and the selection changed as one (no caret past the end of the text between the two).
-            floem::reactive::batch(|| {
+            let had_keys = focused.get_untracked();
+            let selected = floem::reactive::batch(|| {
+                let mut selected = false;
                 if let Some(main) = active(ui) {
                     let (mut from, mut to) = selection(&main);
+                    selected = from < to;
                     if from == to {
                         let text = main.rope_text();
                         let line = text.line_of_offset(from);
@@ -717,8 +733,9 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
                 }
                 let len = doc.text().len();
                 editor.cursor.update(|c| c.set_insert(Selection::region(0, len)));
+                selected
             });
-            if TO_REPLACE.with(|t| t.replace(false)) && !doc.text().is_empty() {
+            if TO_REPLACE.with(|t| t.replace(false)) && (selected || had_keys) {
                 let len = replacer.doc().text().len();
                 replacer.cursor.update(|c| c.set_insert(Selection::region(0, len)));
                 focus(&replacer);
@@ -727,8 +744,6 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
             }
         });
     }
-    let focused = focus_lit(&editor);
-    let replace_focused = focus_lit(&replacer);
     // A toggle clicked: the keys stay in (or go back to) the box it is of.
     {
         let (editor, replacer) = (editor.clone(), replacer.clone());
@@ -795,7 +810,7 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
             find_step(ui, true);
             focus(&down);
         }),
-        toggle(t, "selection", ui.find_in_selection, "Find in Selection (Alt+L)"),
+        toggle(t, "list-selection", ui.find_in_selection, "Find in Selection (Alt+L)"),
         button(ui, "close", "Close (Escape)", move || find_hide(ui)),
     ))
     .style(|s| s.height(24.0).gap(2.0).items_center());
