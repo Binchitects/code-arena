@@ -1,5 +1,5 @@
-//! The Agent view's header, over the thread: the old Code Arena's buttons at its right, as a VS Code view title's
-//! actions. The goal (lit while one is worked toward), the tasks (with how many are at work), this folder's
+//! The Agent view's header: the old Code Arena's buttons, in the view's title at its right as a VS Code view
+//! title's actions (`View::actions`, in the dock and in a window of its own). The goal (lit while one is worked toward), the tasks (with how many are at work), this folder's
 //! sessions, and "…", the chat's More menu (`menus::Menu::AgentMore`: what every part adds to it, under the
 //! window's own Open in a New Window and Hide the Chat).
 //!
@@ -8,7 +8,7 @@
 
 use floem::reactive::{SignalGet, SignalWith};
 use floem::style::Position;
-use floem::views::{Decorators, container, empty, h_stack, label, stack, tooltip};
+use floem::views::{Decorators, container, h_stack, label, stack, tooltip};
 use floem::{IntoView, View as _};
 use serde_json::Value;
 
@@ -49,7 +49,7 @@ fn button(ui: Ui, send: &Send, id: &'static str, name: &'static str, tip: &'stat
     .style(move |s| s.apply_if(!shown(), |s| s.hide()))
 }
 
-pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
+pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     // The goal's icon in the accent while one is worked toward.
     let goal = {
@@ -104,8 +104,7 @@ pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
             || label(|| "More Actions…"),
         )
     };
-    h_stack((empty().style(|s| s.flex_grow(1.0_f32)), goal, tasks, history, more))
-        .style(|s| s.height(28.0).width_full().items_center().gap(2.0).padding_horiz(8.0).flex_shrink(0.0_f32))
+    h_stack((goal, tasks, history, more)).style(|s| s.items_center().gap(2.0))
 }
 
 /// What it adds to the window's registries, once at start: the tasks' and the sessions' commands, and the
