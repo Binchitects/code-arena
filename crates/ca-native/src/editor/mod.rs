@@ -132,7 +132,7 @@ fn body(ui: Ui) -> impl IntoView {
                         done => done,
                     }
                 })
-                .use_doc(tab.doc.clone())
+                .use_doc(crate::decor::doc(tab.doc.clone(), &tab.path))
                 .styling_rc(tab.colours.clone())
                 .editor_style(move |s| {
                     s.gutter_dim_color(c.line_number)
@@ -173,12 +173,13 @@ fn body(ui: Ui) -> impl IntoView {
                     caret.set((line + 1, col + 1));
                 });
                 // Gone from the screen (and not for the next one, which is drawn before this one goes).
-                ed.on_cleanup(move || {
+                let ed = ed.on_cleanup(move || {
                     if ui.live.with_untracked(|l| l.as_ref().is_some_and(|(_, e)| e.id() == id)) {
                         ui.live.set(None);
                     }
-                })
-                .into_any()
+                });
+                // The decorations' glyph margin and overview ruler, over it.
+                stack((ed, crate::decor::over(ui, &editor, &tab.path))).style(|s| s.size_full()).into_any()
             }
         },
     )
