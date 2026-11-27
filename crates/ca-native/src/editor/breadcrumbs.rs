@@ -1,16 +1,18 @@
-//! The breadcrumbs under the tabs, as VS Code's: the shown file's path, part by part.
+//! The breadcrumbs under a group's tabs, as VS Code's: the path of the file the group shows, part by part.
 
 use floem::IntoView;
-use floem::reactive::SignalGet;
+use floem::reactive::{SignalGet, SignalWith};
 use floem::views::{Decorators, dyn_container, dyn_stack, h_stack, label};
 
 use crate::icons::icon;
 use crate::state::Ui;
 
-pub(super) fn breadcrumbs(ui: Ui) -> impl IntoView {
+pub(super) fn breadcrumbs(ui: Ui, active: floem::reactive::Memo<Option<String>>) -> impl IntoView {
     let t = ui.colors;
+    // Shown for a file's text (or its changes), not for a tab of a kind.
+    let text = move || active.with(|a| a.as_ref().is_some_and(|p| ui.tabs.with(|t| t.iter().any(|t| t.path == *p && t.kind.is_none()))));
     dyn_container(
-        move || ui.active.get(),
+        move || active.get(),
         move |path| {
             let file = path.and_then(|p| ui.tab(&p)).map(|t| t.file).unwrap_or_default();
             let parts: Vec<String> = file.split('/').map(str::to_string).collect();
@@ -40,7 +42,7 @@ pub(super) fn breadcrumbs(ui: Ui) -> impl IntoView {
             .color(c.breadcrumb)
             .background(c.editor_bg)
             .selectable(false)
-            .apply_if(!super::kinds::text_shown(ui), |s| s.hide())
+            .apply_if(!text(), |s| s.hide())
     })
 }
 
