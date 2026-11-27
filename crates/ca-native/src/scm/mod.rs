@@ -733,6 +733,9 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
                         .border(0.0)
                         .padding(0.0)
                         .background(Color::TRANSPARENT)
+                        // floem's own theme turns a hovered input white and gives a focused one a border.
+                        .hover(|s| s.background(Color::TRANSPARENT))
+                        .focus(|s| s.border(0.0).hover(|s| s.background(Color::TRANSPARENT)))
                         .color(c.input_fg)
                         .cursor_color(floem::peniko::Brush::Solid(c.cursor))
                 });
