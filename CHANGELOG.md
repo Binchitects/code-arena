@@ -230,8 +230,8 @@ Sections used:
 - **A file that cannot open says why in its tab.** The tab reads '<name> is not text (or not
   UTF-8)', '<name> is larger than 5 MB', or the read error, where before only the status bar
   mentioned it. Such tabs are kept with the layout like the others.
-- **The chat follows only while you read its end.** Scrolled up more than 80 px, the thread stays put
-  while the answer streams, and a 'Jump to the latest' button takes you back down.
+- **The chat follows only while you read its end.** Scrolled up more than 80 px, the thread stays
+  put while the answer streams, and a 'Jump to the latest' button takes you back down.
 - **Show earlier.** A long session opens on its last 30 turns. 'Show earlier (N more turns)' at the
   top brings 30 more each time and keeps your place.
 - **How the turn stands, under the thread.** 'Working…' until the answer begins, a blinking block
