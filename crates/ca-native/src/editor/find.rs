@@ -946,6 +946,23 @@ mod tests {
     }
 
     #[test]
+    fn replace_all_is_one_edit_undone_at_once() {
+        use floem::views::editor::command::Command;
+        use floem::views::editor::core::command::EditCommand;
+        use floem::views::editor::text_document::TextDocument;
+        // A font to lay text out with, where the machine has none.
+        crate::icons::load();
+        let cx = floem::reactive::Scope::new();
+        let doc = Rc::new(TextDocument::new(cx, "cart, cart and Cart"));
+        let editor = Editor::new(cx, doc.clone(), Rc::new(SimpleStyling::new()), false);
+        let edits = replacements(&doc.text().to_string(), "cart", ALL, None, "basket", true).expect("found");
+        doc.edit(&mut edits.iter().map(|(f, t, by)| (Selection::region(*f, *t), by.as_str())), EditType::Other);
+        assert_eq!(doc.text().to_string(), "basket, basket and Basket");
+        doc.run_command(&editor, &Command::Edit(EditCommand::Undo), None, Modifiers::empty());
+        assert_eq!(doc.text().to_string(), "cart, cart and Cart");
+    }
+
+    #[test]
     fn places_move_with_the_edits_made_before_them() {
         let edits = vec![(2, 4, "xyz".to_string()), (10, 12, String::new())];
         assert_eq!(shift(0, &edits), 0);
