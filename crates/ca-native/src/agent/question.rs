@@ -242,9 +242,12 @@ fn bare(text: &str) -> String {
     marks.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// A window's thread (its items' signal) and the answer flashed in it.
+type Flashed = (RwSignal<Vec<Item>>, RwSignal<Option<u64>>);
+
 thread_local! {
     /// The answer flashed for a quote, by the window's thread it is in (its items' signal).
-    static FLASH: RefCell<Vec<(RwSignal<Vec<Item>>, RwSignal<Option<u64>>)>> = const { RefCell::new(Vec::new()) };
+    static FLASH: RefCell<Vec<Flashed>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The answer being flashed in this window's thread (none: none is).
