@@ -42,11 +42,14 @@ pub enum Place {
     Banner,
 }
 
+/// What draws a layer.
+type Draw = Rc<dyn Fn(Ui, Send) -> AnyView>;
+
 struct Layer {
     place: Place,
     id: &'static str,
     order: i32,
-    draw: Rc<dyn Fn(Ui, Send) -> AnyView>,
+    draw: Draw,
 }
 
 thread_local! {
@@ -66,7 +69,7 @@ pub fn add(place: Place, id: &'static str, order: i32, draw: impl Fn(Ui, Send) -
 }
 
 /// A place's layers in the order drawn (by their orders; equal ones as added): their ids and what draws each.
-fn held(place: Place) -> Vec<(&'static str, Rc<dyn Fn(Ui, Send) -> AnyView>)> {
+fn held(place: Place) -> Vec<(&'static str, Draw)> {
     LAYERS.with(|l| {
         let layers = l.borrow();
         let mut mine: Vec<&Layer> = layers.iter().filter(|layer| layer.place == place).collect();

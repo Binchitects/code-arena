@@ -500,7 +500,14 @@ impl Dock {
         let mut d = Dock { root, next, floating };
         // The ids above every part's before a part is made for a missing view.
         d.next = d.next.max(d.most() + 1);
-        if fill && ready.iter().fold(false, |put, v| d.put_home(*v) || put) {
+        // Each missing view is put in its place (all of them: not only until the first that was missing).
+        let mut put = false;
+        if fill {
+            for v in ready {
+                put |= d.put_home(*v);
+            }
+        }
+        if put {
             // A group made beside a split of its own direction is folded into it.
             return d.tidied_for(ready, false);
         }
