@@ -596,7 +596,10 @@ impl Document for Doc {
     }
 
     fn receive_char(&self, ed: &Editor, c: &str) {
-        self.inner.receive_char(ed, c)
+        // Brackets and quotes closed and typed over (`editing.rs`).
+        if !crate::editor::editing::receive_char(ed, &self.path, c) {
+            self.inner.receive_char(ed, c)
+        }
     }
 
     fn edit_single(&self, selection: Selection, content: &str, edit_type: EditType) {

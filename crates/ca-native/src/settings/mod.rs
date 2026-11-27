@@ -282,7 +282,7 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
         {
             return CommandExecuted::Yes;
         }
-        if own_key(ui, &send, press, mods) {
+        if own_key(ui, &send, press, mods) || crate::editor::editing::key(ui, press, mods) {
             return CommandExecuted::Yes;
         }
         let command = map.keymaps.get(press).or_else(|| {
@@ -304,7 +304,8 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
             }
         }
     })
-    .use_doc(tab.doc.clone())
+    // As a file's (`decor::doc`): its brackets and quotes closed as they are typed.
+    .use_doc(crate::decor::doc(tab.doc.clone(), &tab.path))
     .styling_rc(colours.clone())
     .editor_style(move |s| {
         let s = s

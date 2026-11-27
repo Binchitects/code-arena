@@ -44,6 +44,10 @@ pub(super) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
     if super::find::find_key(ui, key, mods) {
         return true;
     }
+    // The editing commands' keys (`editing.rs`), and Tab, Enter and Backspace as VS Code's.
+    if super::editing::key(ui, press, mods) {
+        return true;
+    }
     let shift = mods.contains(Modifiers::SHIFT);
     let ctrl = mods.contains(Modifiers::CONTROL) && !mods.contains(Modifiers::ALT);
     match key {

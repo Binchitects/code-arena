@@ -272,6 +272,11 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                     let s = editor_look(s, &c, focused.get());
                     o.with(|o| options::look(s, o, &c, width.get()))
                 });
+                // Its right-click menu (`editing.rs`), once the editor has put the caret where it was clicked.
+                let view = floem::View::id(&ed);
+                let ed = ed.on_event_cont(floem::event::EventListener::PointerDown, move |e| {
+                    editing::context_menu(ui, view, e)
+                });
                 g.editors.update(|e| {
                     e.insert(id, (tab.path.clone(), editor.clone()));
                 });
