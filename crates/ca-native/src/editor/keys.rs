@@ -1,6 +1,6 @@
 //! The editor's keys: its own keymap's, and the workbench's that are about the editor.
 
-use floem::keyboard::{Key, Modifiers};
+use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::reactive::{RwSignal, SignalGet, SignalWith};
 use floem::views::editor::Editor;
 use floem::views::editor::command::CommandExecuted;
@@ -57,6 +57,11 @@ pub(super) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
             }
             _ => return false,
         },
+        // Ctrl with Page Up or Page Down is the workbench's (the next or previous tab, a tab moved), as in VS
+        // Code: Floem's editor would take it as a page scroll.
+        Key::Named(NamedKey::PageDown | NamedKey::PageUp) if mods.contains(Modifiers::CONTROL) => {
+            tell(ui, |send| crate::workbench::key(ui, send, key, mods));
+        }
         _ => return false,
     }
     true
