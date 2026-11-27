@@ -34,6 +34,8 @@ pub enum Phase {
     Working,
     /// Its words are being written.
     Writing,
+    /// A call runs or waits for the person: its card says so, the line nothing.
+    Calling,
     /// A step ended (its calls ran): the model is asked again.
     Waiting,
 }
@@ -93,6 +95,12 @@ pub fn near_end(top: f64, seen: f64, content: f64) -> bool {
     content - (top + seen) <= NEAR_END
 }
 
+/// Whether the thread still follows after its viewport changed: decided again only when its top moved (the person
+/// scrolled); a viewport that only changed size (a bar shown over the box, the window made smaller) keeps it.
+pub fn stays(stick: bool, old_top: f64, top: f64, seen: f64, content: f64) -> bool {
+    if stick && (top - old_top).abs() < 0.5 { true } else { near_end(top, seen, content) }
+}
+
 /// Where the viewport goes when the content's height changes from `old` to `new`: kept by what was put above
 /// (`above`: the height before), to the end when it is read there, else nowhere.
 pub fn scrolled(top: f64, stick: bool, above: Option<f64>, new: f64) -> Option<f64> {
@@ -109,7 +117,8 @@ pub fn phase_of(m: &Value, now: Phase) -> Option<Phase> {
         "turn_start" => Phase::Working,
         "turn_end" => Phase::Idle,
         "text" if now != Phase::Idle => Phase::Writing,
-        "tool_start" | "tool_waiting" | "ask" if now != Phase::Idle => Phase::Writing,
+        // A call or a question card shows itself how it stands.
+        "tool_start" | "tool_waiting" | "ask" if now != Phase::Idle => Phase::Calling,
         "step_end" if now != Phase::Idle => Phase::Waiting,
         _ => return None,
     })
@@ -160,7 +169,7 @@ pub(super) fn thread(ui: Ui, send: Send) -> impl IntoView {
                 }
                 let to = scrolled(f.top.get_untracked(), f.stick.get_untracked(), f.above.get_untracked(), new);
                 f.content.set(new);
-                f.above.set(None);
+                change(f.above, None);
                 if let Some(y) = to {
                     f.scroll_to(y);
                 }
@@ -168,11 +177,18 @@ pub(super) fn thread(ui: Ui, send: Send) -> impl IntoView {
             .style(|s| s.flex_col().width_full().padding_horiz(16.0).padding_vert(12.0).gap(16.0));
             let view = scroll(list)
                 .on_scroll(move |r: Rect| {
+                    let (old, content) = (f.top.get_untracked(), f.content.get_untracked());
                     change(f.top, r.y0);
                     change(f.seen, r.height());
-                    // Only the person's scrolling (or the window's size) decides; content that grows does not.
-                    if f.above.get_untracked().is_none() {
-                        change(f.stick, near_end(r.y0, r.height(), f.content.get_untracked()));
+                    // Content put above moves the place itself, and is not the person scrolling.
+                    if f.above.get_untracked().is_some() {
+                        return;
+                    }
+                    let stick = stays(f.stick.get_untracked(), old, r.y0, r.height(), content);
+                    change(f.stick, stick);
+                    // Followed, but the viewport changed size (a bar over the box, the window): to the end again.
+                    if stick && !near_end(r.y0, r.height(), content) {
+                        f.scroll_to(content);
                     }
                 })
                 .scroll_to(move || {
@@ -247,14 +263,17 @@ fn jump(ui: Ui) -> impl IntoView {
 fn tail(ui: Ui) -> impl IntoView {
     let (f, t) = (ui.state::<Follow>(), ui.colors);
     let words = move || match f.phase.get() {
-        Phase::Idle => String::new(),
+        Phase::Idle | Phase::Calling => String::new(),
         Phase::Working => "Working…".into(),
         Phase::Writing => if f.tick.get() % 2 == 0 { "▋" } else { " " }.into(),
         Phase::Waiting => format!("Waiting for the model{}", ".".repeat(1 + (f.tick.get() % 3) as usize)),
     };
     label(words).style(move |s| {
         let t = t.get();
-        s.apply_if(f.phase.get() == Phase::Idle, |s| s.hide()).font_size(12.0).color(t.desc).min_height(16.0)
+        s.apply_if(matches!(f.phase.get(), Phase::Idle | Phase::Calling), |s| s.hide())
+            .font_size(12.0)
+            .color(t.desc)
+            .min_height(16.0)
     })
 }
 
@@ -357,7 +376,7 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             f.follow_on();
         }
         // A question sent from here is read where it is answered.
-        "user" if m["replay"] != true => f.follow_on(),
+        "user" if m["replay"] != true && m["carried"] != true => f.follow_on(),
         "older" if f.asked.get_untracked().is_some() && m["before_turn"].as_i64() == f.asked.get_untracked() => {
             let mut older = super::stream::thread_of(ui, m);
             change(f.earlier, m["earlier"].as_i64().unwrap_or(0));
@@ -391,6 +410,10 @@ mod tests {
         // Turns put above: the place read is kept by what they add, whether following or not.
         assert_eq!(scrolled(0.0, true, Some(1500.0), 4000.0), Some(2500.0));
         assert_eq!(scrolled(40.0, false, Some(1500.0), 4000.0), Some(2540.0));
+        // A bar over the box makes the viewport 120 px shorter: still followed. Scrolled up by the person: not.
+        assert!(stays(true, 1000.0, 1000.0, 380.0, 1500.0));
+        assert!(!stays(true, 1000.0, 700.0, 500.0, 1500.0));
+        assert!(stays(false, 700.0, 960.0, 500.0, 1500.0), "back down at the end: followed again");
     }
 
     #[test]
@@ -399,7 +422,8 @@ mod tests {
         assert_eq!(next("turn_start", Phase::Idle), Some(Phase::Working));
         assert_eq!(next("text", Phase::Working), Some(Phase::Writing));
         assert_eq!(next("step_end", Phase::Writing), Some(Phase::Waiting));
-        assert_eq!(next("tool_start", Phase::Waiting), Some(Phase::Writing));
+        assert_eq!(next("tool_start", Phase::Waiting), Some(Phase::Calling));
+        assert_eq!(next("ask", Phase::Writing), Some(Phase::Calling));
         assert_eq!(next("turn_end", Phase::Writing), Some(Phase::Idle));
         assert_eq!(next("text", Phase::Idle), None, "words outside a turn (a command's) change nothing");
         assert_eq!(next("status", Phase::Writing), None);

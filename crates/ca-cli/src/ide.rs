@@ -1058,7 +1058,6 @@ async fn turn(
     let q = session::questions(p).map(|qs| qs.len() + 1).unwrap_or(0);
     // A face that comes while the turn runs is shown the thread before it, then the turn so far said again: both
     // made from what is taken now and kept from here on (the session itself is the turn's until it ends).
-    let before = state(p, app, sh, true);
     let mut replay = Replay::new(&out);
     let mut cut_shown = false;
     match how {
@@ -1069,6 +1068,7 @@ async fn turn(
         How::Late => send(&out, json!({"type": "user", "text": sent.shown, "q": q, "late": true})),
     }
     send(&out, json!({"type": "turn_start"}));
+    let before = state(p, app, sh, true);
     ide_ext::before_turn(&mut Ctx { app: &mut *app, p: &mut *p, side: &mut *side, drv: &mut *drv, sh: &*sh }, &message)
         .await;
     session::begin_turn(p, ui, &message).await;
