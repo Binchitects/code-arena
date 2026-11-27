@@ -67,23 +67,28 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             }
         }
         "thought" => {
-            if let Some(answer) = last_answer(ui) {
-                let ms = m["ms"].as_u64().unwrap_or(0);
+            let ms = m["ms"].as_u64().unwrap_or(0);
+            // An answer cut by a message sent meanwhile (it goes on under its bubble) ends its thinking too.
+            for answer in still_thinking(ui) {
+                answer.thought.set(Some(Thought { ms, cut_short: m["cut_short"] == true }));
+            }
+            if let Some(answer) = last_answer(ui)
+                && answer.thought.with_untracked(Option::is_none)
+            {
                 answer.thought.set(Some(Thought { ms, cut_short: m["cut_short"] == true }));
             }
         }
         "turn_end" => {
             ui.running.set(false);
             send(json!({"type": "changes"}));
-            if let Some(answer) = last_answer(ui) {
-                // A thinking the session did not say the end of (a face from before) ends with the turn.
-                if answer.thought.with_untracked(Option::is_none) && answer.reasoning.with_untracked(|r| !r.is_empty())
-                {
-                    answer.thought.set(Some(Thought { ms: 0, cut_short: m["ok"] != true }));
-                }
-                if m["ok"] == true {
-                    finished(answer, &m["usage"], m["model"].as_str());
-                }
+            // A thinking the session did not say the end of (a face from before) ends with the turn.
+            for answer in still_thinking(ui) {
+                answer.thought.set(Some(Thought { ms: 0, cut_short: m["ok"] != true }));
+            }
+            if m["ok"] == true
+                && let Some(answer) = last_answer(ui)
+            {
+                finished(answer, &m["usage"], m["model"].as_str());
             }
             ui.items.with_untracked(|l| {
                 for i in l {
@@ -114,6 +119,25 @@ fn last_answer(ui: Ui) -> Option<Answer> {
             Kind::Assistant(a) => Some(a),
             _ => None,
         })
+    })
+}
+
+/// The answers of the last question that have thought and were not told the end of it: the last answer, and one
+/// before a message sent while it worked (the answer went on under that message's bubble).
+fn still_thinking(ui: Ui) -> Vec<Answer> {
+    ui.items.with_untracked(|l| {
+        l.iter()
+            .rev()
+            .take_while(|i| !matches!(i.kind, Kind::User(_)))
+            .filter_map(|i| match i.kind {
+                Kind::Assistant(a)
+                    if a.thought.with_untracked(Option::is_none) && a.reasoning.with_untracked(|r| !r.is_empty()) =>
+                {
+                    Some(a)
+                }
+                _ => None,
+            })
+            .collect()
     })
 }
 
@@ -485,6 +509,29 @@ mod tests {
         let answers = ui.items.with_untracked(|l| l.iter().filter(|i| !matches!(i.kind, Kind::User(_))).count());
         assert_eq!(answers, 1, "one answer, no notice");
         assert_eq!(last(ui).1.map(thought_title).as_deref(), Some("Thought for 2 s, cut short"));
+    }
+
+    #[test]
+    fn an_answer_cut_by_a_message_sent_while_it_thinks_ends_its_thinking_too() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let take = |m: Value| ui.take(&m, &send);
+        take(json!({"type": "user", "text": "hi", "q": 1}));
+        take(json!({"type": "turn_start"}));
+        take(json!({"type": "reasoning", "delta": "Let me "}));
+        take(json!({"type": "queued", "id": "w1", "text": "and the tests"}));
+        take(json!({"type": "reasoning", "delta": "weigh."}));
+        take(json!({"type": "thought", "ms": 1_000, "cut_short": false}));
+        let thoughts: Vec<Option<Thought>> = ui.items.with_untracked(|l| {
+            l.iter()
+                .filter_map(|i| match i.kind {
+                    Kind::Assistant(a) => Some(a.thought.get_untracked()),
+                    _ => None,
+                })
+                .collect()
+        });
+        let done = Some(Thought { ms: 1_000, cut_short: false });
+        assert_eq!(thoughts, [done, done], "both parts of the answer, above and under the bubble");
     }
 
     #[test]
