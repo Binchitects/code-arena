@@ -470,10 +470,10 @@ Sections used:
   terminals run at once.
 - **Arena's colour themes and VS Code's most used.** Code Arena, Sakura, Midnight, Copper, Forest,
   Ocean and Lavender, each dark and light, beside One Dark Pro, One Light, Dracula, Alucard, GitHub
-  Dark and Light, Nord, Nord Light, Monokai Light and Dark/Light (Visual Studio). A theme name copied
-  from VS Code or an extension (Default Dark Modern, GitHub Dark Default, Atom One Light) reads as
-  the theme here it stands for, and an unknown name gets the nearest one. In every theme the line
-  numbers, suggestions and links are 4.5:1 or more on their background.
+  Dark and Light, Nord, Nord Light, Monokai Light and Dark/Light (Visual Studio). A theme name
+  copied from VS Code or an extension (Default Dark Modern, GitHub Dark Default, Atom One Light)
+  reads as the theme here it stands for, and an unknown name gets the nearest one. In every theme
+  the line numbers, suggestions and links are 4.5:1 or more on their background.
 - **The theme follows the system.** With window.autoDetectColorScheme on (the default), the window
   wears workbench.preferredDarkColorTheme or workbench.preferredLightColorTheme, so a new window is
   Code Arena Dark. A workbench.colorTheme kept before now only counts once you pick a theme, which
