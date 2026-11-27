@@ -124,9 +124,10 @@ impl Settings {
         Settings { env, ..Default::default() }
     }
 
-    /// A problem kept: with the IDE's when it is about one of the IDE's settings or VS Code's file.
+    /// A problem kept: with the IDE's when it is about one of the IDE's settings, a language's block or VS Code's
+    /// file.
     fn say(&mut self, file: &Path, layer: Layer, key: &str, message: String) {
-        let ide = layer == Layer::Workspace || ide_schema::ALL.iter().any(|s| s.key == key);
+        let ide = layer == Layer::Workspace || key.starts_with('[') || ide_schema::ALL.iter().any(|s| s.key == key);
         let list = if ide { &mut self.ide_problems } else { &mut self.problems };
         list.push(Problem { file: file.to_path_buf(), message, key: key.to_string() });
     }
@@ -204,6 +205,14 @@ impl Settings {
             return None;
         }
         Some(value)
+    }
+
+    /// The same settings read again from their files (one was saved, or changed on disk): the environment and what
+    /// was given for this run stay as they are.
+    pub fn again(&self, user_file: &Path, project_file: Option<&Path>) -> Settings {
+        let mut s = Settings::load(user_file, project_file, self.env.clone());
+        s.flags = self.flags.clone();
+        s
     }
 
     /// Sets a value for this run (a command-line flag), over every other layer.
@@ -455,6 +464,159 @@ mod tests {
         assert_eq!(s.problems.len(), 1);
     }
 
+    /// A project with both of its settings files, and the person's file beside it.
+    fn project(user: &str, code_arena: &str, vscode: &str) -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let u = dir.path().join("user.json");
+        let p = dir.path().join("work/.code-arena/settings.json");
+        let w = dir.path().join("work/.vscode/settings.json");
+        for (file, text) in [(&u, user), (&p, code_arena), (&w, vscode)] {
+            std::fs::create_dir_all(file.parent().expect("in a folder")).expect("folder");
+            if !text.is_empty() {
+                std::fs::write(file, text).expect("write");
+            }
+        }
+        (dir, u, p, w)
+    }
+
+    #[test]
+    fn each_layer_over_the_one_before_and_a_languages_own_over_them_all() {
+        let tab = schema::find("editor.tabSize").expect("declared");
+        let read = |user: &str, code_arena: &str, vscode: &str| {
+            let (d, u, p, w) = project(user, code_arena, vscode);
+            (Settings::load(&u, Some(&p), Env::default()), d, u, p, w)
+        };
+        // The default, then the person's file, then the project's own, then VS Code's beside it.
+        let (s, ..) = read("", "", "");
+        assert_eq!(s.resolve(tab), (json!(4), Source::Default));
+        assert!(!s.has(Layer::User) && !s.has(Layer::Project) && !s.has(Layer::Workspace));
+        let (s, _d, u, ..) = read(r#"{"editor.tabSize": 8}"#, "", "");
+        assert_eq!(s.resolve(tab), (json!(8), Source::User(u)));
+        let (s, _d, _u, p, _w) = read(r#"{"editor.tabSize": 8}"#, r#"{"editor.tabSize": 3}"#, "");
+        assert_eq!(s.resolve(tab), (json!(3), Source::Project(p)));
+        let (s, _d, _u, _p, w) =
+            read(r#"{"editor.tabSize": 8}"#, r#"{"editor.tabSize": 3}"#, r#"{"editor.tabSize": 2}"#);
+        assert_eq!(s.resolve(tab), (json!(2), Source::Project(w.clone())));
+        assert_eq!(s.written(Layer::User, "editor.tabSize"), Some(&json!(8)));
+        assert_eq!(s.written(Layer::Project, "editor.tabSize"), Some(&json!(3)));
+        assert_eq!(s.written(Layer::Workspace, "editor.tabSize"), Some(&json!(2)));
+        // No language's own: a language reads what every language does.
+        assert_eq!(s.resolve_for(tab, Some("python")), (json!(2), Source::Project(w)));
+        // A language's own, even from the person's file, wins over the project's value for every language.
+        let mine = r#"{"editor.tabSize": 8, "[python]": {"editor.tabSize": 6}}"#;
+        let (s, _d, u, ..) = read(mine, r#"{"editor.tabSize": 3}"#, r#"{"editor.tabSize": 2}"#);
+        assert_eq!(s.resolve_for(tab, Some("python")), (json!(6), Source::User(u)));
+        assert_eq!(s.resolve_for(tab, Some("rust")).0, json!(2));
+        assert_eq!(s.resolve(tab).0, json!(2));
+        assert_eq!((s.ide("editor.tabSize", Some("python")), s.ide("editor.tabSize", None)), (json!(6), json!(2)));
+        assert_eq!(s.ide("not.a.setting", None), Value::Null);
+        // Among the languages' own, the project's over the person's, and VS Code's file over the project's own.
+        let (s, _d, _u, p, _w) = read(mine, r#"{"[python]": {"editor.tabSize": 5}}"#, "");
+        assert_eq!(s.resolve_for(tab, Some("python")), (json!(5), Source::Project(p)));
+        let (s, _d, _u, _p, w) =
+            read(mine, r#"{"[python]": {"editor.tabSize": 5}}"#, r#"{"[python]": {"editor.tabSize": 7}}"#);
+        assert_eq!(s.resolve_for(tab, Some("python")), (json!(7), Source::Project(w)));
+        assert_eq!(s.languages().into_iter().collect::<Vec<_>>(), ["python"]);
+        assert_eq!(s.language_values("python").get("editor.tabSize"), Some(&json!(7)));
+        // What was given for this run and the environment still win, and are kept when the files are read again.
+        let (mut s, _d, u, p, _w) = read(mine, "", "");
+        s.set_flag(&MODE, json!("plan"));
+        std::fs::write(&u, r#"{"editor.tabSize": 2, "agent.mode": "yolo"}"#).expect("write");
+        let s = s.again(&u, Some(&p));
+        assert_eq!(s.resolve(&MODE), (json!("plan"), Source::Flag));
+        assert_eq!((s.ide("editor.tabSize", None), s.ide("editor.tabSize", Some("python"))), (json!(2), json!(2)));
+    }
+
+    #[test]
+    fn a_block_of_several_languages_nested_names_and_what_is_not_taken() {
+        let (_d, u, p, w) = project(
+            r#"{
+              // VS Code's nested way of writing a name, and a block for two languages.
+              "editor": {"fontSize": 15, "minimap": {"enabled": false}},
+              "[javascript][typescript]": {"editor.tabSize": 2, "files.autoSave": "afterDelay"},
+              "[markdown]": {"editor": {"wordWrap": "on"}, "editor.tabSize": "wide"},
+              "[go]": 4,
+              "editor.rulers": "80",
+              "tools.shellTimeout": "soon",
+              "somebody.elses": true
+            }"#,
+            r#"{"terminal.integrated.allowChords": false, "editor.lineNumbers": "relative"}"#,
+            r#"{"codeArena.inlineCompletion.enabled": true, "agent.mode": "yolo", "editor.fontSize": 3}"#,
+        );
+        let s = Settings::load(&u, Some(&p), Env::default());
+        let of = |key: &str, language: Option<&str>| s.ide(key, language);
+        assert_eq!((of("editor.fontSize", None), of("editor.minimap.enabled", None)), (json!(15), json!(false)));
+        assert_eq!(
+            (of("editor.tabSize", Some("javascript")), of("editor.tabSize", Some("typescript"))),
+            (json!(2), json!(2))
+        );
+        assert_eq!(of("editor.wordWrap", Some("markdown")), json!("on"));
+        assert_eq!(of("editor.lineNumbers", None), json!("relative"));
+        // Not taken: a setting that is not a language's to set, a value of the wrong kind (its default holds), a
+        // block that is no object, the person's own in a project's file, a value out of its bounds.
+        assert_eq!(of("files.autoSave", Some("javascript")), json!("off"));
+        assert_eq!(of("editor.tabSize", Some("markdown")), json!(4));
+        assert_eq!(of("editor.rulers", None), json!([]));
+        assert_eq!(of("terminal.integrated.allowChords", None), json!(true));
+        assert_eq!(s.value(&MODE), json!("ask"));
+        // Each is listed with its setting and its file. The IDE's own, and all of VS Code's file, are the IDE's to
+        // say; the terminal says what is its own.
+        let said = |list: &[Problem]| -> Vec<(String, String, String)> {
+            let name = |f: &Path| {
+                let dir = f.parent().and_then(Path::file_name).unwrap_or_default().to_string_lossy().into_owned();
+                format!("{dir}/{}", f.file_name().unwrap_or_default().to_string_lossy())
+            };
+            list.iter().map(|p| (name(&p.file), p.key.clone(), p.message.clone())).collect()
+        };
+        let user = format!("{}/user.json", u.parent().and_then(Path::file_name).expect("dir").to_string_lossy());
+        let pair = |file: &str, key: &str, message: &str| (file.to_string(), key.to_string(), message.to_string());
+        assert_eq!(
+            said(&s.problems),
+            [pair(&user, "tools.shellTimeout", "\"tools.shellTimeout\" takes a whole number. Its default holds.")]
+        );
+        assert_eq!(
+            said(&s.ide_problems),
+            [
+                pair(&user, "files.autoSave", "\"files.autoSave\" cannot be set for one language."),
+                pair(&user, "editor.tabSize", "\"editor.tabSize\" takes a whole number. Its default holds."),
+                pair(&user, "[go]", "\"[go]\" holds an object of settings."),
+                pair(&user, "editor.rulers", "\"editor.rulers\" is a list of numbers. Its default holds."),
+                pair(
+                    ".code-arena/settings.json",
+                    "terminal.integrated.allowChords",
+                    "terminal.integrated.allowChords is the person's own: a project's settings cannot set it"
+                ),
+                pair(
+                    ".vscode/settings.json",
+                    "codeArena.inlineCompletion.enabled",
+                    "codeArena.inlineCompletion.enabled is the person's own: a project's settings cannot set it"
+                ),
+                pair(
+                    ".vscode/settings.json",
+                    "agent.mode",
+                    "agent.mode is the person's own: a project's settings cannot set it"
+                ),
+                pair(
+                    ".vscode/settings.json",
+                    "editor.fontSize",
+                    "\"editor.fontSize\" is from 6 to 100. Its default holds."
+                ),
+            ]
+        );
+        // What is no setting of Code Arena's is left in the file, and listed apart.
+        assert_eq!(s.unknown(Layer::User), ["somebody.elses"]);
+        // A file of VS Code's that cannot be read is the IDE's to say too, and is no layer.
+        std::fs::write(&w, "{ not json").expect("write");
+        let s = Settings::load(&u, Some(&p), Env::default());
+        assert!(!s.has(Layer::Workspace) && s.problems.len() == 1);
+        assert!(s.ide_problems.iter().any(|p| p.file == w && p.key.is_empty() && p.message.starts_with("not read:")));
+        // Only a project's `.code-arena/settings.json` has a file of VS Code's beside it.
+        assert_eq!(workspace_file(&p), Some(w));
+        assert_eq!(workspace_file(&u), None);
+        assert_eq!(languages_of("[javascript][typescript]"), Some(vec!["javascript", "typescript"]));
+        assert_eq!((languages_of("[]"), languages_of("[a]b"), languages_of("editor.tabSize")), (None, None, None));
+    }
+
     #[test]
     fn a_flag_wins() {
         let mut s = Settings::defaults(Env::from_pairs([("CODE_ARENA_MODE", "plan")]));
@@ -463,119 +625,380 @@ mod tests {
     }
 }
 
-/// The line a value that starts on line `i` ends on: its brackets and braces counted outside strings and comments
-/// (a value written over several lines, an object by hand).
-fn value_end(lines: &[&str], i: usize) -> usize {
-    let mut depth: i64 = 0;
-    let mut in_string = false;
-    for (n, line) in lines.iter().enumerate().skip(i) {
-        let mut chars = line.chars().peekable();
-        // On the key's line, what comes after the key's colon.
-        let mut seen_colon = n > i;
-        let mut escaped = false;
-        while let Some(c) = chars.next() {
-            if in_string {
-                match (escaped, c) {
-                    (true, _) => escaped = false,
-                    (false, '\\') => escaped = true,
-                    (false, '"') => in_string = false,
+/// One setting as a settings file's text has it: its name, where its name begins, where its value is, and the comma
+/// after it when it has one.
+struct Member {
+    key: String,
+    start: usize,
+    value: std::ops::Range<usize>,
+    comma: Option<usize>,
+}
+
+/// An object of a settings file's text (the file's own, or a language's block): its braces and what is in it.
+struct Object {
+    open: usize,
+    close: usize,
+    members: Vec<Member>,
+}
+
+/// Past the spaces and the comments from `i`.
+fn past_space(b: &[u8], mut i: usize) -> usize {
+    loop {
+        while b.get(i).is_some_and(u8::is_ascii_whitespace) {
+            i += 1;
+        }
+        match (b.get(i), b.get(i + 1)) {
+            (Some(b'/'), Some(b'/')) => {
+                while b.get(i).is_some_and(|c| *c != b'\n') {
+                    i += 1;
+                }
+            }
+            (Some(b'/'), Some(b'*')) => {
+                i += 2;
+                while i < b.len() && !(b[i] == b'*' && b.get(i + 1) == Some(&b'/')) {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+            }
+            _ => return i,
+        }
+    }
+}
+
+/// Past the string that opens at `i`.
+fn past_string(b: &[u8], i: usize) -> Option<usize> {
+    let mut j = i + 1;
+    while j < b.len() {
+        match b[j] {
+            b'\\' => j += 2,
+            b'"' => return Some(j + 1),
+            _ => j += 1,
+        }
+    }
+    None
+}
+
+/// Past the value that begins at `i`: a string, an object or a list with all that is in it (its strings and its
+/// comments read as such), or a word (a number, true, null).
+fn past_value(b: &[u8], i: usize) -> Option<usize> {
+    match *b.get(i)? {
+        b'"' => past_string(b, i),
+        b'{' | b'[' => {
+            let mut depth = 0usize;
+            let mut j = i;
+            while j < b.len() {
+                match b[j] {
+                    b'"' => {
+                        j = past_string(b, j)?;
+                        continue;
+                    }
+                    b'/' if matches!(b.get(j + 1), Some(b'/' | b'*')) => {
+                        j = past_space(b, j);
+                        continue;
+                    }
+                    b'{' | b'[' => depth += 1,
+                    b'}' | b']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(j + 1);
+                        }
+                    }
                     _ => {}
                 }
-                continue;
+                j += 1;
             }
-            match c {
-                '"' => in_string = true,
-                ':' => seen_colon = true,
-                '/' if chars.peek() == Some(&'/') => break,
-                '{' | '[' if seen_colon => depth += 1,
-                '}' | ']' if seen_colon => depth -= 1,
-                _ => {}
-            }
+            None
         }
-        if depth <= 0 && !in_string {
-            return n;
+        _ => {
+            let mut j = i;
+            while b.get(j).is_some_and(|c| !matches!(c, b',' | b'}' | b']' | b'/') && !c.is_ascii_whitespace()) {
+                j += 1;
+            }
+            (j > i).then_some(j)
         }
     }
-    lines.len().saturating_sub(1)
 }
 
-/// Takes one setting out of a settings file, the rest as it is (its comments, its order). A setting not there is no
-/// change.
-pub fn forget(file: &Path, key: &str) -> std::io::Result<()> {
-    let Ok(text) = std::fs::read_to_string(file) else { return Ok(()) };
-    let quoted = format!("\"{key}\"");
-    let lines: Vec<&str> = text.lines().collect();
-    let Some(i) = lines.iter().position(|l| l.trim_start().starts_with(&format!("{quoted}:"))) else { return Ok(()) };
-    let end = value_end(&lines, i);
-    let had_comma = lines[end].split("//").next().unwrap_or("").trim_end().ends_with(',');
-    let mut out: Vec<String> = lines[..i].iter().map(|l| l.to_string()).collect();
-    // It was the last setting: the one before it loses its comma.
-    if !had_comma
-        && let Some(prev) = out.iter_mut().rev().find(|l| !l.trim().is_empty() && !l.trim_start().starts_with("//"))
-    {
-        let (code, comment) = match prev.find("//") {
-            Some(at) if !prev.trim_start().starts_with("//") => (prev[..at].to_string(), prev[at..].to_string()),
-            _ => (prev.clone(), String::new()),
-        };
-        if let Some(stripped) = code.trim_end().strip_suffix(',') {
-            *prev = if comment.is_empty() { stripped.to_string() } else { format!("{stripped} {comment}") };
+/// The object whose brace is at `open`, read as far as its own settings: what is in their values is passed over.
+/// None when the text is not an object there.
+fn object_at(text: &str, open: usize) -> Option<Object> {
+    let b = text.as_bytes();
+    if b.get(open) != Some(&b'{') {
+        return None;
+    }
+    let mut members = Vec::new();
+    let mut i = past_space(b, open + 1);
+    loop {
+        match *b.get(i)? {
+            b'}' => return Some(Object { open, close: i, members }),
+            b'"' => {
+                let end = past_string(b, i)?;
+                let key: String = serde_json::from_str(text.get(i..end)?).ok()?;
+                let colon = past_space(b, end);
+                if b.get(colon) != Some(&b':') {
+                    return None;
+                }
+                let from = past_space(b, colon + 1);
+                let to = past_value(b, from)?;
+                let after = past_space(b, to);
+                let comma = (b.get(after) == Some(&b',')).then_some(after);
+                members.push(Member { key, start: i, value: from..to, comma });
+                i = past_space(b, comma.map_or(after, |c| c + 1));
+            }
+            _ => return None,
         }
     }
-    out.extend(lines[end + 1..].iter().map(|l| l.to_string()));
-    std::fs::write(file, out.join("\n") + "\n")
 }
 
-/// Keeps one setting in a settings file (the person's `settings.json`), the rest of it as it is: its comments, its
-/// order, its other settings. A file not there yet is made.
-pub fn keep(file: &Path, key: &str, value: &Value) -> std::io::Result<()> {
-    let text = std::fs::read_to_string(file).unwrap_or_default();
-    let val = serde_json::to_string(value).unwrap_or_else(|_| "null".into());
-    let quoted = format!("\"{key}\"");
-    let out = if text.trim().is_empty() {
-        format!("{{\n  {quoted}: {val}\n}}\n")
-    } else if let Some(i) = text.lines().position(|l| l.trim_start().starts_with(&format!("{quoted}:"))) {
-        // In place: its lines (a value written over several), its comma kept.
-        let all: Vec<&str> = text.lines().collect();
-        let end = value_end(&all, i);
-        let indent: String = all[i].chars().take_while(|c| c.is_whitespace()).collect();
-        let comma = if all[end].split("//").next().unwrap_or("").trim_end().ends_with(',') { "," } else { "" };
-        let mut lines: Vec<String> = all[..i].iter().map(|l| l.to_string()).collect();
-        lines.push(format!("{indent}{quoted}: {val}{comma}"));
-        lines.extend(all[end + 1..].iter().map(|l| l.to_string()));
-        lines.join("\n") + "\n"
-    } else {
-        // Before the closing brace, with a comma after the setting before it.
-        let Some(close) = text.rfind('}') else {
-            return Err(std::io::Error::other(format!("{}: not a settings object", file.display())));
-        };
-        let head = text[..close].trim_end();
-        let needs_comma = !(head.ends_with('{') || head.ends_with(','));
-        // The last line with a value may end in a comment: the comma goes before it.
-        let head = if needs_comma {
-            match head.rfind('\n').map(|n| (n, &head[n + 1..])) {
-                Some((n, last)) if last.contains("//") && !last.trim_start().starts_with("//") => {
-                    let at = last.find("//").unwrap_or(last.len());
-                    format!("{}\n{}, {}", &head[..n], last[..at].trim_end(), &last[at..])
-                }
-                _ if head.trim_end().lines().last().is_some_and(|l| l.trim_start().starts_with("//")) => {
-                    head.to_string()
-                }
-                _ => format!("{head},"),
-            }
+/// Where the line `i` is on begins.
+fn line_start(text: &str, i: usize) -> usize {
+    text[..i].rfind('\n').map_or(0, |n| n + 1)
+}
+
+/// The spaces the line `i` is on begins with.
+fn indent_at(text: &str, i: usize) -> &str {
+    let line = &text[line_start(text, i)..];
+    &line[..line.len() - line.trim_start_matches([' ', '\t']).len()]
+}
+
+/// Where the line `i` is on ends (before its line break).
+fn line_end(text: &str, i: usize) -> usize {
+    let end = text[i..].find('\n').map_or(text.len(), |n| i + n);
+    if end > i && text.as_bytes()[end - 1] == b'\r' { end - 1 } else { end }
+}
+
+/// Whether nothing but a `//` comment follows on the line, from `i`.
+fn line_is_over(text: &str, i: usize) -> bool {
+    let rest = text[i..line_end(text, i)].trim();
+    rest.is_empty() || rest.starts_with("//")
+}
+
+/// An object's text with one setting in it: its value changed where it stands, or the setting added after the
+/// last one, on a line of its own when the last one has its own.
+fn put(text: &str, object: &Object, key: &str, value: &str) -> String {
+    if let Some(m) = object.members.iter().rev().find(|m| m.key == key) {
+        return format!("{}{value}{}", &text[..m.value.start], &text[m.value.end..]);
+    }
+    let nl = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let member = format!("{}: {value}", Value::String(key.to_string()));
+    let outer = indent_at(text, object.open);
+    let Some(last) = object.members.last() else {
+        let head = &text[..object.open + 1];
+        return if text[object.open + 1..object.close].contains('\n') {
+            // Before the comments it holds.
+            format!("{head}{nl}{outer}  {member}{}", &text[object.open + 1..])
         } else {
-            head.to_string()
+            format!("{head}{nl}{outer}  {member}{nl}{outer}{}", text[object.open + 1..].trim_start_matches([' ', '\t']))
         };
-        format!("{head}\n  {quoted}: {val}\n{}", &text[close..])
     };
+    let at = last.comma.map_or(last.value.end, |c| c + 1);
+    let comma = if last.comma.is_some() { "" } else { "," };
+    if line_is_over(text, at) {
+        // On the next line, as the last one is written; a comment after the last one stays with it.
+        let indent = if text[line_start(text, last.start)..last.start].trim().is_empty() {
+            indent_at(text, last.start).to_string()
+        } else {
+            format!("{outer}  ")
+        };
+        let end = line_end(text, at);
+        format!("{}{comma}{}{nl}{indent}{member}{}", &text[..at], &text[at..end], &text[end..])
+    } else {
+        format!("{}{comma} {member}{}", &text[..at], &text[at..])
+    }
+}
+
+/// An object's text without one setting: its lines gone when they are its own, and the comma of the one before it
+/// when it was the last. None when the setting is not there.
+fn take_out(text: &str, object: &Object, key: &str) -> Option<String> {
+    let at = object.members.iter().rposition(|m| m.key == key)?;
+    let m = &object.members[at];
+    let before = at.checked_sub(1).map(|n| &object.members[n]);
+    let end = m.comma.map_or(m.value.end, |c| c + 1);
+    let from = line_start(text, m.start);
+    let own_lines = text[from..m.start].trim().is_empty() && line_is_over(text, end);
+    let (cut, to) = if own_lines {
+        (from, text[end..].find('\n').map_or(text.len(), |n| end + n + 1))
+    } else {
+        // Among others on its line: it goes with the spaces after it, or, the last, with those before it.
+        match (m.comma, before) {
+            (None, Some(b)) => (b.comma.map_or(b.value.end, |c| c + 1), end),
+            _ => (m.start, end + text[end..].len() - text[end..].trim_start_matches([' ', '\t']).len()),
+        }
+    };
+    let mut out = format!("{}{}", &text[..cut], &text[to..]);
+    // It was the last one: the one before it ends the object, without a comma.
+    if m.comma.is_none()
+        && let Some(c) = before.and_then(|b| b.comma)
+    {
+        out.replace_range(c..c + 1, "");
+    }
+    Some(out)
+}
+
+/// A settings file's text with one setting kept in it (`value`), or taken out of it (none): for every language,
+/// or in a language's own block (`"[python]": {…}`, made when it is not there). The rest of the text stays as it
+/// is: its comments, its order, its other settings. An empty text is an empty object.
+pub fn edited(text: &str, language: Option<&str>, key: &str, value: Option<&Value>) -> Result<String, String> {
+    let text = if text.trim().is_empty() { "{\n}\n" } else { text };
+    let not_object = || "it is not a JSON object of settings".to_string();
+    let root = object_at(text, past_space(text.as_bytes(), 0)).ok_or_else(not_object)?;
+    let written = value.map(|v| serde_json::to_string(v).unwrap_or_else(|_| "null".into()));
+    let set = |text: &str, object: &Object| match &written {
+        Some(v) => put(text, object, key, v),
+        None => take_out(text, object, key).unwrap_or_else(|| text.to_string()),
+    };
+    let Some(language) = language else { return Ok(set(text, &root)) };
+    let block = format!("[{language}]");
+    let inner = |text: &str, root: &Object| {
+        let m = root.members.iter().rev().find(|m| m.key == block)?;
+        Some(object_at(text, m.value.start).ok_or_else(|| format!("\"{block}\" holds an object of settings")))
+    };
+    match inner(text, &root) {
+        Some(found) => Ok(set(text, &found?)),
+        None if written.is_none() => Ok(text.to_string()),
+        None => {
+            let with = put(text, &root, &block, "{}");
+            let root = object_at(&with, root.open).ok_or_else(not_object)?;
+            let made = inner(&with, &root).ok_or_else(not_object)??;
+            Ok(set(&with, &made))
+        }
+    }
+}
+
+/// A settings file changed by [`edited`] and written back; a file not there yet is made, with its folder.
+fn edit(file: &Path, language: Option<&str>, key: &str, value: Option<&Value>) -> std::io::Result<()> {
+    let text = std::fs::read_to_string(file).unwrap_or_default();
+    let out =
+        edited(&text, language, key, value).map_err(|e| std::io::Error::other(format!("{}: {e}", file.display())))?;
+    if out == text {
+        return Ok(());
+    }
     if let Some(d) = file.parent() {
         std::fs::create_dir_all(d)?;
     }
     std::fs::write(file, out)
 }
 
+/// Takes one setting out of a settings file, the rest as it is (its comments, its order). A setting not there, or
+/// a file not there, is no change.
+pub fn forget(file: &Path, key: &str) -> std::io::Result<()> {
+    forget_for(file, None, key)
+}
+
+/// As [`forget`], out of a language's own block when one is given.
+pub fn forget_for(file: &Path, language: Option<&str>, key: &str) -> std::io::Result<()> {
+    if !file.exists() {
+        return Ok(());
+    }
+    edit(file, language, key, None)
+}
+
+/// Keeps one setting in a settings file (the person's `settings.json`), the rest of it as it is: its comments, its
+/// order, its other settings. A file not there yet is made.
+pub fn keep(file: &Path, key: &str, value: &Value) -> std::io::Result<()> {
+    keep_for(file, None, key, value)
+}
+
+/// As [`keep`], in a language's own block (`"[python]": {…}`) when one is given: the block is made when it is not
+/// there, and the same setting outside it is left as it is.
+pub fn keep_for(file: &Path, language: Option<&str>, key: &str, value: &Value) -> std::io::Result<()> {
+    edit(file, language, key, Some(value))
+}
+
 #[cfg(test)]
 mod keep_tests {
     use super::*;
+
+    fn read(file: &Path) -> (String, Value) {
+        let text = std::fs::read_to_string(file).expect("read");
+        let value = crate::jsonc::parse(&text).unwrap_or_else(|e| panic!("still JSON with comments ({e}): {text}"));
+        (text, value)
+    }
+
+    #[test]
+    fn a_setting_kept_for_every_language_leaves_a_languages_own_and_the_other_way() {
+        let d = tempfile::tempdir().expect("temp");
+        let f = d.path().join("settings.json");
+        let tab = "editor.tabSize";
+        std::fs::write(
+            &f,
+            "{\n  // \"editor.tabSize\": 1,\n  \"[python]\": {\n    \"editor.tabSize\": 2 // narrow\n  },\n  \"files.eol\": \"\\\"editor.tabSize\\\": 9\",\n  \"editor.tabSize\": 4\n}\n",
+        )
+        .expect("w");
+        // For every language: the one outside the blocks, not the first line that names it.
+        keep(&f, tab, &serde_json::json!(8)).expect("kept");
+        let (t, v) = read(&f);
+        assert_eq!((&v[tab], &v["[python]"][tab]), (&serde_json::json!(8), &serde_json::json!(2)), "{t}");
+        assert!(t.contains("// \"editor.tabSize\": 1,") && t.contains("2 // narrow") && t.contains("9\","), "{t}");
+        // For one language: in its block, the comment beside it kept; one more goes on a line of its own there.
+        keep_for(&f, Some("python"), tab, &serde_json::json!(3)).expect("kept");
+        keep_for(&f, Some("python"), "editor.insertSpaces", &serde_json::json!(false)).expect("added");
+        let (t, v) = read(&f);
+        assert_eq!((&v[tab], &v["[python]"][tab]), (&serde_json::json!(8), &serde_json::json!(3)), "{t}");
+        assert!(t.contains("    \"editor.tabSize\": 3, // narrow\n    \"editor.insertSpaces\": false\n  },"), "{t}");
+        // A language with no block yet gets one, after the last setting.
+        keep_for(&f, Some("rust"), tab, &serde_json::json!(2)).expect("made");
+        let (t, v) = read(&f);
+        assert_eq!(v["[rust]"][tab], 2, "{t}");
+        assert!(t.ends_with("  \"editor.tabSize\": 8,\n  \"[rust]\": {\n    \"editor.tabSize\": 2\n  }\n}\n"), "{t}");
+        // Taken out of a block: the block's other settings and the same setting outside it stay.
+        forget_for(&f, Some("python"), "editor.insertSpaces").expect("forgotten");
+        forget_for(&f, Some("rust"), tab).expect("forgotten");
+        forget_for(&f, Some("go"), tab).expect("nothing to forget");
+        let (t, v) = read(&f);
+        assert!(t.contains("    \"editor.tabSize\": 3 // narrow\n  },") && t.contains("\"[rust]\": {\n  }"), "{t}");
+        assert_eq!(
+            (&v[tab], &v["[python]"][tab], &v["[rust]"]),
+            (&serde_json::json!(8), &serde_json::json!(3), &serde_json::json!({}))
+        );
+        forget(&f, tab).expect("forgotten");
+        let (t, v) = read(&f);
+        assert!(v[tab].is_null() && v["[python]"][tab] == 3 && t.contains("// \"editor.tabSize\": 1,"), "{t}");
+    }
+
+    #[test]
+    fn settings_written_on_one_line_and_files_that_are_not_settings() {
+        let on = |text: &str, language: Option<&str>, key: &str, value: Option<Value>| {
+            edited(text, language, key, value.as_ref())
+        };
+        let one = serde_json::json!(1);
+        assert_eq!(on("", None, "a", Some(one.clone())).as_deref(), Ok("{\n  \"a\": 1\n}\n"));
+        assert_eq!(on("{}", None, "a", Some(one.clone())).as_deref(), Ok("{\n  \"a\": 1\n}"));
+        assert_eq!(
+            on("{\"a\": 1}", None, "b", Some(serde_json::json!("x"))).as_deref(),
+            Ok("{\"a\": 1, \"b\": \"x\"}")
+        );
+        assert_eq!(on("{\"a\": 1, \"b\": 2}", None, "b", None).as_deref(), Ok("{\"a\": 1}"));
+        assert_eq!(on("{\"a\": 1, \"b\": 2}", None, "a", None).as_deref(), Ok("{\"b\": 2}"));
+        assert_eq!(on("{\"a\": 1}", None, "a", None).as_deref(), Ok("{}"));
+        assert_eq!(
+            on("{\"[go]\": {\"a\": 8}, /* all */ \"a\": 1}", Some("go"), "b", Some(one.clone())).as_deref(),
+            Ok("{\"[go]\": {\"a\": 8, \"b\": 1}, /* all */ \"a\": 1}")
+        );
+        assert_eq!(
+            on("{\r\n  \"a\": 1,\r\n}\r\n", None, "b", Some(one.clone())).as_deref(),
+            Ok("{\r\n  \"a\": 1,\r\n  \"b\": 1\r\n}\r\n"),
+            "a comma that trails already is not written twice, and the file's line ends are kept"
+        );
+        assert_eq!(
+            on("{\n  \"[go]\": {}\n}\n", Some("go"), "a", Some(one.clone())).as_deref(),
+            Ok("{\n  \"[go]\": {\n    \"a\": 1\n  }\n}\n")
+        );
+        // Not an object of settings, or a language's block that is none: said, and nothing is written.
+        assert!(on("[1, 2]", None, "a", Some(one.clone())).is_err());
+        assert!(on("{\"a\": ", None, "a", Some(one.clone())).is_err());
+        assert_eq!(
+            on("{\"[go]\": 4}", Some("go"), "a", Some(one)),
+            Err("\"[go]\" holds an object of settings".to_string())
+        );
+        let d = tempfile::tempdir().expect("temp");
+        let f = d.path().join("settings.json");
+        std::fs::write(&f, "[]").expect("w");
+        assert!(keep(&f, "a", &serde_json::json!(1)).is_err());
+        assert_eq!(std::fs::read_to_string(&f).expect("r"), "[]");
+        forget(&d.path().join("none.json"), "a").expect("no file, nothing to forget");
+        assert!(!d.path().join("none.json").exists());
+    }
 
     #[test]
     fn one_setting_kept_the_rest_as_it_was() {

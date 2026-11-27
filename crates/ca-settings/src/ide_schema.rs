@@ -21,6 +21,24 @@ const fn row(
     Setting { key, kind, default, description, scope, env: None, section }
 }
 
+/// The sections the IDE's settings are shown under, in the Settings editor's order. "Experimental" is for what is
+/// still behind a flag: nothing is yet.
+pub const SECTIONS: &[&str] = &[
+    "Text Editor",
+    "Workbench",
+    "Features",
+    "Files",
+    "Formatting",
+    "Source Control",
+    "Diff Editor",
+    "Terminal",
+    "Accessibility",
+    "Debug",
+    "Language Servers",
+    "Code Arena",
+    "Experimental",
+];
+
 /// Every setting of the IDE's, in the Settings editor's order.
 pub static ALL: &[&Setting] = &[
     &row(
@@ -1236,7 +1254,11 @@ mod tests {
         for key in OLD {
             assert!(find(key).is_some(), "{key} is not in the schema");
         }
-        assert_eq!(ALL.len(), 138, "a row added here is added to the count, and to the coverage test's list");
+        assert_eq!(ALL.len(), 138, "a row added here is added to the count; tests/settings_read.rs wants it read");
+        for s in ALL {
+            assert!(SECTIONS.contains(&s.section), "{} is under {:?}, which is no section", s.key, s.section);
+            assert!(s.env.is_none(), "{} is not read from the environment", s.key);
+        }
     }
 
     #[test]
