@@ -464,3 +464,146 @@ pub fn register(_ui: Ui, _send: &Send) {
 pub fn take(_ui: Ui, _m: &Value, _send: &Send) -> bool {
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    /// A window with the settings and this part in it, and what it tells the session.
+    fn window() -> (Ui, Send, Rc<RefCell<Vec<Value>>>) {
+        let ui = Ui::new();
+        let told = Rc::new(RefCell::new(Vec::new()));
+        let send: Send = {
+            let to = told.clone();
+            Rc::new(move |v: Value| to.borrow_mut().push(v))
+        };
+        ui.out.set(Some(send.clone()));
+        settings::register(ui, &send);
+        register(ui, &send);
+        (ui, send, told)
+    }
+
+    /// The session says the person's settings, and those of languages.
+    fn say(ui: Ui, send: &Send, values: Value, by_lang: Value) {
+        let m = json!({"type": "settings", "values": values, "by_lang": by_lang, "sources": {}, "problems": [],
+            "files": {"user": "/u/settings.json", "project": "/w/.code-arena/settings.json", "workspace": "/w/.vscode/settings.json"}});
+        settings::take(ui, &m, send);
+    }
+
+    #[test]
+    fn each_setting_is_read_as_vs_code_reads_it() {
+        assert_eq!(font_size(&json!(20)), 20.0);
+        assert_eq!(font_size(&json!(2)), 6.0);
+        assert_eq!(font_size(&json!("big")), 13.0);
+        assert_eq!(font_weight(&json!("bold")), 700);
+        assert_eq!(font_weight(&json!("300")), 300);
+        assert_eq!(font_weight(&json!(5000)), 1000);
+        assert_eq!(font_weight(&Value::Null), 400);
+        assert!(font_family(&json!("Fira Code")).starts_with("Fira Code, "));
+        assert_eq!(font_family(&json!("  ")), *MONO_FONT);
+        assert_eq!(line_height(&json!(0), 14.0), 19.0);
+        assert_eq!(line_height(&json!(1.5), 14.0), 21.0);
+        assert_eq!(line_height(&json!(24), 14.0), 24.0);
+        assert_eq!(line_height(&json!(2), 3.0), 8.0);
+        assert_eq!(wrap(&json!("off"), &json!(80)), Wrap::Off);
+        assert_eq!(wrap(&json!("on"), &json!(80)), Wrap::On);
+        assert_eq!(wrap(&json!("wordWrapColumn"), &json!(100)), Wrap::Column(100));
+        assert_eq!(wrap(&json!("bounded"), &Value::Null), Wrap::Bounded(80));
+        assert_eq!(toggled(Wrap::Column(80)), Wrap::Off);
+        assert_eq!(toggled(Wrap::Off), Wrap::On);
+        assert_eq!(rulers(&json!([120, {"column": 80, "color": "#f00"}, 80, -1])), vec![80, 120]);
+        assert!(rulers(&json!("80")).is_empty());
+        assert_eq!(whitespace(&json!("all")), RenderWhitespace::All);
+        assert_eq!(whitespace(&json!("boundary")), RenderWhitespace::Boundary);
+        assert_eq!(whitespace(&json!("trailing")), RenderWhitespace::Trailing);
+        assert_eq!(whitespace(&json!("selection")), RenderWhitespace::None);
+        assert_eq!(line_highlight(&json!("line")), (false, true));
+        assert_eq!(line_highlight(&json!("all")), (true, true));
+        assert_eq!(line_highlight(&json!("gutter")), (true, false));
+        assert_eq!(line_highlight(&json!("none")), (false, false));
+        assert_eq!(zoomed(10.0, 2), 12.0);
+        assert_eq!(zoomed(10.0, -9), 5.0);
+    }
+
+    #[test]
+    fn a_file_is_named_by_its_language_as_a_settings_block_names_it() {
+        assert_eq!(language("src/main.rs"), Some("rust"));
+        assert_eq!(language("web/App.TSX"), Some("typescriptreact"));
+        assert_eq!(language("Makefile"), Some("makefile"));
+        assert_eq!(language(".vscode/settings.json"), Some("jsonc"));
+        assert_eq!(language("user:keybindings.json"), Some("jsonc"));
+        assert_eq!(language("notes"), None);
+    }
+
+    #[test]
+    fn the_options_follow_the_settings_the_languages_own_first_the_zoom_and_the_files_toggled_wrap() {
+        let (ui, send, _) = window();
+        let rust = Some("src/a.rs".to_string());
+        let path = ui.scope.create_rw_signal(rust.clone());
+        let o = memo(ui, move || path.get());
+        // Before the session says anything: the defaults.
+        let first = o.get_untracked();
+        assert_eq!((first.font.size, first.font.line_height, first.wrap), (13.0, 20.0, Wrap::Off));
+        assert!(first.line_numbers && first.highlight_line && !first.highlight_gutter && first.rulers.is_empty());
+        say(
+            ui,
+            &send,
+            json!({"editor.fontSize": 20, "editor.fontWeight": "bold", "editor.lineHeight": 30, "editor.wordWrap": "on",
+                "editor.rulers": [80], "editor.lineNumbers": "off", "editor.renderWhitespace": "all",
+                "editor.renderLineHighlight": "all", "editor.cursorBlinking": "solid", "editor.guides.indentation": false,
+                "editor.scrollBeyondLastLine": false, "editor.mouseWheelZoom": true, "editor.emptySelectionClipboard": false}),
+            json!({"rust": {"editor.fontSize": 16, "editor.wordWrap": "bounded", "editor.wordWrapColumn": 60}}),
+        );
+        let now = o.get_untracked();
+        assert_eq!((now.font.size, now.font.weight, now.font.line_height), (16.0, 700, 30.0));
+        assert_eq!((now.wrap, now.rulers.clone()), (Wrap::Bounded(60), vec![80]));
+        assert!(!now.line_numbers && now.whitespace == RenderWhitespace::All);
+        assert!(now.highlight_gutter && now.highlight_line && now.solid_caret);
+        assert!(!now.indent_guides && !now.scroll_beyond_last_line && now.wheel_zoom && !now.empty_selection_copies);
+        // Another file, of no language block: the person's own.
+        path.set(Some("notes.md".into()));
+        assert_eq!((o.get_untracked().font.size, o.get_untracked().wrap), (20.0, Wrap::On));
+        // The zoom grows the font and the line by a tenth a step; reset, they are the settings' again.
+        zoom(ui, 1);
+        zoom(ui, 1);
+        assert_eq!((o.get_untracked().font.size, o.get_untracked().font.line_height), (24.0, 36.0));
+        zoom(ui, 0);
+        assert_eq!(o.get_untracked().font.size, 20.0);
+        // Toggle Word Wrap is the file's: this one stops wrapping, the other wraps as before.
+        ui.state::<Zoom>().toggled.update(|t| {
+            t.insert("notes.md".into());
+        });
+        assert_eq!(o.get_untracked().wrap, Wrap::Off);
+        path.set(rust);
+        assert_eq!(o.get_untracked().wrap, Wrap::Bounded(60));
+    }
+
+    #[test]
+    fn the_view_toggles_write_the_persons_setting_and_the_zoom_is_bounded() {
+        let (ui, send, told) = window();
+        say(ui, &send, json!({"editor.minimap.enabled": false, "editor.renderWhitespace": "selection"}), json!({}));
+        for id in ["editor.action.toggleMinimap", "editor.action.toggleStickyScroll", "breadcrumbs.toggle"] {
+            assert!(crate::commands::run(ui, &send, id), "{id}");
+        }
+        assert!(crate::commands::run(ui, &send, "editor.action.toggleRenderWhitespace"));
+        {
+            let told = told.borrow();
+            let set: Vec<&Value> = told.iter().filter(|m| m["type"] == "set_setting").collect();
+            assert_eq!(set[0], &json!({"type": "set_setting", "key": "editor.minimap.enabled", "value": true}));
+            assert_eq!(set[1], &json!({"type": "set_setting", "key": "editor.stickyScroll.enabled", "value": false}));
+            assert_eq!(set[2], &json!({"type": "set_setting", "key": "breadcrumbs.enabled", "value": false}));
+            assert_eq!(set[3], &json!({"type": "set_setting", "key": "editor.renderWhitespace", "value": "none"}));
+        }
+        assert_eq!(crate::commands::keys_of(TOGGLE_WORD_WRAP), "Alt+Z");
+        // With no file on screen, there is nothing to toggle.
+        assert!(!crate::commands::run(ui, &send, TOGGLE_WORD_WRAP));
+        for _ in 0..30 {
+            assert!(crate::commands::run(ui, &send, ZOOM_IN));
+        }
+        assert_eq!(ui.state::<Zoom>().level.get_untracked(), 20);
+        assert!(crate::commands::run(ui, &send, ZOOM_RESET));
+        assert_eq!(ui.state::<Zoom>().level.get_untracked(), 0);
+    }
+}
