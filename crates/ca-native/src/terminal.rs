@@ -255,6 +255,7 @@ pub struct Emulator {
 }
 
 impl Emulator {
+    #[cfg(test)]
     pub fn new(columns: usize, lines: usize) -> Emulator {
         Emulator::keeping(columns, lines, 10_000)
     }
@@ -503,19 +504,6 @@ pub fn key_bytes(key: &Key, text: Option<&str>, m: Modifiers, mode: TermMode) ->
     Some(if alt && !s.starts_with('\x1b') { format!("\x1b{s}") } else { s })
 }
 
-/// What it adds to the window's registries, once at start.
-pub fn register(_ui: Ui, _send: &Send) {}
-
-/// The session's messages of a terminal (what it wrote, that it ended), taken in. Never taken away (false).
-pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
-    match m["type"].as_str().unwrap_or("") {
-        "term_out" => output(ui, m["id"].as_u64().unwrap_or(0), m["data"].as_str().unwrap_or(""), send),
-        "term_exit" => ended(ui, m["id"].as_u64().unwrap_or(0), m["code"].as_i64()),
-        _ => {}
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -729,49 +717,144 @@ mod tests {
 
 // ---- The view, and what keeps the terminals while the panel shows another view. ----
 
+use std::cell::Cell;
+
 use floem::event::{Event, EventListener, EventPropagation};
 use floem::peniko::Color;
-use floem::reactive::{SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
+use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::style::CursorStyle;
-use floem::views::{Decorators, container, dyn_stack, h_stack, label, v_stack};
+use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, v_stack};
 use floem::{IntoView, View};
 use serde_json::json;
 
 use crate::icons::icon;
+use crate::layout::View as Part;
+use crate::settings;
 use crate::state::{Send, Ui};
 use crate::widgets::{MONO_FONT, action};
 
-/// The terminal's cell, in pixels (VS Code's: 14 px text, its line 17 px high).
-const FONT: f32 = 14.0;
-const LINE: f64 = 17.0;
 /// The room around the screen: 10 px at each side, 2 px above.
 const PAD_X: f64 = 10.0;
 const PAD_TOP: f64 = 2.0;
+/// An action with its words under the pointer.
+fn tip(v: impl IntoView + 'static, words: &'static str) -> impl IntoView {
+    floem::views::tooltip(v, move || label(move || words))
+}
+
 /// VS Code's terminal tabs list: 120 px wide, its rows 22 px high.
 const TABS: f64 = 120.0;
 const TAB: f64 = 22.0;
+/// The scrollbar's width, as VS Code's terminal's.
+const SCROLLBAR: f64 = 10.0;
 /// The size a terminal starts at when the panel has not been laid out yet (it is fitted once it is).
 const UNFITTED: (usize, usize) = (80, 24);
+/// How long the caret is shown, then hidden, while it blinks.
+const BLINK_MS: u64 = 600;
+
+/// The caret's shape (`terminal.integrated.cursorStyle`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Caret {
+    Block,
+    Line,
+    Underline,
+}
+
+/// How the terminals are drawn, from the `terminal.integrated.*` settings: the font, the line's height in pixels,
+/// the caret, the lines kept, the least contrast.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Look {
+    pub family: String,
+    pub size: f64,
+    pub line: f64,
+    pub caret: Caret,
+    pub blink: bool,
+    pub scrollback: usize,
+    pub contrast: f64,
+}
+
+impl Look {
+    /// Made from the settings' values (the font's family empty: the editor's monospace one); the line is the font's
+    /// size times 1.2 times `lineHeight`, so VS Code's 14 px is 17 px high.
+    pub fn of(family: &str, size: f64, line_height: f64, caret: &str, blink: bool, scrollback: f64, contrast: f64) -> Look {
+        let size = if size > 0.0 { size.clamp(6.0, 100.0) } else { 14.0 };
+        Look {
+            family: if family.trim().is_empty() { MONO_FONT.to_string() } else { family.trim().to_string() },
+            size,
+            line: (size * 1.2 * line_height.max(1.0)).round(),
+            caret: match caret {
+                "line" => Caret::Line,
+                "underline" => Caret::Underline,
+                _ => Caret::Block,
+            },
+            blink,
+            scrollback: scrollback.max(0.0) as usize,
+            contrast: contrast.clamp(1.0, 21.0),
+        }
+    }
+
+    /// The settings read (followed).
+    fn read(ui: Ui) -> Look {
+        Look::of(
+            &settings::text(ui, "terminal.integrated.fontFamily", None),
+            settings::number(ui, "terminal.integrated.fontSize", None),
+            settings::number(ui, "terminal.integrated.lineHeight", None),
+            &settings::text(ui, "terminal.integrated.cursorStyle", None),
+            settings::flag(ui, "terminal.integrated.cursorBlinking", None),
+            settings::number(ui, "terminal.integrated.scrollback", None),
+            settings::number(ui, "terminal.integrated.minimumContrastRatio", None),
+        )
+    }
+}
+
+/// What the terminal panel keeps for a window: how it is drawn (told only when a setting of it changes), the size
+/// its screen was laid out at, the link under the pointer (its line, its first column and the one after its last),
+/// whether the blinking caret is shown, and whether the session was asked for its terminals (after `behind`).
+#[derive(Clone, Copy)]
+pub struct Panel {
+    pub look: Memo<Look>,
+    rect: RwSignal<(f64, f64)>,
+    hover: RwSignal<Option<(usize, usize, usize)>>,
+    blink: RwSignal<bool>,
+    asked: RwSignal<bool>,
+}
+
+impl crate::ext::State for Panel {
+    fn new(ui: Ui) -> Self {
+        Panel {
+            look: ui.scope.create_memo(move |_| Look::read(ui)),
+            rect: ui.scope.create_rw_signal((0.0, 0.0)),
+            hover: ui.scope.create_rw_signal(None),
+            blink: ui.scope.create_rw_signal(true),
+            asked: ui.scope.create_rw_signal(false),
+        }
+    }
+}
+
+fn look(ui: Ui) -> Look {
+    ui.state::<Panel>().look.get_untracked()
+}
 
 thread_local! {
     /// The window's emulators, by their terminals' numbers.
     static EMULATORS: RefCell<HashMap<u64, Emulator>> = RefCell::new(HashMap::new());
-    static CELL_WIDTH: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
+    /// A cell's width for a font (its family and size).
+    static CELL_WIDTH: RefCell<(String, f64, f64)> = const { RefCell::new((String::new(), 0.0, 0.0)) };
     /// The theme's terminal colours, read from it once (a redraw is not to read the theme again).
     static PALETTE: RefCell<Option<Palette>> = const { RefCell::new(None) };
 }
 
-/// How wide a cell of the monospace font is.
-fn cell_width() -> f64 {
+/// How wide a cell of the terminal's font is.
+fn cell_width(look: &Look) -> f64 {
     CELL_WIDTH.with(|w| {
-        if w.get() == 0.0 {
-            let family: Vec<floem::text::FamilyOwned> = floem::text::FamilyOwned::parse_list(&MONO_FONT).collect();
+        let mut w = w.borrow_mut();
+        if w.0 != look.family || w.1 != look.size {
+            let family: Vec<floem::text::FamilyOwned> = floem::text::FamilyOwned::parse_list(&look.family).collect();
             let mut l = floem::text::TextLayout::new();
-            let attrs = floem::text::Attrs::new().family(&family).font_size(FONT);
+            let attrs = floem::text::Attrs::new().family(&family).font_size(look.size as f32);
             l.set_text(&"M".repeat(40), floem::text::AttrsList::new(attrs));
-            w.set((l.size().width / 40.0).max(1.0));
+            *w = (look.family.clone(), look.size, (l.size().width / 40.0).max(1.0));
         }
-        w.get()
+        w.2
     })
 }
 
@@ -785,8 +868,9 @@ pub enum State {
     Ended(u64, Option<i64>),
 }
 
-/// A terminal of the window's, as its row in the tabs list shows it: its number, the shell's name, and how it
-/// ended once it has (with its code, when it gave one).
+/// A terminal of the window's, as its row in the tabs list shows it: its number, its name (the shell's with its
+/// number, "bash 2", or what the session started it for, "Task - build"), and how it ended once it has (with its
+/// code, when it gave one).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Shell {
     pub id: u64,
@@ -801,17 +885,38 @@ impl Shell {
             Some(code) => State::Ended(self.id, code),
         }
     }
+
+    /// Its tab's words: its name, and "(ended)" once it has.
+    pub fn title(&self) -> String {
+        if self.ended.is_some() { format!("{} (ended)", self.name) } else { self.name.clone() }
+    }
 }
 
-/// What a terminal's tab is called: the shell's name, as VS Code's ("bash", "zsh"), as the session says it.
-fn shell_name(ui: Ui) -> String {
+/// What a terminal of the window's is called: the shell's name, as VS Code's ("bash", "zsh"), as the session says
+/// it, with the terminal's number.
+fn shell_name(ui: Ui, id: u64) -> String {
     let s = ui.shell.get_untracked();
-    if s.is_empty() { "bash".to_string() } else { s }
+    let s = if s.is_empty() { "bash".to_string() } else { s };
+    format!("{s} {}", id + 1 - FIRST_ID)
+}
+
+/// What the panel says of a terminal that ended.
+pub fn ended_text(code: Option<i64>) -> String {
+    match code {
+        Some(code) => format!("The shell ended with exit code {code}. Press any key to start a new one."),
+        None => "The shell ended. Press any key to start a new one.".to_string(),
+    }
 }
 
 fn palette(ui: Ui) -> Palette {
     PALETTE.with(|p| {
-        p.borrow_mut().get_or_insert_with(|| Palette::of(&ui.theme_json(), ui.colors.get_untracked().dark)).clone()
+        p.borrow_mut()
+            .get_or_insert_with(|| {
+                let mut p = Palette::of(&ui.theme_json(), ui.colors.get_untracked().dark);
+                p.contrast = look(ui).contrast;
+                p
+            })
+            .clone()
     })
 }
 
@@ -826,6 +931,14 @@ fn shown(ui: Ui) -> Option<u64> {
 /// Something done with a terminal's emulator (none: the window has no such terminal).
 fn with<R>(id: u64, f: impl FnOnce(&mut Emulator) -> R) -> Option<R> {
     EMULATORS.with(|e| e.borrow_mut().get_mut(&id).map(f))
+}
+
+/// The size a new terminal starts at: the panel's, once it has been laid out.
+fn size(ui: Ui) -> (usize, usize) {
+    match ui.term_size.get_untracked() {
+        (0, _) | (_, 0) => UNFITTED,
+        size => size,
+    }
 }
 
 /// Output of a terminal of the window's (others are the page's, or one that was killed, and not drawn here).
@@ -867,21 +980,18 @@ fn redraw(ui: Ui) {
 fn open(ui: Ui, send: &Send, over: Option<u64>) {
     let id = ui.term_next.get_untracked();
     ui.term_next.set(id + 1);
-    let (columns, lines) = match ui.term_size.get_untracked() {
-        (0, _) | (_, 0) => UNFITTED,
-        size => size,
-    };
+    let (columns, lines) = size(ui);
     EMULATORS.with(|e| {
         let mut e = e.borrow_mut();
         if let Some(old) = over {
             e.remove(&old);
         }
-        e.insert(id, Emulator::new(columns, lines));
+        e.insert(id, Emulator::keeping(columns, lines, look(ui).scrollback));
     });
     if let Some(old) = over {
         send(json!({"type": "term_close", "id": old}));
     }
-    let shell = Shell { id, name: shell_name(ui), ended: None };
+    let shell = Shell { id, name: shell_name(ui, id), ended: None };
     ui.terms.update(|l| match over.and_then(|old| l.iter().position(|s| s.id == old)) {
         Some(at) => l[at] = shell,
         None => l.push(shell),
@@ -890,6 +1000,52 @@ fn open(ui: Ui, send: &Send, over: Option<u64>) {
     send(json!({"type": "term_open", "id": id, "cols": columns, "rows": lines}));
     redraw(ui);
 }
+
+/// A terminal the session started itself (a task, a run, a debuggee), shown at once in the panel and fitted to it.
+fn started(ui: Ui, send: &Send, id: u64, title: &str) {
+    if ui.terms.with_untracked(|l| l.iter().any(|s| s.id == id)) {
+        return;
+    }
+    let (columns, lines) = size(ui);
+    EMULATORS.with(|e| e.borrow_mut().insert(id, Emulator::keeping(columns, lines, look(ui).scrollback)));
+    let name = if title.trim().is_empty() { format!("Terminal {id}") } else { title.trim().to_string() };
+    ui.terms.update(|l| l.push(Shell { id, name, ended: None }));
+    send(json!({"type": "term_resize", "id": id, "cols": columns, "rows": lines}));
+    ui.reveal(Part::Terminal);
+    show(ui, id);
+}
+
+/// The session's terminals, as it lists them after the window fell behind its messages: each of the window's
+/// drawn again from what it last showed, one that ended meanwhile said to have, one the session started taken up.
+fn reattach(ui: Ui, send: &Send, list: &[Value]) {
+    let (columns, lines) = size(ui);
+    let scrollback = look(ui).scrollback;
+    for t in list {
+        let id = t["id"].as_u64().unwrap_or(0);
+        let ours = ui.terms.with_untracked(|l| l.iter().any(|s| s.id == id && s.ended.is_none()));
+        if !ours {
+            if let Some(title) = t["title"].as_str().filter(|_| id >= FIRST_DRIVER_TERM) {
+                started(ui, send, id, title);
+            } else {
+                continue;
+            }
+        }
+        // The answers to what the screen once asked were given then: not typed into the shell again.
+        let mut em = Emulator::keeping(columns, lines, scrollback);
+        em.feed(t["screen"].as_str().unwrap_or(""));
+        EMULATORS.with(|e| e.borrow_mut().insert(id, em));
+    }
+    let listed: Vec<u64> = list.iter().filter_map(|t| t["id"].as_u64()).collect();
+    for s in ui.terms.get_untracked() {
+        if s.ended.is_none() && !listed.contains(&s.id) {
+            ended(ui, s.id, None);
+        }
+    }
+    redraw(ui);
+}
+
+/// The numbers the session gives the terminals it starts, from here (the windows' own are below).
+pub const FIRST_DRIVER_TERM: u64 = 1_000_000;
 
 /// VS Code's New Terminal (Ctrl+Shift+`): another shell, shown and given the keys.
 pub fn new_terminal(ui: Ui, send: &Send) {
@@ -963,8 +1119,13 @@ fn paste(ui: Ui, send: &Send) {
     send(json!({"type": "term_in", "id": id, "data": data}));
 }
 
-/// Something typed into a terminal: it goes back to the end and its selection clears, as in VS Code.
+/// Something typed into a terminal: it goes back to the end and its selection clears, as in VS Code, and the
+/// caret shows.
 fn typed(ui: Ui, id: u64) {
+    let blink = ui.state::<Panel>().blink;
+    if !blink.get_untracked() {
+        blink.set(true);
+    }
     if with(id, |em| em.deselect() | em.bottom()) == Some(true) {
         redraw(ui);
     }
@@ -976,10 +1137,96 @@ fn hex(c: u32) -> Color {
 }
 
 /// The cell under a place in the screen's view: its row, its column, and the half of the cell pointed at.
-fn cell_at(p: floem::kurbo::Point) -> (usize, usize, Side) {
-    let x = ((p.x - PAD_X) / cell_width()).max(0.0);
-    let line = ((p.y - PAD_TOP) / LINE).floor().max(0.0) as usize;
+fn cell_at(look: &Look, p: floem::kurbo::Point) -> (usize, usize, Side) {
+    let x = ((p.x - PAD_X) / cell_width(look)).max(0.0);
+    let line = ((p.y - PAD_TOP) / look.line).floor().max(0.0) as usize;
     (line, x as usize, if x.fract() < 0.5 { Side::Left } else { Side::Right })
+}
+
+/// The link at a cell of the terminal shown: its first column, the one after its last, where it leads.
+fn link_at(ui: Ui, line: usize, column: usize) -> Option<(usize, usize, Link)> {
+    let (text, columns) = with(shown(ui)?, |em| em.line_text(line))?;
+    let files = ui.state::<crate::citations::Citations>().files.get_untracked();
+    let folder = ui.folder.get_untracked();
+    let column_of = |byte: usize| columns.get(text[..byte].chars().count()).copied();
+    links(&text, &files, &folder).into_iter().find_map(|(range, link)| {
+        let from = column_of(range.start)?;
+        let to = column_of(range.end).unwrap_or_else(|| columns.last().map_or(0, |c| c + 1));
+        (from..to).contains(&column).then_some((from, to, link))
+    })
+}
+
+/// The screen fitted to the panel's size and the terminal's font: the first terminal starts at it, the others
+/// are told it.
+fn fit(ui: Ui, send: &Send) {
+    let (width, height) = ui.state::<Panel>().rect.get_untracked();
+    if width < 1.0 || height < 1.0 {
+        return;
+    }
+    let look = look(ui);
+    let columns = ((width - 2.0 * PAD_X - SCROLLBAR) / cell_width(&look)).floor().max(2.0) as usize;
+    let lines = ((height - 2.0 * PAD_TOP) / look.line).floor().max(1.0) as usize;
+    if ui.term_size.get_untracked() == (columns, lines) {
+        return;
+    }
+    ui.term_size.set((columns, lines));
+    // The first terminal starts with the panel's first size; after that every one is fitted to it.
+    if ui.term_next.get_untracked() == FIRST_ID && ui.terms.with_untracked(Vec::is_empty) {
+        open(ui, send, None);
+        return;
+    }
+    for shell in ui.terms.get_untracked() {
+        with(shell.id, |em| em.resize(columns, lines));
+        if shell.ended.is_none() {
+            send(json!({"type": "term_resize", "id": shell.id, "cols": columns, "rows": lines}));
+        }
+    }
+    redraw(ui);
+}
+
+/// What it adds to the window's registries, once at start: the status bar's terminal toggle, and the settings of
+/// the terminal followed (each change drawn at once, the screen fitted again to another font).
+pub fn register(ui: Ui, send: &Send) {
+    let panel = ui.state::<Panel>();
+    let send = send.clone();
+    ui.scope.create_effect(move |before: Option<Look>| {
+        let now = panel.look.get();
+        if before.is_some() {
+            PALETTE.with(|p| *p.borrow_mut() = None);
+            EMULATORS.with(|e| e.borrow_mut().values_mut().for_each(|em| em.set_scrollback(now.scrollback)));
+            fit(ui, &send);
+            redraw(ui);
+        }
+        now
+    });
+    crate::statusbar::add("status.terminal", crate::statusbar::Side::Left, 155, |ui, _send| {
+        let t = ui.colors;
+        let item = container(icon("terminal", 16.0))
+            .on_click_stop(move |_| ui.toggle_view(Part::Terminal))
+            .style(move |s| crate::statusbar::item(t, s).cursor(CursorStyle::Pointer));
+        floem::views::tooltip(item, || label(|| "Toggle Terminal (Ctrl+`)")).into_any()
+    });
+}
+
+/// The session's messages of a terminal (what it wrote, that it ended, one it started, the list of them after the
+/// window fell behind), taken in. Never taken away (false).
+pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
+    match m["type"].as_str().unwrap_or("") {
+        "term_out" => output(ui, m["id"].as_u64().unwrap_or(0), m["data"].as_str().unwrap_or(""), send),
+        "term_exit" => ended(ui, m["id"].as_u64().unwrap_or(0), m["code"].as_i64()),
+        "term_started" => started(ui, send, m["id"].as_u64().unwrap_or(0), m["title"].as_str().unwrap_or("")),
+        "behind" => {
+            ui.state::<Panel>().asked.set(true);
+            send(json!({"type": "terms"}));
+        }
+        // Only the list this window asked for (a page asks for its own when it comes back).
+        "terms" if ui.state::<Panel>().asked.get_untracked() => {
+            ui.state::<Panel>().asked.set(false);
+            reattach(ui, send, m["terms"].as_array().map(Vec::as_slice).unwrap_or(&[]));
+        }
+        _ => {}
+    }
+    false
 }
 
 /// The panel's view: the screen of the terminal shown and, when there are two or more, the list of them at its
@@ -988,26 +1235,30 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     h_stack((screen_view(ui, send.clone()), tabs(ui, send))).style(|s| s.size_full())
 }
 
-/// VS Code's panel title actions for the terminal: New Terminal, Kill Terminal.
+/// VS Code's panel title actions for the terminal: New Terminal, Kill Terminal, and the chevron that hides the panel.
 pub fn actions(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     let new = send.clone();
-    h_stack((action(t, "add", move || new_terminal(ui, &new)), action(t, "trash", move || kill(ui, &send))))
-        .style(|s| s.items_center().gap(4.0))
+    h_stack((
+        tip(action(t, "add", move || new_terminal(ui, &new)), "New Terminal (Ctrl+Shift+`)"),
+        tip(action(t, "trash", move || kill(ui, &send)), "Kill Terminal"),
+        tip(action(t, "chevron-down", move || ui.toggle_group_of(Part::Terminal)), "Hide the panel"),
+    ))
+    .style(|s| s.items_center().gap(4.0))
 }
 
-/// VS Code's terminal tabs list: a row for each terminal (the terminal codicon, the shell's name), the one shown
-/// lit, a trash action on the row pointed at.
+/// VS Code's terminal tabs list: a row for each terminal (the terminal codicon, its name, "(ended)" once it has),
+/// the one shown lit, a trash action on the row pointed at; a middle click ends it too.
 fn tabs(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     dyn_stack(
         move || ui.terms.get(),
-        |s: &Shell| (s.id, s.name.clone()),
+        |s: &Shell| (s.id, s.title()),
         move |shell: Shell| {
             let id = shell.id;
-            let name = shell.name;
+            let name = shell.title();
             let over = create_rw_signal(false);
-            let send = send.clone();
+            let (send, middle) = (send.clone(), send.clone());
             let trash = container(icon("trash", 16.0)).on_click_stop(move |_| close(ui, &send, id)).style(move |s| {
                 let c = t.get();
                 s.width(20.0)
@@ -1024,6 +1275,13 @@ fn tabs(ui: Ui, send: Send) -> impl IntoView {
                 .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).text_ellipsis().selectable(false));
             h_stack((icon("terminal", 16.0), text, trash))
                 .on_click_stop(move |_| show(ui, id))
+                .on_event(EventListener::PointerDown, move |e| match e {
+                    Event::PointerDown(p) if p.button.is_auxiliary() => {
+                        close(ui, &middle, id);
+                        EventPropagation::Stop
+                    }
+                    _ => EventPropagation::Continue,
+                })
                 .on_event_cont(EventListener::PointerEnter, move |_| over.set(true))
                 .on_event_cont(EventListener::PointerLeave, move |_| over.set(false))
                 .style(move |s| {
@@ -1056,36 +1314,84 @@ fn tabs(ui: Ui, send: Send) -> impl IntoView {
     })
 }
 
-/// The screen of the terminal shown: its rows, the keys it takes, the mouse's selection.
+/// The caret blinking while the screen has the keys (and `cursorBlinking` is on): shown, then hidden, each
+/// [`BLINK_MS`], until another round begins (`round` counts them, so an old one stops).
+fn blink_on(blink: RwSignal<bool>, round: Rc<Cell<u64>>, mine: u64) {
+    floem::action::exec_after(std::time::Duration::from_millis(BLINK_MS), move |_| {
+        if round.get() == mine {
+            blink.update(|b| *b = !*b);
+            blink_on(blink, round, mine);
+        }
+    });
+}
+
+/// The screen's scrollbar, as VS Code's: a slider at the right as tall as the screen is of what is kept, where the
+/// screen is in it; dragged, it scrolls.
+fn scrollbar(ui: Ui) -> impl IntoView {
+    let t = ui.colors;
+    let panel = ui.state::<Panel>();
+    // Where a drag began: the pointer's height and how far back the screen was.
+    let from = create_rw_signal(None::<(f64, usize)>);
+    let geometry = move || {
+        let height = panel.rect.get().1;
+        let (lines, history, offset) =
+            ui.term_screen.with(|s| (s.rows.len().max(1) as f64, s.history as f64, s.offset as f64));
+        let thumb = (height * lines / (lines + history)).max(20.0).min(height);
+        let top = if history > 0.0 { (height - thumb) * (history - offset) / history } else { 0.0 };
+        (height, thumb, top, history)
+    };
+    let bar = empty();
+    let bar_id = bar.id();
+    bar.on_event(EventListener::PointerDown, move |e| {
+            let Event::PointerDown(p) = e else { return EventPropagation::Continue };
+            let offset = ui.term_screen.with_untracked(|s| s.offset);
+            from.set(Some((p.pos.y, offset)));
+            bar_id.request_active();
+            EventPropagation::Stop
+        })
+        .on_event(EventListener::PointerMove, move |e| {
+            let (Event::PointerMove(p), Some((y, offset))) = (e, from.get_untracked()) else {
+                return EventPropagation::Continue;
+            };
+            let (height, thumb, _, history) = geometry();
+            let per_px = history / (height - thumb).max(1.0);
+            let to = (offset as f64 - (p.pos.y - y) * per_px).round().clamp(0.0, history) as usize;
+            if let Some(id) = shown(ui) {
+                with(id, |em| em.scroll_to(to));
+                redraw(ui);
+            }
+            EventPropagation::Stop
+        })
+        .on_event_cont(EventListener::PointerUp, move |_| from.set(None))
+        .style(move |s| {
+            let c = t.get();
+            let (_, thumb, top, history) = geometry();
+            s.absolute()
+                .inset_right(0.0)
+                .inset_top(top)
+                .width(SCROLLBAR)
+                .height(thumb)
+                .background(if from.get().is_some() { c.scrollbar_hover } else { c.scrollbar })
+                .hover(|s| s.background(c.scrollbar_hover))
+                .apply_if(history == 0.0, |s| s.hide())
+        })
+}
+
+/// The screen of the terminal shown: its rows, the keys it takes, the mouse's selection, its links, its scrollbar.
 fn screen_view(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
+    let panel = ui.state::<Panel>();
     let focused = create_rw_signal(false);
     // The cell a drag has reached (none: no button is held).
     let drag = create_rw_signal(None::<(usize, usize, Side)>);
     let on_resize = {
         let send = send.clone();
         move |r: floem::kurbo::Rect| {
-            if r.width() < 1.0 || r.height() < 1.0 {
-                return;
+            let size = (r.width(), r.height());
+            if panel.rect.get_untracked() != size {
+                panel.rect.set(size);
             }
-            let columns = ((r.width() - 2.0 * PAD_X) / cell_width()).floor().max(2.0) as usize;
-            let lines = ((r.height() - 2.0 * PAD_TOP) / LINE).floor().max(1.0) as usize;
-            if ui.term_size.get_untracked() == (columns, lines) {
-                return;
-            }
-            ui.term_size.set((columns, lines));
-            // The first terminal starts with the panel's first size; after that every one is fitted to it.
-            if ui.term_next.get_untracked() == FIRST_ID {
-                open(ui, &send, None);
-                return;
-            }
-            for shell in ui.terms.get_untracked() {
-                with(shell.id, |em| em.resize(columns, lines));
-                if shell.ended.is_none() {
-                    send(json!({"type": "term_resize", "id": shell.id, "cols": columns, "rows": lines}));
-                }
-            }
-            redraw(ui);
+            fit(ui, &send);
         }
     };
     let rows = dyn_stack(
@@ -1113,7 +1419,8 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
                     label(move || text.clone()).style(move |s| {
                         let c = t.get();
                         let p_cursor = c.cursor;
-                        let s = s.height(LINE).line_height(1.0).color(hex(run.fg)).selectable(false);
+                        let line = panel.look.with(|l| l.line);
+                        let s = s.height(line).line_height(1.0).color(hex(run.fg)).selectable(false);
                         let s = match (run.selected, run.bg) {
                             (true, _) => s.background(c.terminal_selection),
                             (_, Some(bg)) => s.background(hex(bg)),
@@ -1122,40 +1429,71 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
                         let s = s
                             .apply_if(run.bold, |s| s.font_weight(floem::text::Weight::BOLD))
                             .apply_if(run.italic, |s| s.font_style(floem::text::Style::Italic));
-                        if caret {
-                            if focused.get() {
-                                s.background(p_cursor).color(c.terminal_bg)
-                            } else {
-                                s.border(1.0).border_color(p_cursor)
-                            }
-                        } else {
-                            s
+                        if !caret {
+                            return s;
+                        }
+                        if !focused.get() {
+                            return s.border(1.0).border_color(p_cursor);
+                        }
+                        let (shape, blinks) = panel.look.with(|l| (l.caret, l.blink));
+                        if blinks && !panel.blink.get() {
+                            return s;
+                        }
+                        match shape {
+                            Caret::Block => s.background(p_cursor).color(c.terminal_bg),
+                            Caret::Line => s.border_left(2.0).border_color(p_cursor),
+                            Caret::Underline => s.border_bottom(2.0).border_color(p_cursor),
                         }
                     })
                 },
             )
             .style(|s| s.flex_row()),))
-            .style(|s| s.height(LINE))
+            .style(move |s| s.height(panel.look.with(|l| l.line)))
         },
     )
     .style(|s| s.flex_col());
     let ended_line = label(move || match ui.term.get() {
-        State::Ended(_, Some(code)) => {
-            format!("The terminal process terminated with exit code: {code}. Press any key to start a new one.")
-        }
-        State::Ended(..) => "The terminal process terminated. Press any key to start a new one.".to_string(),
+        State::Ended(_, code) => ended_text(code),
         _ => String::new(),
     })
     .style(move |s| {
         s.padding_top(6.0).color(t.get().desc).apply_if(!matches!(ui.term.get(), State::Ended(..)), |s| s.hide())
     });
-    let body = v_stack((rows, ended_line));
+    // The link under the pointer, underlined.
+    let underline = empty().style(move |s| {
+        let look = panel.look.get();
+        match panel.hover.get() {
+            Some((line, from, to)) => {
+                let w = cell_width(&look);
+                s.absolute()
+                    .inset_left(PAD_X + from as f64 * w)
+                    .inset_top(PAD_TOP + (line + 1) as f64 * look.line - 1.0)
+                    .width((to - from) as f64 * w)
+                    .height(1.0)
+                    .background(t.get().terminal_fg)
+            }
+            None => s.hide(),
+        }
+    });
+    let body = v_stack((rows, ended_line, underline, scrollbar(ui)));
     let id = body.id();
     // The keys given to the terminal when one is made or chosen (not when the view is first drawn).
     create_effect(move |drawn: Option<()>| {
         ui.term_focus.get();
         if drawn.is_some() {
             id.request_focus();
+        }
+    });
+    // The caret blinks while the screen has the keys and the setting has it blink.
+    let round = Rc::new(Cell::new(0_u64));
+    create_effect(move |_| {
+        let on = focused.get() && panel.look.with(|l| l.blink);
+        round.set(round.get() + 1);
+        if !panel.blink.get_untracked() {
+            panel.blink.set(true);
+        }
+        if on {
+            blink_on(panel.blink, round.clone(), round.get());
         }
     });
     let (keys, mouse) = (send.clone(), send);
@@ -1180,9 +1518,18 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
             if !p.button.is_primary() {
                 return EventPropagation::Continue;
             }
+            let look = look(ui);
+            let (line, column, side) = cell_at(&look, p.pos);
+            // Ctrl+click follows a link, as in VS Code: a file of the project opens at its line, an address in
+            // the browser.
+            if p.modifiers.contains(Modifiers::CONTROL)
+                && let Some((_, _, link)) = link_at(ui, line, column)
+            {
+                crate::citations::open(ui, &link);
+                return EventPropagation::Stop;
+            }
             // A press begins a selection of cells, a second one of the word there, a third of the line; the
             // moves that follow, wherever the pointer goes, take it further.
-            let (line, column, side) = cell_at(p.pos);
             let kind = match p.count {
                 2 => SelectionType::Semantic,
                 3 => SelectionType::Lines,
@@ -1195,19 +1542,36 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
             EventPropagation::Stop
         })
         .on_event_cont(EventListener::PointerMove, move |e| {
-            let (Event::PointerMove(p), Some(last), Some(shell)) = (e, drag.get_untracked(), shown(ui)) else { return };
-            let at = cell_at(p.pos);
+            let Event::PointerMove(p) = e else { return };
+            let Some(shell) = shown(ui) else { return };
+            let at = cell_at(&look(ui), p.pos);
+            let Some(last) = drag.get_untracked() else {
+                // No button held: the link under the pointer is underlined.
+                let over = link_at(ui, at.0, at.1).map(|(from, to, _)| (at.0, from, to));
+                if panel.hover.get_untracked() != over {
+                    panel.hover.set(over);
+                }
+                return;
+            };
             if at != last {
                 drag.set(Some(at));
                 with(shell, |em| em.drag(at.0, at.1, at.2));
                 redraw(ui);
             }
         })
+        .on_event_cont(EventListener::PointerLeave, move |_| {
+            if panel.hover.get_untracked().is_some() {
+                panel.hover.set(None);
+            }
+        })
         .on_event_cont(EventListener::PointerUp, move |_| drag.set(None))
         .on_event(EventListener::PointerWheel, move |e| {
             if let (Event::PointerWheel(w), Some(shell)) = (e, shown(ui)) {
-                let lines = (-w.delta.y / LINE).round() as i32;
+                let lines = (-w.delta.y / look(ui).line).round() as i32;
                 with(shell, |em| em.scroll(if lines == 0 { -w.delta.y.signum() as i32 } else { lines }));
+                if panel.hover.get_untracked().is_some() {
+                    panel.hover.set(None);
+                }
                 redraw(ui);
             }
             EventPropagation::Stop
@@ -1217,8 +1581,11 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
             let m = k.modifiers;
             let ctrl = m.contains(Modifiers::CONTROL);
             let letter = |l: &str| matches!(&k.key.logical_key, Key::Character(c) if c.eq_ignore_ascii_case(l));
-            // The workbench's own keys stay the workbench's, as VS Code skips them in the shell.
-            if crate::keys_hook::terminal(&k.key.logical_key, m) {
+            // The workbench's own keys stay the workbench's, as VS Code skips them in the shell, unless every key
+            // is to reach the shell (`terminal.integrated.sendKeybindingsToShell`).
+            if crate::keys_hook::terminal(&k.key.logical_key, m)
+                && !settings::now(ui, "terminal.integrated.sendKeybindingsToShell", None).as_bool().unwrap_or(false)
+            {
                 return EventPropagation::Continue;
             }
             // Ctrl+Shift+C copies the selection, as in VS Code's terminal.
@@ -1260,17 +1627,19 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
         })
         .style(move |s| {
             let c = t.get();
+            let look = panel.look.get();
             s.flex_grow(1.0_f32)
                 .flex_basis(0.0)
                 .min_width(0.0)
                 .height_full()
-                .padding_horiz(PAD_X)
+                .padding_left(PAD_X)
+                .padding_right(PAD_X + SCROLLBAR)
                 .padding_top(PAD_TOP)
-                .font_family(MONO_FONT.clone())
-                .font_size(FONT)
+                .font_family(look.family)
+                .font_size(look.size as f32)
                 .background(c.terminal_bg)
                 .color(c.terminal_fg)
-                .cursor(CursorStyle::Text)
+                .cursor(if panel.hover.get().is_some() { CursorStyle::Pointer } else { CursorStyle::Text })
         })
 }
 
@@ -1344,5 +1713,61 @@ mod window_tests {
         // Another after every one was killed takes a number none had.
         new_terminal(ui, &send);
         assert_eq!(ui.term.get_untracked(), State::Running(FIRST_ID + 3));
+    }
+
+    #[test]
+    fn tabs_say_their_names_and_when_they_ended_and_the_sessions_own_show_at_once() {
+        let ui = Ui::new();
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let send: Send = {
+            let sent = sent.clone();
+            Rc::new(move |v: serde_json::Value| sent.borrow_mut().push(v))
+        };
+        new_terminal(ui, &send);
+        let a = FIRST_ID;
+        let titles = || ui.terms.get_untracked().iter().map(Shell::title).collect::<Vec<_>>();
+        assert_eq!(titles(), ["bash 1"]);
+        ended(ui, a, Some(2));
+        assert_eq!(titles(), ["bash 1 (ended)"]);
+        assert_eq!(ended_text(Some(2)), "The shell ended with exit code 2. Press any key to start a new one.");
+        // A terminal the session started (a task) is listed and shown, and fitted to the panel.
+        let task = FIRST_DRIVER_TERM + 4;
+        take(ui, &json!({"type": "term_started", "id": task, "title": "Task - build", "kind": "task"}), &send);
+        assert_eq!(titles(), ["bash 1 (ended)", "Task - build"]);
+        assert_eq!(ui.term.get_untracked(), State::Running(task));
+        assert!(sent.borrow().iter().any(|v| v["type"] == "term_resize" && v["id"] == task));
+        output(ui, task, "building", &send);
+        assert_eq!(first(ui), "building");
+        // Behind the session's messages: the window asks for its terminals and draws them again from what they
+        // last showed; one the list does not have ended meanwhile. A list it did not ask for is the page's.
+        take(ui, &json!({"type": "terms", "terms": []}), &send);
+        assert_eq!(ui.term.get_untracked(), State::Running(task));
+        take(ui, &json!({"type": "behind"}), &send);
+        assert!(sent.borrow().iter().any(|v| v["type"] == "terms"));
+        let n = sent.borrow().len();
+        let screen = "built\r\n\x1b[6n";
+        take(ui, &json!({"type": "terms", "terms": [{"id": task, "screen": screen, "title": "Task - build"}]}), &send);
+        assert_eq!(first(ui), "built");
+        // What the old screen asked is not answered again into the shell.
+        assert!(sent.borrow()[n..].iter().all(|v| v["type"] != "term_in"));
+        new_terminal(ui, &send);
+        let b = FIRST_ID + 1;
+        take(ui, &json!({"type": "behind"}), &send);
+        take(ui, &json!({"type": "terms", "terms": [{"id": task, "screen": ""}]}), &send);
+        assert_eq!(ui.term.get_untracked(), State::Ended(b, None));
+    }
+
+    #[test]
+    fn the_terminals_look_is_read_from_its_settings() {
+        let l = Look::of("", 14.0, 1.0, "underline", false, 500.0, 4.5);
+        assert_eq!((l.family.as_str(), l.size, l.line), (MONO_FONT.as_str(), 14.0, 17.0));
+        assert_eq!((l.caret, l.blink, l.scrollback, l.contrast), (Caret::Underline, false, 500, 4.5));
+        let l = Look::of(" Fira Code ", 0.0, 1.5, "bogus", true, -1.0, 40.0);
+        assert_eq!((l.family.as_str(), l.size, l.line, l.caret), ("Fira Code", 14.0, 25.0, Caret::Block));
+        assert_eq!((l.scrollback, l.contrast), (0, 21.0));
+        // The window's own, before the session says anything: the schema's defaults.
+        let ui = Ui::new();
+        let now = look(ui);
+        assert_eq!((now.size, now.line, now.scrollback, now.blink), (13.0, 16.0, 10_000, true));
     }
 }

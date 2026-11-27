@@ -10,7 +10,7 @@
 //! ```
 //!
 //! The priorities in use, so a new item finds its place. Left: remote 90, branch 100, sync 110, problems 120, agent
-//! changes 130, jobs 140, project 150, chord 160, the window's message 170. Right: Ln/Col 200, indentation 210,
+//! changes 130, jobs 140, project 150, terminal 155, chord 160, the window's message 170. Right: Ln/Col 200, indentation 210,
 //! encoding 220, end of line 230, language 240, formatter 250, language server 260, Complete 270, context 280, mode
 //! 290, model 291, MCP 292, version 298, bell 299.
 //!
