@@ -253,7 +253,7 @@ impl Ui {
     pub fn new() -> Ui {
         let themes = ca_themes::built_in();
         let start = ca_themes::chosen(&themes, "", true);
-        Ui {
+        let ui = Ui {
             colors: create_rw_signal(Colors::of(&start)),
             themes: create_rw_signal(themes),
             choice: create_rw_signal(String::new()),
@@ -338,7 +338,10 @@ impl Ui {
             closing: create_rw_signal(None),
             close_saved: create_rw_signal(None),
             ext: create_rw_signal(crate::ext::Store::default()),
-        }
+        };
+        // The editor groups follow the tabs from the start, whoever opens or closes one (`editor::groups`).
+        crate::editor::groups::groups(ui);
+        ui
     }
 
     pub(crate) fn id(&self) -> u64 {
@@ -427,8 +430,15 @@ impl Ui {
         self.open(path, send);
     }
 
-    /// A tab closed; one with changes not saved is shown and asked about first (Save, Don't Save, Cancel).
+    /// A tab closed in the focused group (or the group that has it): only that group's tab when another group shows the file too, else the
+    /// document (`close_document`).
     pub fn close(&self, path: &str) {
+        crate::editor::groups::close_in(*self, crate::editor::groups::holder(*self, path), path);
+    }
+
+    /// A document closed in every group; one with changes not saved is shown and asked about first (Save, Don't
+    /// Save, Cancel).
+    pub fn close_document(&self, path: &str) {
         if self.tab(path).is_some_and(|t| t.diff.is_none() && t.dirty.get_untracked()) {
             self.active.set(Some(path.to_string()));
             self.closing.set(Some(path.to_string()));
@@ -531,6 +541,7 @@ impl Ui {
             "kind_tabs": kind_tabs,
             "tabs": tabs,
             "active": active,
+            "groups": crate::editor::groups::kept(*self),
             "dock": self.dock.get_untracked().to_json(),
             "hidden": self.hidden.with_untracked(|h| { let mut h: Vec<u32> = h.iter().copied().collect(); h.sort(); h }),
             "sizes": self.sizes.with_untracked(|m| {
@@ -553,6 +564,8 @@ impl Ui {
         if let Some(a) = v["active"].as_str().filter(|a| editors.contains(a)) {
             send(json!({"type": "open", "path": a}));
         }
+        // The editor groups made again, waiting for their tabs (`editor::groups`).
+        crate::editor::groups::restore(*self, v);
         // The kept tabs that are not files, each made again by its kind; one of them shown last is shown again
         // once the files have come.
         crate::editor::kinds::restore_all(*self, send, v);
@@ -597,6 +610,8 @@ impl Ui {
     /// was in it, when it is a folder).
     pub fn moved(&self, from: &str, to: &str) {
         let now = |p: &str| moved_path(p, from, to);
+        // Its groups first: the tab renamed is then still in them.
+        crate::editor::groups::moved(*self, from, to);
         self.tabs.update(|tabs| {
             for t in tabs.iter_mut().filter(|t| t.is_file()) {
                 if let Some(n) = now(&t.path) {
@@ -622,7 +637,7 @@ impl Ui {
             tabs.iter().filter(|t| t.is_file() && inside(&t.path)).map(|t| t.path.clone()).collect()
         });
         for p in open {
-            self.close(&p);
+            self.close_document(&p);
         }
         if inside(&self.selected.get_untracked()) {
             self.selected.set(String::new());

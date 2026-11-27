@@ -1,4 +1,4 @@
-//! The editor group, as VS Code's: its 35 px tabs (the open one with its top border, a dot for changes not saved, a
+//! The editor groups (`groups.rs`: up to eight, side by side or one under the other), each as VS Code's: its 35 px tabs (the open one with its top border, a dot for changes not saved, a
 //! close button), the breadcrumbs, then the editor (line numbers, the current line, the caret, VS Code's font); with
 //! nothing open, VS Code's watermark of keys. Over the editor, VS Code's find widget (Ctrl+F); above it, a notice
 //! when the file changed on disk under changes not saved; and the question asked before such a tab closes.
@@ -9,7 +9,7 @@
 use std::rc::Rc;
 
 use floem::IntoView;
-use floem::reactive::{SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
+use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::views::editor::Editor;
 use floem::views::editor::command::CommandExecuted;
 use floem::views::editor::core::selection::Selection;
@@ -38,14 +38,26 @@ pub mod window;
 pub use find::find_show;
 
 pub fn view(ui: Ui) -> impl IntoView {
-    let editor = stack((body(ui), find::find_widget(ui)))
-        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
-    stack((
-        v_stack((tabs::tabs(ui), breadcrumbs::breadcrumbs(ui), disk::disk_bar(ui), editor))
-            .style(|s| s.size_full().min_width(0.0).min_height(0.0)),
-        tabs::close_question(ui),
-    ))
-    .style(|s| s.size_full().min_width(0.0).min_height(0.0))
+    groups::area(ui)
+}
+
+/// One group: its tabs, its breadcrumbs, its editor. Only the focused group has the find widget and the notice of a
+/// file changed on disk (they are of the tab shown, `ui.active`).
+pub(super) fn group_view(ui: Ui, shown: groups::Shown) -> floem::views::Stack {
+    let focused = shown.focused;
+    let only_focused = move |what: fn(Ui) -> floem::AnyView| {
+        dyn_container(move || focused.get(), move |f| if f { what(ui) } else { floem::views::empty().into_any() })
+    };
+    // The pointer goes to the topmost part under it only: the find widget's place is its own size (at the editor's
+    // top right), so the editor beside it still has the pointer.
+    let find = only_focused(|ui| {
+        find::find_widget(ui).style(|s| s.position(floem::style::Position::Relative).inset_right(0.0)).into_any()
+    })
+    .style(|s| s.absolute().inset_top(0.0).inset_right(28.0).z_index(20));
+    let editor =
+        stack((body(ui, shown), find)).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
+    let disk = only_focused(|ui| disk::disk_bar(ui).into_any()).style(|s| s.width_full());
+    v_stack((tabs::tabs(ui, shown), breadcrumbs::breadcrumbs(ui, shown.active), disk, editor))
 }
 
 /// The editor drawn for a tab, when it is the one on screen.
@@ -80,14 +92,34 @@ pub(super) fn tell(ui: Ui, what: impl FnOnce(&Send)) {
     }
 }
 
-fn body(ui: Ui) -> impl IntoView {
+/// The editor a group has on screen made the window's (`ui.live`) when the group is focused, and none when the
+/// focused group shows no file's text.
+fn make_live(ui: Ui, id: u64) {
+    let g = groups::groups(ui);
+    let mine = g.editors.with_untracked(|e| e.get(&id).cloned());
+    let same = ui.live.with_untracked(|l| match (l, &mine) {
+        (None, None) => true,
+        (Some((p, a)), Some((q, b))) => p == q && a.id() == b.id(),
+        _ => false,
+    });
+    if !same {
+        ui.live.set(mine);
+    }
+}
+
+/// What a group draws for its tab shown (none, a kind's, a file's changes, a file's text): the editor on screen
+/// is the group's, and the window's too while the group is focused.
+fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
     let t = ui.colors;
+    let id = shown.id;
+    let g = groups::groups(ui);
     let map = Rc::new(KeypressMap::default());
     // The line gone to last (its number among those asked for): a tab shown again stays where it was left.
     let gone = create_rw_signal(None::<u64>);
     // A line asked for in the file on screen: the caret goes there, the editor stands.
     create_effect(move |_| {
         if let Some((path, line, n)) = ui.goto.get()
+            && shown.focused.get_untracked()
             && gone.get_untracked() != Some(n)
             && let Some(editor) = live(ui, &path)
         {
@@ -95,20 +127,55 @@ fn body(ui: Ui) -> impl IntoView {
             go_to_line(&editor, line);
         }
     });
+    // Focused: its editor is the window's, and the caret said is its.
+    create_effect(move |_| {
+        if shown.focused.get() {
+            make_live(ui, id);
+            if let Some((_, e)) = g.editors.with_untracked(|m| m.get(&id).cloned()) {
+                let (line, col) = e.offset_to_line_col(e.cursor.with_untracked(|c| c.offset()));
+                ui.caret.set((line + 1, col + 1));
+            }
+        }
+    });
+    let unset = move || {
+        if g.editors.with_untracked(|e| e.contains_key(&id)) {
+            g.editors.update(|e| {
+                e.remove(&id);
+            });
+        }
+        // (A group being taken away has its signals gone already.)
+        if shown.focused.try_get_untracked() == Some(true) {
+            make_live(ui, id);
+        }
+    };
+    let active = shown.active;
     dyn_container(
-        move || (ui.active.get(), t.get()),
+        move || (active.get(), t.get()),
         move |(path, c)| match path.and_then(|p| ui.tab(&p)) {
             None => {
-                ui.live.set(None);
+                unset();
                 watermark::watermark(ui).into_any()
             }
-            // A tab that is not a file's text: drawn by its kind.
+            // A tab that is not a file's text: drawn by its kind. An editor the kind draws (the settings' JSON)
+            // is the group's; the window's only while the group is focused.
             Some(tab) if tab.kind.is_some() => {
-                ui.live.set(None);
-                kinds::draw(ui, &tab)
+                unset();
+                let before = ui.live.get_untracked();
+                let view = kinds::draw(ui, &tab);
+                if let Some(made) =
+                    ui.live.get_untracked().filter(|(_, e)| before.as_ref().is_none_or(|(_, b)| b.id() != e.id()))
+                {
+                    g.editors.update(|e| {
+                        e.insert(id, made);
+                    });
+                    if !shown.focused.get_untracked() {
+                        ui.live.set(before);
+                    }
+                }
+                view
             }
             Some(Tab { diff: Some(lines), .. }) => {
-                ui.live.set(None);
+                unset();
                 crate::changes::diff_view(ui, lines).into_any()
             }
             Some(tab) => {
@@ -153,25 +220,74 @@ fn body(ui: Ui) -> impl IntoView {
                 // No background of its own: the group's is under it, and the overview ruler between (`decor.rs`).
                 .style(move |s| s.size_full().set(floem::views::editor::Foreground, c.editor_fg).color(c.editor_fg));
                 let editor = ed.editor().clone();
-                ui.live.set(Some((tab.path.clone(), editor.clone())));
-                if let Some((_, line, n)) =
-                    ui.goto.get_untracked().filter(|g| g.0 == tab.path && gone.get_untracked() != Some(g.2))
+                g.editors.update(|e| {
+                    e.insert(id, (tab.path.clone(), editor.clone()));
+                });
+                let focused = shown.focused;
+                if focused.get_untracked() {
+                    make_live(ui, id);
+                }
+                // Where it was left in this group: its caret and scroll back.
+                let key = (id, tab.path.clone());
+                let kept = g.places.with_untracked(|p| p.get(&key).copied());
+                let placed = create_rw_signal(kept.is_none());
+                if let Some(at) = kept {
+                    at.put(&editor, placed);
+                }
+                if let Some((_, line, n)) = ui
+                    .goto
+                    .get_untracked()
+                    .filter(|g| g.0 == tab.path && gone.get_untracked() != Some(g.2) && focused.get_untracked())
                 {
                     gone.set(Some(n));
                     go_to_line(&editor, line);
                 }
+                // The editor given the keys (clicked): its group is the focused one.
+                let focus_in = editor.editor_view_focused;
+                create_effect(move |first: Option<()>| {
+                    focus_in.track();
+                    if first.is_some() {
+                        groups::focus(ui, id);
+                    }
+                });
                 let cursor = editor.cursor;
-                let id = editor.id();
-                let shown = editor.clone();
+                let eid = editor.id();
+                let here = editor.clone();
                 create_effect(move |_| {
                     let offset = cursor.with(|c| c.offset());
-                    let (line, col) = shown.offset_to_line_col(offset);
-                    caret.set((line + 1, col + 1));
+                    if focused.get_untracked() {
+                        let (line, col) = here.offset_to_line_col(offset);
+                        caret.set((line + 1, col + 1));
+                    }
                 });
-                // Gone from the screen (and not for the next one, which is drawn before this one goes).
+                // Where it is, noted as the caret moves and it scrolls (its signals are gone by the time it is
+                // cleaned up); not before it was put back where it was left, else that place is lost.
+                let last = Rc::new(std::cell::Cell::new(None::<groups::Place>));
+                {
+                    let (last, here, viewport) = (last.clone(), editor.clone(), editor.viewport);
+                    create_effect(move |_| {
+                        cursor.track();
+                        viewport.track();
+                        if placed.get() {
+                            last.set(Some(groups::Place::of(&here)));
+                        }
+                    });
+                }
+                // Gone from the screen (and not for the next one, which is drawn before this one goes): where it
+                // was left is kept for when it is shown again in this group.
                 let ed = ed.on_cleanup(move || {
-                    if ui.live.with_untracked(|l| l.as_ref().is_some_and(|(_, e)| e.id() == id)) {
-                        ui.live.set(None);
+                    if let Some(at) = last.get() {
+                        g.places.update(|p| {
+                            p.insert(key.clone(), at);
+                        });
+                    }
+                    if g.editors.with_untracked(|e| e.get(&id).is_some_and(|(_, e)| e.id() == eid)) {
+                        g.editors.update(|e| {
+                            e.remove(&id);
+                        });
+                    }
+                    if ui.live.with_untracked(|l| l.as_ref().is_some_and(|(_, e)| e.id() == eid)) {
+                        make_live(ui, id);
                     }
                 });
                 // With the decorations' glyph margin and overview ruler.

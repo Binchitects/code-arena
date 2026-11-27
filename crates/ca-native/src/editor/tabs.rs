@@ -1,5 +1,6 @@
-//! The editor group's tabs, as VS Code's: 35 px, the open one with its top border, a dot for changes not saved, a
-//! close button; and the question asked before a tab with changes not saved closes.
+//! An editor group's tabs, as VS Code's: 35 px, the open one with its top border (in the focused group), a dot for
+//! changes not saved, a close button; the group's actions (Split Editor Right); and the question asked before a tab
+//! with changes not saved closes.
 
 use floem::event::EventListener;
 use floem::keyboard::{Key, NamedKey};
@@ -8,35 +9,40 @@ use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, v_stack};
 use floem::{IntoView, View};
 
-use super::{focus, live, tell};
+use super::{focus, tell};
 use crate::icons::icon;
 use crate::state::{Tab, Ui};
 use crate::widgets::{action, button, line};
 
-pub(super) fn tabs(ui: Ui) -> impl IntoView {
+pub(super) fn tabs(ui: Ui, group: super::groups::Shown) -> impl IntoView {
     let t = ui.colors;
+    let tabs = move || group.tabs.get().iter().filter_map(|p| ui.tab(p)).collect::<Vec<_>>();
+    let empty = move || group.tabs.with(|t| t.is_empty());
     h_stack((
         scroll(
-            dyn_stack(move || ui.tabs.get(), |tab: &Tab| tab.path.clone(), move |tab: Tab| one_tab(ui, tab))
+            dyn_stack(tabs, |tab: &Tab| tab.path.clone(), move |tab: Tab| one_tab(ui, group, tab))
                 .style(|s| s.flex_row().height_full()),
         )
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).height_full()),
         h_stack((
             // An SVG's text has its preview a click away (Open Preview, as a Markdown file's has in VS Code).
             action(t, "open-preview", move || {
-                if let Some(path) = ui.active.get_untracked().filter(|p| svg_text(ui, p)) {
+                if let Some(path) = group.active.get_untracked().filter(|p| svg_text(ui, p)) {
+                    super::groups::focus(ui, group.id);
                     tell(ui, |send| crate::media::preview(ui, &path, send));
                 }
             })
             .style(move |s| {
-                s.apply_if(!ui.active.with(|a| a.as_deref().is_some_and(|p| svg_text(ui, p))), |s| s.hide())
+                s.apply_if(!group.active.with(|a| a.as_deref().is_some_and(|p| svg_text(ui, p))), |s| s.hide())
             }),
-            action(t, "split-horizontal", || {}),
+            // Split Editor Right (Ctrl+\), as VS Code's: the group's tab shown again in a group beside it.
+            action(t, "split-horizontal", move || {
+                super::groups::focus(ui, group.id);
+                super::groups::split(ui, None, true);
+            }),
             action(t, "ellipsis", || {}),
         ))
-        .style(move |s| {
-            s.gap(2.0).padding_horiz(8.0).items_center().apply_if(ui.tabs.with(|t| t.is_empty()), |s| s.hide())
-        }),
+        .style(move |s| s.gap(2.0).padding_horiz(8.0).items_center().apply_if(empty(), |s| s.hide())),
     ))
     .style(move |s| {
         let c = t.get();
@@ -45,7 +51,7 @@ pub(super) fn tabs(ui: Ui) -> impl IntoView {
             .width_full()
             .background(c.tabs_bg)
             .items_center()
-            .apply_if(ui.tabs.with(|t| t.is_empty()), |s| s.hide())
+            .apply_if(empty(), |s| s.hide())
     })
 }
 
@@ -54,16 +60,20 @@ fn svg_text(ui: Ui, path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(".svg") && ui.tab(path).is_some_and(|t| t.is_file())
 }
 
-fn one_tab(ui: Ui, tab: Tab) -> impl IntoView {
+fn one_tab(ui: Ui, group: super::groups::Shown, tab: Tab) -> impl IntoView {
     let t = ui.colors;
     let path = tab.path.clone();
     let here = tab.path.clone();
-    let is_active = move || ui.active.with(|a| a.as_deref() == Some(here.as_str()));
+    let is_active = move || group.active.with(|a| a.as_deref() == Some(here.as_str()));
     let active = is_active.clone();
     let hover = create_rw_signal(false);
     let dirty = tab.dirty;
     let shut = tab.path.clone();
-    let top = is_active.clone();
+    // The open tab's top border is the focused group's only (tab.unfocusedActiveBorderTop is none).
+    let top = {
+        let is_active = is_active.clone();
+        move || is_active() && group.focused.get()
+    };
     // A tab of a kind has its kind's icon before its name, and its name from its kind (a file's has none).
     let kind_icon = super::kinds::icon(&tab);
     let named = tab.clone();
@@ -77,7 +87,7 @@ fn one_tab(ui: Ui, tab: Tab) -> impl IntoView {
                 if dirty && !hover.get_untracked() {
                     icon("circle-filled", 16.0).style(|s| s.font_size(10.0)).into_any()
                 } else if shown {
-                    action(t, "close", move || ui.close(&shut)).into_any()
+                    action(t, "close", move || super::groups::close_in(ui, group.id, &shut)).into_any()
                 } else {
                     empty().style(|s| s.width(22.0)).into_any()
                 }
@@ -94,7 +104,7 @@ fn one_tab(ui: Ui, tab: Tab) -> impl IntoView {
         }),
         content,
     ))
-    .on_click_stop(move |_| ui.active.set(Some(path.clone())))
+    .on_click_stop(move |_| super::groups::show(ui, group.id, &path))
     .on_event_cont(floem::event::EventListener::PointerEnter, move |_| hover.set(true))
     .on_event_cont(floem::event::EventListener::PointerLeave, move |_| hover.set(false))
     .style(move |s| {
@@ -102,7 +112,12 @@ fn one_tab(ui: Ui, tab: Tab) -> impl IntoView {
         let s =
             s.height_full().min_width(80.0).border_right(1.0).border_color(c.tab_border).cursor(CursorStyle::Pointer);
         if active() {
-            s.background(c.tab_active_bg).color(c.tab_active_fg)
+            // In a group without the keys, dimmer (tab.unfocusedActiveForeground).
+            s.background(c.tab_active_bg).color(if group.focused.get() {
+                c.tab_active_fg
+            } else {
+                c.tab_unfocused_active_fg
+            })
         } else {
             s.background(c.tab_inactive_bg).color(c.tab_inactive_fg).hover(|s| s.background(c.tab_hover))
         }
@@ -164,7 +179,7 @@ pub(super) fn close_question(ui: Ui) -> impl IntoView {
         if asked {
             id.request_focus();
         } else if was == Some(true)
-            && let Some(editor) = ui.active.get_untracked().and_then(|p| live(ui, &p))
+            && let Some(editor) = ui.live.get_untracked().map(|(_, e)| e)
         {
             focus(&editor);
         }
