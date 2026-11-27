@@ -243,7 +243,9 @@ pub fn tree(ui: Ui, send: Send) -> impl IntoView {
             node_view(ui, send.clone(), root, Place::Whole).into_any()
         },
     )
-    .style(|s| s.size_full());
+    // Beside the activity bar: what is left of the window's width, however wide its parts' contents would be
+    // (two editor groups of long lines pushed the Agent view out of the window).
+    .style(|s| s.size_full().min_width(0.0).min_height(0.0));
     let id = area.id();
     keep(ROOT, id);
     area

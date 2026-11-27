@@ -22,7 +22,9 @@ use std::collections::{HashMap, HashSet};
 use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, NamedKey};
 use floem::kurbo::{Point, Rect};
-use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal};
+use floem::reactive::{
+    RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal,
+};
 use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, stack, v_stack};
 use floem::{IntoView, View, ViewId};
@@ -449,12 +451,39 @@ pub(super) fn tabs(ui: Ui, group: Shown) -> impl IntoView {
     let empty = move || group.tabs.with(|t| t.is_empty());
     let more = container(icon("ellipsis", 16.0));
     let more_id = more.id();
+    // The tab shown is scrolled into the strip's sight, as VS Code reveals the active tab (once it is built and
+    // laid out, so a moment after it is shown).
+    // Again when the strip's width changes (the window opened, a group split or resized).
+    let reveal = create_rw_signal(None::<ViewId>);
+    let show_active = move || {
+        let Some(path) = group.active.get_untracked() else { return };
+        floem::action::exec_after(std::time::Duration::ZERO, move |_| {
+            if let Some(id) = TAB_VIEWS.with(|v| v.borrow().get(&(group.id, path)).copied()) {
+                reveal.set(Some(id));
+            }
+        });
+    };
+    create_effect(move |_| {
+        group.active.track();
+        show_active();
+    });
+    let strip_width = create_rw_signal(0.0);
     let strip = h_stack((
         scroll(
             dyn_stack(tabs, |tab: &Tab| tab.path.clone(), move |tab: Tab| one_tab(ui, group, tab))
                 .style(|s| s.flex_row().height_full()),
         )
-        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).height_full()),
+        // As narrow as the group: the tabs that do not fit scroll under it, instead of the group being made as
+        // wide as all its tabs (which pushed the parts beside the editor out of the window).
+        .scroll_style(|s| s.hide_bars(true).vertical_scroll_as_horizontal(true))
+        .scroll_to_view(move || reveal.get())
+        .on_resize(move |r| {
+            if strip_width.get_untracked() != r.width() {
+                strip_width.set(r.width());
+                show_active();
+            }
+        })
+        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full()),
         h_stack((
             // An SVG's text has its preview a click away (Open Preview, as a Markdown file's has in VS Code).
             action(t, "open-preview", move || {
