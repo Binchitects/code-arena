@@ -33,6 +33,7 @@ use std::rc::Rc;
 use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::kurbo::Rect;
+use floem::peniko::Color;
 use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal};
 use floem::style::CursorStyle;
 use floem::views::{
@@ -594,13 +595,14 @@ fn row_view(shared: Shared, node: Node) -> impl IntoView {
             .height(ROW)
             .width_full()
             .items_center()
-            .padding_left(BEFORE)
+            .padding_left(BEFORE - 1.0)
             .font_size(13.0)
             .color(c.side_fg)
             .cursor(CursorStyle::Pointer)
             .selectable(false)
             // The row lit is outlined while the tree has the keys and the selection does not say which it is.
-            .apply_if(keys && lit && (many || !selected), |s| s.outline(1.0).outline_color(c.list_outline));
+            .border(1.0)
+            .border_color(if keys && lit && (many || !selected) { c.list_outline } else { Color::TRANSPARENT });
         // VS Code's selection: lit while the tree has the keys, dimmed while it has not.
         match (selected, keys) {
             (true, true) => s.background(c.list_selected).color(c.list_selected_fg),

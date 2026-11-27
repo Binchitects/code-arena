@@ -36,7 +36,7 @@ use serde_json::Value;
 use crate::icons::icon;
 use crate::menus::{Menu, Row};
 use crate::state::{Send, Ui};
-use crate::widgets::{Keep, cover, solid, text_width, window_size};
+use crate::widgets::{Keep, cover, mix, solid, text_width, window_size};
 
 /// What is drawn before a row's name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,14 +281,16 @@ fn top_of(rows: &[Item], row: usize) -> f64 {
     EDGE + rows[..row.min(rows.len())].iter().map(height_of).sum::<f64>()
 }
 
-/// A menu's size: as wide as its longest name and its longest keys need (`width` measures a text), as high as its
-/// rows.
+/// A menu's size: as wide as its widest row needs for its name and its keys (`width` measures a text), never
+/// narrower than the window's other menus; as high as its rows.
 pub fn size_of(rows: &[Item], width: &dyn Fn(&str) -> f64) -> Size {
-    let entries = || rows.iter().filter_map(|r| if let Item::Entry(e) = r { Some(e) } else { None });
-    let names = entries().map(|e| width(&e.label)).fold(0.0, f64::max);
-    let keys = entries().filter(|e| !e.keys.is_empty()).map(|e| width(&e.keys) + 30.0).fold(0.0, f64::max);
-    let arrow = if entries().any(|e| !e.sub.is_empty()) { 16.0 } else { 0.0 };
-    let wide = (2.0 * EDGE + BEFORE + names + keys + arrow + AFTER).ceil().clamp(160.0, 520.0);
+    let widest = rows
+        .iter()
+        .filter_map(|r| if let Item::Entry(e) = r { Some(e) } else { None })
+        // A row that opens a menu has its arrow in the room after the keys.
+        .map(|e| width(&e.label) + if e.keys.is_empty() { 0.0 } else { width(&e.keys) + 30.0 })
+        .fold(0.0, f64::max);
+    let wide = (2.0 * EDGE + BEFORE + widest + AFTER).ceil().clamp(220.0, 520.0);
     Size::new(wide, 2.0 * EDGE + rows.iter().map(height_of).sum::<f64>())
 }
 
@@ -567,7 +569,8 @@ fn row(ui: Ui, state: Open, all: Rc<Vec<Item>>, level: usize, i: usize, item: It
             .border_radius(4.0)
             .margin_horiz(4.0);
         if !enabled {
-            s.color(c.menu_fg.multiply_alpha(0.4))
+            // A row that cannot be chosen: its text nearer the menu's own colour.
+            s.color(mix(c.menu_fg, c.menu_bg, 0.6))
         } else if lit {
             s.background(c.menu_selected).color(c.menu_selected_fg).cursor(CursorStyle::Pointer)
         } else {
@@ -722,10 +725,18 @@ mod tests {
     fn a_menu_is_as_wide_as_its_names_and_keys_and_stays_in_the_window() {
         let items = menu(Rc::default());
         let width = |text: &str| text.len() as f64 * 7.0;
-        // "Word Wrap" (63) and "Ctrl+X" (42 + 30) with the arrow's room, and four rows and a line.
+        // Never narrower than the window's other menus; four rows and a line high.
         let size = size_of(&items, &width);
-        assert_eq!(size, Size::new(10.0 + 26.0 + 63.0 + 72.0 + 16.0 + 20.0, 10.0 + 4.0 * 26.0 + 9.0));
-        assert_eq!(size_of(&[entry("A", || {}).into()], &width).width, 160.0, "never narrower than VS Code's");
+        assert_eq!(size, Size::new(220.0, 10.0 + 4.0 * 26.0 + 9.0));
+        // As wide as its widest row: the name and the keys of one row, not the longest of each.
+        let long = vec![
+            entry("Copy Relative Path of the Active File", || {}).into(),
+            entry("Cut", || {}).keys("Ctrl+Shift+Alt+X").into(),
+        ];
+        assert_eq!(size_of(&long, &width).width, 10.0 + 26.0 + 37.0 * 7.0 + 20.0);
+        let keyed = vec![entry("Copy Relative Path of the Active File", || {}).keys("Ctrl+K").into()];
+        assert_eq!(size_of(&keyed, &width).width, 10.0 + 26.0 + 37.0 * 7.0 + 6.0 * 7.0 + 30.0 + 20.0);
+        assert_eq!(size_of(&[entry(&"x".repeat(200), || {}).into()], &width).width, 520.0, "nor wider than this");
         let window = Size::new(800.0, 600.0);
         let at = |x: f64, y: f64| Rect::new(x, y, x, y);
         assert_eq!(place(at(100.0, 100.0), false, size, window), Point::new(100.0, 100.0));

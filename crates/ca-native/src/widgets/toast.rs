@@ -131,6 +131,11 @@ impl Toast {
         self
     }
 
+    /// Says it (as `toast::show`): its id.
+    pub fn show_in(self, ui: Ui) -> u64 {
+        show(ui, self)
+    }
+
     /// How long its toast stays; none: until it is closed (said so, or an error with buttons, as VS Code's).
     fn stays(&self) -> Option<Duration> {
         let kept = self.sticky || (self.severity == Severity::Error && !self.actions.is_empty());
@@ -325,18 +330,21 @@ fn note_view(ui: Ui, send: Send, note: Rc<Note>, listed: bool) -> impl IntoView 
                 .text_overflow(TextOverflow::Wrap)
         }),
         // The cross, drawn while the pointer is on the notification.
-        container(icon("close", 16.0)).on_click_stop(move |_| dismiss(ui, id)).style(move |st| {
-            let c = t.get();
-            st.width(22.0)
-                .height(22.0)
-                .margin_left(4.0)
-                .items_center()
-                .justify_center()
-                .border_radius(5.0)
-                .cursor(CursorStyle::Pointer)
-                .color(if over.get() { c.icon } else { floem::peniko::Color::TRANSPARENT })
-                .hover(|st| st.background(c.toolbar_hover))
-        }),
+        container(icon("close", 16.0).style(move |st| st.apply_if(!over.get(), |st| st.hide())))
+            .on_click_stop(move |_| dismiss(ui, id))
+            .style(move |st| {
+                let c = t.get();
+                st.width(22.0)
+                    .height(22.0)
+                    .margin_left(4.0)
+                    .flex_shrink(0.0_f32)
+                    .items_center()
+                    .justify_center()
+                    .border_radius(5.0)
+                    .cursor(CursorStyle::Pointer)
+                    .color(c.icon)
+                    .hover(|st| st.background(c.toolbar_hover))
+            }),
     ))
     .style(|st| st.width_full().items_start());
     let has_foot = !source.is_empty() || !actions.is_empty();

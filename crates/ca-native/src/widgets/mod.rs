@@ -182,6 +182,13 @@ pub fn line(s: Style, colour: Color, side: char) -> Style {
     }
 }
 
+/// A colour between two others: `a` at 0, `b` at 1. For a dimmed text on a known background (a text's own
+/// transparency is not drawn by every renderer).
+pub fn mix(a: Color, b: Color, t: f64) -> Color {
+    let of = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t.clamp(0.0, 1.0)).round() as u8;
+    Color::rgba8(of(a.r, b.r), of(a.g, b.g), of(a.b, b.b), of(a.a, b.a))
+}
+
 /// The size of the window a view is in (a view may float in a window of its own); the main window's when no view
 /// is given, or it is not laid out yet.
 pub fn window_size(ui: Ui, of: Option<ViewId>) -> Size {
@@ -262,4 +269,19 @@ pub fn cover(
 /// keeps its keys.
 pub fn solid(part: impl IntoView + 'static, keep: Keep) -> impl IntoView {
     part.into_view().on_event_stop(EventListener::PointerDown, move |_| keep())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_colour_between_two_is_nearer_the_one_it_is_mixed_towards() {
+        let (fg, bg) = (Color::rgb8(204, 204, 204), Color::rgb8(37, 37, 38));
+        assert_eq!(mix(fg, bg, 0.0), fg);
+        assert_eq!(mix(fg, bg, 1.0), bg);
+        assert_eq!(mix(fg, bg, 0.6), Color::rgb8(104, 104, 104));
+        assert_eq!(mix(fg, bg, 7.0), bg, "no further than the other colour");
+        assert_eq!(mix(Color::rgba8(0, 0, 0, 0), Color::rgba8(0, 0, 0, 255), 0.5).a, 128);
+    }
 }

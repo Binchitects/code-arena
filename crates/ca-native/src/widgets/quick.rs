@@ -869,7 +869,6 @@ fn host_view(ui: Ui, _send: Send) -> AnyView {
             .items_center()
             .justify_center()
             .font_size(13.0)
-            .font_weight(Weight::SEMIBOLD)
             .border_radius(5.0)
             .background(c.quick_title_bg)
             .selectable(false)

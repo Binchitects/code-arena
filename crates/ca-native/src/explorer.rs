@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use crate::icons::icon;
 use crate::menus::Menu;
 use crate::state::{Entry, Send, Ui};
-use crate::widgets::{action, bold, caps, dialog, line, popup};
+use crate::widgets::{action, bold, caps, dialog, line, popup, toast};
 
 /// VS Code's row in a tree.
 const ROW: f64 = 22.0;
@@ -300,7 +300,7 @@ fn open_menu(ui: Ui, send: &Send, path: String, dir: bool, at: (f64, f64)) {
         let copy = |text: String| {
             move || {
                 if floem::Clipboard::set_contents(text.clone()).is_err() {
-                    ui.message.set("The path could not be copied.".into());
+                    toast::error(ui, "The path could not be copied.");
                 }
             }
         };
@@ -582,6 +582,13 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         .style(|s| s.size_full().min_height(0.0))
 }
 
+/// What the session could not do, said in the status bar as before, and as the old Code Arena says it: a
+/// notification in the corner, kept in the bell's list.
+fn said_wrong(ui: Ui, what: &str) {
+    ui.message.set(what.to_string());
+    toast::error_of(what).source("Explorer").show_in(ui);
+}
+
 /// What it adds to the window's registries, once at start.
 pub fn register(_ui: Ui, _send: &Send) {}
 
@@ -612,7 +619,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             }
             ui.explorer_asked.set(None);
             match m["error"].as_str() {
-                Some(e) => ui.message.set(format!("Could not create {path}: {e}")),
+                Some(e) => said_wrong(ui, &format!("Could not create {path}: {e}")),
                 None => {
                     ui.message.set(String::new());
                     if m["dir"] == true {
@@ -626,7 +633,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         "renamed" => {
             let (path, to) = (s("path"), s("to"));
             match m["error"].as_str() {
-                Some(e) => ui.message.set(format!("Could not rename {path}: {e}")),
+                Some(e) => said_wrong(ui, &format!("Could not rename {path}: {e}")),
                 None => {
                     ui.message.set(String::new());
                     ui.moved(&path, &to);
@@ -636,7 +643,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         "deleted" => {
             let path = s("path");
             match m["error"].as_str() {
-                Some(e) => ui.message.set(format!("Could not delete {path}: {e}")),
+                Some(e) => said_wrong(ui, &format!("Could not delete {path}: {e}")),
                 None => {
                     ui.gone(&path);
                     ui.message.set(match m["kept"].as_str() {
@@ -683,6 +690,26 @@ mod tests {
 
     fn shown(ui: Ui) -> Vec<String> {
         rows(ui).into_iter().map(|r| if r.input { format!("[{}]", r.path) } else { r.path }).collect()
+    }
+
+    #[test]
+    fn what_the_session_could_not_do_is_a_notification_kept_in_the_bells_list() {
+        let ui = project();
+        let (send, _) = sender();
+        assert_eq!(toast::count(ui), 0);
+        ui.take(
+            &json!({"type": "renamed", "path": "src/a.rs", "to": "src/b.rs", "error": "it is there already"}),
+            &send,
+        );
+        assert_eq!(ui.message.get_untracked(), "Could not rename src/a.rs: it is there already");
+        assert_eq!(toast::count(ui), 1);
+        ui.take(&json!({"type": "deleted", "path": "z.txt", "error": "permission denied"}), &send);
+        assert_eq!(toast::count(ui), 2);
+        // What went well says nothing in the corner.
+        ui.take(&json!({"type": "renamed", "path": "src/a.rs", "to": "src/c.rs"}), &send);
+        ui.take(&json!({"type": "deleted", "path": "z.txt", "kept": ".code-arena/backups/1"}), &send);
+        assert_eq!(toast::count(ui), 2);
+        assert_eq!(ui.message.get_untracked(), "Deleted z.txt: it is kept in .code-arena/backups/1");
     }
 
     #[test]
