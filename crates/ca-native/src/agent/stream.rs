@@ -26,7 +26,7 @@ pub fn thread_of(ui: Ui, m: &Value) -> Vec<Item> {
     for msg in m["messages"].as_array().into_iter().flatten() {
         match msg["role"].as_str() {
             Some("user") => items.extend(super::question::kept(ui, msg)),
-            Some("assistant") => super::answer::kept(ui, msg, &mut items),
+            Some("assistant") => super::answer::kept(ui, msg, &mut items, m["running"] == true),
             _ => {}
         }
     }

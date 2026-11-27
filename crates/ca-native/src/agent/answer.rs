@@ -55,9 +55,9 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
 }
 
 /// An answer's step the session kept, put after the items before it: into the answer it carries on, or a new one.
-pub(super) fn kept(ui: Ui, msg: &Value, items: &mut Vec<Item>) {
+pub(super) fn kept(ui: Ui, msg: &Value, items: &mut Vec<Item>, running: bool) {
     let text = msg["text"].as_str().unwrap_or("").to_string();
-    let tools = super::tools::kept(msg);
+    let tools = super::tools::kept(msg, running);
     if !matches!(items.last(), Some(Item { kind: Kind::Assistant(_), .. })) {
         items.push(Item { id: ui.id(), kind: Kind::assistant(ui.scope) });
     }

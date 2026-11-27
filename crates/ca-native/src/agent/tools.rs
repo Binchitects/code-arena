@@ -464,13 +464,15 @@ fn change(ui: Ui, id: &str, f: impl FnOnce(&mut Tool)) -> bool {
     }
     let held = ui.items.with_untracked(|l| {
         l.iter().rev().find_map(|i| match &i.kind {
-            Kind::Assistant(a) if a.tools.with_untracked(|ts| ts.iter().any(|t| t.id == id)) => Some(a.tools),
+            Kind::Assistant(a) if a.tools.with_untracked(|ts| ts.iter().any(|t| t.id == id && !t.done)) => {
+                Some(a.tools)
+            }
             _ => None,
         })
     });
     let Some(tools) = held else { return false };
     tools.update(|ts| {
-        if let Some(t) = ts.iter_mut().rev().find(|t| t.id == id) {
+        if let Some(t) = ts.iter_mut().rev().find(|t| t.id == id && !t.done) {
             f(t);
         }
     });
@@ -543,16 +545,46 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
                 });
             }
         }
+        "turn_end" => ui.items.with_untracked(|l| {
+            for i in l {
+                if let Kind::Assistant(a) = &i.kind
+                    && a.tools.with_untracked(|ts| ts.iter().any(|t| !t.done))
+                {
+                    a.tools.update(|ts| ts.iter_mut().for_each(settle));
+                }
+            }
+        }),
         _ => {}
     }
     false
 }
 
+/// A call not ended when its turn ended, said as one that did not run: so the next turn's start does not make it
+/// run again.
+fn settle(t: &mut Tool) {
+    if !t.done {
+        t.done = true;
+        t.ok = false;
+        t.status = "skipped".into();
+        t.began = None;
+    }
+}
+
 /// A kept step's calls, as the session says them: each with what it kept of it (`tool_calls`), else by their
 /// names alone (`tools`).
-pub(super) fn kept(msg: &Value) -> Vec<Tool> {
+/// One that has not ended in a turn that has (`running` false) did not run.
+pub(super) fn kept(msg: &Value, running: bool) -> Vec<Tool> {
     match msg["tool_calls"].as_array() {
-        Some(all) => all.iter().map(|v| Tool::from_json(v, v["done"] == true)).collect(),
+        Some(all) => all
+            .iter()
+            .map(|v| {
+                let mut t = Tool::from_json(v, v["done"] == true);
+                if !running {
+                    settle(&mut t);
+                }
+                t
+            })
+            .collect(),
         None => msg["tools"]
             .as_array()
             .into_iter()
@@ -617,12 +649,32 @@ mod tests {
 
     #[test]
     fn a_kept_step_reads_its_calls_and_an_older_one_their_names() {
-        let calls = kept(&json!({"tools": ["grep"], "tool_calls": [
+        let step = json!({"tools": ["grep"], "tool_calls": [
             {"id": "a", "name": "grep", "arguments": {"pattern": "x"}, "done": true, "ok": true, "text": "a:1: x", "ms": 5},
             {"id": "b", "name": "read_file", "done": false},
-        ]}));
+        ]});
+        let calls = kept(&step, true);
         assert_eq!((calls[0].ms, calls[0].done, calls[1].done), (5, true, false));
-        assert_eq!(calls::state(&calls[1], false), State::NotRun);
-        assert_eq!(kept(&json!({"tools": ["grep"]}))[0].name, "grep");
+        // In a turn that ended, one not ended did not run, and stays so when another turn runs.
+        let calls = kept(&step, false);
+        assert_eq!(calls::state(&calls[1], true), State::NotRun);
+        assert_eq!(calls::state(&calls[0], true), State::Done);
+        assert_eq!(kept(&json!({"tools": ["grep"]}), false)[0].name, "grep");
+    }
+
+    #[test]
+    fn a_call_cut_off_by_its_turns_end_did_not_run_and_an_id_used_again_is_a_call_of_its_own() {
+        let ui = Ui::new();
+        let send: Send = std::rc::Rc::new(|_| {});
+        let said = |v: Value| take(ui, &v, &send);
+        said(json!({"type": "tool_start", "id": "call_0", "name": "grep", "subject": "x"}));
+        said(json!({"type": "tool_end", "id": "call_0", "name": "grep", "subject": "x", "ok": true, "text": "a"}));
+        said(json!({"type": "tool_start", "id": "call_0", "name": "run_shell", "subject": "make"}));
+        said(json!({"type": "turn_end", "ok": false, "stopped": true}));
+        let Kind::Assistant(answer) = ui.current().kind else { panic!("an answer") };
+        let now = answer.tools.get_untracked();
+        assert_eq!(now.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["grep", "run_shell"]);
+        assert_eq!((now[0].text.as_str(), calls::state(&now[0], true)), ("a", State::Done));
+        assert_eq!((calls::state(&now[1], true), now[1].began), (State::NotRun, None));
     }
 }
