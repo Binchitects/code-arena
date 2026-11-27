@@ -3,7 +3,6 @@
 //! top of the window, an input, then rows of 22 px with the letters that matched lit. The files are ranked as the
 //! page ranks them, on each key, and only the best fifty are drawn.
 
-use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
@@ -21,9 +20,10 @@ use floem::views::{
     v_stack,
 };
 use floem::{AnyView, IntoView, View};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::colors::Colors;
+use crate::commands::Command;
 use crate::state::{Send, Ui};
 use crate::widgets::{Theme, UI_FONT};
 
@@ -44,83 +44,9 @@ const SHOWN: usize = 20;
 const WIDTH: f64 = 600.0;
 const TOP: f64 = 6.0;
 
-/// The commands the workbench runs for the palette (the layout is its own), by VS Code's ids where it has one.
-pub const TOGGLE_PRIMARY: &str = "workbench.action.toggleSidebarVisibility";
-pub const TOGGLE_SECONDARY: &str = "workbench.action.toggleAuxiliaryBar";
-pub const TOGGLE_PANEL: &str = "workbench.action.togglePanel";
-pub const FOCUS_EXPLORER: &str = "workbench.view.explorer";
-pub const FOCUS_SEARCH: &str = "workbench.view.search";
-pub const FOCUS_CHANGES: &str = "workbench.view.changes";
-pub const FOCUS_TERMINAL: &str = "workbench.action.terminal.focus";
-pub const FOCUS_AGENT: &str = "workbench.view.agent";
-
-/// What runs a workbench command by its id (the workbench gives it, so the palette knows nothing of the layout).
-pub type Runner = Rc<dyn Fn(Ui, &Send, &str)>;
-pub type Action = Rc<dyn Fn(Ui, &Send)>;
-
-/// A command of the palette: its label, its keys as VS Code writes them ("Ctrl+K Ctrl+T", or none), what it does.
-#[derive(Clone)]
-pub struct Command {
-    pub label: String,
-    pub keys: String,
-    pub run: Action,
-}
-
-thread_local! {
-    static RUNNER: RefCell<Option<Runner>> = const { RefCell::new(None) };
-    static ADDED: RefCell<Vec<Command>> = const { RefCell::new(Vec::new()) };
-}
-
-pub fn set_runner(runner: Runner) {
-    RUNNER.with(|r| *r.borrow_mut() = Some(runner));
-}
-
-/// A command added to the palette by another part of the window.
-pub fn add(label: &str, keys: &str, run: impl Fn(Ui, &Send) + 'static) {
-    ADDED.with(|a| a.borrow_mut().push(Command { label: label.into(), keys: keys.into(), run: Rc::new(run) }));
-}
-
-fn workbench(id: &'static str) -> Action {
-    Rc::new(move |ui, send| {
-        // Taken out first: the command may set another runner, or run a command itself.
-        let runner = RUNNER.with(|r| r.borrow().clone());
-        if let Some(run) = runner {
-            run(ui, send, id);
-        }
-    })
-}
-
-/// The palette's commands: the window's own, then the ones added.
-pub fn commands() -> Vec<Command> {
-    let own = |label: &str, keys: &str, run: Action| Command { label: label.into(), keys: keys.into(), run };
-    let mut all = vec![
-        own("File: Save", "Ctrl+S", Rc::new(|ui, send| ui.save(send))),
-        own(
-            "View: Close Editor",
-            "Ctrl+W",
-            Rc::new(|ui, _| {
-                if let Some(p) = ui.active.get_untracked() {
-                    ui.close(&p);
-                }
-            }),
-        ),
-        own("Go to File…", "Ctrl+P", Rc::new(|ui, send| open(ui, send, Mode::Files))),
-        own("View: Toggle Primary Side Bar Visibility", "Ctrl+B", workbench(TOGGLE_PRIMARY)),
-        own("View: Toggle Secondary Side Bar Visibility", "Ctrl+Alt+B", workbench(TOGGLE_SECONDARY)),
-        own("View: Toggle Panel Visibility", "Ctrl+J", workbench(TOGGLE_PANEL)),
-        own("View: Show Explorer", "Ctrl+Shift+E", workbench(FOCUS_EXPLORER)),
-        own("View: Show Search", "Ctrl+Shift+F", workbench(FOCUS_SEARCH)),
-        own("View: Show the Agent's Changes", "", workbench(FOCUS_CHANGES)),
-        own("Terminal: Focus Terminal", "Ctrl+`", workbench(FOCUS_TERMINAL)),
-        own("Terminal: Create New Terminal", "Ctrl+Shift+`", Rc::new(crate::terminal::new_terminal)),
-        own("Terminal: Kill the Active Terminal Instance", "", Rc::new(crate::terminal::kill)),
-        own("Terminal: Clear", "", Rc::new(|ui, _| crate::terminal::clear(ui))),
-        own("View: Show Agent", "Ctrl+Alt+I", workbench(FOCUS_AGENT)),
-        own("Preferences: Color Theme", "Ctrl+K Ctrl+T", Rc::new(|ui, send| open(ui, send, Mode::Themes))),
-        own("Help: About", "", Rc::new(|ui, _| ui.message.set(format!("Code Arena {}", env!("CARGO_PKG_VERSION"))))),
-    ];
-    ADDED.with(|a| all.extend(a.borrow().iter().cloned()));
-    all
+/// The commands the palette lists now: every command that is there and is not a key's own, in the order added.
+pub fn commands(ui: Ui) -> Vec<Rc<Command>> {
+    crate::commands::all().into_iter().filter(|c| !c.hidden && c.offered(ui)).collect()
 }
 
 /// What was typed, as it is looked for: lower case, without its spaces.
@@ -325,7 +251,8 @@ impl Files {
 #[derive(Clone)]
 pub enum Pick {
     File(String),
-    Command(Action),
+    /// A command, by its id.
+    Command(String),
     Theme(String),
 }
 
@@ -391,15 +318,16 @@ pub fn file_rows(files: &Files, text: &str) -> Vec<Row> {
 }
 
 /// The commands' rows for what was typed after the ">": all of them in their order, or the ones that match.
-pub fn command_rows(all: &[Command], text: &str) -> Vec<Row> {
+pub fn command_rows(all: &[Rc<Command>], text: &str) -> Vec<Row> {
     let q = Query::of(text);
-    let labels = Files::of(all.iter().map(|c| c.label.as_str()), false);
+    let names: Vec<String> = all.iter().map(|c| c.label()).collect();
+    let labels = Files::of(names.iter().map(String::as_str), false);
     labels
         .rank(&q, MOST)
         .into_iter()
         .map(|i| {
-            let c = &all[i];
-            Row::new(&c.label, "", positions(&c.label, &q), &c.keys, Pick::Command(c.run.clone()))
+            let (c, label) = (&all[i], &labels.paths[i]);
+            Row::new(label, "", positions(label, &q), c.shown_keys(), Pick::Command(c.id.clone()))
         })
         .collect()
 }
@@ -433,7 +361,7 @@ pub fn refresh(ui: Ui) {
     let text = ui.quick_text.get();
     let (rows, at) = match mode {
         Mode::Files => (ui.quick_files.with(|f| file_rows(f, &text)), 0),
-        Mode::Commands => (command_rows(&commands(), &text[1..]), 0),
+        Mode::Commands => (command_rows(&commands(ui), &text[1..]), 0),
         Mode::Themes => {
             let was = ui.quick_theme.get_untracked().unwrap_or_else(|| ui.choice.get_untracked());
             ui.themes.with(|all| theme_rows(all, &text, &ca_themes::chosen(all, &was, true).id))
@@ -508,9 +436,9 @@ pub fn accept(ui: Ui, send: &Send, at: usize) {
             close(ui);
             ui.open(&path, send);
         }
-        Pick::Command(run) => {
+        Pick::Command(id) => {
             close(ui);
-            run(ui, send);
+            crate::commands::run(ui, send, &id);
         }
         Pick::Theme(id) => {
             ui.quick_theme.set(None);
@@ -748,8 +676,24 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     })
 }
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
+/// The session's messages that are Quick Open's, taken in. Never taken away from the rest of the window (false).
+pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
+    if m["type"] == "files" {
+        let paths = || m["paths"].as_array().into_iter().flatten().filter_map(Value::as_str);
+        let more = m["more"] == true;
+        // Listed again as they were: what is shown stays (the row chosen with it).
+        if !ui.quick_files.with_untracked(|f| f.holds(paths(), more)) {
+            ui.quick_files.set(Rc::new(crate::palette::Files::of(paths(), more)));
+        }
+    }
+    false
+}
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::time::Instant;
 
     use serde_json::Value;
@@ -840,26 +784,61 @@ mod tests {
 
     #[test]
     fn the_commands_are_all_there_in_their_order_and_found_by_their_letters() {
-        let all = commands();
+        let ui = Ui::new();
+        let (send, _) = sender();
+        crate::workbench::register(ui, &send);
+        let all = commands(ui);
         let rows = command_rows(&all, "");
         let labels: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
-        for want in [
-            "File: Save",
-            "View: Close Editor",
-            "View: Toggle Primary Side Bar Visibility",
-            "View: Toggle Secondary Side Bar Visibility",
-            "View: Toggle Panel Visibility",
-            "View: Show Explorer",
-            "View: Show Search",
-            "View: Show the Agent's Changes",
-            "Terminal: Focus Terminal",
-            "View: Show Agent",
-            "Preferences: Color Theme",
-            "Help: About",
-        ] {
-            assert!(labels.contains(&want), "{want}");
-        }
-        assert_eq!(labels[0], "File: Save");
+        // The palette as the window began with it, to the letter and in this order, and the one command it lacked
+        // for a view it had: Show Outline.
+        assert_eq!(
+            labels,
+            [
+                "File: Save",
+                "View: Close Editor",
+                "Go to File…",
+                "View: Toggle Primary Side Bar Visibility",
+                "View: Toggle Secondary Side Bar Visibility",
+                "View: Toggle Panel Visibility",
+                "View: Show Explorer",
+                "View: Show Search",
+                "View: Show the Agent's Changes",
+                "View: Show Outline",
+                "Terminal: Focus Terminal",
+                "Terminal: Create New Terminal",
+                "Terminal: Kill the Active Terminal Instance",
+                "Terminal: Clear",
+                "View: Show Agent",
+                "Preferences: Color Theme",
+                "Help: About",
+                "View: Reset View Locations",
+                "View: Float Explorer",
+                "View: Float Search",
+                "View: Float Changes",
+                "View: Float Outline",
+                "View: Float Agent",
+                "View: Float Terminal",
+            ]
+        );
+        let keys: Vec<&str> = rows.iter().map(|r| r.keys.as_str()).filter(|k| !k.is_empty()).collect();
+        assert_eq!(
+            keys,
+            [
+                "Ctrl+S",
+                "Ctrl+W",
+                "Ctrl+P",
+                "Ctrl+B",
+                "Ctrl+Alt+B",
+                "Ctrl+J",
+                "Ctrl+Shift+E",
+                "Ctrl+Shift+F",
+                "Ctrl+`",
+                "Ctrl+Shift+`",
+                "Ctrl+Alt+I",
+                "Ctrl+K Ctrl+T"
+            ]
+        );
         let found = command_rows(&all, " color theme");
         assert_eq!(found[0].name, "Preferences: Color Theme");
         assert_eq!(found[0].keys, "Ctrl+K Ctrl+T");
@@ -867,45 +846,59 @@ mod tests {
     }
 
     #[test]
-    fn a_layout_command_goes_to_the_workbench_by_its_id_and_an_added_one_is_listed() {
+    fn a_command_chosen_runs_by_its_id_and_one_added_is_listed() {
+        use crate::layout::View;
         let ui = Ui::new();
         let (send, said) = sender();
-        let ran = Rc::new(RefCell::new(Vec::new()));
-        // Without a runner, nothing (and no panic).
+        // With no command added, nothing (and no panic).
         open(ui, &send, Mode::Commands);
         refresh(ui);
         assert_eq!(shown(ui), Some(Mode::Commands));
         ui.quick_text.set(">toggle panel".into());
         refresh(ui);
         accept(ui, &send, 0);
-        assert_eq!(ui.quick.get_untracked(), None);
-        {
-            let ran = ran.clone();
-            set_runner(Rc::new(move |_, _, id| ran.borrow_mut().push(id.to_string())));
-        }
-        for (typed, id) in [
-            (">toggle primary", TOGGLE_PRIMARY),
-            (">toggle secondary", TOGGLE_SECONDARY),
-            (">toggle panel", TOGGLE_PANEL),
-            (">show explorer", FOCUS_EXPLORER),
-            (">show search", FOCUS_SEARCH),
-            (">agent's changes", FOCUS_CHANGES),
-            (">focus terminal", FOCUS_TERMINAL),
-            (">show agent", FOCUS_AGENT),
-        ] {
+        assert!(ui.group_shown(View::Terminal));
+        close(ui);
+        crate::workbench::register(ui, &send);
+        let run = |typed: &str| {
             open(ui, &send, Mode::Commands);
             ui.quick_text.set(typed.into());
             refresh(ui);
             accept(ui, &send, 0);
-            assert_eq!(ran.borrow().last().map(String::as_str), Some(id), "{typed}");
-        }
-        add("Test: Added", "Ctrl+K A", |ui, _| ui.message.set("added".into()));
-        open(ui, &send, Mode::Commands);
-        ui.quick_text.set(">test added".into());
-        refresh(ui);
-        accept(ui, &send, 0);
+        };
+        run(">toggle panel");
+        assert!(!ui.group_shown(View::Terminal));
+        run(">toggle primary");
+        assert!(!ui.group_shown(View::Files));
+        run(">toggle secondary");
+        assert!(!ui.group_shown(View::Agent));
+        run(">show explorer");
+        assert!(ui.view_shown(View::Files));
+        run(">show search");
+        assert!(ui.view_shown(View::Search));
+        run(">agent's changes");
+        assert!(ui.view_shown(View::Changes));
+        run(">focus terminal");
+        assert!(ui.view_shown(View::Terminal));
+        run(">show agent");
+        assert!(ui.view_shown(View::Agent));
+        assert!(said.borrow().is_empty(), "these commands ask nothing of the session");
+        crate::commands::add(
+            crate::commands::command("test.added", "Test", "Added", |ui, _| ui.message.set("added".into()))
+                .keys("Ctrl+K A"),
+        );
+        run(">test added");
         assert_eq!(ui.message.get_untracked(), "added");
-        assert!(said.borrow().is_empty(), "the commands ask nothing of the session");
+        // A key's own command, and one that is not there now, are not listed.
+        crate::commands::add(crate::commands::command("test.hidden", "Test", "Never Listed", |_, _| {}).hidden());
+        crate::commands::add(
+            crate::commands::command("test.later", "Test", "Listed While It Works", |_, _| {})
+                .when(|ui| ui.running.get_untracked()),
+        );
+        let labels = |ui: Ui| commands(ui).iter().map(|c| c.label()).collect::<Vec<_>>();
+        assert!(!labels(ui).iter().any(|l| l == "Test: Never Listed" || l == "Test: Listed While It Works"));
+        ui.running.set(true);
+        assert!(labels(ui).iter().any(|l| l == "Test: Listed While It Works"));
     }
 
     #[test]

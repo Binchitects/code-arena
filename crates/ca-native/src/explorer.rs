@@ -20,7 +20,7 @@ use floem::views::{
     v_stack_from_iter,
 };
 use floem::{AnyView, IntoView, View};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::icons::icon;
 use crate::state::{Entry, Send, Ui};
@@ -722,6 +722,75 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             }
         })
         .style(|s| s.size_full().min_height(0.0))
+}
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
+/// The session's messages that are the Explorer's, taken in. Never taken away from the rest of the window (false).
+pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
+    let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
+    match m["type"].as_str().unwrap_or("") {
+        "ls" => {
+            if m["error"].is_string() {
+                return false;
+            }
+            let entries = m["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|e| Entry { name: e["name"].as_str().unwrap_or("").into(), dir: e["dir"] == true })
+                .collect();
+            ui.tree.update(|t| {
+                t.insert(s("path"), entries);
+            });
+        }
+        // The Explorer's own. Every face is told, so what another face moved or deleted is followed here too;
+        // but a file is opened only in the window that asked for it.
+        "created" => {
+            let path = s("path");
+            if !ui.explorer_asked.with_untracked(|a| a.as_deref() == Some(path.as_str())) {
+                return false;
+            }
+            ui.explorer_asked.set(None);
+            match m["error"].as_str() {
+                Some(e) => ui.message.set(format!("Could not create {path}: {e}")),
+                None => {
+                    ui.message.set(String::new());
+                    if m["dir"] == true {
+                        ui.selected.set(path);
+                    } else {
+                        ui.open(&path, send);
+                    }
+                }
+            }
+        }
+        "renamed" => {
+            let (path, to) = (s("path"), s("to"));
+            match m["error"].as_str() {
+                Some(e) => ui.message.set(format!("Could not rename {path}: {e}")),
+                None => {
+                    ui.message.set(String::new());
+                    ui.moved(&path, &to);
+                }
+            }
+        }
+        "deleted" => {
+            let path = s("path");
+            match m["error"].as_str() {
+                Some(e) => ui.message.set(format!("Could not delete {path}: {e}")),
+                None => {
+                    ui.gone(&path);
+                    ui.message.set(match m["kept"].as_str() {
+                        Some(kept) => format!("Deleted {path}: it is kept in {kept}"),
+                        None => String::new(),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+    false
 }
 
 #[cfg(test)]

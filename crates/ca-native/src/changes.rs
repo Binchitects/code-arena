@@ -6,12 +6,12 @@ use std::rc::Rc;
 
 use floem::IntoView;
 use floem::peniko::Color;
-use floem::reactive::{SignalGet, SignalWith};
+use floem::reactive::{SignalGet, SignalUpdate, SignalWith};
 use floem::style::CursorStyle;
 use floem::views::{
     Decorators, VirtualDirection, VirtualItemSize, dyn_stack, empty, h_stack, label, scroll, v_stack, virtual_stack,
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::diff::{Line, Side};
 use crate::state::{Change, Send, Ui};
@@ -125,4 +125,27 @@ pub fn diff_view(ui: Ui, lines: Rc<Vec<Line>>) -> impl IntoView {
         let c = t.get();
         s.size_full().font_family(MONO_FONT.clone()).font_size(14.0).background(c.editor_bg).selectable(false)
     })
+}
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
+/// The session's message of the files the agent changed, taken in. Never taken away (false).
+pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
+    if m["type"] == "changes" {
+        let text = |v: &Value| v.as_str().map(str::to_string);
+        ui.changes.set(
+            m["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|f| Change {
+                    path: f["path"].as_str().unwrap_or("").to_string(),
+                    before: text(&f["before"]),
+                    after: text(&f["after"]),
+                })
+                .collect(),
+        );
+    }
+    false
 }

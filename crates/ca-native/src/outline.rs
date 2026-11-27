@@ -273,7 +273,7 @@ fn follow(ui: Ui) {
             Some(true) => return wanted.set(true),
             Some(false) => {}
         }
-        let Some(tab) = ui.active.get_untracked().and_then(|p| ui.tab(&p)).filter(|t| t.diff.is_none()) else {
+        let Some(tab) = ui.active.get_untracked().and_then(|p| ui.tab(&p)).filter(|t| t.is_file()) else {
             ui.symbols.set((String::new(), Rc::new(Vec::new())));
             return;
         };
@@ -396,6 +396,14 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     });
     floem::views::v_stack((none, scroll(list).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).width_full())))
         .style(|s| s.size_full().min_height(0.0))
+}
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: crate::state::Ui, _send: &crate::state::Send) {}
+
+/// The session's messages that are this part's, taken in; true takes one away from the parts after it.
+pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state::Send) -> bool {
+    false
 }
 
 #[cfg(test)]

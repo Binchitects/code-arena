@@ -2,6 +2,10 @@
 //! (or its tabs) and the view it shows, the editor where the tree puts it. A view is dragged by its icon, title or
 //! tab: past 5 px, Visual Studio's guide shows on the part under the pointer and at the window's edges, the place it
 //! would take is shaded, and on release it docks there (Escape gives up).
+//!
+//! What is drawn is `ui.drawn()`: the dock kept for the folder (`ui.dock`) without the views withheld now
+//! (`ui.withhold`). A withheld view keeps its place in `ui.dock`, and in what is kept for the folder, so it is back
+//! where it was when it is withheld no more.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -9,7 +13,7 @@ use std::collections::HashMap;
 use floem::event::{Event, EventListener, EventPropagation};
 use floem::kurbo::{Point, Rect};
 use floem::peniko::Color;
-use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo};
+use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo};
 use floem::style::{CursorStyle, Position};
 use floem::views::{
     Decorators, container, dyn_container, empty, h_stack, h_stack_from_iter, label, v_stack, v_stack_from_iter,
@@ -61,7 +65,62 @@ fn editor_least(dir: Dir) -> f64 {
     if dir == Dir::Row { 220.0 } else { 70.0 }
 }
 
+/// The views withheld while the window runs, and the dock as it is drawn: the kept one without them.
+#[derive(Clone, Copy)]
+struct Withheld {
+    views: RwSignal<Vec<View>>,
+    drawn: Memo<Dock>,
+}
+
+impl crate::ext::State for Withheld {
+    fn new(ui: Ui) -> Withheld {
+        let views = ui.scope.create_rw_signal(Vec::new());
+        let drawn = ui.scope.create_memo(move |_| {
+            let gone: Vec<View> = views.get();
+            ui.dock.with(|d| d.without_all(&gone))
+        });
+        Withheld { views, drawn }
+    }
+}
+
 impl Ui {
+    /// The dock as it is drawn: the one kept (`ui.dock`) without the views withheld. Told only when it changes.
+    pub fn drawn(&self) -> Memo<Dock> {
+        self.state::<Withheld>().drawn
+    }
+
+    /// A view withheld (true) or given back (false) while the window runs: withheld, it is drawn nowhere and its
+    /// commands are not there, and it keeps its place in the layout.
+    // The parts to come call it (Memory, while the account may not use it); the window's first parts do not.
+    #[allow(dead_code)]
+    pub fn withhold(&self, v: View, yes: bool) {
+        let views = self.state::<Withheld>().views;
+        if views.with_untracked(|w| w.contains(&v)) == yes {
+            return;
+        }
+        views.update(|w| {
+            w.retain(|x| *x != v);
+            if yes {
+                w.push(v);
+            }
+        });
+        // One floating in a window of its own: the window goes with it, and comes back with it.
+        if self.dock.with_untracked(|d| d.floating.contains(&v)) {
+            if yes {
+                if let Some(w) = WINDOWS.with(|w| w.borrow_mut().remove(&v)) {
+                    floem::close_window(w);
+                }
+            } else {
+                open_window(*self, v);
+            }
+        }
+    }
+
+    /// Whether a view is in the window now: written, and not withheld.
+    pub fn available(&self, v: View) -> bool {
+        v.ready() && !self.state::<Withheld>().views.with(|w| w.contains(&v))
+    }
+
     /// A part's size (across in a row, down in a column), its first one until it is resized.
     pub fn size(&self, id: u32) -> RwSignal<f64> {
         if let Some(s) = self.sizes.with_untracked(|m| m.get(&id).copied()) {
@@ -81,7 +140,7 @@ impl Ui {
 
     /// Whether the view is on screen: its group shown, and it the one shown in it.
     pub fn view_shown(&self, v: View) -> bool {
-        self.dock.with(|d| {
+        self.drawn().with(|d| {
             d.group_of(v).is_some_and(|g| {
                 !self.hidden(g) && matches!(d.find(g), Some(Node::Tabs { active, .. }) if *active == v)
             })
@@ -91,6 +150,9 @@ impl Ui {
     /// The view on screen: its group shown, it shown in it. The dock and the hidden groups are set only when they
     /// change, so what reads them is not told of nothing.
     pub fn reveal(&self, v: View) {
+        if !self.available(v) {
+            return;
+        }
         let next = self.dock.with_untracked(|d| d.shown(v));
         if self.dock.with_untracked(|d| *d != next) {
             self.dock.set(next);
@@ -132,7 +194,7 @@ impl Ui {
     }
 
     pub fn group_shown(&self, v: View) -> bool {
-        self.dock.with(|d| d.group_of(v)).is_some_and(|g| !self.hidden(g))
+        self.drawn().with(|d| d.group_of(v)).is_some_and(|g| !self.hidden(g))
     }
 
     pub fn dock_view(&self, v: View, target: u32, side: Side) {
@@ -155,7 +217,7 @@ impl Ui {
 
     /// The floating views' windows opened (after the layout is read back).
     pub fn open_floating(&self) {
-        for v in self.dock.with_untracked(|d| d.floating.clone()) {
+        for v in self.drawn().with_untracked(|d| d.floating.clone()) {
             open_window(*self, v);
         }
     }
@@ -172,11 +234,12 @@ impl Ui {
 /// The dock area: the tree, drawn again only when its shape changes (a view docked), not when a tab is chosen or
 /// a part resized or hidden.
 pub fn tree(ui: Ui, send: Send) -> impl IntoView {
-    let shape = create_memo(move |_| ui.dock.with(|d| shape_of(&d.root)));
+    let drawn = ui.drawn();
+    let shape = create_memo(move |_| drawn.with(|d| shape_of(&d.root)));
     let area = dyn_container(
         move || shape.get(),
         move |_| {
-            let root = ui.dock.get_untracked().root;
+            let root = drawn.get_untracked().root;
             node_view(ui, send.clone(), root, Place::Whole).into_any()
         },
     )
@@ -288,7 +351,7 @@ fn resize(ui: Ui, split: u32, part: u32, dir: Dir, editor: bool, others: f64, wa
         size.set(first);
         return;
     }
-    let is_group = ui.dock.with_untracked(|d| matches!(d.find(part), Some(Node::Tabs { .. })));
+    let is_group = ui.drawn().with_untracked(|d| matches!(d.find(part), Some(Node::Tabs { .. })));
     if want < least(dir) / 2.0 && is_group {
         ui.hidden.update(|h| {
             h.insert(part);
@@ -326,7 +389,7 @@ pub fn fit(ui: Ui) {
         }
         kids.iter().for_each(|k| walk(ui, k));
     }
-    let root = ui.dock.get_untracked().root;
+    let root = ui.drawn().get_untracked().root;
     walk(ui, &root);
 }
 
@@ -334,14 +397,15 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     let t = ui.colors;
     // The group's views and the one it shows, told only when they change: a container built from them is built
     // again then, not at every change of the dock (Floem's dyn_container builds again whenever what it reads is set).
+    let drawn = ui.drawn();
     let views = create_memo(move |_| {
-        ui.dock.with(|d| match d.find(id) {
+        drawn.with(|d| match d.find(id) {
             Some(Node::Tabs { views, active, .. }) => (views.clone(), Some(*active)),
             _ => (Vec::new(), None),
         })
     });
     let shown = create_memo(move |_| views.with(|v| v.1));
-    let side_bar = ui.dock.with_untracked(|d| d.side_bar()) == Some(id);
+    let side_bar = drawn.with_untracked(|d| d.side_bar()) == Some(id);
     let header = dyn_container(
         move || views.get(),
         move |(views, active)| {
@@ -393,13 +457,31 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
                         h.insert(id);
                     })
                 });
-                match active {
-                    Some(View::Files) => crate::explorer::actions(ui, send).into_any(),
-                    Some(View::Terminal) => {
-                        h_stack((crate::terminal::actions(ui, send), close)).style(|s| s.gap(2.0)).into_any()
+                let Some(v) = active else { return empty().into_any() };
+                // The view's own actions, the ones other parts put in its title (the menu's items that have an
+                // icon), then the cross that hides the group (not in the side bar, where the activity bar does it;
+                // the Explorer has none, the terminal always one).
+                let mut parts: Vec<floem::AnyView> = v.actions(ui, send.clone()).into_iter().collect();
+                for row in crate::menus::rows(ui, crate::menus::Menu::ViewTitle(v)) {
+                    if let crate::menus::Row::Entry { icon: name, command: Some(id), .. } = row
+                        && !name.is_empty()
+                    {
+                        let send = send.clone();
+                        parts.push(
+                            action(t, name, move || {
+                                crate::commands::run(ui, &send, &id);
+                            })
+                            .into_any(),
+                        );
                     }
-                    _ if !side_bar => close.into_any(),
-                    _ => empty().into_any(),
+                }
+                if v != View::Files && (v == View::Terminal || !side_bar) {
+                    parts.push(close.into_any());
+                }
+                match parts.len() {
+                    0 => empty().into_any(),
+                    1 => parts.remove(0),
+                    _ => h_stack_from_iter(parts).style(|s| s.gap(2.0)).into_any(),
                 }
             },
         )
@@ -410,7 +492,7 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     let body = dyn_container(
         move || shown.get(),
         move |v| match v {
-            Some(v) => view_body(ui, send.clone(), v).into_any(),
+            Some(v) => v.body(ui, send.clone()),
             None => empty().into_any(),
         },
     )
@@ -429,18 +511,6 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     });
     keep(id, view.id());
     view
-}
-
-/// A view's own content.
-fn view_body(ui: Ui, send: Send, v: View) -> floem::AnyView {
-    match v {
-        View::Files => crate::explorer::view(ui, send).into_any(),
-        View::Agent => crate::agent::view(ui, send).into_any(),
-        View::Search => crate::search::view(ui, send).into_any(),
-        View::Changes => crate::changes::view(ui, send).into_any(),
-        View::Terminal => crate::terminal::view(ui, send).into_any(),
-        View::Outline => crate::outline::view(ui, send).into_any(),
-    }
 }
 
 /// A floating view's window: its title with a button that docks it back, and the view, in the theme; closed, the
@@ -463,7 +533,7 @@ fn open_window(ui: Ui, v: View) {
                 action(t, "layout-sidebar-right", move || ui.dock_view(v, EDITOR, Side::Right)),
             ))
             .style(|s| s.height(35.0).width_full().items_center().padding_right(8.0).selectable(false));
-            v_stack((title, view_body(ui, send, v).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0))))
+            v_stack((title, v.body(ui, send).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0))))
                 .on_event_cont(EventListener::WindowClosed, move |_| {
                     // Closed by its frame: back in the tree (unless docked already, which closed it).
                     if WINDOWS.with(|w| w.borrow_mut().remove(&v)).is_some() {
@@ -544,7 +614,7 @@ fn aim(ui: Ui, v: View, p: Point) -> Drag {
         d.shade = Some(dock::preview(area, side, true));
     }
     let mut parts = vec![EDITOR];
-    ui.dock.with_untracked(|dk| dk.root.groups(&mut parts));
+    ui.drawn().with_untracked(|dk| dk.root.groups(&mut parts));
     let under = parts
         .into_iter()
         .filter(|g| *g == EDITOR || !ui.hidden.with_untracked(|h| h.contains(g)))

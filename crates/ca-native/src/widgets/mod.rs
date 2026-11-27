@@ -12,6 +12,12 @@ use floem::{IntoView, View};
 use crate::colors::Colors;
 use crate::icons::icon;
 
+pub mod dialog;
+pub mod popup;
+pub mod quick;
+pub mod toast;
+pub mod tree;
+
 /// VS Code's fonts on each system, the first of them this machine has (the text drawn takes one family only).
 const UI_FONTS: &[&str] =
     &["Segoe UI", "SF Pro Text", "Ubuntu Sans", "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans"];
