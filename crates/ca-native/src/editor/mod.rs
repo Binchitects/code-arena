@@ -182,6 +182,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 tab.colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
                 let caret = ui.caret;
                 let map = map.clone();
+                let focused = shown.focused;
                 let ed = text_editor_keys("", move |editor, press, mods| {
                     if keys::editor_key(ui, press, mods) {
                         return CommandExecuted::Yes;
@@ -209,7 +210,8 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                         .gutter_right_padding(22.0)
                         .current_line_color(c.line_highlight)
                         .selection_color(c.selection)
-                        .cursor_color(c.cursor)
+                        // As VS Code: the caret only in the group that has the keys.
+                        .cursor_color(if focused.get() { c.cursor } else { floem::peniko::Color::TRANSPARENT })
                         .indent_guide_color(c.indent_guide)
                         .visible_whitespace(c.whitespace)
                         .phantom_color(c.desc)
@@ -223,7 +225,6 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 g.editors.update(|e| {
                     e.insert(id, (tab.path.clone(), editor.clone()));
                 });
-                let focused = shown.focused;
                 if focused.get_untracked() {
                     make_live(ui, id);
                 }
