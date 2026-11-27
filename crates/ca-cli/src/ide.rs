@@ -255,7 +255,12 @@ impl Events for PageEvents {
         send(&self.out, json!({"type": "reasoning", "delta": delta}));
     }
     fn notice(&mut self, text: &str) {
-        send(&self.out, json!({"type": "notice", "text": text}));
+        // A message sent meanwhile, read at this step: `took_in` first, and the notice marked with its number.
+        let mut v = json!({"type": "notice", "text": text});
+        if let Some(id) = self.tasks.as_ref().and_then(|sh| crate::ide_chat::queue::read(sh, text)) {
+            v["took_in"] = json!(id);
+        }
+        send(&self.out, v);
     }
     fn tool_waiting(&mut self, call: &Call<'_>) {
         self.thought_ends(false);
@@ -982,7 +987,10 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
         let msg = if let Some(m) = drv.later.next() {
             m
         } else if let Some((text, how)) = next_turn(&mut p.said_next, &drv.inbox) {
-            let sent = Sent::new(&Value::Null, text, false);
+            let mut sent = Sent::new(&Value::Null, text, false);
+            if how == How::Late {
+                sent.fields.insert("queued".into(), json!(crate::ide_chat::queue::unread(&sh)));
+            }
             turn(&mut w, &mut p, app, &mut drv, &mut side, &mut sh, sent, how).await;
             continue;
         } else {
@@ -1009,7 +1017,13 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                     send(&out, tasks(&sh));
                 }
                 "send" => {
-                    let text = msg["text"].as_str().unwrap_or("").trim().to_string();
+                    // One that waited for the turn's end goes with its words as they are now, or not at all.
+                    let text = if msg["late"] == true {
+                        let Some(t) = crate::ide_chat::queue::due(&sh, &msg) else { continue };
+                        t.trim().to_string()
+                    } else {
+                        msg["text"].as_str().unwrap_or("").trim().to_string()
+                    };
                     if text.is_empty() {
                         continue;
                     }
@@ -1017,6 +1031,9 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                     // It waited for a turn to end, and the faces showed it as `queued` then.
                     if msg["late"] == true {
                         sent.fields.insert("late".into(), json!(true));
+                        if let Some(id) = msg["queued"].as_u64() {
+                            sent.fields.insert("queued".into(), json!([id]));
+                        }
                     }
                     ide_ext::shape(&sh, &mut sent);
                     if !sent.done {
@@ -1093,13 +1110,15 @@ fn during(m: &Value, sh: &Shared, drv: &mut Driver, pending: &Pending) -> bool {
                 if sent.later {
                     let mut kept = m.clone();
                     kept["late"] = json!(true);
+                    if !drv.later.full() {
+                        crate::ide_chat::queue::wait(sh, &mut sent, true);
+                        kept["queued"] = sent.fields["id"].clone();
+                    }
                     if ide_ext::defer(&kept, &mut drv.later, out, false) {
                         send(out, sent.with_fields(json!({"type": "queued", "text": sent.shown, "later": true})));
                     }
                 } else if !sent.done {
-                    if let Ok(mut q) = drv.inbox.lock() {
-                        q.push(sent.model.clone());
-                    }
+                    crate::ide_chat::queue::wait(sh, &mut sent, false);
                     send(out, sent.with_fields(json!({"type": "queued", "text": sent.shown})));
                 }
             }
@@ -1158,12 +1177,13 @@ async fn turn(
         How::Carried => json!({"type": "user", "text": sent.shown, "q": q, "carried": true}),
         // The faces showed it as `queued` when it was sent. It is the question of this turn all the same: without
         // it they would write this answer on as the end of the last one.
-        How::Late => json!({"type": "user", "text": sent.shown, "q": q, "late": true}),
+        How::Late => sent.with_fields(json!({"type": "user", "text": sent.shown, "q": q, "late": true})),
     };
     if sent.fields.contains_key("note") {
         user["note"] = json!(true);
     }
     send(&out, user);
+    crate::ide_chat::queue::turn_begins(sh, q);
     // Where the request will be kept, to keep its details beside it once the turn has written it.
     let at = p.store.lock().ok().and_then(|s| s.summary(&p.session).ok()).map(|s| s.messages);
     send(&out, json!({"type": "turn_start"}));
@@ -1207,6 +1227,8 @@ async fn turn(
                 for said in replay.kept.said() {
                     send(&out, said);
                 }
+                // What waits now: the turn so far says what was sent, not what was changed or taken back since.
+                crate::ide_chat::queue::said(sh, None);
                 send(&out, tasks(sh));
                 cut_shown |= replay.kept.cut();
                 continue;
@@ -1275,8 +1297,9 @@ fn keep_details(p: &Prepared, at: i64, sent: &Sent) {
     let Ok(page) = store.page(&p.session, 1, None) else { return };
     let written = page.messages.iter().any(|m| m.seq == at && m.message.role == ca_llm::Role::User);
     let mut fields = sent.fields.clone();
-    // The key a face asked with answers only that send; a note is told by its words.
-    for k in ["note", "key", "id"] {
+    // The key a face asked with answers only that send; a note is told by its words; the numbers it waited under
+    // are the run's.
+    for k in ["note", "key", "id", "queued"] {
         fields.remove(k);
     }
     if sent.shown != page.messages.iter().find(|m| m.seq == at).map(|m| m.message.content.as_str()).unwrap_or("") {

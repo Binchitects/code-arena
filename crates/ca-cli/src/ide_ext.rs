@@ -134,6 +134,9 @@ pub const TAKEN: &[&str] = &[
     "ask",
     "answered",
     "queued",
+    "took_in",
+    "queue",
+    "queue_error",
     "context_detail",
     "setting_kept",
     "setting_refused",
@@ -207,6 +210,11 @@ impl Later {
         }
         self.0.push_back(m);
         true
+    }
+
+    /// As many wait as may: one more would not be kept.
+    pub fn full(&self) -> bool {
+        self.0.len() >= MOST_LATER
     }
 
     /// The one that waited longest, taken out.

@@ -34,6 +34,7 @@ const THE_TURNS: &[&str] = &[
     "ask",
     "answered",
     "queued",
+    "took_in",
 ];
 
 /// The turn's messages kept so far, and their size.
