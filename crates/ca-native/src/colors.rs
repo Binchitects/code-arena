@@ -197,6 +197,10 @@ colors! {
 
     chat_request: ["chat.requestBubbleBackground", "chat.requestBackground", "list.hoverBackground"], "#2A2D2E", "#F2F2F2";
     chat_flash: ["editor.findMatchHighlightBackground"], "#EA5C0055", "#EA5C0055";
+    diff_added: ["diffEditor.insertedLineBackground", "diffEditor.insertedTextBackground"], "#9BB95533", "#9CCC2C40";
+    diff_removed: ["diffEditor.removedLineBackground", "diffEditor.removedTextBackground"], "#FF000033", "#FF000033";
+    added_fg: ["gitDecoration.addedResourceForeground"], "#81B88B", "#587C0C";
+    removed_fg: ["gitDecoration.deletedResourceForeground"], "#C74E39", "#AD0707";
     terminal_bg: ["terminal.background", "panel.background"], "#1E1E1E", "#FFFFFF";
     terminal_fg: ["terminal.foreground"], "#CCCCCC", "#333333";
     terminal_selection: ["terminal.selectionBackground", "editor.selectionBackground"], "#264F78", "#ADD6FF";

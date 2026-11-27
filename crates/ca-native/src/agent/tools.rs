@@ -183,11 +183,19 @@ fn card(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>, n: usize, tick: RwSignal
         },
     )
     .style(|s| s.width_full().min_width(0.0));
-    let chip_of = create_memo(move |_| me.with(Chip::of));
+    // An edit with its diff has the diff's path in place of the chip; an answer's one edit, the diff alone.
+    let chip_of = create_memo(move |_| me.with(|m| if m.ok && m.diff.is_some() { None } else { Chip::of(m) }));
+    let lone = create_memo(move |_| tools.with(|ts| super::diffs::lone(ts)));
+    let diff_send = send.clone();
     v_stack((
         v_stack((head, bar(ui, me, st, tick), body)).style(move |s| {
             let c = t.get();
-            s.width_full().min_width(0.0).border(1.0).border_color(c.widget_border).border_radius(4.0)
+            s.width_full()
+                .min_width(0.0)
+                .border(1.0)
+                .border_color(c.widget_border)
+                .border_radius(4.0)
+                .apply_if(lone.get(), |s| s.hide())
         }),
         dyn_container(
             move || chip_of.get(),
@@ -196,6 +204,7 @@ fn card(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>, n: usize, tick: RwSignal
                 None => empty().into_any(),
             },
         ),
+        super::diffs::under(ui, diff_send, me),
     ))
     .style(|s| s.gap(4.0).width_full().min_width(0.0))
 }
