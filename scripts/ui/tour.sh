@@ -6,7 +6,7 @@
 #
 #   scripts/ui-test.sh start && sh scripts/ui/tour.sh before      # on the build before the change
 #   scripts/ui-test.sh start && sh scripts/ui/tour.sh after       # on the build after it (start again: a fresh project)
-#   python3 scripts/ui/compare.py target/ui/before target/ui/after 901,36,1280,664
+#   python3 scripts/ui/compare.py target/ui/before target/ui/after 901,36,1280,667
 #
 # The pictures go to target/ui/NAME/NN-step.png. Run it from the checkout's root. What moves by itself differs
 # from one run to the next and says nothing: a caret that blinks (a few pixels), and how far the thread is scrolled

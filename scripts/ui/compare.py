@@ -3,7 +3,7 @@
 # itself). With only zlib, so it runs anywhere the pictures are (shot.py's PNGs: 8 bits a channel, RGB or RGBA).
 #
 #   python3 scripts/ui/compare.py target/ui/before target/ui/after              # the whole window
-#   python3 scripts/ui/compare.py target/ui/before target/ui/after 901,36,1280,664   # without x0,y0,x1,y1
+#   python3 scripts/ui/compare.py target/ui/before target/ui/after 901,36,1280,667   # without x0,y0,x1,y1
 #
 # It ends with 1 when a step differs (or is missing from the second tour), so a script can stop on it.
 import os
