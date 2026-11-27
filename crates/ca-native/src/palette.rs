@@ -679,8 +679,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
 /// What it adds to the window's registries, once at start.
 pub fn register(_ui: Ui, _send: &Send) {}
 
-/// The session's messages that are Quick Open's, taken in. Never taken away from the
-/// rest of the window (false).
+/// The session's messages that are Quick Open's, taken in. Never taken away from the rest of the window (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     if m["type"] == "files" {
         let paths = || m["paths"].as_array().into_iter().flatten().filter_map(Value::as_str);
@@ -791,7 +790,8 @@ mod tests {
         let all = commands(ui);
         let rows = command_rows(&all, "");
         let labels: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
-        // The palette as the window began with it, to the letter and in this order.
+        // The palette as the window began with it, to the letter and in this order, and the one command it lacked
+        // for a view it had: Show Outline.
         assert_eq!(
             labels,
             [
@@ -804,6 +804,7 @@ mod tests {
                 "View: Show Explorer",
                 "View: Show Search",
                 "View: Show the Agent's Changes",
+                "View: Show Outline",
                 "Terminal: Focus Terminal",
                 "Terminal: Create New Terminal",
                 "Terminal: Kill the Active Terminal Instance",

@@ -140,6 +140,7 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(command(SHOW_EXPLORER, "View", "Show Explorer", reveal(View::Files)).keys("Ctrl+Shift+E"));
     add(command(SHOW_SEARCH, "View", "Show Search", reveal(View::Search)).keys("Ctrl+Shift+F"));
     add(command(SHOW_CHANGES, "View", "Show the Agent's Changes", reveal(View::Changes)));
+    add(command(SHOW_OUTLINE, "View", "Show Outline", reveal(View::Outline)));
     add(command(FOCUS_TERMINAL, "Terminal", "Focus Terminal", reveal(View::Terminal)).keys("Ctrl+`"));
     add(command(NEW_TERMINAL, "Terminal", "Create New Terminal", |ui, send| {
         ui.reveal(View::Terminal);
@@ -175,7 +176,6 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(command(TOGGLE_TERMINAL, "View", "Toggle Terminal", |ui, _| ui.toggle_view(View::Terminal))
         .keys("Ctrl+`")
         .hidden());
-    add(command(SHOW_OUTLINE, "View", "Show Outline", reveal(View::Outline)).hidden());
     add(command(QUIT, "File", "Exit", |_, _| floem::quit_app()).hidden());
     register_menus();
     register_status();
