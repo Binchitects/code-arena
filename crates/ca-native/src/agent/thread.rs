@@ -4,10 +4,10 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use floem::{IntoView, View};
 use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::style::TextOverflow;
 use floem::views::{Decorators, dyn_container, dyn_stack, h_stack, label, scroll};
+use floem::{IntoView, View};
 use serde_json::Value;
 
 use crate::icons::icon;
@@ -61,8 +61,8 @@ pub(super) fn thread(ui: Ui, send: Send) -> impl IntoView {
                         follow.track();
                         100.0
                     })
-                .style(|s| s.size_full())
-                .into_any()
+                    .style(|s| s.size_full())
+                    .into_any()
             }
         },
     )
