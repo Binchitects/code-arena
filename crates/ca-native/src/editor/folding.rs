@@ -342,8 +342,11 @@ struct File {
     /// The document whose edits move the folds (its address).
     doc: usize,
     /// The regions, with the document's `cache_rev` they were found at.
-    regions: Option<(u64, Rc<Vec<(usize, usize)>>)>,
+    regions: Option<(u64, Regions)>,
 }
+
+/// A file's regions, each its first and last line (from 0).
+type Regions = Rc<Vec<(usize, usize)>>;
 
 thread_local! {
     static FILES: RefCell<HashMap<String, File>> = RefCell::new(HashMap::new());
@@ -807,7 +810,7 @@ impl View for Chevrons {
                     continue;
                 };
                 let mut layout = TextLayout::new();
-                layout.set_text(&crate::icons::char_of(icon).to_string(), AttrsList::new(attrs.clone()));
+                layout.set_text(&crate::icons::char_of(icon).to_string(), AttrsList::new(attrs));
                 cx.draw_text(&layout, Point::new((CHEVRONS - 16.0) / 2.0, y - top + (height - 16.0) / 2.0));
             }
         });
@@ -848,9 +851,9 @@ pub fn register(ui: Ui, _send: &Send) {
         }
         commands::add(c);
     };
-    add("editor.fold", "Fold", &["Ctrl+Shift+["], |ui| on_live(ui, |f, r, l| fold(f, r, l)));
+    add("editor.fold", "Fold", &["Ctrl+Shift+["], |ui| on_live(ui, fold));
     add("editor.unfold", "Unfold", &["Ctrl+Shift+]"], |ui| on_live(ui, |f, _, l| unfold(f, l)));
-    add("editor.toggleFold", "Toggle Fold", &["Ctrl+K Ctrl+L"], |ui| on_live(ui, |f, r, l| toggle(f, r, l)));
+    add("editor.toggleFold", "Toggle Fold", &["Ctrl+K Ctrl+L"], |ui| on_live(ui, toggle));
     add("editor.foldRecursively", "Fold Recursively", &["Ctrl+K Ctrl+["], |ui| {
         on_live(ui, |f, r, l| recursively(f, r, l, true))
     });
