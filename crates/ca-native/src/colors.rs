@@ -122,6 +122,7 @@ colors! {
     tabs_border: ["editorGroupHeader.tabsBorder"], "#00000000", "#00000000";
     tab_active_bg: ["tab.activeBackground", "editor.background"], "#1E1E1E", "#FFFFFF";
     tab_active_fg: ["tab.activeForeground"], "#FFFFFF", "#333333";
+    tab_unfocused_active_fg: ["tab.unfocusedActiveForeground"], "#FFFFFF80", "#33333380";
     tab_inactive_bg: ["tab.inactiveBackground"], "#2D2D2D", "#ECECEC";
     tab_inactive_fg: ["tab.inactiveForeground"], "#FFFFFF80", "#33333380";
     tab_border: ["tab.border"], "#252526", "#F3F3F3";

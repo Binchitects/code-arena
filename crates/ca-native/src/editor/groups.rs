@@ -757,7 +757,8 @@ fn one(ui: Ui, id: u64) -> impl IntoView {
             (true, true) => s.border_top(1.0).border_color(t.get().group_border),
         }
     });
-    stack((divider(ui, at, vertical), body))
+    // The divider last: the pointer goes to the topmost part under it.
+    stack((body, divider(ui, at, vertical)))
         .on_event_cont(EventListener::PointerDown, move |_| focus(ui, id))
         .style(move |s| {
             let s = s.flex_grow(share.get() as f32).flex_basis(0.0).min_width(0.0).min_height(0.0);
@@ -810,10 +811,11 @@ fn divider(ui: Ui, at: Memo<usize>, vertical: Memo<bool>) -> impl IntoView {
             let c = t.get();
             let on = lit.get() || down.get().is_some();
             let s = if vertical.get() {
-                s.height(4.0).width_full().margin_vert(-2.0).cursor(CursorStyle::RowResize)
+                s.height(4.0).width_full().inset_top(0.0).cursor(CursorStyle::RowResize)
             } else {
-                s.width(4.0).height_full().margin_horiz(-2.0).cursor(CursorStyle::ColResize)
+                s.width(4.0).height_full().inset_left(0.0).cursor(CursorStyle::ColResize)
             };
+            let s = s.absolute();
             s.z_index(10)
                 .flex_shrink(0.0_f32)
                 .background(if on { c.sash } else { floem::peniko::Color::TRANSPARENT })

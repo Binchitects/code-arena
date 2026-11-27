@@ -114,7 +114,8 @@ fn one_tab(ui: Ui, group: super::groups::Shown, tab: Tab) -> impl IntoView {
         let s =
             s.height_full().min_width(80.0).border_right(1.0).border_color(c.tab_border).cursor(CursorStyle::Pointer);
         if active() {
-            s.background(c.tab_active_bg).color(c.tab_active_fg)
+            // In a group without the keys, dimmer (tab.unfocusedActiveForeground).
+            s.background(c.tab_active_bg).color(if group.focused.get() { c.tab_active_fg } else { c.tab_unfocused_active_fg })
         } else {
             s.background(c.tab_inactive_bg).color(c.tab_inactive_fg).hover(|s| s.background(c.tab_hover))
         }

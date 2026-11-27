@@ -48,8 +48,12 @@ pub(super) fn group_view(ui: Ui, shown: groups::Shown) -> floem::views::Stack {
     let only_focused = move |what: fn(Ui) -> floem::AnyView| {
         dyn_container(move || focused.get(), move |f| if f { what(ui) } else { floem::views::empty().into_any() })
     };
-    let find = only_focused(|ui| find::find_widget(ui).into_any())
-        .style(|s| s.absolute().inset(0.0).min_width(0.0).min_height(0.0));
+    // The pointer goes to the topmost part under it only: the find widget's place is its own size (at the editor's
+    // top right), so the editor beside it still has the pointer.
+    let find = only_focused(|ui| {
+        find::find_widget(ui).style(|s| s.position(floem::style::Position::Relative).inset_right(0.0)).into_any()
+    })
+    .style(|s| s.absolute().inset_top(0.0).inset_right(28.0).z_index(20));
     let editor = stack((body(ui, shown), find))
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     let disk = only_focused(|ui| disk::disk_bar(ui).into_any()).style(|s| s.width_full());
@@ -233,6 +237,14 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                     gone.set(Some(n));
                     go_to_line(&editor, line);
                 }
+                // The editor given the keys (clicked): its group is the focused one.
+                let focus_in = editor.editor_view_focused;
+                create_effect(move |first: Option<()>| {
+                    focus_in.track();
+                    if first.is_some() {
+                        groups::focus(ui, id);
+                    }
+                });
                 let cursor = editor.cursor;
                 let eid = editor.id();
                 let here = editor.clone();
