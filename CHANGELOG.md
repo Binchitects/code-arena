@@ -393,6 +393,19 @@ Sections used:
   it back.
 - **Explorer rows say more.** File kind icons, a '…' row while a folder loads, the reason a folder
   could not be listed, and ↪ after a link.
+- **Search options.** The Search view has Match Whole Word next to Match Case and Use Regular
+  Expression, and its "…" button shows files to include and to exclude (comma-separated globs, as
+  VS Code reads them: `*.rs`, `src`, `./src`). It searches 300 ms after you stop typing, says
+  "Searching…", then "N results in M files" and a note when the results were cut. It lists every
+  match on its own row with its line number and cuts a long line's start so the match shows. You
+  can fold each file, and Collapse All, Refresh and Clear Search Results are in the view's title.
+- **Replace in files.** Ctrl+Shift+H (or the chevron) shows the replace box. Replace All asks
+  "Replace N results in M files?" and leaves files with unsaved changes as they are. You can also
+  replace one file's matches or one match from its row. With a regex, `$1` puts a group back. Line
+  endings stay as they were, and open tabs without changes take in the new text.
+- **A search result opens as a preview with its match selected.** Find in Folder... in the
+  Explorer's menu fills in files to include, and Edit > Find in Files and Replace in Files are in the
+  menu. The query and options are kept with the folder and come back at the next start.
 
 
 ### :bug: Bugs fixed
