@@ -194,7 +194,7 @@ mod tests {
     use super::*;
 
     fn ops(v: &Value) -> String {
-        v["lines"].as_array().unwrap().iter().map(|l| l[0].as_str().unwrap()).collect()
+        v["lines"].as_array().expect("lines").iter().map(|l| l[0].as_str().expect("an op")).collect()
     }
 
     #[test]
@@ -202,7 +202,10 @@ mod tests {
         let before: String = (1..=12).map(|n| format!("line {n}\n")).collect();
         let after = before.replace("line 6\n", "six\n");
         let d = edit_diff("src/a.rs", Some(&before), &after);
-        assert_eq!((d["added"].as_u64(), d["removed"].as_u64(), d["created"].as_bool()), (Some(1), Some(1), Some(false)));
+        assert_eq!(
+            (d["added"].as_u64(), d["removed"].as_u64(), d["created"].as_bool()),
+            (Some(1), Some(1), Some(false))
+        );
         assert_eq!(ops(&d), "   -+   ");
         assert_eq!(d["lines"][0], json!([" ", 3, 3, "line 3"]));
         assert_eq!(d["lines"][3], json!(["-", 6, 0, "line 6"]));
@@ -215,7 +218,8 @@ mod tests {
         let before: String = (1..=30).map(|n| format!("{n}\n")).collect();
         let after = before.replace("\n2\n", "\ntwo\n").replace("\n28\n", "\ntwenty-eight\n");
         let d = edit_diff("a", Some(&before), &after);
-        let news: Vec<u64> = d["lines"].as_array().unwrap().iter().map(|l| l[2].as_u64().unwrap()).collect();
+        let news: Vec<u64> =
+            d["lines"].as_array().expect("lines").iter().map(|l| l[2].as_u64().expect("a number")).collect();
         assert!(news.windows(2).any(|w| w[1] > w[0] + 1), "{news:?}");
         assert_eq!(d["added"], 2);
     }
@@ -233,7 +237,7 @@ mod tests {
     fn a_long_change_lists_its_first_lines_and_says_how_many_more() {
         let after: String = (0..250).map(|n| format!("{n}\n")).collect();
         let d = edit_diff("big", Some(""), &after);
-        assert_eq!(d["lines"].as_array().unwrap().len(), MOST_CHANGED);
+        assert_eq!(d["lines"].as_array().expect("lines").len(), MOST_CHANGED);
         assert_eq!(d["more"], 50);
         assert_eq!(d["added"], 250);
         assert_eq!(d["created"], false);
@@ -241,11 +245,8 @@ mod tests {
 
     #[test]
     fn a_kept_call_takes_its_diff_from_its_results_details_else_from_the_run() {
-        let result = |id: &str, seq: i64| ca_session::Stored {
-            seq,
-            turn: 1,
-            message: ca_llm::Message::tool(id, "done"),
-        };
+        let result =
+            |id: &str, seq: i64| ca_session::Stored { seq, turn: 1, message: ca_llm::Message::tool(id, "done") };
         let mut calls = vec![json!({"id": "a"}), json!({"id": "b"}), json!({"id": "c"})];
         let details = HashMap::from([(5, json!({"diff": {"path": "x"}}))]);
         let run = |id: &str| (id == "b").then(|| json!({"path": "y"}));
