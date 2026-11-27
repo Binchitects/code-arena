@@ -221,6 +221,12 @@ colors! {
     diff_removed: ["diffEditor.removedLineBackground", "diffEditor.removedTextBackground"], "#FF000033", "#FF000033";
     added_fg: ["gitDecoration.addedResourceForeground"], "#81B88B", "#587C0C";
     removed_fg: ["gitDecoration.deletedResourceForeground"], "#C74E39", "#AD0707";
+    scm_modified: ["gitDecoration.modifiedResourceForeground"], "#E2C08D", "#895503";
+    scm_untracked: ["gitDecoration.untrackedResourceForeground"], "#73C991", "#007100";
+    scm_renamed: ["gitDecoration.renamedResourceForeground"], "#73C991", "#007100";
+    scm_conflict: ["gitDecoration.conflictingResourceForeground"], "#E4676B", "#AD0707";
+    scm_count_bg: ["badge.background"], "#4D4D4D", "#C4C4C4";
+    scm_count_fg: ["badge.foreground"], "#FFFFFF", "#333333";
     terminal_bg: ["terminal.background", "panel.background"], "#1E1E1E", "#FFFFFF";
     terminal_fg: ["terminal.foreground"], "#CCCCCC", "#333333";
     terminal_selection: ["terminal.selectionBackground", "editor.selectionBackground"], "#264F78", "#ADD6FF";
