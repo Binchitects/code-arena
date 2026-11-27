@@ -670,9 +670,9 @@ pub fn follow<V: IntoView + 'static>(
         };
         let hls = highlights(&ask);
         let same = GIVEN.with(|g| {
-            g.borrow()
-                .as_ref()
-                .is_some_and(|(v, p, h, f)| *v == view_id && *p == path_now && *h == hls && Rc::ptr_eq(f, &find))
+            g.borrow().as_ref().is_some_and(|(v, p, h, f)| {
+                *v == view_id && *p == path_now && *h == hls && (Rc::ptr_eq(f, &find) || **f == *find)
+            })
         });
         if same {
             return;
