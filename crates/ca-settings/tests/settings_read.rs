@@ -268,9 +268,16 @@ fn every_setting_read_is_declared_and_every_setting_declared_is_read() {
                 named.insert(key.clone());
             }
         }
-        // A file's tests come last: what they read is no part of the program's.
-        let program = text.split("\n#[cfg(test)]\nmod ").next().unwrap_or(&text);
-        let (keys, unseen) = reads(program);
+        // A file's tests come last: what they read is no part of the program's. Nor is what a comment shows.
+        let program: String = text
+            .split("\n#[cfg(test)]\nmod ")
+            .next()
+            .unwrap_or(&text)
+            .lines()
+            .map(|l| if l.trim_start().starts_with("//") { "" } else { l })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (keys, unseen) = reads(&program);
         for line in unseen {
             faults
                 .push(format!("{rel}:{line}: the setting's key is not written as a literal, so this read is not seen"));

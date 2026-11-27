@@ -106,6 +106,7 @@ impl Said {
 
     /// A setting's value: the language's own when it has one, else the value for every language, else (nothing
     /// said yet) the schema's default. Null for a key that is no setting.
+    #[allow(dead_code)] // Read by the parts to come.
     pub fn value(&self, key: &str, language: Option<&str>) -> Value {
         if let Some(own) = language.and_then(|id| self.by_lang.get(id)).and_then(|own| own.get(key)) {
             return own.clone();
@@ -117,13 +118,16 @@ impl Said {
     }
 }
 
+/// A tab's text, and the colours made for it.
+type Coloured = (Rc<TextDocument>, Rc<Colours>);
+
 /// This part's state: the settings as said last, and what the person's files' tabs need.
 #[derive(Clone, Copy)]
 pub struct Settings {
     /// Set only when what the session says differs from what is held.
     pub said: RwSignal<Rc<Said>>,
-    /// The colours of each of the person's files open in a tab, by the tab's path, with the text they are of.
-    colours: RwSignal<HashMap<String, (Rc<TextDocument>, Rc<Colours>)>>,
+    /// The colours of each of the person's files open in a tab, by the tab's path.
+    colours: RwSignal<HashMap<String, Coloured>>,
     /// This window asked for the project's settings file: it is opened when the session says it is there.
     asked: RwSignal<bool>,
 }
@@ -140,26 +144,31 @@ impl crate::ext::State for Settings {
 
 /// A setting's value now, for a language when one is given (VS Code's id: `python`, `typescriptreact`). Followed:
 /// what reads it is run again when the settings change.
+#[allow(dead_code)] // Read by the parts to come.
 pub fn setting(ui: Ui, key: &str, language: Option<&str>) -> Value {
     ui.state::<Settings>().said.with(|s| s.value(key, language))
 }
 
 /// As [`setting`], not followed: for a command, or a message being taken in.
+#[allow(dead_code)] // Read by the parts to come.
 pub fn now(ui: Ui, key: &str, language: Option<&str>) -> Value {
     ui.state::<Settings>().said.with_untracked(|s| s.value(key, language))
 }
 
 /// A setting that is true or false (false for one that is neither).
+#[allow(dead_code)] // Read by the parts to come.
 pub fn flag(ui: Ui, key: &str, language: Option<&str>) -> bool {
     setting(ui, key, language).as_bool().unwrap_or(false)
 }
 
 /// A setting that is a number (0 for one that is not).
+#[allow(dead_code)] // Read by the parts to come.
 pub fn number(ui: Ui, key: &str, language: Option<&str>) -> f64 {
     setting(ui, key, language).as_f64().unwrap_or(0.0)
 }
 
 /// A setting that is a word or a text (empty for one that is not).
+#[allow(dead_code)] // Read by the parts to come.
 pub fn text(ui: Ui, key: &str, language: Option<&str>) -> String {
     setting(ui, key, language).as_str().unwrap_or("").to_string()
 }
@@ -167,11 +176,13 @@ pub fn text(ui: Ui, key: &str, language: Option<&str>) -> String {
 /// A setting's value behind a memo of the window's own scope: it tells only when the value is another, so a
 /// `dyn_container` built from it is not built again when some other setting changes. `language` is followed too
 /// (the language of the file shown).
+#[allow(dead_code)] // Read by the parts to come.
 pub fn memo(ui: Ui, key: &'static str, language: impl Fn() -> Option<String> + 'static) -> Memo<Value> {
     ui.scope.create_memo(move |_| setting(ui, key, language().as_deref()))
 }
 
 /// What the settings files hold that was not taken, as the session said last. Followed.
+#[allow(dead_code)] // Read by the parts to come.
 pub fn problems(ui: Ui) -> Vec<Problem> {
     ui.state::<Settings>().said.with(|s| s.problems.clone())
 }

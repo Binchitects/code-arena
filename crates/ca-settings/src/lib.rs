@@ -1,5 +1,6 @@
-//! Every setting Code Arena reads, declared once ([`schema`]), and the layers they come from ([`Settings`]):
-//! the defaults, the person's `settings.json`, the project's `.code-arena/settings.json`, then the environment.
+//! Every setting Code Arena reads, declared once ([`schema`], and the IDE's own in [`ide_schema`]), and the layers
+//! they come from ([`Settings`]): the defaults, the person's `settings.json`, the project's
+//! `.code-arena/settings.json` and `.vscode/settings.json`, a language's own block of those, then the environment.
 //! The Arena connection (address, API key) is apart, in [`connection`].
 //!
 //! Nothing else in Code Arena reads the environment or a settings file: a test fails when code does, so every
