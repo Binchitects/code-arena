@@ -299,7 +299,8 @@ pub(super) fn flashable(ui: Ui, id: u64, view: AnyView) -> AnyView {
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     match m["type"].as_str().unwrap_or("") {
         "user" => ui.push(Kind::User(Question::from_json(m))),
-        "notice" => {
+        // One the session numbered is taken in by its number (`took_in`, in `queue.rs`).
+        "notice" if m.get("took_in").is_none() => {
             if let Some(text) = read_meanwhile(m["text"].as_str().unwrap_or("")) {
                 taken_in(ui, text);
             }
