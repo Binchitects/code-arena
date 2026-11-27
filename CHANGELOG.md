@@ -407,6 +407,13 @@ Sections used:
   while the editor has focus, instead of typing a new line.
 - **No crash on a machine without italic fonts.** A preview tab is drawn upright when no italic font
   is installed, so opening one no longer closes the window.
+- **A queued message keeps its width under the pointer.** Its Edit and Cancel used to push the
+  bubble wider as the pointer came over it. They now sit in room the bubble always keeps.
+- **A chat picker's menu shows its rows in full.** A menu opened from a pill near the view's right
+  edge, such as Thinking, cut its descriptions short ('The model's ...'). It now moves left to fit
+  inside the view.
+- **Split editors show one caret.** Every editor group used to draw its caret. Only the focused
+  group draws one now, as in VS Code.
 
 ## v0.5.0 (2026-11-26)
 
