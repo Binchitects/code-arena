@@ -28,8 +28,10 @@
 //! are listed together, the groups in the order their first items come. At most `most` rows are drawn (200 unless
 //! said): the rest is "N more: type to narrow the list.". `on_active` is told the item lit each time it is another
 //! (at first too): a live preview. `done` is given the item taken, or none, once, after the widget has closed and
-//! the keys are back where `back` says. One at a time: a second answers the first with none. It is in the main
-//! window, and may be opened from anywhere (a command, a menu's row, the palette, a message taken in).
+//! the keys are back where `back` says. One at a time: a second answers the first with none, a dialog asked while
+//! it is open too, and it cancels a dialog that is open. It is in the main window, and may be opened from anywhere
+//! (a command, a menu's row, the palette, a dialog's answer, a message taken in). The first text of an input box is
+//! not selected (the text box cannot be told to): the caret is at its end, and Ctrl+A selects it.
 
 // The parts to come call what the window's first parts do not yet.
 #![allow(dead_code)]
@@ -563,12 +565,14 @@ fn light(ui: Ui, at: usize) {
     }
 }
 
-/// Opens what was asked: the one open answers none first; the palette and the menus close.
+/// Opens what was asked: the one open answers none first; the palette and the menus close, and a dialog that is
+/// open is cancelled (it is drawn over the pick, which would have the keys unseen).
 fn begin(ui: Ui, asked: Asked, value: &str) {
     let host = ui.state::<Host>();
     finish(ui, None);
     crate::palette::close(ui);
     crate::widgets::popup::close(ui);
+    crate::widgets::dialog::cancel(ui);
     if ui.menu.get_untracked().is_some() {
         ui.menu.set(None);
     }
@@ -1147,6 +1151,27 @@ mod tests {
         ui.quick.set(Some(crate::palette::Mode::Commands));
         pick("Three").open(ui, told("three"));
         assert!(ui.quick.get_untracked().is_none());
+    }
+
+    #[test]
+    fn a_pick_and_a_dialog_are_never_open_together() {
+        use crate::widgets::dialog;
+        let ui = Ui::new();
+        let said = Rc::new(RefCell::new(Vec::<String>::new()));
+        let (picked, answered) = (said.clone(), said.clone());
+        // A dialog asked while a pick is open: the pick answers none before the dialog is there.
+        pick("Branch")
+            .items(vec![item("a", "A")])
+            .open(ui, move |i| picked.borrow_mut().push(format!("pick:{}", i.map_or("none".into(), |i| i.id))));
+        dialog::ask("Delete the branch?")
+            .button("Delete")
+            .open(ui, move |a| answered.borrow_mut().push(format!("dialog:{:?}", a.button)));
+        assert!(!is_open(ui) && dialog::is_open(ui));
+        assert_eq!(*said.borrow(), ["pick:none"]);
+        // A pick opened while a dialog is open: the dialog is cancelled.
+        input("Name").open(ui, |_| {});
+        assert!(is_open(ui) && !dialog::is_open(ui));
+        assert_eq!(*said.borrow(), ["pick:none", "dialog:None"]);
     }
 
     #[test]

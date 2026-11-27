@@ -16,8 +16,9 @@
 //!
 //! The buttons are the ones named, in their order, then Cancel (unless `no_cancel`). The answer says which button
 //! was taken (none: cancelled) and whether the box is ticked. It is given once, after the dialog has closed and the
-//! keys are back where `back` says. One dialog at a time: a second cancels the first. It may be asked from
-//! anywhere (a click, a key, a message taken in); a press outside its box does nothing.
+//! keys are back where `back` says. One dialog at a time: a second cancels the first, and so does a quick pick
+//! opened while it is asked (a quick pick open when it is asked answers none). It may be asked from anywhere (a
+//! click, a key, a quick pick's answer, a message taken in); a press outside its box does nothing.
 
 // The parts to come call what the window's first parts do not yet.
 #![allow(dead_code)]
@@ -171,9 +172,10 @@ impl Dialog {
     /// Asks it. `done` is given the answer once.
     pub fn open(self, ui: Ui, done: impl FnOnce(Answer) + 'static) {
         let state = ui.state::<Open>();
-        // One at a time: the one open is cancelled first. A menu open closes.
+        // One at a time: the one open is cancelled first. A menu open closes, and a quick pick answers none.
         answer(ui, None);
         crate::widgets::popup::close(ui);
+        crate::widgets::quick::cancel(ui);
         let buttons = self.drawn();
         let b = Buttons { named: buttons.len() - usize::from(self.cancel.is_some()), total: buttons.len() };
         let has_box = self.checkbox.is_some();

@@ -500,9 +500,10 @@ pub fn register(_ui: Ui, _send: &Send) {
     layers::add(Place::Over, "toasts", 50, corner);
     crate::statusbar::add("status.bell", crate::statusbar::Side::Right, 299, |ui, _| bell(ui));
     add(command(SHOW_LIST, "Notifications", "Show Notifications", |ui, _| show_list(ui, true)));
+    // Escape hides the list only while no menu of the window's is open: that one closes first.
     add(command(HIDE_LIST, "Notifications", "Hide Notifications", |ui, _| show_list(ui, false))
         .keys("Escape")
-        .when(list_open));
+        .when(|ui| list_open(ui) && ui.menu.get_untracked().is_none() && ui.context.get_untracked().is_none()));
     add(command(CLEAR_ALL, "Notifications", "Clear All Notifications", |ui, _| clear_all(ui)));
 }
 
@@ -604,6 +605,9 @@ mod tests {
         assert!(!hide.offered(ui), "not while the list is closed: Escape is the window's");
         assert!(crate::commands::run(ui, &send, SHOW_LIST));
         assert!(list_open(ui) && hide.offered(ui));
+        ui.menu.set(Some(0));
+        assert!(!hide.offered(ui), "a menu open over the window: Escape closes it first");
+        ui.menu.set(None);
         add(ui, info_of("One"));
         assert!(crate::commands::run(ui, &send, CLEAR_ALL));
         assert_eq!((count(ui), list_open(ui)), (0, false));

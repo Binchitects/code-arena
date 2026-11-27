@@ -431,8 +431,13 @@ pub fn open(ui: Ui, at: At, items: Vec<Item>) {
     if items.is_empty() {
         return;
     }
-    ui.menu.set(None);
-    ui.context.set(None);
+    // The window's own menus close (set only when one is open: what is drawn from them is not built again).
+    if ui.menu.get_untracked().is_some() {
+        ui.menu.set(None);
+    }
+    if ui.context.get_untracked().is_some() {
+        ui.context.set(None);
+    }
     let window = window_size(ui, Some(at.view));
     let items = Rc::new(items);
     state.lit.set(Lit(vec![None]));
