@@ -235,17 +235,21 @@ mod tests {
         let (q, inbox) = (Queue::default(), Mutex::new(Vec::new()));
         let a = q.wait(&inbox, &sent("and the tests"), false);
         // Arena's web chat put one in between.
-        inbox.lock().unwrap().push("from the web".into());
+        inbox.lock().expect("inbox").push("from the web".into());
         let b = q.wait(&inbox, &sent("then commit"), false);
         let c = q.wait(&inbox, &sent("/explain it"), true);
-        assert_eq!(*inbox.lock().unwrap(), ["and the tests", "from the web", "then commit"], "a command waits apart");
+        assert_eq!(
+            *inbox.lock().expect("inbox"),
+            ["and the tests", "from the web", "then commit"],
+            "a command waits apart"
+        );
         assert!(q.change(&inbox, b, Some("then commit and push")));
-        assert_eq!(*inbox.lock().unwrap(), ["and the tests", "from the web", "then commit and push"]);
+        assert_eq!(*inbox.lock().expect("inbox"), ["and the tests", "from the web", "then commit and push"]);
         assert!(q.change(&inbox, a, None));
-        assert_eq!(*inbox.lock().unwrap(), ["from the web", "then commit and push"]);
+        assert_eq!(*inbox.lock().expect("inbox"), ["from the web", "then commit and push"]);
         assert!(q.change(&inbox, c, Some("/explain the parser")));
         // The turn's next step reads the inbox: what waited is read and can no longer change.
-        std::mem::take(&mut *inbox.lock().unwrap());
+        std::mem::take(&mut *inbox.lock().expect("inbox"));
         assert!(!q.change(&inbox, b, Some("no")), "read already");
         assert!(!q.change(&inbox, 99, None), "none such");
         assert_eq!(q.read("then commit and push").map(|(w, _)| w.id), Some(b));
@@ -267,7 +271,11 @@ mod tests {
         q.wait(&inbox, &sent("four"), false);
         q.clear(&inbox);
         assert!(q.items().is_empty());
-        assert_eq!(*inbox.lock().unwrap(), ["one", "three"], "the inbox is the driver's to empty at the turn's end");
+        assert_eq!(
+            *inbox.lock().expect("inbox"),
+            ["one", "three"],
+            "the inbox is the driver's to empty at the turn's end"
+        );
         assert_eq!(q.due(later), None, "taken back");
     }
 

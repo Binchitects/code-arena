@@ -1998,7 +1998,10 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     let command = json!({"type": "queued", "text": "/explain the parser", "later": true, "id": 1});
     assert!(at(&meanwhile, &|v| *v == command).is_some(), "{meanwhile:?}");
     assert!(at(&meanwhile, &|v| v["type"] == "deferred" && v["of"] == "send").is_some(), "{meanwhile:?}");
-    assert!(at(&meanwhile, &|v| *v == json!({"type": "queued", "text": "and then?", "id": 2})).is_some(), "{meanwhile:?}");
+    assert!(
+        at(&meanwhile, &|v| *v == json!({"type": "queued", "text": "and then?", "id": 2})).is_some(),
+        "{meanwhile:?}"
+    );
     assert!(at(&meanwhile, &|v| v["type"] == "status" || v["type"] == "setting_kept").is_none(), "{meanwhile:?}");
     assert!(at(&meanwhile, &|v| v["type"] == "state").is_none(), "nothing went back: {meanwhile:?}");
 
@@ -2016,7 +2019,10 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     let theme = at(&after, &|v| v["type"] == "theme" && v["theme"] == "Light Modern").expect("theme");
     let started = at(&after, &|v| v["type"] == "turn_start").expect("the command's turn");
     let asked = at(&after, &|v| v["type"] == "user").expect("the command as a question");
-    assert_eq!(after[asked], json!({"type": "user", "text": "/explain the parser", "q": 2, "late": true, "queued": [1]}));
+    assert_eq!(
+        after[asked],
+        json!({"type": "user", "text": "/explain the parser", "q": 2, "late": true, "queued": [1]})
+    );
     assert!(
         model < thinking && thinking < mode && mode < kept && kept < theme && theme < asked && asked < started,
         "{after:?}"

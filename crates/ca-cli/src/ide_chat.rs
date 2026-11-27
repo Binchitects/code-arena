@@ -31,15 +31,14 @@ pub mod replay;
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] =
-        &[
-            ("history", Rule::Turn),
-            ("library", Rule::Turn),
-            ("folders", Rule::Turn),
-            ("queue_edit", Rule::Turn),
-            ("queue_cancel", Rule::Turn),
-            ("queue_clear", Rule::Turn),
-        ];
+    const MESSAGES: &'static [(&'static str, Rule)] = &[
+        ("history", Rule::Turn),
+        ("library", Rule::Turn),
+        ("folders", Rule::Turn),
+        ("queue_edit", Rule::Turn),
+        ("queue_cancel", Rule::Turn),
+        ("queue_clear", Rule::Turn),
+    ];
 
     fn shared(sh: &Shared, m: &Value) -> bool {
         match kind(m) {

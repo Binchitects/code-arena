@@ -99,11 +99,7 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
                 ui.items.update(|l| l.retain(|i| !gone.contains(&i.id)));
             }
         }
-        "state" => {
-            if q.editing.get_untracked().is_some() {
-                q.editing.set(None);
-            }
-        }
+        "state" if q.editing.get_untracked().is_some() => q.editing.set(None),
         _ => {}
     }
     false
@@ -147,7 +143,7 @@ fn taken_in(ui: Ui, m: &Value) {
 /// another window), and one whose words changed is drawn again with them. A bubble the session did not number is
 /// left as it is.
 fn now_waiting(ui: Ui, items: &[Value]) {
-    let words = |id: u64| items.iter().find(|i| i["id"].as_u64() == Some(id)).map(|i| text_of(i));
+    let words = |id: u64| items.iter().find(|i| i["id"].as_u64() == Some(id)).map(text_of);
     let changes = ui.items.with_untracked(|l| {
         l.iter().any(|i| match (&i.kind, queued_id(i)) {
             (Kind::Queued { question, .. }, Some(id)) => words(id).is_none_or(|w| w != question.text),
@@ -234,12 +230,10 @@ pub fn bubble(ui: Ui, send: Send, item: &Item) -> AnyView {
         label(|| NOTE).style(move |s| {
             s.font_size(11.0).color(t.get().desc).flex_grow(1.0_f32).min_width(0.0).text_overflow(TextOverflow::Wrap)
         }),
-        label(|| "Clear all")
-            .on_click_stop(move |_| send_clear(json!({"type": "queue_clear"})))
-            .style(move |s| {
-                let c = t.get();
-                s.font_size(11.0).color(c.link).cursor(CursorStyle::Pointer)
-            }),
+        label(|| "Clear all").on_click_stop(move |_| send_clear(json!({"type": "queue_clear"}))).style(move |s| {
+            let c = t.get();
+            s.font_size(11.0).color(c.link).cursor(CursorStyle::Pointer)
+        }),
     ))
     .style(move |s| s.gap(8.0).items_center().width_full().apply_if(!first.get() || number.is_none(), |s| s.hide()));
     let tool = move |name: &'static str, tip: &'static str, run: Box<dyn Fn()>| {
@@ -389,9 +383,7 @@ mod tests {
         ui.items.with_untracked(|l| {
             l.iter()
                 .filter_map(|i| match &i.kind {
-                    Kind::User(q) => {
-                        Some(format!("user {}{}", q.text, if q.taken_in { " (taken in)" } else { "" }))
-                    }
+                    Kind::User(q) => Some(format!("user {}{}", q.text, if q.taken_in { " (taken in)" } else { "" })),
                     Kind::Queued { question, later, .. } => {
                         Some(format!("queued {}{}", question.text, if *later { " (later)" } else { "" }))
                     }
