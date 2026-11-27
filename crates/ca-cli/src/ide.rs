@@ -1135,7 +1135,10 @@ fn keep_details(p: &Prepared, at: i64, sent: &Sent) {
     let Ok(page) = store.page(&p.session, 1, None) else { return };
     let written = page.messages.iter().any(|m| m.seq == at && m.message.role == ca_llm::Role::User);
     let mut fields = sent.fields.clone();
-    fields.remove("note");
+    // The key a face asked with answers only that send; a note is told by its words.
+    for k in ["note", "key", "id"] {
+        fields.remove(k);
+    }
     if sent.shown != page.messages.iter().find(|m| m.seq == at).map(|m| m.message.content.as_str()).unwrap_or("") {
         fields.insert("typed".into(), json!(sent.shown));
     }
