@@ -295,7 +295,10 @@ fn locked(edition: ca_settings::Edition) -> Value {
 /// at each `state` and at each turn's start, so a page of the thread asked for while a turn holds the session is
 /// read the same.
 #[derive(Default)]
-struct Tools(Mutex<Vec<(String, Value, Arc<dyn ca_tools::Tool>)>>);
+struct Tools(Mutex<Vec<ToolOf>>);
+
+/// A tool by its name, with its parameters' schema.
+type ToolOf = (String, Value, Arc<dyn ca_tools::Tool>);
 
 impl Tools {
     fn take_from(&self, p: &Prepared) {
@@ -314,7 +317,7 @@ impl Tools {
         }
     }
 
-    fn all(&self) -> Vec<(String, Value, Arc<dyn ca_tools::Tool>)> {
+    fn all(&self) -> Vec<ToolOf> {
         self.0.lock().map(|g| g.clone()).unwrap_or_default()
     }
 }
@@ -328,7 +331,7 @@ fn thread_page(
     store: &ca_session::Store,
     session: &str,
     before_turn: Option<i64>,
-    tools: &[(String, Value, Arc<dyn ca_tools::Tool>)],
+    tools: &[ToolOf],
     facts: &CallFacts,
 ) -> (Vec<Value>, i64, i64) {
     let numbers: HashMap<i64, usize> =

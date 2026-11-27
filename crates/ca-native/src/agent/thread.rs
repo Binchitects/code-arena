@@ -121,13 +121,13 @@ pub fn earlier_words(n: i64) -> String {
 }
 
 impl Follow {
-    fn scroll_to(&self, y: f64) {
+    fn scroll_to(self, y: f64) {
         let (n, _) = self.to.get_untracked();
         self.to.set((n + 1, y));
     }
 
     /// To the end, and following again.
-    fn to_end(&self) {
+    fn follow_on(self) {
         change(self.stick, true);
         self.scroll_to(self.content.get_untracked().max(1.0e7));
     }
@@ -218,7 +218,7 @@ fn jump(ui: Ui) -> impl IntoView {
     let away = floem::reactive::create_memo(move |_| {
         !f.stick.get() && f.content.get() > f.seen.get() + NEAR_END && f.above.get().is_none()
     });
-    h_stack((icon("arrow-down", 14.0), label(|| "Jump to the latest"))).on_click_stop(move |_| f.to_end()).style(
+    h_stack((icon("arrow-down", 14.0), label(|| "Jump to the latest"))).on_click_stop(move |_| f.follow_on()).style(
         move |s| {
             let t = t.get();
             s.apply_if(!away.get(), |s| s.hide())
@@ -354,10 +354,10 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             change(f.first_turn, m["first_turn"].as_i64().unwrap_or(1));
             change(f.asked, None);
             change(f.phase, if m["running"] == true { Phase::Working } else { Phase::Idle });
-            f.to_end();
+            f.follow_on();
         }
         // A question sent from here is read where it is answered.
-        "user" if m["replay"] != true => f.to_end(),
+        "user" if m["replay"] != true => f.follow_on(),
         "older" if f.asked.get_untracked().is_some() && m["before_turn"].as_i64() == f.asked.get_untracked() => {
             let mut older = super::stream::thread_of(ui, m);
             change(f.earlier, m["earlier"].as_i64().unwrap_or(0));
