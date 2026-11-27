@@ -116,18 +116,18 @@ fn set(send: &Send, key: &str, value: Value) {
 }
 
 /// A theme chosen: kept as `workbench.colorTheme` (by its name, as VS Code keeps it), following the system turned
-/// off first, and shown until the session says so.
+/// off after it (so the window never shows the setting from before in between), and shown until the session says so.
 fn choose(ui: Ui, send: &Send, name: &str) {
     let s = ui.state::<Follow>();
     let was = said(ui);
-    if was.auto {
-        set(send, "window.autoDetectColorScheme", json!(false));
-    }
     if was.auto || of(ui, name).id != of(ui, &was.setting).id {
         if s.pending.get_untracked().as_deref() != Some(name) {
             s.pending.set(Some(name.to_string()));
         }
         set(send, "workbench.colorTheme", json!(name));
+    }
+    if was.auto {
+        set(send, "window.autoDetectColorScheme", json!(false));
     }
 }
 
@@ -195,9 +195,7 @@ pub fn pick(ui: Ui, send: &Send) {
             }
         })
         .open(ui, move |picked| {
-            if s.preview.get_untracked().is_some() {
-                s.preview.set(None);
-            }
+            // The one taken is held before the preview is let go, so the window does not show another between.
             match picked {
                 Some(i) if i.id == FOLLOW => follow(ui, &send, None),
                 Some(i) => {
@@ -205,6 +203,9 @@ pub fn pick(ui: Ui, send: &Send) {
                     choose(ui, &send, &name);
                 }
                 None => {}
+            }
+            if s.preview.get_untracked().is_some() {
+                s.preview.set(None);
             }
         });
 }
