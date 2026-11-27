@@ -389,6 +389,10 @@ impl Ui {
     /// A file opened in an editor: its tab shown, or asked of the session when it is not open yet.
     pub fn open(&self, path: &str, send: &Send) {
         self.selected.set(path.to_string());
+        // A picture, a sound or a video opens in a tab of its own, not as text.
+        if crate::media::open(*self, path, send) {
+            return;
+        }
         if self.tab(path).is_some() {
             self.active.set(Some(path.to_string()));
         } else {

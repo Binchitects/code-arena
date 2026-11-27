@@ -17,11 +17,17 @@ ca-themes.workspace = true
 crossbeam-channel = "0.5"
 floem = "0.2"
 # Floem's own drawing (fills, strokes, text) for the views this crate paints itself: the editor's margin, the
-# overview ruler. Floem draws with it and does not give its trait out.
+# overview ruler, and a picture decoded off the window's thread (floem's own `img` decodes where it is
+# built). Floem draws with it and does not give its trait out.
 floem_renderer = "0.2"
+# A GIF's first frame: the locked `image` reads no GIF (it wants a newer `gif` than the lock has).
+gif = "0.13"
 globset.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "ico", "bmp"] }
 im = "15.1"
 regex.workspace = true
+# An SVG drawn for its preview (the one floem draws with).
+resvg = "0.43"
 serde_json.workspace = true
 similar.workspace = true
 syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }

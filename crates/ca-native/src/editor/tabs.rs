@@ -21,7 +21,20 @@ pub(super) fn tabs(ui: Ui) -> impl IntoView {
                 .style(|s| s.flex_row().height_full()),
         )
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).height_full()),
-        h_stack((action(t, "split-horizontal", || {}), action(t, "ellipsis", || {}))).style(move |s| {
+        h_stack((
+            // An SVG's text has its preview a click away (Open Preview, as a Markdown file's has in VS Code).
+            action(t, "open-preview", move || {
+                if let Some(path) = ui.active.get_untracked().filter(|p| svg_text(ui, p)) {
+                    tell(ui, |send| crate::media::preview(ui, &path, send));
+                }
+            })
+            .style(move |s| {
+                s.apply_if(!ui.active.with(|a| a.as_deref().is_some_and(|p| svg_text(ui, p))), |s| s.hide())
+            }),
+            action(t, "split-horizontal", || {}),
+            action(t, "ellipsis", || {}),
+        ))
+        .style(move |s| {
             s.gap(2.0).padding_horiz(8.0).items_center().apply_if(ui.tabs.with(|t| t.is_empty()), |s| s.hide())
         }),
     ))
@@ -34,6 +47,11 @@ pub(super) fn tabs(ui: Ui) -> impl IntoView {
             .items_center()
             .apply_if(ui.tabs.with(|t| t.is_empty()), |s| s.hide())
     })
+}
+
+/// Whether a tab is an SVG file's text.
+fn svg_text(ui: Ui, path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".svg") && ui.tab(path).is_some_and(|t| t.is_file())
 }
 
 fn one_tab(ui: Ui, tab: Tab) -> impl IntoView {

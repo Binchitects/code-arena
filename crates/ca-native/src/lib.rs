@@ -207,7 +207,10 @@ fn keep_view_state_by(ui: Ui, send: Send, later: Later) {
 /// (the session says when one changes, and lists a changed folder again).
 fn watch_disk(ui: Ui, send: Send) {
     create_effect(move |_| {
-        let files: Vec<String> = ui.tabs.with(|t| t.iter().filter(|t| t.is_file()).map(|t| t.path.clone()).collect());
+        // A picture's tab is watched for its file too: it is drawn again when the file changes.
+        let files: Vec<String> = ui.tabs.with(|t| {
+            t.iter().filter(|t| t.is_file() || t.kind == Some(media::KIND)).map(|t| t.file.clone()).collect()
+        });
         let mut folders: Vec<String> = ui.expanded.with(|e| e.iter().cloned().collect());
         folders.sort();
         folders.insert(0, String::new());
