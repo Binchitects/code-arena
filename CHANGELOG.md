@@ -377,6 +377,22 @@ Sections used:
   opened bracket, as `editor.autoIndent` says.
 - **Edit, Selection and right-click menus that work.** The Edit and Selection menus now run their
   commands, and right-clicking in the editor offers Cut, Copy, Paste and Command Palette....
+- **Several rows selected in the Explorer.** Ctrl+click (Cmd on macOS) adds a row, Shift+click and
+  Shift+arrows select a range, Ctrl+A selects all; Delete asks once for all of them.
+- **Cut, Copy and Paste in the Explorer.** Ctrl+X, Ctrl+C and Ctrl+V (also in the row's menu) move
+  or copy files and folders into the folder selected; a copy whose name is taken is named 'name
+  copy.ext', 'name copy 2.ext'; open tabs follow a move; a folder is never pasted into itself.
+- **Drag and drop in the Explorer.** Drag rows onto a folder, or below the rows for the top, to move
+  them after VS Code's question ('Do not ask me again' turns off explorer.confirmDragAndDrop); hold
+  Ctrl (Alt on macOS) to copy. Files dropped from the system are copied in, asking before one is
+  replaced.
+- **Auto reveal.** The file the editor shows is selected in the Explorer with its folders opened
+  (explorer.autoReveal), and File: Reveal Active File in Explorer View does it on demand.
+- **Open in Integrated Terminal** from a row's menu starts a shell in that folder.
+- **Restore a deleted file.** The notification after deleting one row has a Restore button that puts
+  it back.
+- **Explorer rows say more.** File kind icons, a '…' row while a folder loads, the reason a folder
+  could not be listed, and ↪ after a link.
 
 
 ### :bug: Bugs fixed
