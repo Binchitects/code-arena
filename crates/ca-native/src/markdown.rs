@@ -1,5 +1,6 @@
 //! Markdown as an answer is written in it, read into the blocks the Agent view draws: paragraphs, headings, list
-//! items, quotes, fenced code and rules, their text with its bold, italic, code and link runs. An answer comes a
+//! items, quotes, fenced code, GitHub's tables and rules, their text with its bold, italic, code and link runs (and
+//! where each link leads). An answer comes a
 //! piece at a time, so every beginning of a text reads well: a fence not closed yet is code to the end, and a mark
 //! not closed yet is the mark itself.
 
@@ -19,6 +20,18 @@ pub struct Style {
 pub struct Text {
     pub text: String,
     pub spans: Vec<(Range<usize>, Style)>,
+    /// Where each link of it leads, as written (`https://…`, `src/app.ts#L12`, `mailto:…`).
+    pub links: Vec<(Range<usize>, String)>,
+}
+
+/// How a table's column is aligned, as its delimiter row says (`:--`, `:-:`, `--:`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Align {
+    #[default]
+    None,
+    Left,
+    Center,
+    Right,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -34,10 +47,18 @@ pub enum Block {
         text: Text,
     },
     Quote(Text),
-    /// A fenced block: the language its fence names (lower case, may be none), its lines.
+    /// A fenced block: the language its fence names (lower case, may be none), the file it names after a colon
+    /// (```` ```ts:src/app.ts ````, may be none), its lines.
     Code {
         lang: String,
+        name: String,
         text: String,
+    },
+    /// A table: its header's cells, its columns' alignments (as many), its rows (each as many cells).
+    Table {
+        head: Vec<Text>,
+        align: Vec<Align>,
+        rows: Vec<Vec<Text>>,
     },
     Rule,
 }
@@ -65,8 +86,8 @@ fn run(b: &[u8], at: usize, c: u8) -> usize {
     b[at.min(b.len())..].iter().take_while(|x| **x == c).count()
 }
 
-/// A fence's opening: its character, its length, the language it names.
-fn fence(rest: &str) -> Option<(u8, usize, String)> {
+/// A fence's opening: its character, its length, the language it names, the file it names.
+fn fence(rest: &str) -> Option<(u8, usize, String, String)> {
     let c = *rest.as_bytes().first()?;
     if c != b'`' && c != b'~' {
         return None;
@@ -76,8 +97,59 @@ fn fence(rest: &str) -> Option<(u8, usize, String)> {
     if n < 3 || (c == b'`' && info.contains('`')) {
         return None;
     }
-    let lang = info.split(|x: char| x.is_whitespace() || x == ',' || x == '{').next().unwrap_or("");
-    Some((c, n, lang.to_lowercase()))
+    let word = info.split(|x: char| x.is_whitespace() || x == ',' || x == '{').next().unwrap_or("");
+    let (lang, name) = word.split_once(':').unwrap_or((word, ""));
+    Some((c, n, lang.to_lowercase(), name.to_string()))
+}
+
+/// A table row's cells: the outer pipes taken off, split at each pipe not escaped (`\|` is a pipe in a cell).
+fn cells(line: &str) -> Vec<String> {
+    let line = line.trim();
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let line = if line.ends_with('|') && !line.ends_with("\\|") { &line[..line.len() - 1] } else { line };
+    let mut out = vec![String::new()];
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.peek() == Some(&'|') => {
+                out.last_mut().expect("one").push('|');
+                chars.next();
+            }
+            '|' => out.push(String::new()),
+            c => out.last_mut().expect("one").push(c),
+        }
+    }
+    out.into_iter().map(|c| c.trim().to_string()).collect()
+}
+
+/// A table's delimiter row (`| --- | :-: |`): its columns' alignments.
+fn delimiter(line: &str) -> Option<Vec<Align>> {
+    if !line.contains('-') || !line.contains('|') {
+        return None;
+    }
+    cells(line)
+        .iter()
+        .map(|c| {
+            let (left, right) = (c.starts_with(':'), c.ends_with(':'));
+            let dashes = c.trim_matches(':');
+            if dashes.is_empty() || !dashes.bytes().all(|b| b == b'-') {
+                return None;
+            }
+            Some(match (left, right) {
+                (true, true) => Align::Center,
+                (true, false) => Align::Left,
+                (false, true) => Align::Right,
+                _ => Align::None,
+            })
+        })
+        .collect()
+}
+
+/// A row read into as many cells as the table has columns (the missing ones empty, those over dropped).
+fn row(line: &str, columns: usize) -> Vec<Text> {
+    let mut cells: Vec<Text> = cells(line).iter().map(|c| inline(c)).collect();
+    cells.resize(columns, Text::default());
+    cells
 }
 
 fn heading(rest: &str) -> Option<(u8, &str)> {
@@ -135,7 +207,28 @@ pub fn parse(src: &str) -> Vec<Block> {
             close(&mut open, &mut out);
             continue;
         }
-        if let Some((c, n, lang)) = fence(rest) {
+        // A table: a row of cells and, under it, its delimiter row with as many.
+        if rest.contains('|')
+            && !matches!(open, Some((Open::Quote | Open::Item { .. }, _)))
+            && let Some(align) = lines.clone().next().and_then(delimiter)
+            && cells(rest).len() == align.len()
+        {
+            close(&mut open, &mut out);
+            levels.clear();
+            lines.next();
+            let head = row(rest, align.len());
+            let mut rows = Vec::new();
+            while let Some(next) = lines.clone().next() {
+                if next.trim().is_empty() || !next.contains('|') {
+                    break;
+                }
+                rows.push(row(next, align.len()));
+                lines.next();
+            }
+            out.push(Block::Table { head, align, rows });
+            continue;
+        }
+        if let Some((c, n, lang, name)) = fence(rest) {
             close(&mut open, &mut out);
             if indent == 0 {
                 levels.clear();
@@ -152,7 +245,7 @@ pub fn parse(src: &str) -> Vec<Block> {
                 text.push('\n');
             }
             text.pop();
-            out.push(Block::Code { lang, text });
+            out.push(Block::Code { lang, name, text });
             continue;
         }
         if let Some((level, text)) = heading(rest) {
@@ -332,6 +425,15 @@ fn link(b: &[u8], at: usize) -> Option<(usize, usize)> {
     }
 }
 
+/// Where a link leads, from what its parentheses hold: the address without its angle brackets or its title.
+fn target(inner: &str) -> String {
+    let inner = inner.trim();
+    if let Some(rest) = inner.strip_prefix('<') {
+        return rest.split('>').next().unwrap_or("").to_string();
+    }
+    inner.split_whitespace().next().unwrap_or("").to_string()
+}
+
 /// Where an address written bare ends: at a space, less the punctuation that closes the sentence around it.
 fn address_end(s: &str, at: usize) -> usize {
     let end = s[at..].find(|c: char| c.is_whitespace() || c == '<' || c == '`').map(|n| at + n).unwrap_or(s.len());
@@ -388,10 +490,15 @@ fn walk(s: &str, style: Style, out: &mut Text) {
                     Some((text_end, end)) => {
                         push(out, &s[plain..i], style);
                         let linked = Style { link: true, ..style };
+                        let target = target(&s[text_end + 2..end - 1]);
+                        let from = out.text.len();
                         if text_end == at + 1 {
                             push(out, &s[text_end + 2..end - 1], linked);
                         } else {
                             walk(&s[at + 1..text_end], linked, out);
+                        }
+                        if out.text.len() > from && !target.is_empty() {
+                            out.links.push((from..out.text.len(), target));
                         }
                         taken = Some(end);
                     }
@@ -407,7 +514,9 @@ fn walk(s: &str, style: Style, out: &mut Text) {
                 match (address, end) {
                     (Some(a), Some(end)) => {
                         push(out, &s[plain..i], style);
+                        let from = out.text.len();
                         push(out, a, Style { link: true, ..style });
+                        out.links.push((from..out.text.len(), a.to_string()));
                         taken = Some(end + 1);
                     }
                     _ => i += 1,
@@ -419,7 +528,9 @@ fn walk(s: &str, style: Style, out: &mut Text) {
             {
                 let end = address_end(s, i);
                 push(out, &s[plain..i], style);
+                let from = out.text.len();
                 push(out, &s[i..end], Style { link: true, ..style });
+                out.links.push((from..out.text.len(), s[i..end].to_string()));
                 taken = Some(end);
             }
             _ => i += 1,
@@ -452,6 +563,47 @@ mod tests {
     const ITALIC: Style = Style { bold: false, italic: true, code: false, link: false };
     const CODE: Style = Style { bold: false, italic: false, code: true, link: false };
     const LINK: Style = Style { bold: false, italic: false, code: false, link: true };
+
+    #[test]
+    fn a_table_is_read_with_its_alignments_and_rows_of_as_many_cells() {
+        let src = "Before\n\n| Name | `Size` | Kind |\n|:--|--:|:-:|\n| a.rs | 12 | file \\| link |\n| b | 3\nafter |\n\nlast";
+        let blocks = parse(src);
+        assert_eq!(blocks.len(), 3, "{blocks:?}");
+        let Block::Table { head, align, rows } = &blocks[1] else { panic!("{blocks:?}") };
+        assert_eq!(head.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["Name", "Size", "Kind"]);
+        assert_eq!(runs(&head[1]), [("Size", CODE)]);
+        assert_eq!(align, &[Align::Left, Align::Right, Align::Center]);
+        let texts: Vec<Vec<&str>> = rows.iter().map(|r| r.iter().map(|c| c.text.as_str()).collect()).collect();
+        assert_eq!(texts, [vec!["a.rs", "12", "file | link"], vec!["b", "3", ""], vec!["after", "", ""]]);
+        // A header with no delimiter row under it yet (an answer being written) is a paragraph.
+        assert!(matches!(parse("| a | b |")[..], [Block::Paragraph(_)]));
+        // Nor is a row whose cells are not as many as the delimiter's a table.
+        assert!(matches!(parse("| a | b |\n| --- |")[..], [Block::Paragraph(_)]));
+        assert!(matches!(parse("a | b\n--|--\n1 | 2")[..], [Block::Table { .. }]));
+    }
+
+    #[test]
+    fn a_fence_names_its_language_and_its_file() {
+        let blocks = parse("```TS:src/App.ts\nlet a = 1\n```");
+        assert_eq!(blocks, [Block::Code { lang: "ts".into(), name: "src/App.ts".into(), text: "let a = 1".into() }]);
+    }
+
+    #[test]
+    fn a_links_target_is_kept_with_its_text() {
+        let t = inline(
+            "See [the docs](https://x.dev/a \"Docs\"), [app](<src/app.ts#L3>), <https://y.io> and https://z.org/b.",
+        );
+        let links: Vec<(&str, &str)> = t.links.iter().map(|(r, to)| (&t.text[r.clone()], to.as_str())).collect();
+        assert_eq!(
+            links,
+            [
+                ("the docs", "https://x.dev/a"),
+                ("app", "src/app.ts#L3"),
+                ("https://y.io", "https://y.io"),
+                ("https://z.org/b", "https://z.org/b")
+            ]
+        );
+    }
 
     #[test]
     fn a_texts_marks_become_its_runs() {
@@ -548,20 +700,27 @@ mod tests {
             blocks,
             [
                 Block::Paragraph(inline("Run:")),
-                Block::Code { lang: "rust".into(), text: "fn main() {\n    let a = \"**x**\";\n}".into() },
+                Block::Code {
+                    lang: "rust".into(),
+                    name: String::new(),
+                    text: "fn main() {\n    let a = \"**x**\";\n}".into()
+                },
                 Block::Paragraph(inline("Done.")),
             ]
         );
         // Still being written.
         assert_eq!(
             parse("```sh\nls -la\n# not a heading"),
-            [Block::Code { lang: "sh".into(), text: "ls -la\n# not a heading".into() }]
+            [Block::Code { lang: "sh".into(), name: String::new(), text: "ls -la\n# not a heading".into() }]
         );
-        assert_eq!(parse("~~~\n```\n~~~"), [Block::Code { lang: String::new(), text: "```".into() }]);
+        assert_eq!(
+            parse("~~~\n```\n~~~"),
+            [Block::Code { lang: String::new(), name: String::new(), text: "```".into() }]
+        );
         // Under a list's item, its indent is the fence's, not the code's.
         assert_eq!(
             parse("- so:\n  ```py\n  if x:\n      y()\n  ```")[1],
-            Block::Code { lang: "py".into(), text: "if x:\n    y()".into() }
+            Block::Code { lang: "py".into(), name: String::new(), text: "if x:\n    y()".into() }
         );
     }
 
@@ -575,6 +734,9 @@ mod tests {
                     t.text.clone()
                 }
                 Block::Code { text, .. } => text.clone(),
+                Block::Table { head, rows, .. } => {
+                    head.iter().chain(rows.iter().flatten()).map(|c| c.text.as_str()).collect::<String>()
+                }
                 Block::Rule => String::new(),
             })
             .collect();

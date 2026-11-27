@@ -329,10 +329,10 @@ fn body(ui: Ui, send: Send, tool: Tool, st: State) -> AnyView {
         for (k, v) in asked.code {
             let lang = calls::lang_of(&tool, &k);
             parts.push(label(move || k.clone()).style(move |s| s.color(t.get().desc)).into_any());
-            parts.push(crate::prose::code(ui, &lang, move || v.clone()).into_any());
+            parts.push(crate::prose::code(ui, &lang, "", move || v.clone()).into_any());
         }
         if let Some(json) = asked.rest {
-            parts.push(crate::prose::code(ui, "json", move || json.clone()).into_any());
+            parts.push(crate::prose::code(ui, "json", "", move || json.clone()).into_any());
         }
     }
     if tool.done && !tool.text.is_empty() {
@@ -368,7 +368,7 @@ fn result(ui: Ui, send: Send, tool: &Tool) -> AnyView {
         })
     };
     match calls::shown(tool) {
-        Shown::File { text, lang, .. } => crate::prose::code(ui, &lang, move || text.clone()).into_any(),
+        Shown::File { text, lang, .. } => crate::prose::code(ui, &lang, "", move || text.clone()).into_any(),
         Shown::Console(text) => mono(text, true).into_any(),
         Shown::Raw(text) => mono(text, false).into_any(),
         Shown::Locations(all) => v_stack_from_iter(all.into_iter().take(MOST_ROWS).map(|l| {
