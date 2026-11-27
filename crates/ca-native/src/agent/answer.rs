@@ -357,11 +357,19 @@ fn thinking(ui: Ui, send: Send, answer: Answer) -> impl IntoView {
                 .color(c.desc)
                 .apply_if(!shown.get(), |s| s.hide())
         });
-    v_stack((head, body)).style(move |s| s.gap(4.0).width_full().min_width(0.0).margin_bottom(8.0).apply_if(!has.get(), |s| s.hide()))
+    v_stack((head, body))
+        .style(move |s| s.gap(4.0).width_full().min_width(0.0).margin_bottom(8.0).apply_if(!has.get(), |s| s.hide()))
 }
 
 /// The thinking's seconds, moved on while it thinks and this round of it is the newest.
-fn tick(secs: RwSignal<u64>, generation: RwSignal<u64>, g: u64, now: floem::reactive::Memo<bool>, before: u64, since: Instant) {
+fn tick(
+    secs: RwSignal<u64>,
+    generation: RwSignal<u64>,
+    g: u64,
+    now: floem::reactive::Memo<bool>,
+    before: u64,
+    since: Instant,
+) {
     exec_after(TICK, move |_| {
         if generation.get_untracked() != g || !now.get_untracked() {
             return;
@@ -434,17 +442,17 @@ mod tests {
 
     #[test]
     fn tokens_are_short_in_the_footer_and_exact_in_its_tooltip() {
-        assert_eq!((tokens(950), tokens(8_600), tokens(12_400), tokens(1_000), tokens(1_230_000)), (
-            "950".into(),
-            "8.6K".into(),
-            "12K".into(),
-            "1K".into(),
-            "1.2M".into()
-        ));
+        assert_eq!(
+            (tokens(950), tokens(8_600), tokens(12_400), tokens(1_000), tokens(1_230_000)),
+            ("950".into(), "8.6K".into(), "12K".into(), "1K".into(), "1.2M".into())
+        );
         let u = Usage { prompt: 8_600, cached: 6_278, completion: 1_200, ms: 12_000, cost: Some(0.012) };
         assert_eq!(usage_line(&u), "8.6K in (73% cached) \u{b7} 1.2K out");
         assert_eq!(usage_tip(&u), "8,600 tokens in, 6,278 of them cached; 1,200 tokens out");
-        assert_eq!(footer_line("qwen", &u), "qwen \u{b7} 12 s \u{b7} 8.6K in (73% cached) \u{b7} 1.2K out \u{b7} $0.012");
+        assert_eq!(
+            footer_line("qwen", &u),
+            "qwen \u{b7} 12 s \u{b7} 8.6K in (73% cached) \u{b7} 1.2K out \u{b7} $0.012"
+        );
         // Nothing cached, no cost, nothing read: each left out.
         let none = Usage { prompt: 0, cached: 0, completion: 0, ms: 0, cost: None };
         assert_eq!(usage_line(&none), "0 in \u{b7} 0 out");

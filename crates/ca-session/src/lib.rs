@@ -117,11 +117,10 @@ const ADDED: &[(&str, &str, &str)] = &[
 /// Adds to the store the columns of `ADDED` it lacks.
 fn add_missing(db: &Connection) -> Result<()> {
     for (table, column, decl) in ADDED {
-        let has: i64 = db.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
-            params![table, column],
-            |r| r.get(0),
-        )?;
+        let has: i64 =
+            db.query_row("SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2", params![table, column], |r| {
+                r.get(0)
+            })?;
         if has == 0 {
             db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
         }
