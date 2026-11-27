@@ -1176,9 +1176,14 @@ fn replace(ask: &Ask, with: &str, files: Vec<(String, PathBuf)>, only: &HashMap<
         }
         let text = match std::fs::metadata(&real) {
             Ok(m) if !m.is_file() || m.len() > MOST_BYTES => Err("not a plain file under 5 MB".to_string()),
-            Ok(_) => std::fs::read(&real)
-                .map_err(|e| e.to_string())
-                .and_then(|b| String::from_utf8(b).map_err(|_| "not UTF-8 text".to_string())),
+            Ok(_) => std::fs::read(&real).map_err(|e| e.to_string()).and_then(|b| {
+                // Binary (a NUL in it), as the search reads it: not looked in.
+                if b.contains(&0) {
+                    Ok(String::new())
+                } else {
+                    String::from_utf8(b).map_err(|_| "not UTF-8 text".to_string())
+                }
+            }),
             Err(e) => Err(e.to_string()),
         };
         let text = match text {

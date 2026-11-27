@@ -9,7 +9,9 @@ use std::collections::HashSet;
 
 use floem::keyboard::{Key, NamedKey};
 use floem::peniko::Color;
-use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect};
+use floem::reactive::{
+    RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal,
+};
 use floem::style::CursorStyle;
 use floem::views::editor::core::selection::Selection;
 use floem::views::{
@@ -24,6 +26,7 @@ use crate::layout::View;
 use crate::state::{Found, Hit, Send, Ui};
 use crate::widgets::{bold, dialog, toast, toggle};
 
+pub const FIND_IN_FILES: &str = "workbench.action.findInFiles";
 pub const REPLACE_IN_FILES: &str = "workbench.action.replaceInFiles";
 pub const FIND_IN_FOLDER: &str = "filesExplorer.findInFolder";
 pub const COLLAPSE: &str = "search.action.collapseSearchResults";
@@ -360,7 +363,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     let st = state(ui);
     // Asked a moment after the last key, as VS Code searches while one types.
-    let typed = ui.scope.create_rw_signal(0u64);
+    let typed = create_rw_signal(0u64);
     {
         let send = send.clone();
         create_effect(move |first: Option<()>| {
@@ -387,12 +390,8 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             });
         });
     }
-    let (qf, rf, inf, exf) = (
-        ui.scope.create_rw_signal(false),
-        ui.scope.create_rw_signal(false),
-        ui.scope.create_rw_signal(false),
-        ui.scope.create_rw_signal(false),
-    );
+    let (qf, rf, inf, exf) =
+        (create_rw_signal(false), create_rw_signal(false), create_rw_signal(false), create_rw_signal(false));
     let go = send.clone();
     let query = input(ui, ui.search_query, "Search", qf).on_key_down(
         Key::Named(NamedKey::Enter),
@@ -449,7 +448,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         boxed(ui, input(ui, st.exclude, "e.g. *.ts, src/**/exclude", exf), empty(), exf),
     ))
     .style(move |s| s.margin_left(26.0).margin_right(12.0).apply_if(!st.details.get(), |s| s.hide()));
-    let said = create_memo_of(ui, move || {
+    let said = create_memo(move |_| {
         if st.waiting.with(Option::is_some) && ui.search.with(Option::is_none) {
             return ("Searching…".to_string(), String::new());
         }
@@ -517,11 +516,6 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     .style(move |s| s.size_full().min_height(0.0).color(t.get().side_fg))
 }
 
-/// A memo made in the window's scope.
-fn create_memo_of<T: PartialEq + Clone + 'static>(ui: Ui, f: impl Fn() -> T + 'static) -> floem::reactive::Memo<T> {
-    ui.scope.create_memo(move |_| f())
-}
-
 fn file_row(ui: Ui, send: Send, path: String, count: usize, folded: bool) -> impl IntoView {
     let t = ui.colors;
     let st = state(ui);
@@ -529,7 +523,7 @@ fn file_row(ui: Ui, send: Send, path: String, count: usize, folded: bool) -> imp
         Some((d, n)) => (d.to_string(), n.to_string()),
         None => (String::new(), path.clone()),
     };
-    let hovered = ui.scope.create_rw_signal(false);
+    let hovered = create_rw_signal(false);
     let (fold, replaced) = (path.clone(), path.clone());
     h_stack((
         icon(if folded { "chevron-right" } else { "chevron-down" }, 16.0),
@@ -578,7 +572,7 @@ fn match_row(ui: Ui, send: Send, h: Hit, numbers: bool) -> impl IntoView {
     let t = ui.colors;
     let st = state(ui);
     let (before, lit, after) = cut(&h.text, h.at, h.len);
-    let hovered = ui.scope.create_rw_signal(false);
+    let hovered = create_rw_signal(false);
     let line = h.line;
     let (opened, replaced) = (h.clone(), h.clone());
     let replace_send = send.clone();
@@ -650,8 +644,8 @@ pub fn register(ui: Ui, send: &Send) {
     use crate::commands::{add, command};
     use crate::menus::{Menu, item};
     let st = state(ui);
-    add(command(crate::workbench::SHOW_SEARCH, "Search", "Find in Files", |ui, _| focus(ui, false))
-        .keys("Ctrl+Shift+F"));
+    add(command(crate::workbench::SHOW_SEARCH, "View", "Show Search", |ui, _| focus(ui, false)).keys("Ctrl+Shift+F"));
+    add(command(FIND_IN_FILES, "Search", "Find in Files", |ui, _| focus(ui, false)));
     add(command(REPLACE_IN_FILES, "Search", "Replace in Files", |ui, _| focus(ui, true)).keys("Ctrl+Shift+H"));
     add(command(FIND_IN_FOLDER, "Search", "Find in Folder...", move |ui, _| {
         let folder = ui.selected.get_untracked();
@@ -678,6 +672,9 @@ pub fn register(ui: Ui, send: &Send) {
     crate::menus::add(Menu::ViewTitle(View::Search), title(CLEAR, "clear-all", 2));
     crate::menus::add(Menu::ViewTitle(View::Search), title(COLLAPSE, "collapse-all", 3));
     crate::menus::add(Menu::ExplorerRow, item(FIND_IN_FOLDER).group("4_search"));
+    let edit = Menu::TitleBar(crate::menus::EDIT);
+    crate::menus::add(edit, item(FIND_IN_FILES).shown_keys("Ctrl+Shift+F").group("4_find_global").order(1));
+    crate::menus::add(edit, item(REPLACE_IN_FILES).group("4_find_global").order(2));
     // A match waiting to be selected once its file comes on screen.
     ui.scope.create_effect(move |_| {
         ui.live.track();
@@ -703,10 +700,14 @@ pub fn kept(ui: Ui) -> Value {
 
 fn restore(ui: Ui, v: &Value, send: &Send) {
     let st = state(ui);
-    if st.restored.get_untracked() || !v.is_object() {
+    // The first state only (a later one, a session switched, leaves what is typed as it is).
+    if st.restored.get_untracked() {
         return;
     }
     st.restored.set(true);
+    if !v.is_object() {
+        return;
+    }
     let s = |k: &str| v[k].as_str().unwrap_or("").to_string();
     st.word.set(v["word"] == true);
     st.include.set(s("include"));
@@ -779,6 +780,50 @@ mod tests {
 
     fn hit(p: &str, line: usize) -> Hit {
         Hit { path: p.into(), line, text: String::new(), col: 0, len: 0, at: 0 }
+    }
+
+    fn sender() -> (Send, std::rc::Rc<std::cell::RefCell<Vec<Value>>>) {
+        let said = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let to = said.clone();
+        (std::rc::Rc::new(move |v: Value| to.borrow_mut().push(v)), said)
+    }
+
+    #[test]
+    fn what_is_typed_is_kept_with_the_folder_and_an_answer_to_other_options_is_left() {
+        let ui = Ui::new();
+        ui.search_query.set("cart".into());
+        state(ui).word.set(true);
+        state(ui).include.set("*.rs".into());
+        let kept = ui.view_state();
+        assert_eq!(kept["search"]["query"], "cart");
+        let again = Ui::new();
+        let (send, said) = sender();
+        again.take(&json!({"type": "state", "view_state": kept}), &send);
+        assert_eq!(
+            asked_now(again),
+            Asked { query: "cart".into(), word: true, include: "*.rs".into(), ..Asked::default() }
+        );
+        assert!(state(again).details.get_untracked(), "the include shown");
+        let asked: Vec<Value> = said.borrow().iter().filter(|m| m["type"] == "search").cloned().collect();
+        assert_eq!(asked.len(), 1, "searched again");
+        // A later state (another session) leaves what is typed.
+        again.search_query.set("other".into());
+        again.take(&json!({"type": "state", "view_state": kept}), &send);
+        assert_eq!(again.search_query.get_untracked(), "other");
+        // The answer to what was asked is taken; one with other options is not.
+        let reply = |word: bool| {
+            let mut m =
+                Asked { query: "cart".into(), word, include: "*.rs".into(), ..Asked::default() }.message("search");
+            m["hits"] = json!([{"path": "a.rs", "line": 2, "col": 4, "len": 4, "text": "let cart", "at": 4}]);
+            m
+        };
+        let fresh = Ui::new();
+        fresh.take(&json!({"type": "state", "view_state": kept}), &send);
+        fresh.take(&reply(false), &send);
+        assert!(fresh.search.with_untracked(Option::is_none), "asked with whole word: an answer without is left");
+        fresh.take(&reply(true), &send);
+        let hits = fresh.search.with_untracked(|r| r.as_ref().map(|r| r.hits.clone()).unwrap_or_default());
+        assert_eq!((hits.len(), hits[0].col, hits[0].len), (1, 4, 4));
     }
 
     #[test]
