@@ -27,13 +27,19 @@ const MENUS: [&str; 8] = ["File", "Edit", "Selection", "View", "Go", "Run", "Ter
 pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     let keys = send.clone();
-    let body = h_stack((crate::activity_bar::view(ui, send.clone()), crate::docking::tree(ui, send.clone())))
+    // The activity bar, the title bar and the status bar are hidden in Zen mode and full screen (`layout_commands`).
+    let bars = move |s: floem::style::Style| s.apply_if(!crate::layout_commands::bars_shown(ui), |s| s.hide());
+    let activity = container(crate::activity_bar::view(ui, send.clone())).style(move |s| bars(s.height_full()));
+    let body = h_stack((activity, crate::docking::tree(ui, send.clone())))
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     // The title bar, the parts' banners under it (`layers.rs`; none: no row), the views, the status bar.
-    let mut rows = vec![title_bar(ui, send.clone()).into_any()];
+    let title = container(title_bar(ui, send.clone())).style(move |s| {
+        s.width_full().apply_if(!crate::layout_commands::title_bar_shown(ui), |s| s.hide())
+    });
+    let mut rows = vec![title.into_any()];
     rows.extend(crate::layers::views(ui, &send, crate::layers::Place::Banner));
     rows.push(body.into_any());
-    rows.push(status_bar(ui, send.clone()).into_any());
+    rows.push(container(status_bar(ui, send.clone())).style(move |s| bars(s.width_full())).into_any());
     // Over them: the window's own layers, then the parts', then the strips the window is resized by.
     let mut all = vec![
         v_stack_from_iter(rows).style(|s| s.size_full()).into_any(),
@@ -218,6 +224,7 @@ fn register_menus() {
 /// VS Code's keys for the workbench: the command a key (or a chord of two) is bound to runs; Escape, bound to
 /// none, closes what is open over the window.
 pub(crate) fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
+    crate::layout_commands::key_seen(ui, key, m);
     // An editing command's key does nothing where no editor has the keys (the editor runs it itself).
     if crate::editor::editing::editor_only(key, m) {
         return;

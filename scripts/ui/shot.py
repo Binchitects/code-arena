@@ -27,7 +27,7 @@ if not d.value:
     sys.exit("no X display (is DISPLAY set and Xvfb running?)")
 
 if title:
-    found = subprocess.run(["xdotool", "search", "--name", f"^{title}$"], capture_output=True, text=True).stdout.split()
+    found = subprocess.run(["xdotool", "search", "--name", title if title.startswith("^") else f"^{title}$"], capture_output=True, text=True).stdout.split()
     if not found:
         sys.exit(f"no window named {title!r}")
     win = int(found[0])
