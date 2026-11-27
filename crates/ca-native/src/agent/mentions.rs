@@ -543,6 +543,18 @@ fn row_view(ui: Ui, send: Send, n: usize, entry: Entry) -> impl IntoView {
     })
 }
 
+/// Where the list goes for a caret in a box (`frame`, none when not known) and the list's height: its left, top and
+/// width. It is over the box, clear of its border, as the / list is, within the box's sides and from the caret's
+/// left; under the caret when there is no room over the box.
+fn placed(caret: Rect, frame: Rect, height: f64) -> (f64, f64, f64) {
+    let known = frame.width() > 0.0;
+    let width = if known { WIDTH.min(frame.width()) } else { WIDTH };
+    let left = if known { (caret.x0 - 8.0).min(frame.x1 - width).max(frame.x0) } else { caret.x0 - 8.0 };
+    let over = if known { caret.y0.min(frame.y0) } else { caret.y0 };
+    let top = if over - height - 4.0 >= 0.0 { over - height - 4.0 } else { caret.y1 + 4.0 };
+    (left.max(4.0), top, width)
+}
+
 /// The list over the caret (under it when there is no room over it).
 fn menu(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
@@ -613,13 +625,9 @@ fn menu(ui: Ui, send: Send) -> impl IntoView {
             + if me.total.get() > 0 { ROW } else { 0.0 }
             + if me.note.with(String::is_empty) { 0.0 } else { ROW + 2.0 }
             + 10.0;
-        let (caret, frame) = (me.caret.get(), me.frame.get());
-        let width = if frame.width() > 0.0 { WIDTH.min(frame.width()) } else { WIDTH };
-        let left =
-            if frame.width() > 0.0 { (caret.x0 - 8.0).min(frame.x1 - width).max(frame.x0) } else { caret.x0 - 8.0 };
-        let top = if caret.y0 - height - 4.0 >= 0.0 { caret.y0 - height - 4.0 } else { caret.y1 + 4.0 };
+        let (left, top, width) = placed(me.caret.get(), me.frame.get(), height);
         s.position(Position::Absolute)
-            .inset_left(left.max(4.0))
+            .inset_left(left)
             .inset_top(top)
             .width(width)
             .padding_vert(4.0)
@@ -748,6 +756,20 @@ mod tests {
 
     fn files(paths: &[&str], more: bool) -> Files {
         Files::of(paths.iter().copied(), more)
+    }
+
+    #[test]
+    fn the_list_sits_over_the_box_clear_of_its_border_and_within_its_sides() {
+        let frame = Rect::new(913.0, 702.0, 1268.0, 766.0);
+        // The caret on the box's first line: the list ends over the box's top, not over its border.
+        let (left, top, width) = placed(Rect::new(980.0, 712.0, 981.0, 730.0), frame, 100.0);
+        assert_eq!((left, top, width), (913.0, 598.0, 355.0));
+        // No room over the box: under the caret.
+        let (_, top, _) = placed(Rect::new(980.0, 52.0, 981.0, 70.0), Rect::new(913.0, 40.0, 1268.0, 100.0), 100.0);
+        assert_eq!(top, 74.0);
+        // No box known: over the caret.
+        let (left, top, _) = placed(Rect::new(300.0, 500.0, 301.0, 518.0), Rect::ZERO, 100.0);
+        assert_eq!((left, top), (292.0, 396.0));
     }
 
     #[test]
