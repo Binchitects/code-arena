@@ -219,6 +219,17 @@ Sections used:
 - **Answer footer.** Under a finished answer: Copy answer, the model, '· 12 s', and '· 8.6K in (73%
   cached) · 1.2K out' (exact counts in its tooltip). The session keeps it, so the footer is still
   there after a reload.
+- **Pictures open in a tab of their own.** PNG, JPEG, GIF (first frame), WebP, BMP and ICO files
+  show on a checkerboard, fitted to the editor. Click the picture (or the zoom item in the status
+  bar) to see it at its own size and scroll it. The status bar shows its size in pixels (W × H) and
+  in bytes, and the picture is drawn again when the file changes on disk.
+- **Sounds and videos open in a tab with their name and size.** MP3, WAV, OGG, OPUS, FLAC, M4A, AAC,
+  WEBA, MP4, WebM, OGV and MOV files have an 'Open in the system player' button.
+- **An SVG has a preview.** It still opens as text, and the Open Preview button in the tab bar shows
+  the drawing in its own colours, next to the text.
+- **A file that cannot open says why in its tab.** The tab reads '<name> is not text (or not
+  UTF-8)', '<name> is larger than 5 MB', or the read error, where before only the status bar
+  mentioned it. Such tabs are kept with the layout like the others.
 
 
 ### :bug: Bugs fixed
