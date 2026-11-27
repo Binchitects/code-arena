@@ -9,12 +9,14 @@
 //! share in a message sent. So two parts written at once touch one line each here.
 //!
 //! - `history.rs`: what was sent in this folder, for the box's ↑ (`history`), and each line sent kept in it.
+//! - `replay.rs`: the running turn kept for a face that comes in late (the driver's turn loop keeps it).
 
 use serde_json::Value;
 
 use crate::ide_ext::{Area, Rule, Sent, Shared, kind};
 
 mod history;
+pub mod replay;
 
 /// This area in the driver.
 pub struct Here;
