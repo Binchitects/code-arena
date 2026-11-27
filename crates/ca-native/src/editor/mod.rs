@@ -217,8 +217,27 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 let focused = shown.focused;
                 let doc = crate::decor::doc(tab.doc.clone(), &tab.path);
                 let editor = Editor::new(floem::reactive::Scope::current(), doc, tab.colours.clone(), false);
+                // The options of the file, read for its language: the editor follows them as they change.
+                let file = tab.path.clone();
+                let o = options::memo(ui, move || Some(file.clone()));
+                // The editor's width, by which a bounded wrap is found.
+                let width = create_rw_signal(0.0);
+                {
+                    let viewport = editor.viewport;
+                    create_effect(move |_| {
+                        let w = viewport.with(|v| v.width());
+                        if width.get_untracked() != w {
+                            width.set(w);
+                        }
+                    });
+                }
                 // Floem's editor, drawn with the folds (`folding.rs`).
                 let ed = folding::view(ui, editor.clone(), &tab.doc, &tab.path, move |editor, press, mods| {
+                    if let KeyInput::Keyboard(key, _) = &press.key
+                        && options::key(ui, editor, o, key, mods)
+                    {
+                        return CommandExecuted::Yes;
+                    }
                     // The key after a chord's first (Ctrl+K Enter, Ctrl+K Shift+Enter) ends the chord: the
                     // editor does not take it as its own (a new line) when the chord runs a command.
                     if crate::commands::waiting().is_some()
@@ -249,7 +268,10 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                     }
                 })
                 // No background of its own: the group's is under it, and the overview ruler between (`decor.rs`).
-                .style(move |s| editor_look(s, &c, focused.get()));
+                .style(move |s| {
+                    let s = editor_look(s, &c, focused.get());
+                    o.with(|o| options::look(s, o, &c, width.get()))
+                });
                 g.editors.update(|e| {
                     e.insert(id, (tab.path.clone(), editor.clone()));
                 });
@@ -321,6 +343,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 });
                 // With its highlights (brackets, the word at the caret, links), the decorations' glyph margin and the
                 // overview ruler.
+                let ed = options::follow(ui, ed, &editor, tab.colours.clone(), o);
                 let ed = highlights::follow(ui, ed, &editor, tab.doc.clone(), &tab.path);
                 crate::decor::around(ui, ed, &editor, &tab.path).into_any()
             }

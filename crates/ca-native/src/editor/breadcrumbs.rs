@@ -9,7 +9,7 @@ use crate::state::Ui;
 
 pub(super) fn breadcrumbs(ui: Ui, active: floem::reactive::Memo<Option<String>>) -> impl IntoView {
     let t = ui.colors;
-    // Shown for a file's text (or its changes), not for a tab of a kind.
+    // Shown for a file's text (or its changes), not for a tab of a kind, while `breadcrumbs.enabled` is on.
     let text = move || {
         active
             .with(|a| a.as_ref().is_some_and(|p| ui.tabs.with(|t| t.iter().any(|t| t.path == *p && t.kind.is_none()))))
@@ -45,7 +45,7 @@ pub(super) fn breadcrumbs(ui: Ui, active: floem::reactive::Memo<Option<String>>)
             .color(c.breadcrumb)
             .background(c.editor_bg)
             .selectable(false)
-            .apply_if(!text(), |s| s.hide())
+            .apply_if(!text() || !crate::settings::flag(ui, "breadcrumbs.enabled", None), |s| s.hide())
     })
 }
 

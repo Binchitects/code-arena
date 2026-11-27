@@ -13,7 +13,7 @@ use floem::text::{Attrs, AttrsList, FamilyOwned, Stretch, Style as FontSlant, We
 use floem::views::editor::EditorStyle;
 use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::id::EditorId;
-use floem::views::editor::layout::TextLayoutLine;
+use floem::views::editor::layout::{LineExtraStyle, TextLayoutLine};
 use floem::views::editor::text::{Document, Styling};
 use floem::views::editor::text_document::TextDocument;
 use serde_json::Value;
@@ -194,6 +194,29 @@ struct Parsed {
     after: Vec<(ParseState, HighlightState)>,
 }
 
+/// The font the editor's lines are laid out with, and where its rulers stand (in pixels from the text's start).
+struct Look {
+    family: Vec<FamilyOwned>,
+    size: f32,
+    weight: Weight,
+    line_height: f32,
+    rulers: Vec<f64>,
+    ruler: Color,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Look {
+            family: FamilyOwned::parse_list(&MONO_FONT).collect(),
+            size: 14.0,
+            weight: Weight::NORMAL,
+            line_height: 19.0,
+            rulers: Vec::new(),
+            ruler: Color::TRANSPARENT,
+        }
+    }
+}
+
 /// The editor's styling: VS Code's font and sizes, and each line's colours from its grammar and the theme.
 pub struct Colours {
     doc: Rc<TextDocument>,
@@ -201,7 +224,7 @@ pub struct Colours {
     theme: RefCell<Theme>,
     parsed: RefCell<Parsed>,
     id: Cell<u64>,
-    family: Vec<FamilyOwned>,
+    look: RefCell<Look>,
     /// The file's path, by which its decorations are found (`decor.rs`).
     path: String,
 }
@@ -215,7 +238,7 @@ impl Colours {
             theme: RefCell::new(Theme::default()),
             parsed: RefCell::new(Parsed { after: Vec::new() }),
             id: Cell::new(1),
-            family: FamilyOwned::parse_list(&MONO_FONT).collect(),
+            look: RefCell::new(Look::default()),
             path: path.to_string(),
         })
     }
@@ -229,6 +252,20 @@ impl Colours {
     pub fn set_theme(&self, theme: Theme) {
         *self.theme.borrow_mut() = theme;
         self.parsed.borrow_mut().after.clear();
+        self.id.set(self.id.get() + 1);
+    }
+
+    /// The editor's font and rulers (`editor/options.rs`): every line laid out again with them.
+    pub fn set_look(&self, font: &crate::editor::options::Font, rulers: &[usize], ruler: Color) {
+        let width = font.char_width();
+        *self.look.borrow_mut() = Look {
+            family: font.families(),
+            size: font.size,
+            weight: Weight(font.weight),
+            line_height: font.line_height,
+            rulers: rulers.iter().map(|c| *c as f64 * width).collect(),
+            ruler,
+        };
         self.id.set(self.id.get() + 1);
     }
 
@@ -276,19 +313,19 @@ impl Styling for Colours {
     }
 
     fn font_size(&self, _: EditorId, _: usize) -> usize {
-        14
+        self.look.borrow().size.round() as usize
     }
 
     fn line_height(&self, _: EditorId, _: usize) -> f32 {
-        19.0
+        self.look.borrow().line_height
     }
 
     fn font_family(&self, _: EditorId, _: usize) -> Cow<'_, [FamilyOwned]> {
-        Cow::Borrowed(&self.family)
+        Cow::Owned(self.look.borrow().family.clone())
     }
 
     fn weight(&self, _: EditorId, _: usize) -> Weight {
-        Weight::NORMAL
+        self.look.borrow().weight
     }
 
     fn italic_style(&self, _: EditorId, _: usize) -> FontSlant {
@@ -330,7 +367,22 @@ impl Styling for Colours {
 
     fn apply_layout_styles(&self, edid: EditorId, _: &EditorStyle, line: usize, layout: &mut TextLayoutLine) {
         let len = self.doc.rope_text().line_end_col(line, true);
-        crate::decor::layout(&self.path, line, len, self.line_height(edid, line) as f64, layout);
+        let height = self.line_height(edid, line) as f64;
+        crate::decor::layout(&self.path, line, len, height, layout);
+        let look = self.look.borrow();
+        // Down every row of a wrapped line too.
+        let rows = layout.text.size().height.max(height);
+        for x in &look.rulers {
+            layout.extra_style.push(LineExtraStyle {
+                x: *x,
+                y: 0.0,
+                width: Some(1.0),
+                height: rows,
+                bg_color: Some(look.ruler),
+                under_line: None,
+                wave_line: None,
+            });
+        }
     }
 }
 

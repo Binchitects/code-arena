@@ -101,6 +101,7 @@ colors! {
     cursor: ["editorCursor.foreground"], "#AEAFAD", "#000000";
     indent_guide: ["editorIndentGuide.background1", "editorIndentGuide.background"], "#404040", "#D3D3D3";
     whitespace: ["editorWhitespace.foreground"], "#E3E4E229", "#33333333";
+    editor_ruler: ["editorRuler.foreground"], "#5A5A5A", "#D3D3D3";
     gutter_bg: ["editorGutter.background", "editor.background"], "#1E1E1E", "#FFFFFF";
     problem_error: ["editorError.foreground"], "#F14C4C", "#E51400";
     problem_info: ["editorInfo.foreground"], "#3794FF", "#1A85FF";
