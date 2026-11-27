@@ -951,10 +951,15 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
         {
             start.set(Some(at(p.pos)));
             id.request_active();
+            // A drag whose row was drawn again before it ended is over.
+            if x.drag.with_untracked(Option::is_some) {
+                x.drag.set(None);
+            }
         }
         EventPropagation::Continue
     })
-    .on_event_stop(EventListener::PointerMove, move |e| {
+    // Passed on: the Explorer keeps where the pointer is, for a row's menu.
+    .on_event_cont(EventListener::PointerMove, move |e| {
         let (Event::PointerMove(p), Some(from)) = (e, start.get_untracked()) else { return };
         let now = at(p.pos);
         if x.drag.with_untracked(Option::is_none) {
@@ -1263,14 +1268,19 @@ pub fn register(ui: Ui, send: &Send) {
         open_terminal(ui, send, &folder);
     }));
     let send = send.clone();
-    ui.scope.create_effect(move |_| {
-        let Some(active) = ui.active.get() else { return };
-        let Some(path) = ui.tab(&active).filter(|t| t.is_file()).map(|t| t.path) else { return };
-        let how = crate::settings::now(ui, "explorer.autoReveal", None);
-        if how == json!(false) {
-            return;
+    // The tabs are followed too (the file's tab may come after it is the one shown); a file is revealed once each
+    // time it comes to be shown.
+    ui.scope.create_effect(move |before: Option<Option<String>>| {
+        let active = ui.active.get()?;
+        let file = ui.tabs.with(|t| t.iter().any(|t| t.path == active && t.is_file()));
+        if !file || before.flatten().as_deref() == Some(active.as_str()) {
+            return file.then_some(active);
         }
-        reveal(ui, &send, &path, how != json!("focusNoScroll"));
+        let how = crate::settings::now(ui, "explorer.autoReveal", None);
+        if how != json!(false) {
+            reveal(ui, &send, &active, how != json!("focusNoScroll"));
+        }
+        Some(active)
     });
 }
 
@@ -1802,6 +1812,36 @@ mod tests {
         assert_eq!(toast::count(ui), 1);
         ui.take(&json!({"type": "deleted", "path": "src/a.rs", "kept": "/k/2/src/a.rs"}), &send);
         assert_eq!(toast::count(ui), 1, "another window's delete");
+    }
+
+    #[test]
+    fn the_file_the_editor_shows_is_revealed_in_the_tree_once() {
+        let ui = project();
+        let (send, asked) = sender();
+        register(ui, &send);
+        // Opened elsewhere (Quick Open): its tab comes, and its closed folder opens in the tree.
+        ui.take(&json!({"type": "file", "path": "src/in/deep.rs", "text": "x\n", "modified": 1}), &send);
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("src/in/deep.rs"));
+        assert!(ui.expanded.with_untracked(|e| e.contains("src/in")));
+        assert_eq!(ui.selected.get_untracked(), "src/in/deep.rs");
+        assert!(asked.borrow().is_empty(), "src/in was listed already");
+        // Shown again, the tree is not moved for it; another file is revealed.
+        ui.selected.set("z.txt".into());
+        ui.active.set(Some("src/in/deep.rs".into()));
+        assert_eq!(ui.selected.get_untracked(), "z.txt");
+        ui.take(&json!({"type": "file", "path": "z.txt", "text": "z\n", "modified": 1}), &send);
+        assert_eq!(me(ui).reveal.get_untracked(), 6.0 * ROW);
+    }
+
+    #[test]
+    fn open_in_integrated_terminal_starts_the_shell_in_the_folder() {
+        let ui = project();
+        let (send, asked) = sender();
+        crate::workbench::register(ui, &send);
+        open_terminal(ui, &send, "src/in");
+        let got = asked.borrow().clone();
+        let open = got.iter().find(|m| m["type"] == "term_open").expect("term_open");
+        assert_eq!(open["cwd"], "src/in");
     }
 
     #[test]
