@@ -22,7 +22,8 @@
 //! - `save`: what Save (Ctrl+S, and the question asked when the tab closes) does. The tab's `dirty` is the part's to
 //!   set; once saved it says so with `kinds::saved(ui, path)`, which also closes a tab that waited for it.
 //! - `kept`: its tabs are kept with the folder's layout and made again at the next start, each by this (which opens
-//!   it, at once or when what it shows has come). Without it a tab of the kind is gone at the next start.
+//!   it, at once or when what it shows has come), among the files' tabs where they were. Without it a tab of the
+//!   kind is gone at the next start.
 //!
 //! A tab of a kind is in `ui.tabs` with the files' tabs (its `kind` is the kind's name, its `file` the rest of its
 //! path), so the tabs, Close and the close question are the same for all. It is not a file to the rest of the
@@ -201,10 +202,19 @@ pub fn restore(ui: Ui, send: &Send, path: &str) -> bool {
     }
 }
 
-/// The kept tab that was the one shown, waiting for the files asked for with it: each file is shown as it comes,
-/// and the tab is shown again after the last of them.
+/// What a kept layout's tabs wait for while its files come from the session: the files asked for and not here yet,
+/// the order the tabs were in (the kept ones are made at once and the files come one by one, so the order is put
+/// right as each comes), and the kept tab that was the one shown (each file is shown as it comes, and that tab is
+/// shown again after the last of them; none: a file was the one shown).
+#[derive(Clone, Default)]
+struct Waiting {
+    files: Vec<String>,
+    order: Vec<String>,
+    shown: Option<String>,
+}
+
 #[derive(Clone, Copy)]
-struct Restoring(RwSignal<Option<(String, Vec<String>)>>);
+struct Restoring(RwSignal<Option<Waiting>>);
 
 impl crate::ext::State for Restoring {
     fn new(ui: Ui) -> Restoring {
@@ -212,30 +222,46 @@ impl crate::ext::State for Restoring {
     }
 }
 
-/// The tabs kept with a layout (its `kind_tabs`) made again, each by its kind; when the tab shown last was one of
-/// them, it is shown again once the layout's files have come.
+/// The tabs kept with a layout (its `kind_tabs`) made again, each by its kind. Once the layout's files have come
+/// the tabs are in the order they were kept in (its `tabs`), and the tab shown last is shown again when it was one
+/// of these.
 pub fn restore_all(ui: Ui, send: &Send, kept: &Value) {
     let paths = |key: &str| -> Vec<String> {
         kept[key].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
     };
     let tabs = paths("kind_tabs");
+    if tabs.is_empty() {
+        return;
+    }
     for path in &tabs {
         restore(ui, send, path);
     }
-    let Some(shown) = kept["active"].as_str().filter(|a| tabs.iter().any(|t| t == a)) else { return };
+    let shown = kept["active"].as_str().filter(|a| tabs.iter().any(|t| t == a)).map(str::to_string);
     let files = paths("editors");
     if !files.is_empty() {
-        ui.state::<Restoring>().0.set(Some((shown.to_string(), files)));
-    } else if ui.tab(shown).is_some() {
-        ui.active.set(Some(shown.to_string()));
+        ui.state::<Restoring>().0.set(Some(Waiting { files, order: paths("tabs"), shown }));
+    } else if let Some(shown) = shown
+        && ui.tab(&shown).is_some()
+    {
+        ui.active.set(Some(shown));
+    }
+}
+
+/// The tabs put in a kept order: those it names as it has them, the others after them as they are. The tabs are
+/// set only when they are not in that order already.
+fn in_order(ui: Ui, order: &[String]) {
+    let at = |path: &str| order.iter().position(|o| o == path).unwrap_or(usize::MAX);
+    if ui.tabs.with_untracked(|tabs| tabs.windows(2).any(|w| at(&w[0].path) > at(&w[1].path))) {
+        ui.tabs.update(|tabs| tabs.sort_by_key(|t| at(&t.path)));
     }
 }
 
 /// What it adds to the window's registries, once at start.
 pub fn register(_ui: Ui, _send: &Send) {}
 
-/// The session's message of a file read, after the editor has taken it in: when it is the last of the files a
-/// kept layout asked for, the kept tab that was shown is shown again. Never taken away (false).
+/// The session's message of a file read, after the editor has taken it in, while a kept layout's files are coming:
+/// the tabs are put in the order they were kept in, and after the last of the files the kept tab that was shown is
+/// shown again. Never taken away (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     if m["type"] != "file" {
         return false;
@@ -245,17 +271,18 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
         return false;
     }
     let path = m["path"].as_str().unwrap_or("");
-    let mut show = None;
+    let (mut order, mut done) = (Vec::new(), None);
     waiting.update(|w| {
-        if let Some((shown, files)) = w {
-            files.retain(|f| f != path);
-            if files.is_empty() {
-                show = Some(shown.clone());
-                *w = None;
-            }
+        let Some(now) = w.as_mut() else { return };
+        now.files.retain(|f| f != path);
+        if now.files.is_empty() {
+            done = w.take();
+        } else {
+            order = now.order.clone();
         }
     });
-    if let Some(shown) = show
+    in_order(ui, done.as_ref().map_or(&order, |d| &d.order));
+    if let Some(shown) = done.and_then(|d| d.shown)
         && ui.tab(&shown).is_some()
     {
         ui.active.set(Some(shown));
@@ -349,6 +376,7 @@ mod tests {
         let state = ui.view_state();
         assert_eq!(state["editors"], json!(["a.rs"]), "the files, as before");
         assert_eq!(state["kind_tabs"], json!(["test-preview:README.md"]));
+        assert_eq!(state["tabs"], json!(["a.rs", "test-preview:README.md"]), "the order of those that are kept");
         assert_eq!(state["active"], json!("test-preview:README.md"));
         // The next start: the files are asked of the session, the kept tab is made by its kind and shown.
         let again = Ui::new();
@@ -360,11 +388,59 @@ mod tests {
         // The file comes and is shown, as every file that comes; it was the last asked for, so the tab that was
         // shown when the layout was kept is shown again.
         again.take(&json!({"type": "file", "path": "a.rs", "text": "", "modified": 1}), &send);
-        assert_eq!(again.tabs.with_untracked(|t| t.len()), 2);
+        let paths = |ui: Ui| ui.tabs.with_untracked(|t| t.iter().map(|t| t.path.clone()).collect::<Vec<_>>());
+        assert_eq!(paths(again), ["a.rs", "test-preview:README.md"], "in the order they were kept in");
         assert_eq!(again.active.get_untracked().as_deref(), Some("test-preview:README.md"));
         // A file opened after that is shown, as ever.
         again.take(&json!({"type": "file", "path": "b.rs", "text": "", "modified": 1}), &send);
         assert_eq!(again.active.get_untracked().as_deref(), Some("b.rs"));
         assert!(!restore(again, &send, "test-once:1") && !restore(again, &send, "no-such-kind:x"));
+    }
+
+    #[test]
+    fn kept_tabs_come_back_among_the_files_tabs_where_they_were() {
+        let ui = Ui::new();
+        let (send, _) = sender();
+        test_kinds();
+        let file = |ui: Ui, send: &Send, path: &str| {
+            ui.take(&json!({"type": "file", "path": path, "text": "", "modified": 1}), send)
+        };
+        let paths = |ui: Ui| ui.tabs.with_untracked(|t| t.iter().map(|t| t.path.clone()).collect::<Vec<_>>());
+        file(ui, &send, "a.rs");
+        open(ui, "test-preview:a.md");
+        file(ui, &send, "b.rs");
+        open(ui, "test-preview:b.md");
+        file(ui, &send, "c.rs");
+        let order = ["a.rs", "test-preview:a.md", "b.rs", "test-preview:b.md", "c.rs"];
+        assert_eq!(paths(ui), order);
+        let state = ui.view_state();
+        assert_eq!(state["tabs"], json!(order));
+        // The next start: the kept tabs are there at once, the files come one by one, each in its place; a file
+        // that is gone from disk leaves the others in their order, and one another window opened comes after.
+        let again = Ui::new();
+        let (send, _) = sender();
+        again.take(&json!({"type": "state", "view_state": state}), &send);
+        assert_eq!(paths(again), ["test-preview:a.md", "test-preview:b.md"]);
+        file(again, &send, "a.rs");
+        assert_eq!(paths(again), ["a.rs", "test-preview:a.md", "test-preview:b.md"]);
+        file(again, &send, "other.rs");
+        again.take(&json!({"type": "file", "path": "b.rs", "error": "No such file"}), &send);
+        assert_eq!(paths(again), ["a.rs", "test-preview:a.md", "test-preview:b.md", "other.rs"]);
+        file(again, &send, "c.rs");
+        assert_eq!(paths(again), ["a.rs", "test-preview:a.md", "test-preview:b.md", "c.rs", "other.rs"]);
+        // A file was the one shown: it is, once it has come (asked for once more, last).
+        file(again, &send, "c.rs");
+        assert_eq!(again.active.get_untracked().as_deref(), Some("c.rs"));
+        // The files have all come: a tab opened from then on goes last, wherever a kept order had it.
+        again.close_now("a.rs");
+        file(again, &send, "a.rs");
+        assert_eq!(paths(again).last().map(String::as_str), Some("a.rs"));
+        // A layout kept before the order was (no `tabs`): the tabs stay as they come.
+        let mut old = ui.view_state();
+        old.as_object_mut().expect("an object").remove("tabs");
+        let third = Ui::new();
+        third.take(&json!({"type": "state", "view_state": old}), &send);
+        file(third, &send, "a.rs");
+        assert_eq!(paths(third), ["test-preview:a.md", "test-preview:b.md", "a.rs"]);
     }
 }

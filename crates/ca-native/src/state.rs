@@ -501,9 +501,14 @@ impl Ui {
         // The tabs that are not files and are kept all the same (`editor::kinds`).
         let kind_tabs = crate::editor::kinds::kept(*self);
         let active = self.active.get_untracked().filter(|a| editors.contains(a) || kind_tabs.contains(a));
+        // The order they are all in: the files come one by one at the next start, the others are made at once.
+        let tabs: Vec<String> = self.tabs.with_untracked(|t| {
+            t.iter().map(|t| &t.path).filter(|p| editors.contains(p) || kind_tabs.contains(p)).cloned().collect()
+        });
         json!({
             "editors": editors,
             "kind_tabs": kind_tabs,
+            "tabs": tabs,
             "active": active,
             "dock": self.dock.get_untracked().to_json(),
             "hidden": self.hidden.with_untracked(|h| { let mut h: Vec<u32> = h.iter().copied().collect(); h.sort(); h }),
