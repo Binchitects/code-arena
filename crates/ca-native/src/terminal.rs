@@ -94,14 +94,17 @@ pub fn contrasted(fg: u32, bg: u32, least: f64) -> u32 {
 pub type Link = crate::citations::Target;
 
 /// The address of the web in a line of output.
-static ADDRESS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r#"(?i)\b(?:https?://|mailto:)[^\s<>"'`]+"#).expect("an address")
-});
+static ADDRESS: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r#"(?i)\b(?:https?://|mailto:)[^\s<>"'`]+"#).expect("an address"));
 
 /// The links in a line of output: the addresses of the web, and the project's files with their line and column
 /// (`src/app.rs:12:5`, `./src/app.rs`, or the path written from the project's folder, `/home/me/app/src/app.rs:12`).
 /// Each with where it is in the line (bytes).
-pub fn links(text: &str, files: &std::collections::HashSet<String>, folder: &str) -> Vec<(std::ops::Range<usize>, Link)> {
+pub fn links(
+    text: &str,
+    files: &std::collections::HashSet<String>,
+    folder: &str,
+) -> Vec<(std::ops::Range<usize>, Link)> {
     let mut found: Vec<(std::ops::Range<usize>, Link)> = ADDRESS
         .find_iter(text)
         .map(|m| {
@@ -535,7 +538,8 @@ mod tests {
     #[test]
     fn addresses_and_the_projects_files_in_output_are_links() {
         let files: std::collections::HashSet<String> = ["src/main.rs", "README.md"].map(String::from).into();
-        let line = "error --> src/main.rs:12:5 see https://doc.rust-lang.org/E0308.html. /home/me/app/README.md:3 x.rs:1";
+        let line =
+            "error --> src/main.rs:12:5 see https://doc.rust-lang.org/E0308.html. /home/me/app/README.md:3 x.rs:1";
         let found = links(line, &files, "/home/me/app");
         let at: Vec<(&str, Link)> = found.iter().map(|(r, l)| (&line[r.clone()], l.clone())).collect();
         let file = |path: &str, line: usize, column: Option<usize>| {
@@ -775,7 +779,15 @@ pub struct Look {
 impl Look {
     /// Made from the settings' values (the font's family empty: the editor's monospace one); the line is the font's
     /// size times 1.2 times `lineHeight`, so VS Code's 14 px is 17 px high.
-    pub fn of(family: &str, size: f64, line_height: f64, caret: &str, blink: bool, scrollback: f64, contrast: f64) -> Look {
+    pub fn of(
+        family: &str,
+        size: f64,
+        line_height: f64,
+        caret: &str,
+        blink: bool,
+        scrollback: f64,
+        contrast: f64,
+    ) -> Look {
         let size = if size > 0.0 { size.clamp(6.0, 100.0) } else { 14.0 };
         Look {
             family: if family.trim().is_empty() { MONO_FONT.to_string() } else { family.trim().to_string() },
@@ -1343,38 +1355,38 @@ fn scrollbar(ui: Ui) -> impl IntoView {
     let bar = empty();
     let bar_id = bar.id();
     bar.on_event(EventListener::PointerDown, move |e| {
-            let Event::PointerDown(p) = e else { return EventPropagation::Continue };
-            let offset = ui.term_screen.with_untracked(|s| s.offset);
-            from.set(Some((p.pos.y, offset)));
-            bar_id.request_active();
-            EventPropagation::Stop
-        })
-        .on_event(EventListener::PointerMove, move |e| {
-            let (Event::PointerMove(p), Some((y, offset))) = (e, from.get_untracked()) else {
-                return EventPropagation::Continue;
-            };
-            let (height, thumb, _, history) = geometry();
-            let per_px = history / (height - thumb).max(1.0);
-            let to = (offset as f64 - (p.pos.y - y) * per_px).round().clamp(0.0, history) as usize;
-            if let Some(id) = shown(ui) {
-                with(id, |em| em.scroll_to(to));
-                redraw(ui);
-            }
-            EventPropagation::Stop
-        })
-        .on_event_cont(EventListener::PointerUp, move |_| from.set(None))
-        .style(move |s| {
-            let c = t.get();
-            let (_, thumb, top, history) = geometry();
-            s.absolute()
-                .inset_right(0.0)
-                .inset_top(top)
-                .width(SCROLLBAR)
-                .height(thumb)
-                .background(if from.get().is_some() { c.scrollbar_hover } else { c.scrollbar })
-                .hover(|s| s.background(c.scrollbar_hover))
-                .apply_if(history == 0.0, |s| s.hide())
-        })
+        let Event::PointerDown(p) = e else { return EventPropagation::Continue };
+        let offset = ui.term_screen.with_untracked(|s| s.offset);
+        from.set(Some((p.pos.y, offset)));
+        bar_id.request_active();
+        EventPropagation::Stop
+    })
+    .on_event(EventListener::PointerMove, move |e| {
+        let (Event::PointerMove(p), Some((y, offset))) = (e, from.get_untracked()) else {
+            return EventPropagation::Continue;
+        };
+        let (height, thumb, _, history) = geometry();
+        let per_px = history / (height - thumb).max(1.0);
+        let to = (offset as f64 - (p.pos.y - y) * per_px).round().clamp(0.0, history) as usize;
+        if let Some(id) = shown(ui) {
+            with(id, |em| em.scroll_to(to));
+            redraw(ui);
+        }
+        EventPropagation::Stop
+    })
+    .on_event_cont(EventListener::PointerUp, move |_| from.set(None))
+    .style(move |s| {
+        let c = t.get();
+        let (_, thumb, top, history) = geometry();
+        s.absolute()
+            .inset_right(0.0)
+            .inset_top(top)
+            .width(SCROLLBAR)
+            .height(thumb)
+            .background(if from.get().is_some() { c.scrollbar_hover } else { c.scrollbar })
+            .hover(|s| s.background(c.scrollbar_hover))
+            .apply_if(history == 0.0, |s| s.hide())
+    })
 }
 
 /// The screen of the terminal shown: its rows, the keys it takes, the mouse's selection, its links, its scrollbar.
