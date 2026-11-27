@@ -11,6 +11,9 @@
 //!   lens), or ghost text (as an inline completion, the caret before it);
 //! - a mark in the overview ruler, the right edge (a squiggle's severity puts one there by itself).
 //!
+//! The pointer resting on a range shows its hover (on a glyph: its title) after VS Code's 300 ms, under the line; it
+//! goes when the pointer moves off, the editor scrolls or the caret moves.
+//!
 //! Lines and columns count from 0; a column is a byte offset in the line, as the editor's own. Marks are not moved
 //! by edits: an owner says them again when its view of the file changes, and marks past the text are left out when
 //! drawn. All owners' marks for a file are merged once when one owner changes them (and again when the theme
@@ -36,6 +39,7 @@ use floem::views::editor::command::{Command, CommandExecuted};
 use floem::views::editor::core::buffer::rope_text::{RopeText, RopeTextVal};
 use floem::views::editor::core::cursor::CursorAffinity;
 use floem::views::editor::core::editor::EditType;
+use floem::views::editor::core::mode::Mode;
 use floem::views::editor::core::selection::Selection;
 use floem::views::editor::core::xi_rope::Rope;
 use floem::views::editor::id::EditorId;
@@ -264,6 +268,106 @@ impl crate::ext::State for Decor {
     fn new(ui: Ui) -> Self {
         Decor { rev: ui.scope.create_rw_signal(0) }
     }
+}
+
+/// The hover shown: what the ranges under the pointer say, and where in the window (under their line).
+#[derive(Clone, Debug, PartialEq)]
+struct Shown {
+    texts: Vec<String>,
+    at: Point,
+}
+
+#[derive(Clone, Copy)]
+struct Hover {
+    shown: RwSignal<Option<Shown>>,
+    /// The pointer's latest stop: a hover waits a moment and shows only if the pointer has not moved on.
+    asked: RwSignal<u64>,
+}
+
+impl crate::ext::State for Hover {
+    fn new(ui: Ui) -> Self {
+        Hover { shown: ui.scope.create_rw_signal(None), asked: ui.scope.create_rw_signal(0) }
+    }
+}
+
+impl Hover {
+    fn hide(self) {
+        self.asked.update(|n| *n += 1);
+        if self.shown.with_untracked(Option::is_some) {
+            self.shown.set(None);
+        }
+    }
+
+    /// VS Code's hover delay (`editor.hover.delay`).
+    fn ask(self, wanted: Shown) {
+        if self.shown.with_untracked(|s| s.as_ref().is_some_and(|s| s.texts == wanted.texts)) {
+            return;
+        }
+        self.asked.update(|n| *n += 1);
+        let n = self.asked.get_untracked();
+        floem::action::exec_after(std::time::Duration::from_millis(300), move |_| {
+            if self.asked.try_get_untracked() == Some(n) {
+                self.shown.set(Some(wanted));
+            }
+        });
+    }
+}
+
+/// The hover under a point over an editor (`local` in the editor's own view, `win` in the window): the glyph's title
+/// in the glyph margin, the ranges' hovers over the text; none there: hidden.
+fn hover_over(ui: Ui, editor: &Editor, path: &str, local: Point, win: Point) {
+    let hover = ui.state::<Hover>();
+    let (o, v) = (editor.window_origin.get_untracked(), editor.viewport.get_untracked());
+    let at = Point::new(win.x - o.x + v.x0, win.y - o.y + v.y0);
+    let ((line, col), inside) = editor.line_col_of_point(Mode::Insert, at);
+    let texts = match of(path) {
+        None => Vec::new(),
+        Some(m) if local.x < MARGIN => line_at(editor, local.y)
+            .and_then(|line| m.lines.get(&line).and_then(|l| l.glyph.as_ref()))
+            .map(|g| vec![g.title.clone()])
+            .filter(|t| !t[0].is_empty())
+            .unwrap_or_default(),
+        Some(_) if win.x >= o.x && inside => hover_at(path, line, col),
+        Some(_) => Vec::new(),
+    };
+    if texts.is_empty() {
+        return hover.hide();
+    }
+    let height = editor.line_height(line) as f64;
+    let below = o.y + ((at.y / height).floor() + 1.0) * height - v.y0;
+    hover.ask(Shown { texts, at: Point::new(win.x, below + 2.0) });
+}
+
+/// The hover's box, as VS Code's: its colours, its border, at most 500 px wide.
+fn hover_view(ui: Ui) -> floem::AnyView {
+    let hover = ui.state::<Hover>();
+    let t = ui.colors;
+    floem::views::dyn_container(
+        move || hover.shown.get().map(|s| s.texts),
+        move |texts| {
+            let c = t.get_untracked();
+            let lines = texts.unwrap_or_default().into_iter().map(|text| floem::views::label(move || text.clone()));
+            floem::views::v_stack_from_iter(lines)
+                .style(move |s| {
+                    s.padding_vert(4.0)
+                        .padding_horiz(8.0)
+                        .row_gap(4.0)
+                        .max_width(500.0)
+                        .font_size(13.0)
+                        .color(c.hover_fg)
+                        .background(c.hover_bg)
+                        .border(1.0)
+                        .border_color(c.hover_border)
+                        .border_radius(3.0)
+                })
+                .into_any()
+        },
+    )
+    .style(move |s| match hover.shown.get() {
+        None => s.hide(),
+        Some(h) => s.absolute().inset_left(h.at.x).inset_top(h.at.y),
+    })
+    .into_any()
 }
 
 /// An owner's marks for a file, in place of those it gave before (none: it has none there now).
@@ -524,6 +628,15 @@ pub fn over(ui: Ui, editor: &Editor, path: &str) -> impl IntoView + use<> {
             id.request_paint();
         });
     }
+    // Scrolled, or the caret moved (a key pressed): the hover goes, as VS Code's.
+    let (hover, cursor) = (ui.state::<Hover>(), editor.cursor);
+    floem::reactive::create_effect(move |_| {
+        viewport.track();
+        cursor.track();
+        hover.hide();
+    });
+    let origin = floem::reactive::create_rw_signal(Point::ZERO);
+    let (hovered, hover_path) = (editor.clone(), path.to_string());
     let shown = editor.clone();
     let path = path.to_string();
     let margin = margin
@@ -541,7 +654,15 @@ pub fn over(ui: Ui, editor: &Editor, path: &str) -> impl IntoView + use<> {
         })
         .style(|s| s.absolute().inset_left(0.0).inset_top(0.0).width(MARGIN).height_full());
     let ruler = ruler.style(|s| s.absolute().inset_right(0.0).inset_top(0.0).width(RULER).height_full());
-    floem::views::stack((margin, ruler)).style(|s| s.absolute().size_full())
+    floem::views::stack((margin, ruler))
+        .on_move(move |p| origin.set(p))
+        .on_event_cont(EventListener::PointerMove, move |e| {
+            if let Event::PointerMove(p) = e {
+                hover_over(ui, &hovered, &hover_path, p.pos, p.pos + origin.get_untracked().to_vec2());
+            }
+        })
+        .on_event_cont(EventListener::PointerLeave, move |_| hover.hide())
+        .style(|s| s.absolute().size_full())
 }
 
 /// The line drawn at a height in the editor's view (none: below the last).
@@ -600,9 +721,10 @@ impl View for Margin {
     }
 }
 
-/// What it adds to the window's registries, once at start: every file's marks take the theme's colours again when
+/// What it adds to the window's registries, once at start: the hover's layer; and every file's marks take the theme's colours again when
 /// it changes.
 pub fn register(ui: Ui, _send: &Send) {
+    crate::layers::add(crate::layers::Place::Over, "editor.hover", 20, |ui, _| hover_view(ui));
     let colors = ui.colors;
     ui.scope.create_effect(move |_| {
         let c = colors.get();
