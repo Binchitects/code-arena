@@ -1203,8 +1203,11 @@ pub fn receive_char(ed: &Editor, path: &str, c: &str) -> bool {
     }
 }
 
-/// The editor's right-click menu, where it was clicked.
+/// The editor's right-click menu, where it was clicked (a press of the pointer's other button).
 pub fn context_menu(ui: Ui, view: floem::ViewId, e: &Event) {
+    if !matches!(e, Event::PointerDown(p) if p.button.is_secondary()) {
+        return;
+    }
     super::tell(ui, |send| {
         crate::widgets::popup::open_menu(
             ui,
