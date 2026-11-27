@@ -60,6 +60,39 @@ struct Term {
     writer: Box<dyn Write + Send>,
     /// Its last output, for a page that comes back (a reload) to draw it again.
     screen: Arc<Mutex<String>>,
+    /// What started it, for one the driver made (a task, a run, a debuggee): its tab's title and its kind.
+    made: Option<(String, String)>,
+}
+
+/// The most terminals of the person's running at once (the driver's own are not counted).
+const MOST_TERMS: usize = 10;
+
+/// The numbers of the terminals the driver makes, apart from the faces' own.
+pub const FIRST_DRIVER_TERM: u64 = 1_000_000;
+
+static NEXT_DRIVER_TERM: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(FIRST_DRIVER_TERM);
+
+/// What a terminal's shell is not to see of the driver's environment.
+const NOT_IN_TERMS: &[&str] = &["ARENA_API_KEY"];
+
+/// The shell a terminal runs: the one asked for (a path, or a name on `PATH`), else `$SHELL`, else bash, else sh.
+pub(crate) fn shell_for(asked: Option<&str>, env_shell: Option<&Path>, path: Option<&str>) -> PathBuf {
+    let found = |name: &str| -> Option<PathBuf> {
+        let p = Path::new(name);
+        if p.is_absolute() {
+            return p.is_file().then(|| p.to_path_buf());
+        }
+        if name.is_empty() || name.contains('/') {
+            return None;
+        }
+        std::env::split_paths(path?).map(|d| d.join(name)).find(|c| c.is_file())
+    };
+    asked
+        .map(str::trim)
+        .and_then(found)
+        .or_else(|| env_shell.filter(|p| p.is_file()).map(Path::to_path_buf))
+        .or_else(|| found("bash"))
+        .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }))
 }
 
 /// How much of a terminal's output is kept for a page that comes back.
@@ -85,7 +118,8 @@ pub struct Side {
     checkpoints: Arc<ca_tools::checkpoints::Checkpoints>,
     out: broadcast::Sender<String>,
     terms: Arc<Mutex<HashMap<u64, Term>>>,
-    shell: PathBuf,
+    /// `$SHELL`, when it is a path.
+    shell: Option<PathBuf>,
     watch: Arc<Mutex<Watch>>,
     /// Where the unsaved changes of this project's files are kept (only the person may read them).
     backups: PathBuf,
@@ -224,10 +258,7 @@ impl Side {
         shell: Option<&str>,
         data: &Path,
     ) -> Side {
-        let shell = shell
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-            .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }));
+        let shell = shell.map(PathBuf::from).filter(|p| p.is_absolute());
         let backups = data.join("ide-backups").join(name_of(&ws.root().to_string_lossy()));
         Side {
             ws,
@@ -506,7 +537,16 @@ impl Side {
                         let mut ids: Vec<&u64> = t.keys().collect();
                         ids.sort();
                         ids.into_iter()
-                            .map(|id| json!({"id": id, "screen": t[id].screen.lock().map(|s| s.clone()).unwrap_or_default()}))
+                            .map(|id| {
+                                let term = &t[id];
+                                let screen = term.screen.lock().map(|s| s.clone()).unwrap_or_default();
+                                let mut v = json!({"id": id, "screen": screen});
+                                if let Some((title, kind)) = &term.made {
+                                    v["title"] = json!(title);
+                                    v["kind"] = json!(kind);
+                                }
+                                v
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -913,11 +953,47 @@ impl Side {
         let id = m["id"].as_u64().unwrap_or(0);
         let cols = m["cols"].as_u64().unwrap_or(80) as u16;
         let rows = m["rows"].as_u64().unwrap_or(24) as u16;
-        let env = vec![("TERM".to_string(), "xterm-256color".to_string()), ("COLORTERM".into(), "truecolor".into())];
+        let mine = self.terms.lock().map(|t| t.values().filter(|t| t.made.is_none()).count()).unwrap_or(0);
+        if mine >= MOST_TERMS && !self.terms.lock().is_ok_and(|t| t.contains_key(&id)) {
+            let error = format!("At most {MOST_TERMS} terminals run at once: kill one to start another.");
+            send(&self.out, json!({"type": "term_exit", "id": id, "error": error}));
+            return;
+        }
         // In the folder asked for (the Explorer's Open in Integrated Terminal), when it is one of the project's.
         let asked = m["cwd"].as_str().and_then(|c| self.real(c).ok()).filter(|p| p.is_dir());
-        let cwd = asked.as_deref().unwrap_or(self.ws.cwd());
-        let pty = match ca_pty::Pty::spawn(&self.shell, &[], cwd, &env, cols, rows) {
+        let cwd = asked.as_deref().unwrap_or(self.ws.cwd()).to_path_buf();
+        let path = std::env::var_os("PATH").map(|p| p.to_string_lossy().into_owned());
+        let shell = shell_for(m["shell"].as_str(), self.shell.as_deref(), path.as_deref());
+        self.term_spawn(id, &shell, &[], &cwd, (cols, rows), None);
+    }
+
+    /// A terminal the driver starts itself (a task, a run, a debuggee: `kind` is "task", "run" or "debug"): every
+    /// face is told with `term_started{id, title, kind}` before its first output, so the window shows it at once.
+    /// Its number, from [`FIRST_DRIVER_TERM`].
+    #[allow(dead_code)] // The tasks, runs and debuggers call it.
+    pub fn term_start(&self, title: &str, kind: &str, program: &Path, args: &[String], cwd: &Path) -> u64 {
+        let id = NEXT_DRIVER_TERM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        send(&self.out, json!({"type": "term_started", "id": id, "title": title, "kind": kind}));
+        self.term_spawn(id, program, args, cwd, (80, 24), Some((title.to_string(), kind.to_string())));
+        id
+    }
+
+    fn term_spawn(
+        &self,
+        id: u64,
+        program: &Path,
+        args: &[String],
+        cwd: &Path,
+        (cols, rows): (u16, u16),
+        made: Option<(String, String)>,
+    ) {
+        let env = vec![
+            ("TERM".to_string(), "xterm-256color".to_string()),
+            ("COLORTERM".into(), "truecolor".into()),
+            ("TERM_PROGRAM".into(), "code-arena".into()),
+            ("TERM_PROGRAM_VERSION".into(), env!("CARGO_PKG_VERSION").into()),
+        ];
+        let pty = match ca_pty::Pty::spawn_without(program, args, cwd, &env, NOT_IN_TERMS, cols, rows) {
             Ok(p) => p,
             Err(e) => {
                 send(&self.out, json!({"type": "term_exit", "id": id, "error": e.to_string()}));
@@ -934,7 +1010,7 @@ impl Side {
                 // Already running (the page came back and asked again): left as it is.
                 return;
             }
-            t.insert(id, Term { pty, writer, screen: screen.clone() });
+            t.insert(id, Term { pty, writer, screen: screen.clone(), made });
         }
         let out = self.out.clone();
         let terms = self.terms.clone();
@@ -1970,6 +2046,69 @@ mod tests {
             }
         }
         assert!(text.contains("hello-42"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shell_is_the_one_asked_for_then_the_environments_then_bash_then_sh() {
+        let d = tempfile::tempdir().expect("temp");
+        let (zsh, bash) = (d.path().join("zsh"), d.path().join("bash"));
+        std::fs::write(&zsh, "").expect("w");
+        std::fs::write(&bash, "").expect("w");
+        let path = d.path().to_string_lossy().into_owned();
+        assert_eq!(shell_for(Some("zsh"), None, Some(&path)), zsh);
+        assert_eq!(shell_for(Some(zsh.to_str().expect("s")), None, None), zsh);
+        // One that is not there, or none asked: $SHELL, then bash on PATH, then sh.
+        assert_eq!(shell_for(Some("fish"), Some(&zsh), Some(&path)), zsh);
+        assert_eq!(shell_for(None, Some(&d.path().join("gone")), Some(&path)), bash);
+        assert_eq!(shell_for(Some("../zsh"), None, Some("/nowhere")), PathBuf::from("/bin/sh"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_terminal_says_it_is_code_arenas_and_the_driver_starts_its_own() {
+        let (d, s, mut rx) = side();
+        let id = s.term_start("Task - build", "task", Path::new("/bin/sh"), &[], d.path());
+        assert!(id >= FIRST_DRIVER_TERM);
+        let first: Value = serde_json::from_str(&rx.blocking_recv().expect("message")).expect("json");
+        assert_eq!(first, json!({"type": "term_started", "id": id, "title": "Task - build", "kind": "task"}));
+        s.handle(&json!({"type": "term_in", "id": id, "data": "echo \"[$TERM_PROGRAM]\"\n"}));
+        loop {
+            let v: Value = serde_json::from_str(&rx.blocking_recv().expect("message")).expect("json");
+            if v["type"] == "term_out" && v["data"].as_str().is_some_and(|d| d.contains("[code-arena]")) {
+                break;
+            }
+        }
+        s.handle(&json!({"type": "terms"}));
+        let listed = loop {
+            let v: Value = serde_json::from_str(&rx.blocking_recv().expect("message")).expect("json");
+            if v["type"] == "terms" {
+                break v;
+            }
+        };
+        let t = listed["terms"].as_array().expect("terms").iter().find(|t| t["id"] == id).cloned().expect("listed");
+        assert_eq!((t["title"].as_str(), t["kind"].as_str()), (Some("Task - build"), Some("task")));
+        s.handle(&json!({"type": "term_close", "id": id}));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_more_than_ten_of_the_persons_terminals_run() {
+        let (_d, s, mut rx) = side();
+        for id in 1..=11 {
+            s.handle(&json!({"type": "term_open", "id": id, "cols": 80, "rows": 24}));
+        }
+        let refused = loop {
+            let v: Value = serde_json::from_str(&rx.blocking_recv().expect("message")).expect("json");
+            if v["type"] == "term_exit" {
+                break v;
+            }
+        };
+        assert_eq!(refused["id"], 11);
+        assert!(refused["error"].as_str().is_some_and(|e| e.starts_with("At most 10")), "{refused}");
+        for id in 1..=10 {
+            s.handle(&json!({"type": "term_close", "id": id}));
+        }
     }
 
     #[cfg(unix)]

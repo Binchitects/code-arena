@@ -14,6 +14,7 @@ const ALLOWED: &[(&str, &str)] = &[
     ("ca-tools/src/shell.rs", "std::env::var_os(\"PATH\")"),
     ("ca-tools/src/sandbox.rs", "std::env::var_os(\"PATH\")"),
     ("ca-cli/src/ide.rs", "std::env::var_os(\"PATH\")"),
+    ("ca-cli/src/ide_files.rs", "std::env::var_os(\"PATH\")"),
     // A build script's own variables, set by Cargo while it builds: not the program's environment.
     ("ca-server/build.rs", "std::env::var(\"CARGO_MANIFEST_DIR\")"),
     ("ca-server/build.rs", "std::env::var(\"OUT_DIR\")"),
