@@ -100,6 +100,22 @@ colors! {
     cursor: ["editorCursor.foreground"], "#AEAFAD", "#000000";
     indent_guide: ["editorIndentGuide.background1", "editorIndentGuide.background"], "#404040", "#D3D3D3";
     whitespace: ["editorWhitespace.foreground"], "#E3E4E229", "#33333333";
+    gutter_bg: ["editorGutter.background", "editor.background"], "#1E1E1E", "#FFFFFF";
+    problem_error: ["editorError.foreground"], "#F14C4C", "#E51400";
+    problem_info: ["editorInfo.foreground"], "#3794FF", "#1A85FF";
+    problem_hint: ["editorHint.foreground"], "#EEEEEEB3", "#6C6C6C";
+    code_lens: ["editorCodeLens.foreground"], "#999999", "#919191";
+    ghost_text: ["editorGhostText.foreground"], "#FFFFFF56", "#00000077";
+    inlay_fg: ["editorInlayHint.foreground"], "#969696", "#969696";
+    inlay_bg: ["editorInlayHint.background"], "#4D4D4D1A", "#C4C4C41A";
+    link_active: ["editorLink.activeForeground"], "#4E94CE", "#0000FF";
+    hover_bg: ["editorHoverWidget.background", "editorWidget.background"], "#252526", "#F3F3F3";
+    hover_fg: ["editorHoverWidget.foreground", "editorWidget.foreground", "foreground"], "#CCCCCC", "#616161";
+    hover_border: ["editorHoverWidget.border", "editorWidget.border"], "#454545", "#C8C8C8";
+    ruler_border: ["editorOverviewRuler.border"], "#7F7F7F4D", "#7F7F7F4D";
+    ruler_error: ["editorOverviewRuler.errorForeground"], "#FF1212B3", "#FF1212B3";
+    ruler_warning: ["editorOverviewRuler.warningForeground", "editorWarning.foreground"], "#CCA700", "#BF8803";
+    ruler_info: ["editorOverviewRuler.infoForeground", "editorInfo.foreground"], "#3794FF", "#1A85FF";
 
     tabs_bg: ["editorGroupHeader.tabsBackground"], "#252526", "#F3F3F3";
     tabs_border: ["editorGroupHeader.tabsBorder"], "#00000000", "#00000000";

@@ -565,6 +565,7 @@ dependencies = [
  "ca-themes",
  "crossbeam-channel",
  "floem",
+ "floem_renderer",
  "globset",
  "im",
  "regex",
