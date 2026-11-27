@@ -336,10 +336,17 @@ impl Dock {
         let id = d.next;
         d.next += 2;
         let group = Node::Tabs { id, views: vec![v], active: v };
+        d.insert(group, target, side, id + 1);
+        d.normalized()
+    }
+
+    /// A part put against `target` (`ROOT`: the window's edge); a split made for it, when one is needed, is
+    /// numbered `split`.
+    fn insert(&mut self, group: Node, target: u32, side: Side, split: u32) {
         let dir = side.dir();
         if target == ROOT {
-            let root = std::mem::replace(&mut d.root, Node::Editor);
-            d.root = match root {
+            let root = std::mem::replace(&mut self.root, Node::Editor);
+            self.root = match root {
                 Node::Split { id: rid, dir: rdir, mut kids } if rdir == dir => {
                     if side.before() {
                         kids.insert(0, group)
@@ -350,21 +357,112 @@ impl Dock {
                 }
                 other => {
                     let kids = if side.before() { vec![group, other] } else { vec![other, group] };
-                    Node::Split { id: id + 1, dir, kids }
+                    Node::Split { id: split, dir, kids }
                 }
             };
-            return d.normalized();
+            return;
         }
-        let same_dir = matches!(d.root.parent_of_mut(target), Some((Node::Split { dir: pdir, .. }, _)) if *pdir == dir);
+        let same_dir =
+            matches!(self.root.parent_of_mut(target), Some((Node::Split { dir: pdir, .. }, _)) if *pdir == dir);
         if same_dir {
-            if let Some((Node::Split { kids, .. }, at)) = d.root.parent_of_mut(target) {
+            if let Some((Node::Split { kids, .. }, at)) = self.root.parent_of_mut(target) {
                 kids.insert(if side.before() { at } else { at + 1 }, group);
             }
-        } else if let Some(node) = d.root.find_mut(target) {
+        } else if let Some(node) = self.root.find_mut(target) {
             let old = std::mem::replace(node, Node::Editor);
             let kids = if side.before() { vec![group, old] } else { vec![old, group] };
-            *node = Node::Split { id: id + 1, dir, kids };
+            *node = Node::Split { id: split, dir, kids };
         }
+    }
+
+    /// `v` moved in its group's order to stand before `before` (none, or one not in its group: last).
+    pub fn reordered(&self, v: View, before: Option<View>) -> Dock {
+        let mut d = self.clone();
+        let Some(g) = d.group_of(v) else { return d };
+        if let Some(Node::Tabs { views, .. }) = d.root.find_mut(g) {
+            views.retain(|x| *x != v);
+            let at = before.and_then(|b| views.iter().position(|x| *x == b)).unwrap_or(views.len());
+            views.insert(at, v);
+        }
+        d
+    }
+
+    /// `v` one place up (a negative `by`) or down in its group's order; at an end it stays.
+    pub fn nudged(&self, v: View, by: i32) -> Dock {
+        let mut d = self.clone();
+        let Some(g) = d.group_of(v) else { return d };
+        if let Some(Node::Tabs { views, .. }) = d.root.find_mut(g)
+            && let Some(i) = views.iter().position(|x| *x == v)
+        {
+            let j = i as i64 + by as i64;
+            if (0..views.len() as i64).contains(&j) {
+                views.swap(i, j as usize);
+            }
+        }
+        d
+    }
+
+    /// `v` put among the views of the group `g` before `before` (none: last), and shown there.
+    pub fn put_in(&self, v: View, g: u32, before: Option<View>) -> Dock {
+        let d = if self.group_of(v) == Some(g) { self.shown(v) } else { self.docked(v, g, Side::Center) };
+        d.reordered(v, before)
+    }
+
+    /// Every group, by number, in the tree's order.
+    pub fn all_groups(&self) -> Vec<u32> {
+        let mut out = Vec::new();
+        self.root.groups(&mut out);
+        out
+    }
+
+    /// VS Code's panel: the group the terminal is in (the one Ctrl+J shows and hides), wherever it was moved; with
+    /// no terminal in the tree, the group right below the editor.
+    pub fn panel(&self) -> Option<u32> {
+        if let Some(g) = self.group_of(View::Terminal) {
+            return Some(g);
+        }
+        fn below(n: &Node) -> Option<u32> {
+            let Node::Split { dir, kids, .. } = n else { return None };
+            let under = (*dir == Dir::Column)
+                .then(|| kids.windows(2).find(|w| w[0].has_editor() && matches!(w[1], Node::Tabs { .. })))
+                .flatten()
+                .map(|w| w[1].id());
+            under.or_else(|| kids.iter().find_map(below))
+        }
+        below(&self.root)
+    }
+
+    /// Where a group is against the editor when the two are parts of one split: below it, above, right or left.
+    pub fn side_of_editor(&self, g: u32) -> Option<Side> {
+        fn walk(n: &Node, g: u32) -> Option<Side> {
+            let Node::Split { dir, kids, .. } = n else { return None };
+            if let (Some(at), Some(e)) = (kids.iter().position(|k| k.id() == g), kids.iter().position(Node::has_editor))
+            {
+                return Some(match (dir, at > e) {
+                    (Dir::Column, true) => Side::Bottom,
+                    (Dir::Column, false) => Side::Top,
+                    (Dir::Row, true) => Side::Right,
+                    (Dir::Row, false) => Side::Left,
+                });
+            }
+            kids.iter().find_map(|k| walk(k, g))
+        }
+        walk(&self.root, g)
+    }
+
+    /// The group `g` moved whole to a side of the editor, keeping its number (so its size, and whether it is
+    /// hidden, stay): VS Code's Move Panel Left, Right, to the Bottom.
+    pub fn group_moved(&self, g: u32, side: Side) -> Dock {
+        if self.side_of_editor(g) == Some(side) {
+            return self.clone();
+        }
+        let mut d = self.clone();
+        let Some((Node::Split { kids, .. }, at)) = d.root.parent_of_mut(g) else { return d };
+        let group = kids.remove(at);
+        let mut d = d.tidied(false);
+        let split = d.next.max(d.most() + 1);
+        d.next = split + 1;
+        d.insert(group, EDITOR, side, split);
         d.normalized()
     }
 
@@ -670,6 +768,51 @@ mod tests {
         assert_eq!(d.side_bar(), Some(2));
         assert_eq!(d.group_of(Terminal), Some(4));
         assert_eq!(d.normalized(), d);
+    }
+
+    #[test]
+    fn views_reordered_in_their_group_keep_that_order_when_kept_and_read_back() {
+        let side = |d: &Dock| match d.find(2) {
+            Some(Node::Tabs { views, .. }) => views.clone(),
+            _ => panic!(),
+        };
+        let d = Dock::default().reordered(Outline, Some(Search));
+        assert_eq!(side(&d), [Files, Outline, Search, Changes]);
+        assert_eq!(side(&Dock::from_json(&d.to_json())), [Files, Outline, Search, Changes]);
+        // Last when nothing is named; up and down by one, staying at the ends.
+        assert_eq!(side(&d.reordered(Files, None)), [Outline, Search, Changes, Files]);
+        assert_eq!(side(&d.nudged(Search, 1)), [Files, Outline, Changes, Search]);
+        assert_eq!(side(&d.nudged(Files, -1)), [Files, Outline, Search, Changes]);
+        // Put in from another group at a place, and shown there.
+        let d = Dock::default().put_in(Agent, 2, Some(Search));
+        ok(&d);
+        assert_eq!(side(&d), [Files, Agent, Search, Changes, Outline]);
+        assert!(matches!(d.find(2), Some(Node::Tabs { active: Agent, .. })));
+    }
+
+    #[test]
+    fn the_panel_moved_whole_beside_the_editor_keeps_its_number() {
+        let d = Dock::default();
+        assert_eq!(d.panel(), Some(4));
+        assert_eq!(d.side_of_editor(4), Some(Side::Bottom));
+        let left = d.group_moved(4, Side::Left);
+        ok(&left);
+        assert_eq!(left.panel(), Some(4));
+        assert_eq!(left.side_of_editor(4), Some(Side::Left));
+        // Still the side bar at the far left and the secondary at the right.
+        assert_eq!(left.side_bar(), Some(2));
+        let Node::Split { kids, .. } = &left.root else { panic!() };
+        assert_eq!(kids.iter().map(Node::id).collect::<Vec<_>>(), [2, 4, EDITOR, 5]);
+        let right = left.group_moved(4, Side::Right);
+        ok(&right);
+        assert_eq!(right.side_of_editor(4), Some(Side::Right));
+        let back = right.group_moved(4, Side::Bottom);
+        ok(&back);
+        assert_eq!(back.side_of_editor(4), Some(Side::Bottom));
+        assert_eq!(back.group_moved(4, Side::Bottom), back);
+        // With the terminal out of the tree the panel is the group under the editor.
+        let d = Dock::default().docked(Search, EDITOR, Side::Bottom).floated(Terminal);
+        assert_eq!(d.panel(), d.group_of(Search));
     }
 
     #[test]
