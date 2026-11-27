@@ -239,6 +239,14 @@ Sections used:
   waits) are warning lines above the answer.
 - **A page reloaded mid-turn sees the turn from its start.** Instead of a silent 'busy', it gets the
   thread before the turn and then everything the running turn has said so far.
+- **An edit shows what it changed.** Under each edit in the chat, 'Changes to PATH' lists the changed
+  lines with 3 lines around them. Each line has its old and new number, removed lines are red and added
+  lines green, '⋮' marks skipped lines and '… N more changed lines' ends a long list. The edit also shows
+  'new file' and its +N −M. It stays open while the turn runs. Clicking the path opens the file at its
+  first change, and clicking a new line number opens that line. An answer whose only call is a
+  successful edit shows just its diff.
+- **N files changed.** Under a finished turn's last answer: the files its edits changed, each listed once
+  with its +/− counts and the totals. Clicking a file opens the agent's compare of it.
 
 
 ### :bug: Bugs fixed
