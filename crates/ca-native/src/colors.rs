@@ -108,6 +108,8 @@ colors! {
     code_lens: ["editorCodeLens.foreground"], "#999999", "#919191";
     ghost_text: ["editorGhostText.foreground"], "#FFFFFF56", "#00000077";
     inlay_fg: ["editorInlayHint.foreground"], "#969696", "#969696";
+    fold_bg: ["editor.foldBackground"], "#264F784D", "#ADD6FF4D";
+    folding_control: ["editorGutter.foldingControlForeground", "icon.foreground"], "#C5C5C5", "#424242";
     inlay_bg: ["editorInlayHint.background"], "#4D4D4D1A", "#C4C4C41A";
     link_active: ["editorLink.activeForeground"], "#4E94CE", "#0000FF";
     hover_bg: ["editorHoverWidget.background", "editorWidget.background"], "#252526", "#F3F3F3";

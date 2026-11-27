@@ -586,7 +586,9 @@ impl Document for Doc {
     }
 
     fn compute_screen_lines(&self, editor: &Editor, base: RwSignal<ScreenLinesBase>) -> ScreenLines {
-        self.inner.compute_screen_lines(editor, base)
+        // With folds, the rows the fold map puts the lines on (`editor::folding`).
+        crate::editor::folding::screen_lines(editor, base, &self.path)
+            .unwrap_or_else(|| self.inner.compute_screen_lines(editor, base))
     }
 
     fn run_command(&self, ed: &Editor, cmd: &Command, count: Option<usize>, modifiers: Modifiers) -> CommandExecuted {
