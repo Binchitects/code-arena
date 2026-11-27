@@ -246,6 +246,7 @@ fn title_bar(ui: Ui, send: Send) -> impl IntoView {
         |(n, _)| *n,
         move |(n, name)| {
             label(move || name)
+                .on_move(move |p| crate::layout_commands::title_at(n, p.x))
                 .on_click_stop(move |_| ui.menu.update(|m| *m = if *m == Some(n) { None } else { Some(n) }))
                 .on_event_cont(EventListener::PointerEnter, move |_| {
                     if ui.menu.get_untracked().is_some() {
@@ -348,8 +349,10 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
                 .iter()
                 .map(|r| matches!(r, Row::Entry { command: Some(_), .. }))
                 .collect();
-            // Where the menu's title is: the icon (35) and the titles before it, each its text and 16 of padding.
-            let left = 35.0 + MENUS[..n].iter().map(|m| m.len() as f64 * 7.4 + 16.0).sum::<f64>();
+            // Where the menu's title is, as laid out (before that: the icon's 35 and the titles before it, each its
+            // text and 16 of padding).
+            let left = crate::layout_commands::title_x(n)
+                .unwrap_or_else(|| 35.0 + MENUS[..n].iter().map(|m| m.len() as f64 * 7.4 + 16.0).sum::<f64>());
             let rows = crate::menus::rows(ui, crate::menus::Menu::TitleBar(n));
             let items = dyn_stack(
                 move || rows.clone().into_iter().enumerate().collect::<Vec<_>>(),

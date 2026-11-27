@@ -26,15 +26,15 @@ name=code-arena-ui-$(basename "$(pwd)" | tr -c 'a-zA-Z0-9_.\n-' '-')
 cmd=${1:-}
 [ $# -gt 0 ] && shift
 
-# The main window's title: the app's name, after the folder's ("work · Code Arena"); a floating view's has a dash.
-main='^(Code Arena|.* · Code Arena)$'
+# The main window: called by the app's name after the folder's ("work · Code Arena"); a floating view's has a dash.
+main='$(for w in $(xdotool search --name "Code Arena\$"); do case "$(xdotool getwindowname $w)" in *—*) ;; *) echo $w; break ;; esac; done)'
 
 inside() { docker exec -e DISPLAY=:99 "$name" sh -c "$1"; }
 
 # There is no window manager on the virtual screen, so keys go to a window only once it is given the focus: the one
 # under the pointer (a floating view's window, a menu), else the main window.
 focus='w=$(xdotool getmouselocation --shell | sed -n "s/^WINDOW=//p"); r=$(xdotool search --maxdepth 0 --name "" 2>/dev/null | head -1); \
-  [ -z "$w" ] || [ "$w" = "$r" ] && w=$(xdotool search --name "'"$main"'" | head -1); xdotool windowfocus --sync "$w" 2>/dev/null || true'
+  [ -z "$w" ] || [ "$w" = "$r" ] && w='"$main"'; xdotool windowfocus --sync "$w" 2>/dev/null || true'
 
 open_window() {
   # The window's own process id is kept (a new sh's $$, kept by exec), so restart stops exactly it.
@@ -44,7 +44,7 @@ open_window() {
     FLOEM_FORCE_TINY_SKIA=1 FONTCONFIG_FILE=/src/scripts/ui/fonts.conf XDG_RUNTIME_DIR=/tmp \
     /src/target/debug/code-arena ide >/tmp/app.log 2>&1'
   i=0
-  until inside 'xdotool search --name "'"$main"'" >/dev/null 2>&1'; do
+  until inside '[ -n "'"$main"'" ]'; do
     i=$((i + 1))
     if [ $i -gt 60 ]; then
       echo "the window did not open; its output:" >&2
@@ -53,7 +53,7 @@ open_window() {
     fi
     sleep 0.5
   done
-  inside 'w=$(xdotool search --name "'"$main"'" | head -1); xdotool windowmove "$w" 0 0; xdotool windowfocus --sync "$w"' >/dev/null 2>&1 || true
+  inside 'w='"$main"'; xdotool windowmove "$w" 0 0; xdotool windowfocus --sync "$w"' >/dev/null 2>&1 || true
   sleep 1.5
 }
 
@@ -69,7 +69,7 @@ case $cmd in
     inside 'p=$(cat /tmp/app.pid 2>/dev/null) && kill $p 2>/dev/null; while [ -n "$p" ] && kill -0 $p 2>/dev/null; do sleep 0.1; done' || true
     open_window
     ;;
-  shot) inside "python3 /src/scripts/ui/shot.py '/src/$1' '$main'" ;;
+  shot) inside "python3 /src/scripts/ui/shot.py '/src/$1' 'Code Arena'" ;;
   screen) inside "python3 /src/scripts/ui/shot.py '/src/$1'" ;;
   click) inside "xdotool mousemove $1 $2 click 1" ;;
   rclick) inside "xdotool mousemove $1 $2 click 3" ;;

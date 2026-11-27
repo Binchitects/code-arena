@@ -46,6 +46,8 @@ const FRAMES: u32 = 90;
 thread_local! {
     /// A view of the main window (the confetti's layer), by which its window is found.
     static MAIN: Cell<Option<ViewId>> = const { Cell::new(None) };
+    /// Where each title bar menu's title begins across the window, as laid out.
+    static TITLES: Cell<[Option<f64>; 8]> = const { Cell::new([None; 8]) };
     /// How far into the Konami code the keys typed are.
     static TYPED: Cell<usize> = const { Cell::new(0) };
 }
@@ -416,6 +418,22 @@ pub fn register(ui: Ui, _send: &Send) {
     });
 }
 
+/// A title bar menu's title laid out at `x` across the window.
+pub fn title_at(n: usize, x: f64) {
+    TITLES.with(|t| {
+        let mut all = t.get();
+        if let Some(at) = all.get_mut(n) {
+            *at = Some(x);
+        }
+        t.set(all);
+    });
+}
+
+/// Where a title bar menu's title begins, once it is laid out.
+pub fn title_x(n: usize) -> Option<f64> {
+    TITLES.with(|t| t.get().get(n).copied().flatten())
+}
+
 /// What a key does in a title bar menu that has the keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuKey {
@@ -581,6 +599,24 @@ mod tests {
         toggle_zen(ui);
         assert_eq!(ui.hidden.get_untracked(), before);
         assert!(bars_shown(ui) && title_bar_shown(ui));
+    }
+
+    #[test]
+    fn the_panel_commands_may_run_only_where_the_panel_is_not() {
+        let ui = Ui::new();
+        let send: Send = std::rc::Rc::new(|_| {});
+        register(ui, &send);
+        let may = |id: &str| crate::commands::find(id).is_some_and(|c| c.may_run(ui));
+        assert!(!may(PANEL_BOTTOM) && may(PANEL_RIGHT) && may(PANEL_LEFT));
+        assert!(crate::commands::run(ui, &send, PANEL_RIGHT));
+        assert_eq!(ui.dock.with_untracked(panel_place), Place::Right);
+        assert!(may(PANEL_BOTTOM) && !may(PANEL_RIGHT) && may(PANEL_LEFT));
+        let rows = crate::menus::rows(ui, crate::menus::Menu::TitleBar(crate::menus::VIEW));
+        let right = rows.iter().find_map(|r| match r {
+            crate::menus::Row::Entry { title, command, .. } if title == "Move Panel Right" => Some(command.clone()),
+            _ => None,
+        });
+        assert_eq!(right, Some(None), "dimmed in the View menu");
     }
 
     #[test]
