@@ -56,6 +56,7 @@ CREATE TABLE messages (
   at INTEGER NOT NULL,
   arena TEXT,
   details TEXT,
+  usage TEXT,
   PRIMARY KEY (session, seq)
 ) WITHOUT ROWID;
 CREATE INDEX messages_by_turn ON messages(session, turn);
@@ -111,6 +112,28 @@ ALTER TABLE sessions ADD COLUMN parent_seq INTEGER;
 const UPGRADE_4: &str = r#"
 ALTER TABLE messages ADD COLUMN details TEXT;
 "#;
+
+/// Columns added within a schema's version: each is added to a store that lacks it when the store opens, so a store
+/// of the same version made before it keeps its sessions, and a build before it (which names the columns it reads)
+/// still opens the store. Table, column, and its declaration.
+const ADDED: &[(&str, &str, &str)] = &[
+    // What an answer's turn used, on its last message: `{prompt, cached, completion, ms, model, cost?}`.
+    ("messages", "usage", "TEXT"),
+];
+
+/// Adds to the store the columns of `ADDED` it lacks.
+fn add_missing(db: &Connection) -> Result<()> {
+    for (table, column, decl) in ADDED {
+        let has: i64 =
+            db.query_row("SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2", params![table, column], |r| {
+                r.get(0)
+            })?;
+        if has == 0 {
+            db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl};"))?;
+        }
+    }
+    Ok(())
+}
 
 /// Where a session stands with its chat in Arena.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -213,6 +236,7 @@ impl Store {
                 .map_err(|e| SessionError::Sql(rusqlite::Error::InvalidPath(aside.join(e.to_string()))))?;
             return Self::open(path);
         }
+        add_missing(&db)?;
         Ok(Self { db })
     }
 
@@ -397,7 +421,7 @@ impl Store {
         let new = self.create(&s.folder, &s.model, &s.mode)?;
         let tx = self.db.unchecked_transaction()?;
         tx.execute(
-            "INSERT INTO messages (session, seq, turn, role, body, at, details) SELECT ?2, seq, turn, role, body, at, details FROM messages WHERE session = ?1 AND seq < ?3",
+            "INSERT INTO messages (session, seq, turn, role, body, at, details, usage) SELECT ?2, seq, turn, role, body, at, details, usage FROM messages WHERE session = ?1 AND seq < ?3",
             params![id, new, cut],
         )?;
         tx.execute(
@@ -424,6 +448,32 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(new)
+    }
+
+    /// What the turn just ended used (`{prompt, cached, completion, ms, model, cost?}`), kept on the session's last
+    /// message when it is the model's: the answer's footer, shown again after a reload. Nothing when the last
+    /// message is another's.
+    pub fn set_usage(&self, id: &str, usage: &serde_json::Value) -> Result<()> {
+        self.db.execute(
+            "UPDATE messages SET usage = ?2 WHERE session = ?1 AND role = 'assistant'
+               AND seq = (SELECT MAX(seq) FROM messages WHERE session = ?1)",
+            params![id, usage.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// What the turns of messages `from` on used, by the place of the message each is kept on.
+    pub fn usages(&self, id: &str, from: i64) -> Result<std::collections::HashMap<i64, serde_json::Value>> {
+        let mut q = self
+            .db
+            .prepare("SELECT seq, usage FROM messages WHERE session = ?1 AND seq >= ?2 AND usage IS NOT NULL")?;
+        let rows = q.query_map(params![id, from], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (seq, usage) = row?;
+            out.insert(seq, serde_json::from_str(&usage)?);
+        }
+        Ok(out)
     }
 
     /// The session a fork was made from, and how many of its messages it took.
@@ -774,6 +824,51 @@ mod tests {
         s.append(id, &a, false).expect("call");
         s.append(id, &Message::tool(format!("c{n}"), "result"), false).expect("result");
         s.append(id, &Message::assistant(format!("answer {n}")), false).expect("answer");
+    }
+
+    #[test]
+    fn a_turns_usage_is_kept_on_its_answer_and_forks_with_it() {
+        let s = Store::in_memory().expect("store");
+        let id = s.create("/w", "m", "ask").expect("create");
+        turn(&s, &id, 1);
+        let used = serde_json::json!({"prompt": 8600, "cached": 6278, "completion": 1200, "ms": 12000, "model": "m"});
+        s.set_usage(&id, &used).expect("usage");
+        // A last message that is the person's takes none.
+        s.append(&id, &Message::user("question 2"), true).expect("user");
+        s.set_usage(&id, &serde_json::json!({"prompt": 1})).expect("usage");
+        let kept = s.usages(&id, 0).expect("usages");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[&3], used);
+        let fork = s.fork(&id, None).expect("fork");
+        assert_eq!(s.usages(&fork, 0).expect("usages")[&3], used);
+    }
+
+    #[test]
+    fn a_store_of_this_version_without_the_usage_column_gains_it_and_keeps_its_sessions() {
+        let dir = std::env::temp_dir().join(format!("ca-session-usage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = dir.join("sessions.db");
+        {
+            let db = Connection::open(&path).expect("db");
+            db.execute_batch(&CREATE.replace("  usage TEXT,\n", "")).expect("create");
+            db.pragma_update(None, "user_version", SCHEMA).expect("version");
+            let has: i64 = db
+                .query_row("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'usage'", [], |r| r.get(0))
+                .expect("columns");
+            assert_eq!(has, 0, "made without the column");
+        }
+        let id = {
+            let s = Store::open(&path).expect("open");
+            let id = s.create("/w", "m", "ask").expect("create");
+            turn(&s, &id, 1);
+            id
+        };
+        let s = Store::open(&path).expect("open again");
+        s.set_usage(&id, &serde_json::json!({"prompt": 5})).expect("usage");
+        assert_eq!(s.usages(&id, 0).expect("usages")[&3]["prompt"], 5);
+        assert_eq!(s.summary(&id).expect("summary").messages, 4);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

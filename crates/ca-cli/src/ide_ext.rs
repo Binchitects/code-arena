@@ -124,6 +124,7 @@ pub const TAKEN: &[&str] = &[
     "turn_end",
     "text",
     "reasoning",
+    "thought",
     "notice",
     "tool_start",
     "tool_end",

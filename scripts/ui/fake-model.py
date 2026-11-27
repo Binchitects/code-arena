@@ -5,7 +5,8 @@
 #   python3 scripts/ui/fake-model.py 18733
 #
 # The last user message decides: "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a
-# command that needs an approval in ask mode, anything else streams a Markdown answer with a code block. A tool's
+# command that needs an approval in ask mode, "think" thinks for some seconds before it answers (with its usage),
+# anything else streams a Markdown answer with a code block. A tool's
 # result is answered with a short line, so each turn ends.
 import http.server
 import json
@@ -79,6 +80,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if last["role"] == "tool":
             ev({"content": "Done."})
             ev({}, "stop")
+        elif "think" in text:
+            for word in ("Let me weigh this. " * 40).split(" "):
+                ev({"reasoning_content": word + " "})
+                time.sleep(0.08)
+            for word in ANSWER.split(" "):
+                ev({"content": word + " "})
+            done = {"choices": [{"delta": {}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 8600, "completion_tokens": 1200, "prompt_tokens_details": {"cached_tokens": 6278}}}
+            self.wfile.write(f"data: {json.dumps(done)}\n\n".encode())
         elif "plan" in text:
             steps = [
                 {"title": "Read the code", "status": "done"},

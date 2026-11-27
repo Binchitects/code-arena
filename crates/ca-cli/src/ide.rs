@@ -103,15 +103,39 @@ struct PageEvents {
     out: broadcast::Sender<String>,
     /// The session's handles, for the bars (none while the conversation is compacted: nothing of theirs changes).
     tasks: Option<Shared>,
+    /// Since when the model thinks (none: it does not now), and how long it thought before in this turn.
+    thinking: Option<std::time::Instant>,
+    thought_ms: u64,
 }
 
 impl PageEvents {
+    fn new(out: broadcast::Sender<String>, tasks: Option<Shared>) -> Self {
+        PageEvents { out, tasks, thinking: None, thought_ms: 0 }
+    }
+
+    /// The model's thinking gave way (to its words, a call, the step's or the turn's end): the faces are told how
+    /// long it thought in this turn in all, and whether it was cut short (Skip thinking, or the turn stopped).
+    fn thought_ends(&mut self, stopped: bool) {
+        if let Some(since) = self.thinking.take() {
+            self.thought_ms += since.elapsed().as_millis() as u64;
+            let skipped = self.tasks.as_ref().is_some_and(|sh| sh.skip.asked());
+            send(&self.out, json!({"type": "thought", "ms": self.thought_ms, "cut_short": skipped || stopped}));
+        }
+    }
+
     /// How a call ended, kept for the thread a face asks for again in this run.
     fn keep(&self, id: &str, fact: Fact) {
         if let Some(sh) = &self.tasks {
             sh.kept.of::<CallFacts>().keep(&sh.session, id, fact);
         }
     }
+}
+
+/// What a turn used as the faces show it under its answer, and as the session keeps it: the tokens read (and how
+/// many of them from the cache) and written, how long it took and on which model. Its cost is added when a model's
+/// prices are known (none are yet).
+fn usage(u: &ca_llm::Usage, ms: u64, model: &str) -> Value {
+    json!({"prompt": u.prompt, "cached": u.cached, "completion": u.completion, "ms": ms, "model": model})
 }
 
 /// What one argument of a call shows in the page at most (a file written whole is long).
@@ -221,18 +245,22 @@ fn kept_calls(
 }
 impl Events for PageEvents {
     fn text(&mut self, delta: &str) {
+        self.thought_ends(false);
         send(&self.out, json!({"type": "text", "delta": delta}));
     }
     fn reasoning(&mut self, delta: &str) {
+        self.thinking.get_or_insert_with(std::time::Instant::now);
         send(&self.out, json!({"type": "reasoning", "delta": delta}));
     }
     fn notice(&mut self, text: &str) {
         send(&self.out, json!({"type": "notice", "text": text}));
     }
     fn tool_waiting(&mut self, call: &Call<'_>) {
+        self.thought_ends(false);
         send(&self.out, said_call("tool_waiting", call));
     }
     fn tool_start(&mut self, call: &Call<'_>) {
+        self.thought_ends(false);
         send(&self.out, said_call("tool_start", call));
     }
     fn tool_end(&mut self, call: &Call<'_>, output: &Output, took: std::time::Duration) {
@@ -271,6 +299,7 @@ impl Events for PageEvents {
         );
     }
     fn step_end(&mut self) {
+        self.thought_ends(false);
         send(&self.out, json!({"type": "step_end"}));
     }
 }
@@ -356,10 +385,11 @@ fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
         .ok()
         .and_then(|s| {
             let page = s.page(&p.session, 30, None).ok()?;
+            let from = page.messages.first().map_or(0, |m| m.seq);
             let details = page.messages.first().and_then(|m| s.details(&p.session, m.seq).ok()).unwrap_or_default();
-            Some((page, details))
+            Some((s.usages(&p.session, from).unwrap_or_default(), page, details))
         })
-        .map(|(page, details)| {
+        .map(|(used, page, details)| {
             page.messages
                 .iter()
                 .enumerate()
@@ -372,6 +402,12 @@ fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
                         "turn": m.turn,
                         "q": numbers.get(&m.seq),
                     });
+                    if let Some(r) = m.message.reasoning.as_deref().filter(|r| !r.is_empty()) {
+                        v["reasoning"] = json!(r);
+                    }
+                    if let Some(u) = used.get(&m.seq) {
+                        v["usage"] = u.clone();
+                    }
                     // Each call with what the session kept of it, beside their names (which stay as they were).
                     if !m.message.tool_calls.is_empty() {
                         v["tool_calls"] = json!(kept_calls(&m.message, &page.messages[at + 1..], &read, &fact));
@@ -748,7 +784,7 @@ async fn own_idle(m: &Value, p: &mut Prepared, app: &mut App, sh: &Shared) -> Ow
             }
         }
         "compact" => {
-            let mut events = PageEvents { out: out.clone(), tasks: None };
+            let mut events = PageEvents::new(out.clone(), None);
             let said = match p.agent.compact(&mut events, true).await {
                 Ok(Some(_)) => "Compacted: the model reads a summary of the earlier part from now on.".to_string(),
                 Ok(None) => "Nothing older to summarize.".to_string(),
@@ -1066,8 +1102,9 @@ async fn turn(
     // The session as the turn begins: what answers meanwhile reads this.
     *sh = Shared::of(p, app, drv, side);
     let started = std::time::Instant::now();
+    let model = p.agent.model.clone();
     let jobs = p.agent.ctx.jobs.clone();
-    let mut events = PageEvents { out: out.clone(), tasks: Some(sh.clone()) };
+    let mut events = PageEvents::new(out.clone(), Some(sh.clone()));
     let result = {
         let running = p.agent.turn(&message, &mut events);
         tokio::pin!(running);
@@ -1093,21 +1130,27 @@ async fn turn(
     if let Some(at) = at {
         keep_details(p, at, &sent);
     }
+    events.thought_ends(result.is_none());
     send(&out, tasks(sh));
     let took = started.elapsed();
     let ms = took.as_millis() as u64;
     let mut end = TurnEnd { message, outcome: None, stopped: false, error: None, took, carried: how == How::Carried };
     match result {
         Some(Ok(o)) => {
+            let used = usage(&o.usage, ms, &model);
+            // Kept on the answer, so its footer is shown again after a reload.
+            if let Ok(store) = p.store.lock() {
+                let _ = store.set_usage(&p.session, &used);
+            }
             send(
                 &out,
                 json!({"type": "turn_end", "ok": true, "ms": ms, "steps": o.steps, "tool_calls": o.tool_calls,
-                       "usage": {"prompt": o.usage.prompt, "cached": o.usage.cached, "completion": o.usage.completion}}),
+                       "model": model, "usage": used}),
             );
             end.outcome = Some(o);
         }
         Some(Err(e)) => {
-            send(&out, json!({"type": "turn_end", "ok": false, "ms": ms, "error": e.to_string()}));
+            send(&out, json!({"type": "turn_end", "ok": false, "ms": ms, "model": model, "error": e.to_string()}));
             end.error = Some(e.to_string());
         }
         None => {
@@ -1116,7 +1159,7 @@ async fn turn(
             {
                 j.stop_turn(t);
             }
-            send(&out, json!({"type": "turn_end", "ok": false, "ms": ms, "stopped": true}));
+            send(&out, json!({"type": "turn_end", "ok": false, "ms": ms, "model": model, "stopped": true}));
             end.stopped = true;
         }
     }
