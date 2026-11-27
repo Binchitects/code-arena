@@ -304,6 +304,12 @@ Sections used:
 - **Groups come back after a restart.** The groups, their tabs, the tab each shows, their sizes, the
   layout, the group you were in, and where each tab's caret and scroll were come back after a
   reload.
+- **Copy, Edit, Answer again and Rewind to here on a question.** With the pointer over one of your
+  questions in the Agent view you can copy its words. Edit asks it again in new words from a box that
+  keeps its quote. Answer again gives the same answer, or a shorter or longer one, or one from another
+  model or with other thinking (for that answer only), and can put the files back as they were. Rewind
+  to here says how many messages go and which files would be put back or removed, and lets you take back
+  the conversation, the code or both. Afterwards the question's words are back in the box.
 
 
 ### :bug: Bugs fixed
@@ -353,6 +359,8 @@ Sections used:
   the same way the / list does.
 - **Show earlier keeps your place.** Loading the last earlier turns no longer moves the thread
   down by the height of the row that went away.
+- **Going back to a question no longer closes the window.** This happened when an answer with a code
+  block was on screen; the theme is no longer applied again when the session sends the same one.
 
 ## v0.5.0 (2026-11-26)
 
