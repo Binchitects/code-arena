@@ -29,6 +29,21 @@ fn main() {
 
 Tell me what to change next."""
 
+# Asked with "table" in the message: a table, a code block named for a file, citations and links.
+TABLES = """| File | Lines | Kind |
+|:--|--:|:-:|
+| src/main.rs | 3 | code |
+| notes.txt | 10 | text |
+| zeta.md | 2 | notes |
+
+See `src/main.rs:2` and notes.txt, or [the docs](https://example.com).
+
+```rust:src/main.rs
+fn main() {
+    println!("hello");
+}
+```"""
+
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -81,7 +96,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ev({"content": "I'll look at the folder first."})
             call("run_shell", {"command": "ls -la"})
         else:
-            for word in ANSWER.split(" "):
+            answer = TABLES if "table" in text else ANSWER
+            for word in answer.split(" "):
                 ev({"content": word + " "})
                 time.sleep(0.005)
             ev({}, "stop")
