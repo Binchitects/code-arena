@@ -278,6 +278,16 @@ Sections used:
   History buttons appear once their commands and views exist. The palette has Chat: Compact the
   Conversation, Chat: Hide the Chat, Chat: Show Tasks and Sub-agents, and Chat: Show This Folder's
   Sessions.
+- **Change or take back what you sent while it works.** Each message sent while an answer is written
+  waits in its own bubble at the thread's end ('Read at the next step', or 'Waits for the answer to
+  end' for a command). Hover it to Edit it in place (Enter keeps the words, Escape leaves them) or
+  Cancel it. Clear all takes them all back. One the answer already read says 'The message could not
+  be changed.'
+- **A message the answer read becomes its question.** Read at the next step, the bubble turns into a
+  question marked 'Sent while it worked'. Read after the answer, its question takes the bubble's
+  place. Matching is by number, not words, so two messages with the same words, or one changed
+  since it was sent, are never mixed up. A window that comes in mid-answer sees the queue as it is
+  now.
 
 
 ### :bug: Bugs fixed
