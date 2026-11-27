@@ -58,8 +58,8 @@ pub(super) fn card(
 /// What it adds to the window's registries, once at start.
 pub fn register(_ui: Ui, _send: &Send) {}
 
-/// The session's messages that are the agent's question (asked, answered), taken in. Never taken away from the
-/// rest of the window (false).
+/// The session's messages that are the agent's question (asked, answered), taken in. Never taken away from the rest of
+/// the window (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
     match m["type"].as_str().unwrap_or("") {

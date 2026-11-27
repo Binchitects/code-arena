@@ -753,7 +753,7 @@ mod tests {
             json!({"primary": ["files"], "secondary": ["agent"], "panel": ["terminal"], "active": {}, "shown": {}});
         assert_eq!(Dock::from_json(&old), Dock::default());
         assert_eq!(Dock::from_json(&Value::Null), Dock::default());
-        // A view lost from a kept dock comes back beside the editor.
+        // A view lost from a kept dock comes back in its first place.
         let mut kept = Dock::default().to_json();
         kept["root"]["kids"][2]["views"] = json!(["bogus"]);
         let d = Dock::from_json(&kept);

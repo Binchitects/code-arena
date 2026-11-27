@@ -36,8 +36,8 @@ pub(super) fn view(ui: Ui, answer: Answer) -> impl IntoView {
 /// What it adds to the window's registries, once at start.
 pub fn register(_ui: Ui, _send: &Send) {}
 
-/// The session's messages that are an answer's (its words as they come, its turn's end), taken in. Never taken away from the
-/// rest of the window (false).
+/// The session's messages that are an answer's (its words as they come, its turn's end), taken in. Never taken away
+/// from the rest of the window (false).
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     match m["type"].as_str().unwrap_or("") {
         "text" => {
