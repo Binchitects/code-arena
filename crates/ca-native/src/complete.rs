@@ -298,6 +298,8 @@ struct Session {
     line: usize,
     seq: u64,
     explicit: bool,
+    /// Opened by Ctrl+Space or a trigger character: kept with no letter typed.
+    keeps_empty: bool,
     prefix: String,
     lists: Vec<(&'static str, Vec<Rc<Item>>)>,
 }
@@ -646,7 +648,19 @@ fn open(ui: Ui, explicit: bool, trigger: Option<char>) {
         lists.push((id, items(ui, &ask).into_iter().map(Rc::new).collect()));
     }
     let start = offset - (col - from.min(col));
-    SESSION.with(|s| *s.borrow_mut() = Some(Session { path, editor, start, line, seq, explicit, prefix, lists }));
+    SESSION.with(|s| {
+        *s.borrow_mut() = Some(Session {
+            path,
+            editor,
+            start,
+            line,
+            seq,
+            explicit,
+            keeps_empty: explicit || trigger.is_some(),
+            prefix,
+            lists,
+        })
+    });
     show(ui, true);
 }
 
@@ -668,9 +682,9 @@ fn show(ui: Ui, again: bool) {
         let sess = sess.borrow();
         let session = sess.as_ref()?;
         let rows = again.then(|| filtered(session.lists.iter().flat_map(|(_, l)| l.iter()), &session.prefix));
-        Some((rows, session.explicit, spot(&session.editor, session.start, session.line)))
+        Some((rows, session.explicit, session.editor.clone(), session.start, session.line))
     });
-    let Some((rows, explicit, place)) = shown else { return close(ui) };
+    let Some((rows, explicit, editor, start, line)) = shown else { return close(ui) };
     if let Some(rows) = rows {
         s.rev.update(|n| *n += 1);
         let list = s.rev.get_untracked();
@@ -678,12 +692,13 @@ fn show(ui: Ui, again: bool) {
         set_if(s.none, explicit && rows.is_empty());
         s.rows.set(rows.into_iter().map(|r| Row { list, ..r }).collect());
     }
-    set_if(s.place, place);
+    let n = s.rows.with_untracked(im::Vector::len).clamp(1, MOST_ROWS);
+    set_if(s.place, spot(&editor, start, line, n));
 }
 
 /// Where the widget goes for a word starting at `start`: its label under the word's, below the line, or above it
 /// where there is no room below; none when the word is scrolled out of sight.
-fn spot(editor: &Editor, start: usize, line: usize) -> Option<Spot> {
+fn spot(editor: &Editor, start: usize, line: usize, rows: usize) -> Option<Spot> {
     let (o, v) = (editor.window_origin.get_untracked(), editor.viewport.get_untracked());
     let row = f64::from(editor.line_height(line));
     let (top, bottom) = editor.points_of_offset(start, CursorAffinity::Forward);
@@ -694,10 +709,58 @@ fn spot(editor: &Editor, start: usize, line: usize) -> Option<Spot> {
     if bottom <= o.y || top >= o.y + v.height() {
         return None;
     }
-    let height = row * MOST_ROWS as f64 + 2.0;
-    let y = if bottom + height > o.y + v.height() && top - height >= o.y { top - height } else { bottom };
+    let y = top_of(top, bottom, row * rows as f64 + 2.0, o.y, o.y + v.height());
     // The label (after the 16 px icon and its padding) under the word.
     Some(Spot { x: (o.x + top_x(editor, start) - v.x0 - 26.0).max(0.0), y, row })
+}
+
+/// The widget's top: under the line (from `top` to `bottom`), or over it when it does not fit under it within
+/// `lo..hi` and does over it.
+fn top_of(top: f64, bottom: f64, height: f64, lo: f64, hi: f64) -> f64 {
+    if bottom + height > hi && top - height >= lo { top - height } else { bottom }
+}
+
+/// What the widget does once the caret moved: keeps its word typed, closes, opens (closed first when it was open).
+#[derive(Debug, PartialEq)]
+enum Next {
+    Keep(String),
+    Close,
+    Open { close: bool, trigger: Option<char> },
+    Nothing,
+}
+
+/// How the widget goes on, the caret at `offset` on line `line` (its text `text`, from `line_start`): open (from
+/// `start` on its `line`, `keeps_empty` when opened by Ctrl+Space or a trigger character) it keeps the word typed
+/// while the caret is in it, else it opens for a character just typed (`typed`, and the offset before it): a trigger
+/// character (`trigger` and `on_trigger`), a word's letter (`quick`).
+#[allow(clippy::too_many_arguments)]
+fn next(
+    open: Option<(usize, usize, bool)>,
+    offset: usize,
+    line: usize,
+    line_start: usize,
+    text: &str,
+    typed: Option<(char, usize)>,
+    trigger: &dyn Fn(char) -> bool,
+    (quick, on_trigger): (bool, bool),
+) -> Next {
+    if let Some((start, at, keeps_empty)) = open {
+        let col = offset.saturating_sub(line_start).min(text.len());
+        let word = (offset >= start && line == at)
+            .then(|| start.checked_sub(line_start).and_then(|from| text.get(from..col)))
+            .flatten()
+            .filter(|w| w.chars().all(is_word) && (keeps_empty || !w.is_empty()));
+        if let Some(word) = word {
+            return Next::Keep(word.to_string());
+        }
+    }
+    let close = open.is_some();
+    match typed.filter(|(c, before)| before + c.len_utf8() == offset) {
+        Some((c, _)) if on_trigger && trigger(c) => Next::Open { close, trigger: Some(c) },
+        Some((c, _)) if quick && is_word(c) => Next::Open { close, trigger: None },
+        _ if close => Next::Close,
+        _ => Next::Nothing,
+    }
 }
 
 fn top_x(editor: &Editor, offset: usize) -> f64 {
@@ -715,39 +778,44 @@ fn refresh(ui: Ui) {
     if GHOST.with(|g| g.borrow().as_ref().is_some_and(|g| g.path != path || g.offset != offset)) {
         drop_ghost(ui);
     }
-    let open_now = SESSION
-        .with(|s| s.borrow().as_ref().map(|s| (s.path == path && s.editor.id() == editor.id(), s.start, s.line)));
-    match open_now {
-        Some((true, start, line)) => {
-            let (l, col) = editor.offset_to_line_col(offset);
-            let text = editor.rope_text().line_content(l).to_string();
-            let line_start = offset - col.min(offset);
-            let prefix = (offset >= start && l == line)
-                .then(|| text.get(start - line_start..col.min(text.len())).map(str::to_string))
-                .flatten()
-                .filter(|p| p.chars().all(is_word));
-            let Some(prefix) = prefix else { return close(ui) };
+    let open_now = SESSION.with(|s| {
+        s.borrow().as_ref().map(|s| (s.path == path && s.editor.id() == editor.id(), s.start, s.line, s.keeps_empty))
+    });
+    let open_now = match open_now {
+        Some((false, ..)) => {
+            close(ui);
+            None
+        }
+        Some((true, start, line, keeps)) => Some((start, line, keeps)),
+        None => None,
+    };
+    let (line, col) = editor.offset_to_line_col(offset);
+    let text = editor.rope_text().line_content(line).to_string();
+    let lang = lang_of(&path);
+    let trigger = |c: char| PROVIDERS.with(|p| p.borrow().iter().any(|p| p.triggers.contains(&c)));
+    let flags = (
+        crate::settings::now(ui, "editor.quickSuggestions", lang).as_bool() != Some(false),
+        crate::settings::now(ui, "editor.suggestOnTriggerCharacters", lang).as_bool() != Some(false),
+    );
+    match next(open_now, offset, line, offset - col.min(offset), &text, typed, &trigger, flags) {
+        Next::Keep(prefix) => {
             let again = SESSION.with(|s| {
                 let mut s = s.borrow_mut();
-                let session = s.as_mut().expect("open");
+                let Some(session) = s.as_mut() else { return false };
                 let again = session.prefix != prefix;
                 session.prefix = prefix;
                 again
             });
             show(ui, again);
         }
-        Some((false, ..)) => close(ui),
-        None => {
-            let Some((c, before)) = typed.filter(|(c, before)| before + c.len_utf8() == offset) else { return };
-            let lang = lang_of(&path);
-            let trigger = PROVIDERS.with(|p| p.borrow().iter().any(|p| p.triggers.contains(&c)));
-            if trigger && crate::settings::now(ui, "editor.suggestOnTriggerCharacters", lang).as_bool() != Some(false) {
-                open(ui, false, Some(c));
-            } else if is_word(c) && crate::settings::now(ui, "editor.quickSuggestions", lang).as_bool() != Some(false) {
-                let _ = before;
-                open(ui, false, None);
+        Next::Close => close(ui),
+        Next::Open { close: was, trigger } => {
+            if was {
+                close(ui);
             }
+            open(ui, false, trigger);
         }
+        Next::Nothing => {}
     }
 }
 
@@ -830,6 +898,9 @@ pub fn ghost(ui: Ui, path: &str, line: usize, col: usize, text: &str) {
     let rope = tab.doc.text();
     let offset = rope.offset_of_line(line.min(rope.line_of_offset(rope.len()))) + col;
     let first = text.lines().next().unwrap_or("").to_string();
+    if first.is_empty() {
+        return ghost_clear(ui, path);
+    }
     let mark = crate::decor::Mark::Text { line, col, text: first, at: crate::decor::Phantom::Ghost };
     crate::decor::set(ui, "ghost", path, vec![mark]);
     GHOST.with(|g| *g.borrow_mut() = Some(Ghost { path: path.to_string(), offset, text: text.to_string() }));
@@ -890,9 +961,13 @@ pub fn key(ui: Ui, key: &Key, mods: Modifiers) -> bool {
     let n = s.rows.with_untracked(im::Vector::len);
     match key {
         Key::Named(NamedKey::Escape) if plain => {
+            // Taken only when something is shown: an opening with nothing to show closes, the key goes on.
+            let shown = open || s.none.get_untracked();
             if SESSION.with(|s| s.borrow().is_some()) {
                 close(ui);
-                return true;
+                if shown {
+                    return true;
+                }
             }
             if ghost_shown().is_some() {
                 drop_ghost(ui);
@@ -1200,6 +1275,60 @@ mod tests {
         let b = Rc::new(Item::new("ac", Kind::Field).sort("1"));
         let rows = filtered([&a, &b], "a");
         assert_eq!(rows[0].item.label, "ac");
+    }
+
+    #[test]
+    fn the_widget_keeps_its_word_closes_and_opens_again_for_a_trigger_character() {
+        let dot = |c: char| c == '.';
+        let on = (true, true);
+        // "foo|" open from 0: "foo" kept.
+        assert_eq!(next(Some((0, 0, false)), 3, 0, 0, "foo", None, &dot, on), Next::Keep("foo".into()));
+        // "foo.|": the word is no more, and the "." opens it again for the trigger.
+        let typed = Some(('.', 3));
+        assert_eq!(
+            next(Some((0, 0, false)), 4, 0, 0, "foo.", typed, &dot, on),
+            Next::Open { close: true, trigger: Some('.') }
+        );
+        // Not a trigger: closed.
+        assert_eq!(next(Some((0, 0, false)), 4, 0, 0, "foo-", Some(('-', 3)), &dot, on), Next::Close);
+        // Back to an empty word: closed, unless opened by Ctrl+Space or a trigger.
+        assert_eq!(next(Some((4, 1, false)), 4, 1, 4, "", None, &dot, on), Next::Close);
+        assert_eq!(next(Some((4, 1, true)), 4, 1, 4, "", None, &dot, on), Next::Keep(String::new()));
+        // Before the word's start, or on another line: closed.
+        assert_eq!(next(Some((4, 1, true)), 3, 0, 0, "abc", None, &dot, on), Next::Close);
+        // Closed: a letter typed opens it, as the settings say; a click (nothing typed there) does not.
+        assert_eq!(next(None, 1, 0, 0, "a", Some(('a', 0)), &dot, on), Next::Open { close: false, trigger: None });
+        assert_eq!(next(None, 1, 0, 0, "a", Some(('a', 0)), &dot, (false, true)), Next::Nothing);
+        assert_eq!(next(None, 1, 0, 0, ".", Some(('.', 0)), &dot, (true, false)), Next::Nothing);
+        assert_eq!(next(None, 5, 0, 0, "abcde", Some(('a', 0)), &dot, on), Next::Nothing);
+    }
+
+    #[test]
+    fn the_widget_goes_over_the_line_only_where_it_does_not_fit_under_it() {
+        // A row's height under a line near the bottom fits there; twelve rows do not and go over it.
+        assert_eq!(top_of(560.0, 579.0, 21.0, 70.0, 600.0), 579.0);
+        assert_eq!(top_of(560.0, 579.0, 230.0, 70.0, 600.0), 330.0);
+        // No room over it either: under it.
+        assert_eq!(top_of(100.0, 119.0, 600.0, 70.0, 600.0), 119.0);
+    }
+
+    #[test]
+    fn ghost_text_is_shown_by_its_first_line_and_taken_away() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let path = "/tmp/ghost-test.rs";
+        ui.take(&serde_json::json!({"type": "file", "path": path, "text": "fn a() {\n}\n", "modified": 1}), &send);
+        ghost(ui, path, 0, 8, "\n    body();\n");
+        assert!(ghost_shown().is_none(), "a text whose first line is empty shows nothing");
+        ghost(ui, path, 1, 0, "let x = 1;\nlet y = 2;");
+        assert_eq!(ghost_shown(), Some((path.to_string(), 9, "let x = 1;\nlet y = 2;".to_string())));
+        let marks = crate::decor::of(path).expect("marked");
+        let texts = &marks.lines.get(&1).expect("line 1").texts;
+        assert_eq!(texts.len(), 1);
+        assert_eq!((texts[0].0, texts[0].1.as_str()), (0, "let x = 1;"));
+        ghost_clear(ui, path);
+        assert!(ghost_shown().is_none());
+        assert!(crate::decor::of(path).is_none_or(|m| m.lines.get(&1).is_none_or(|l| l.texts.is_empty())));
     }
 
     #[test]
