@@ -17,7 +17,7 @@ use floem::kurbo::Rect;
 use floem::peniko::Color;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect};
 use floem::style::{CursorStyle, Position, TextOverflow};
-use floem::views::{Decorators, dyn_stack, empty, h_stack, label, scroll, stack, v_stack};
+use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, scroll, stack, v_stack};
 use floem::{IntoView, View, ViewId};
 use serde_json::{Value, json};
 
@@ -320,6 +320,9 @@ pub(super) fn pill(ui: Ui, which: Picker, anchor: RwSignal<Rect>) -> impl IntoVi
             }
         })
         .style(|s| s.min_width(0.0).text_overflow(TextOverflow::Ellipsis)),
+        // Chosen while a turn runs: it waits for the next turn.
+        icon("watch", 12.0)
+            .style(move |s| s.apply_if(me.pending.with(|p| pending_of(p, which).is_none()), |s| s.hide())),
         icon("chevron-down", 12.0),
     ));
     let id = view.id();
@@ -338,7 +341,6 @@ pub(super) fn pill(ui: Ui, which: Picker, anchor: RwSignal<Rect>) -> impl IntoVi
         let now = current(ui, which);
         let hidden = which == Picker::Thinking && !me.infos.with(|i| thinks(i, &current(ui, Picker::Model)));
         let lit = ui.picker.get() == Some(which);
-        let waits = me.pending.with(|p| pending_of(p, which).is_some());
         s.gap(2.0)
             .items_center()
             .min_width(0.0)
@@ -349,7 +351,6 @@ pub(super) fn pill(ui: Ui, which: Picker, anchor: RwSignal<Rect>) -> impl IntoVi
             .selectable(false)
             .apply_if(which != Picker::Model, |s| s.flex_shrink(0.0_f32))
             .color(tone_color(&c, tone(which, &now), c.desc))
-            .apply_if(waits, |s| s.font_style(floem::text::Style::Italic))
             .cursor(CursorStyle::Pointer)
             .apply_if(lit, |s| s.background(c.toolbar_hover))
             .hover(|s| s.background(c.toolbar_hover))
@@ -394,8 +395,11 @@ pub(super) fn menu(ui: Ui, send: Send, anchor: RwSignal<Rect>, frame: ViewId, ba
                 let (name, detail, tint) = (o.name.clone(), o.detail.clone(), tone(which, &o.value));
                 let no_detail = o.detail.is_empty();
                 h_stack((
-                    icon("check", 16.0)
-                        .style(move |s| s.apply_if(current(ui, which) != value, |s| s.color(Color::TRANSPARENT))),
+                    // The check's room is kept on every row, so the names stand level.
+                    container(
+                        icon("check", 16.0).style(move |s| s.apply_if(current(ui, which) != value, |s| s.hide())),
+                    )
+                    .style(|s| s.width(16.0).height(16.0).flex_shrink(0.0_f32)),
                     label(move || name.clone()).style(move |s| {
                         let c = t.get();
                         let lit = ui.picker_at.get() == n && enabled;
