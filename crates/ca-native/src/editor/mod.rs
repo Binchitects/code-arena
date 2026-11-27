@@ -149,6 +149,8 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
         }
     };
     let active = shown.active;
+    // The options of the file it shows, read for its language: the editor follows them as they change.
+    let o = options::memo(ui, move || active.get());
     dyn_container(
         move || (active.get(), t.get()),
         move |(path, c)| match path.and_then(|p| ui.tab(&p)) {
@@ -182,7 +184,14 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 tab.colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
                 let caret = ui.caret;
                 let map = map.clone();
+                // The editor's width, by which a bounded wrap is found.
+                let width = create_rw_signal(0.0);
                 let ed = text_editor_keys("", move |editor, press, mods| {
+                    if let KeyInput::Keyboard(key, _) = &press.key
+                        && editor.with_untracked(|e| o.with_untracked(|o| options::key(e, o, key, mods)))
+                    {
+                        return CommandExecuted::Yes;
+                    }
                     if keys::editor_key(ui, press, mods) {
                         return CommandExecuted::Yes;
                     }
@@ -202,24 +211,29 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 .use_doc(crate::decor::doc(tab.doc.clone(), &tab.path))
                 .styling_rc(tab.colours.clone())
                 .editor_style(move |s| {
-                    s.gutter_dim_color(c.line_number)
-                        .gutter_accent_color(c.line_number_active)
-                        .gutter_current_color(c.editor_bg)
+                    let s = s
                         .gutter_left_padding(18.0)
                         .gutter_right_padding(22.0)
-                        .current_line_color(c.line_highlight)
                         .selection_color(c.selection)
                         .cursor_color(c.cursor)
                         .indent_guide_color(c.indent_guide)
                         .visible_whitespace(c.whitespace)
                         .phantom_color(c.desc)
-                        .placeholder_color(c.placeholder)
-                        // As VS Code: long lines go on, scrolled to, not wrapped.
-                        .wrap_method(floem::views::editor::text::WrapMethod::None)
+                        .placeholder_color(c.placeholder);
+                    o.with(|o| options::style(s, o, &c, width.get()))
                 })
                 // No background of its own: the group's is under it, and the overview ruler between (`decor.rs`).
                 .style(move |s| s.size_full().set(floem::views::editor::Foreground, c.editor_fg).color(c.editor_fg));
                 let editor = ed.editor().clone();
+                {
+                    let viewport = editor.viewport;
+                    create_effect(move |_| {
+                        let w = viewport.with(|v| v.width());
+                        if width.get_untracked() != w {
+                            width.set(w);
+                        }
+                    });
+                }
                 g.editors.update(|e| {
                     e.insert(id, (tab.path.clone(), editor.clone()));
                 });
@@ -292,6 +306,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 });
                 // With its highlights (brackets, the word at the caret, links), the decorations' glyph margin and the
                 // overview ruler.
+                let ed = options::follow(ui, ed, &editor, tab.colours.clone(), o);
                 let ed = highlights::follow(ui, ed, &editor, tab.doc.clone(), &tab.path);
                 crate::decor::around(ui, ed, &editor, &tab.path).into_any()
             }
