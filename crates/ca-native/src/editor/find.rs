@@ -826,10 +826,18 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
         button(ui, "close", "Close (Escape)", move || find_hide(ui)),
     ))
     .style(|s| s.height(24.0).gap(2.0).items_center());
+    // Replace and Replace All clicked: the keys back in the replace box (Escape still closes the widget).
+    let (one, every) = (replacer.clone(), replacer.clone());
     let replace_row = h_stack((
         replace_field,
-        button(ui, "replace", "Replace (Enter)", move || replace(ui, false)),
-        button(ui, "replace-all", "Replace All (Ctrl+Alt+Enter)", move || replace(ui, true)),
+        button(ui, "replace", "Replace (Enter)", move || {
+            replace(ui, false);
+            focus(&one);
+        }),
+        button(ui, "replace-all", "Replace All (Ctrl+Alt+Enter)", move || {
+            replace(ui, true);
+            focus(&every);
+        }),
     ))
     .style(move |s| s.height(24.0).gap(2.0).items_center().apply_if(!ui.find_replacing.get(), |s| s.hide()));
     let opened = replacer.clone();
