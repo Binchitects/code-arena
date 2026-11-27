@@ -456,7 +456,8 @@ impl Place {
     }
 
     /// An editor put back where it was left: the caret at once, the scroll once it is laid out.
-    pub fn put(&self, editor: &Editor) {
+    /// `done` is set once the scroll is there too (until then, where the editor is is not where it was left).
+    pub fn put(&self, editor: &Editor, done: RwSignal<bool>) {
         let line = self.line.min(editor.last_line());
         let at = editor.offset_of_line_col(line, self.col.min(editor.line_end_col(line, true)));
         editor.cursor.update(|c| c.set_insert(floem::views::editor::core::selection::Selection::caret(at)));
@@ -464,6 +465,12 @@ impl Place {
         floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
             if e.cursor.try_get_untracked().is_some() {
                 e.scroll_to.set(Some(to));
+                // Scrolled at the next layout.
+                floem::action::exec_after(std::time::Duration::from_millis(100), move |_| {
+                    if done.try_get_untracked().is_some() {
+                        done.set(true);
+                    }
+                });
             }
         });
     }
@@ -594,6 +601,15 @@ pub fn close_in(ui: Ui, id: u64, path: &str) {
         focus(ui, id);
         ui.close_document(path);
     }
+}
+
+/// The group a tab is closed in by the workbench (Close Editor, Ctrl+W): the focused group when it has the tab,
+/// else the first group that has it.
+pub fn holder(ui: Ui, path: &str) -> u64 {
+    groups(ui).model.with_untracked(|m| {
+        let has = |g: &Group| g.tabs.iter().any(|t| t == path);
+        if has(m.current()) { m.focused } else { m.groups.iter().find(|g| has(g)).map_or(m.focused, |g| g.id) }
+    })
 }
 
 /// A file opened to the side: in the group after the focused one (made when there is none), and focused there.

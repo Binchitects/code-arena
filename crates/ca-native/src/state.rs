@@ -430,10 +430,10 @@ impl Ui {
         self.open(path, send);
     }
 
-    /// A tab closed in the focused group: only that group's tab when another group shows the file too, else the
+    /// A tab closed in the focused group (or the group that has it): only that group's tab when another group shows the file too, else the
     /// document (`close_document`).
     pub fn close(&self, path: &str) {
-        crate::editor::groups::close_in(*self, crate::editor::groups::focused(*self), path);
+        crate::editor::groups::close_in(*self, crate::editor::groups::holder(*self, path), path);
     }
 
     /// A document closed in every group; one with changes not saved is shown and asked about first (Save, Don't

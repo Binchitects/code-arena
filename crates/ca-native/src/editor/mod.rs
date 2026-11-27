@@ -228,8 +228,10 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 }
                 // Where it was left in this group: its caret and scroll back.
                 let key = (id, tab.path.clone());
-                if let Some(at) = g.places.with_untracked(|p| p.get(&key).copied()) {
-                    at.put(&editor);
+                let kept = g.places.with_untracked(|p| p.get(&key).copied());
+                let placed = create_rw_signal(kept.is_none());
+                if let Some(at) = kept {
+                    at.put(&editor, placed);
                 }
                 if let Some((_, line, n)) = ui
                     .goto
@@ -261,7 +263,8 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 // Gone from the screen (and not for the next one, which is drawn before this one goes): where it
                 // was left is kept for when it is shown again in this group.
                 let ed = ed.on_cleanup(move || {
-                    if left.cursor.try_get_untracked().is_some() {
+                    // Not before it was put back where it was left (else that place is lost).
+                    if left.cursor.try_get_untracked().is_some() && placed.get_untracked() {
                         let at = groups::Place::of(&left);
                         g.places.update(|p| {
                             p.insert(key.clone(), at);
