@@ -333,6 +333,9 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
                 .background(c.input_bg)
                 .color(c.input_fg)
                 .cursor_color(floem::peniko::Brush::Solid(c.cursor))
+                // floem's own theme turns a hovered input white and a focused one's border purple.
+                .hover(|s| s.background(c.input_bg))
+                .focus(|s| s.border_color(c.focus).hover(|s| s.background(c.input_bg)))
         });
     let top = container(search).style(|s| s.width_full().padding_horiz(12.0).padding_vert(6.0));
     let items = move || {

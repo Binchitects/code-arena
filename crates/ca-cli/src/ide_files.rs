@@ -95,6 +95,18 @@ pub(crate) fn shell_for(asked: Option<&str>, env_shell: Option<&Path>, path: Opt
         .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "cmd.exe" } else { "/bin/sh" }))
 }
 
+/// The name of the shell a terminal opened without asking for one runs ("bash", "zsh"), for the faces' tabs: the
+/// one [`shell_for`] finds, so the tab says what runs even when `$SHELL` is not set.
+pub(crate) fn default_shell_name(env_shell: Option<&str>) -> String {
+    let path = std::env::var_os("PATH").map(|p| p.to_string_lossy().into_owned());
+    let env_shell = env_shell.map(Path::new).filter(|p| p.is_absolute());
+    shell_name_of(&shell_for(None, env_shell, path.as_deref()))
+}
+
+fn shell_name_of(shell: &Path) -> String {
+    shell.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "sh".into())
+}
+
 /// How much of a terminal's output is kept for a page that comes back.
 const SCREEN_KEPT: usize = 256 * 1024;
 
@@ -2062,6 +2074,9 @@ mod tests {
         assert_eq!(shell_for(Some("fish"), Some(&zsh), Some(&path)), zsh);
         assert_eq!(shell_for(None, Some(&d.path().join("gone")), Some(&path)), bash);
         assert_eq!(shell_for(Some("../zsh"), None, Some("/nowhere")), PathBuf::from("/bin/sh"));
+        // The tabs' name is the shell found, not a fixed "sh" when $SHELL is not set.
+        assert_eq!(shell_name_of(&shell_for(None, None, Some(&path))), "bash");
+        assert_eq!(shell_name_of(&zsh), "zsh");
     }
 
     #[cfg(unix)]

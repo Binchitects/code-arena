@@ -303,6 +303,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     v_stack((
         label(|| "The agent has changed no file in this session.").style(move |s| {
             s.padding_horiz(20.0)
+                .line_height(1.4)
                 .padding_vert(6.0)
                 .color(t.get().desc)
                 .apply_if(ui.changes.with(|c| !c.is_empty()), |s| s.hide())

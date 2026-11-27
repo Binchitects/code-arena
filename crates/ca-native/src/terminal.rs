@@ -1468,8 +1468,20 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
         State::Ended(_, code) => ended_text(code),
         _ => String::new(),
     })
+    // At the panel's foot over the screen's last rows, wrapped: the rows fill the panel, so a line after them was
+    // cut off below it.
     .style(move |s| {
-        s.padding_top(6.0).color(t.get().desc).apply_if(!matches!(ui.term.get(), State::Ended(..)), |s| s.hide())
+        let c = t.get();
+        s.absolute()
+            .inset_left(0.0)
+            .inset_right(0.0)
+            .inset_bottom(0.0)
+            .padding_horiz(PAD_X)
+            .padding_vert(4.0)
+            .text_overflow(floem::style::TextOverflow::Wrap)
+            .background(c.terminal_bg)
+            .color(c.desc)
+            .apply_if(!matches!(ui.term.get(), State::Ended(..)), |s| s.hide())
     });
     // The link under the pointer, underlined.
     let underline = empty().style(move |s| {

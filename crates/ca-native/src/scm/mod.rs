@@ -886,7 +886,7 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         move || what.get(),
         move |w| {
             let say = move |text: String| {
-                label(move || text.clone()).style(move |s| s.padding_horiz(20.0).padding_vert(6.0).color(t.get().desc))
+                label(move || text.clone()).style(move |s| s.padding_horiz(20.0).padding_vert(6.0).line_height(1.4).color(t.get().desc))
             };
             match w {
                 Empty::NoRepo => {
