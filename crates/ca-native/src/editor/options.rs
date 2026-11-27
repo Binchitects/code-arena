@@ -387,9 +387,10 @@ fn parts(o: &Options, c: &Colors, width: f64) -> (WrapMethod, Color, Color, Colo
             if width > 0.0 && width < at { WrapMethod::EditorWidth } else { WrapMethod::WrapColumn { col } }
         }
     };
-    let (dim, accent) =
-        if o.line_numbers { (c.line_number, c.line_number_active) } else { (Color::TRANSPARENT, Color::TRANSPARENT) };
     let gutter = if o.highlight_gutter { c.line_highlight } else { c.editor_bg };
+    // Hidden numbers are drawn in the colour under them, not a transparent one: the software renderer draws a
+    // glyph's colour without its alpha, so a transparent number came out black.
+    let (dim, accent) = if o.line_numbers { (c.line_number, c.line_number_active) } else { (c.editor_bg, gutter) };
     let line = if o.highlight_line { c.line_highlight } else { Color::TRANSPARENT };
     (wrap, dim, accent, gutter, line)
 }
@@ -601,6 +602,16 @@ mod tests {
         off.set(true);
         assert!(key(ui, editor, o2, &ch("c"), Modifiers::CONTROL) && key(ui, editor, o2, &ch("x"), Modifiers::CONTROL));
         assert!(!key(ui, editor, o2, &ch("v"), Modifiers::CONTROL));
+    }
+
+    #[test]
+    fn hidden_line_numbers_are_drawn_in_the_gutters_own_colour() {
+        let (ui, send, _) = window();
+        say(ui, &send, json!({"editor.lineNumbers": "off"}), json!({}));
+        let c = ui.colors.get_untracked();
+        let (_, dim, accent, gutter, _) = parts(&read(ui, None), &c, 0.0);
+        assert_eq!((dim, accent), (c.editor_bg, gutter));
+        assert_ne!(dim, Color::TRANSPARENT);
     }
 
     #[test]
