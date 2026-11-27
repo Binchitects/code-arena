@@ -200,7 +200,7 @@ fn send(out: &broadcast::Sender<String>, v: Value) {
     let _ = out.send(v.to_string());
 }
 
-fn modified(meta: &std::fs::Metadata) -> u64 {
+pub(crate) fn modified(meta: &std::fs::Metadata) -> u64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -545,7 +545,9 @@ impl Side {
     }
 
     fn open(&self, path: &str) -> Value {
-        let fail = |e: &str| json!({"type": "file", "path": path, "error": e});
+        // `kind` says why it is not opened as text: too big, not text, or another reason.
+        let fail_as = |e: &str, kind: &str| json!({"type": "file", "path": path, "error": e, "kind": kind});
+        let fail = |e: &str| fail_as(e, "other");
         let real = match self.real(path) {
             Ok(r) => r,
             Err(e) => return fail(&e),
@@ -555,16 +557,16 @@ impl Side {
             return fail("not a plain file (a folder, a pipe or a device is not opened)");
         }
         if meta.len() > MOST_BYTES {
-            return fail("bigger than 5 MB: open it with another program");
+            return fail_as("bigger than 5 MB: open it with another program", "too_large");
         }
         let mut bytes = Vec::new();
         if std::fs::File::open(&real).and_then(|mut f| f.read_to_end(&mut bytes)).is_err() {
             return fail("it could not be read");
         }
         if bytes.iter().take(8000).any(|b| *b == 0) {
-            return fail("a binary file: open it with another program");
+            return fail_as("a binary file: open it with another program", "binary");
         }
-        let Ok(text) = String::from_utf8(bytes) else { return fail("not UTF-8 text") };
+        let Ok(text) = String::from_utf8(bytes) else { return fail_as("not UTF-8 text", "binary") };
         json!({"type": "file", "path": self.shown(&real), "text": text, "modified": modified(&meta)})
     }
 
@@ -926,6 +928,8 @@ mod tests {
         assert_eq!(names, ["src", "blob.bin"], "folders first");
         assert_eq!(s.open("src/main.rs")["text"], "fn main() {}\n");
         assert!(s.open("blob.bin")["error"].as_str().is_some_and(|e| e.contains("binary")));
+        assert_eq!(s.open("blob.bin")["kind"], "binary", "why it is not opened, for the tab that says so");
+        assert_eq!(s.open("src")["kind"], "other");
         assert!(s.open("/etc/passwd")["error"].as_str().is_some_and(|e| e.contains("inside the project")));
         assert!(s.open("../outside.txt")["error"].is_string());
         assert!(s.open("src")["error"].as_str().is_some_and(|e| e.contains("not a plain file")));
