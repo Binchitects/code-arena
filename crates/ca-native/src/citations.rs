@@ -98,7 +98,7 @@ pub fn find_refs(text: &str, files: &HashSet<String>) -> Vec<(Range<usize>, Ref)
             let found = m.as_str().trim_end_matches('.');
             let end = m.start() + found.len();
             let mut after = text[end..].chars().skip_while(|c| *c == '.');
-            if text[end..].starts_with(|c| part_of_word(c)) || after.next().is_some_and(part_of_word) {
+            if text[end..].starts_with(part_of_word) || after.next().is_some_and(part_of_word) {
                 return None;
             }
             let mut r = parse_ref(found)?;

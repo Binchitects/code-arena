@@ -590,7 +590,9 @@ mod tests {
 
     #[test]
     fn a_links_target_is_kept_with_its_text() {
-        let t = inline("See [the docs](https://x.dev/a \"Docs\"), [app](<src/app.ts#L3>), <https://y.io> and https://z.org/b.");
+        let t = inline(
+            "See [the docs](https://x.dev/a \"Docs\"), [app](<src/app.ts#L3>), <https://y.io> and https://z.org/b.",
+        );
         let links: Vec<(&str, &str)> = t.links.iter().map(|(r, to)| (&t.text[r.clone()], to.as_str())).collect();
         assert_eq!(
             links,
@@ -698,7 +700,11 @@ mod tests {
             blocks,
             [
                 Block::Paragraph(inline("Run:")),
-                Block::Code { lang: "rust".into(), name: String::new(), text: "fn main() {\n    let a = \"**x**\";\n}".into() },
+                Block::Code {
+                    lang: "rust".into(),
+                    name: String::new(),
+                    text: "fn main() {\n    let a = \"**x**\";\n}".into()
+                },
                 Block::Paragraph(inline("Done.")),
             ]
         );
@@ -707,7 +713,10 @@ mod tests {
             parse("```sh\nls -la\n# not a heading"),
             [Block::Code { lang: "sh".into(), name: String::new(), text: "ls -la\n# not a heading".into() }]
         );
-        assert_eq!(parse("~~~\n```\n~~~"), [Block::Code { lang: String::new(), name: String::new(), text: "```".into() }]);
+        assert_eq!(
+            parse("~~~\n```\n~~~"),
+            [Block::Code { lang: String::new(), name: String::new(), text: "```".into() }]
+        );
         // Under a list's item, its indent is the fence's, not the code's.
         assert_eq!(
             parse("- so:\n  ```py\n  if x:\n      y()\n  ```")[1],

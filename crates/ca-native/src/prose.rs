@@ -11,12 +11,12 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
+use floem::event::{Event, EventListener, EventPropagation};
+use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::kurbo::Rect;
 use floem::reactive::{
     Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal,
 };
-use floem::event::{Event, EventListener, EventPropagation};
-use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::style::{CursorStyle, Position, TextOverflow};
 use floem::text::{Attrs, AttrsList, FamilyOwned, LineHeightValue, Style as Slant, TextLayout, Weight};
 use floem::views::{
@@ -264,7 +264,7 @@ fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool) -
     let over_link = create_rw_signal(false);
     let marks = backgrounds(ui, move || laid.with(|l| l.marks.clone()), laid, |c| c.preformat_bg, 3.0);
     let chosen = move || match selected.get() {
-        Some((a, b)) if a != b => vec![a.min(b)..a.max(b)],
+        Some((a, b)) if a != b => std::iter::once(a.min(b)..a.max(b)).collect(),
         _ => Vec::new(),
     };
     let selection = backgrounds(ui, chosen, laid, |c| c.selection, 0.0);
@@ -394,7 +394,8 @@ fn cell_number(text: &str) -> Option<f64> {
     };
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     let (int, frac) = whole.split_once('.').unwrap_or((whole, ""));
-    let whole_ok = (digits(int) || int.is_empty()) && (frac.is_empty() || digits(frac)) && whole != "." && !whole.is_empty();
+    let whole_ok =
+        (digits(int) || int.is_empty()) && (frac.is_empty() || digits(frac)) && whole != "." && !whole.is_empty();
     let power_ok = power.is_none_or(|p| digits(p.strip_prefix(['-', '+']).unwrap_or(p)));
     (whole_ok && power_ok).then(|| t.parse::<f64>().ok()).flatten().filter(|n| n.is_finite())
 }
@@ -503,9 +504,8 @@ fn table(ui: Ui, now: Memo<Option<Rc<Block>>>) -> impl IntoView {
     let widths = create_memo(move |_| {
         let (head, rows) = parts.get();
         let mut m = measured.borrow_mut();
-        let mut width = |text: &str, bold: bool| {
-            *m.entry((text.to_string(), bold)).or_insert_with(|| measure(text, bold))
-        };
+        let mut width =
+            |text: &str, bold: bool| *m.entry((text.to_string(), bold)).or_insert_with(|| measure(text, bold));
         (0..head.len())
             .map(|c| {
                 let widest = rows.iter().filter_map(|r| r.get(c)).map(|x| width(&x.text, false)).fold(0.0, f64::max);
@@ -639,7 +639,12 @@ fn code_label(lang: &str, name: &str) -> String {
 }
 
 /// One of a code block's bar's actions: a 16 px codicon in a 22 px square, with its tooltip.
-fn bar_action(ui: Ui, icon: &'static str, tip: impl Fn() -> String + 'static, on: impl Fn() + 'static) -> impl IntoView {
+fn bar_action(
+    ui: Ui,
+    icon: &'static str,
+    tip: impl Fn() -> String + 'static,
+    on: impl Fn() + 'static,
+) -> impl IntoView {
     let tip = Rc::new(tip);
     tooltip(crate::widgets::action(ui.colors, icon, on), move || {
         let tip = tip.clone();
@@ -755,7 +760,11 @@ fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static) -> 
     });
     let bar = h_stack((
         label(move || label_text.clone()).style(move |s| {
-            s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).text_overflow(TextOverflow::Ellipsis).color(t.get().desc)
+            s.flex_grow(1.0_f32)
+                .flex_basis(0.0)
+                .min_width(0.0)
+                .text_overflow(TextOverflow::Ellipsis)
+                .color(t.get().desc)
         }),
         open,
         bar_action(
@@ -816,21 +825,18 @@ fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static) -> 
                 .background(c.input_bg)
                 .color(c.input_fg)
         });
-    let ask = h_stack((
-        label(|| "Save as").style(move |s| s.color(t.get().desc).selectable(false)),
-        input,
-    ))
-    .style(move |s| {
-        s.width_full()
-            .gap(8.0)
-            .items_center()
-            .padding_horiz(12.0)
-            .padding_vert(6.0)
-            .font_size(12.0)
-            .border_bottom(1.0)
-            .border_color(t.get().widget_border)
-            .apply_if(!saving.get(), |s| s.hide())
-    });
+    let ask =
+        h_stack((label(|| "Save as").style(move |s| s.color(t.get().desc).selectable(false)), input)).style(move |s| {
+            s.width_full()
+                .gap(8.0)
+                .items_center()
+                .padding_horiz(12.0)
+                .padding_vert(6.0)
+                .font_size(12.0)
+                .border_bottom(1.0)
+                .border_color(t.get().widget_border)
+                .apply_if(!saving.get(), |s| s.hide())
+        });
     v_stack((bar, ask, body)).style(move |s| {
         let c = t.get();
         s.width_full()
@@ -913,7 +919,8 @@ mod tests {
     #[test]
     fn an_answers_links_and_the_projects_files_it_cites_lead_where_they_say() {
         let files: HashSet<String> = ["src/app.ts", "README.md"].map(String::from).into();
-        let words = inline("Open `src/app.ts:12`, see README.md and [docs](https://x.dev), not `other.ts` or [x](#top).");
+        let words =
+            inline("Open `src/app.ts:12`, see README.md and [docs](https://x.dev), not `other.ts` or [x](#top).");
         let links: Vec<(&str, Target)> =
             cited(&words, &files).into_iter().map(|(r, to)| (&words.text[r], to)).collect();
         let file = |path: &str, line| Target::File(citations::Ref { path: path.into(), line, ..Default::default() });
