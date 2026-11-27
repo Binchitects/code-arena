@@ -375,7 +375,7 @@ fn view(ui: Ui, send: Send, tab: &Tab) -> AnyView {
             }
         },
     )
-    .style(move |s| s.size_full().background(t.get().editor_bg))
+    .style(move |s| s.size_full().min_size(0.0, 0.0).background(t.get().editor_bg))
     .into_any()
 }
 
@@ -396,14 +396,14 @@ fn picture(st: State, path: &str, p: Rc<Picture>) -> AnyView {
                     container(drawn.style(move |s| s.width(w).height(h).flex_shrink(0.0_f32)))
                         .style(|s| s.min_size_full().items_center().justify_center()),
                 )
-                .style(|s| s.size_full())
+                .style(|s| s.size_full().min_size(0.0, 0.0))
                 .into_any()
             } else {
                 drawn.style(|s| s.size_full()).into_any()
             }
         },
     )
-    .style(|s| s.size_full())
+    .style(|s| s.size_full().min_size(0.0, 0.0))
     .into_any()
 }
 
@@ -448,7 +448,12 @@ impl View for Drawn {
         let p = &self.picture;
         let (w, h) = fitted(f64::from(p.width), f64::from(p.height), place.width(), place.height());
         let (x, y) = (place.x0 + (place.width() - w) / 2.0, place.y0 + (place.height() - h) / 2.0);
-        cx.draw_img(floem_renderer::Img { img: p.image.clone(), hash: &p.hash }, Rect::new(x, y, x + w, y + h));
+        // Drawn at the origin of a moved drawing: the software renderer lays a picture from the origin, whatever
+        // the place it is given.
+        cx.save();
+        cx.offset((x.round(), y.round()));
+        cx.draw_img(floem_renderer::Img { img: p.image.clone(), hash: &p.hash }, Rect::new(0.0, 0.0, w, h));
+        cx.restore();
     }
 }
 
