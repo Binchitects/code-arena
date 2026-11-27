@@ -371,7 +371,13 @@ impl Ui {
 
     fn apply_theme(&self) {
         let t = ca_themes::chosen(&self.themes.get_untracked(), &self.choice.get_untracked(), true);
-        self.colors.set(Colors::of(&t));
+        // The same theme again (every `state` says it) changes nothing: what is drawn with its colours is not made
+        // again, and a code block going with the thread it is in is not given lines first.
+        let colors = Colors::of(&t);
+        if self.colors.get_untracked() == colors {
+            return;
+        }
+        self.colors.set(colors);
         self.tokens.set(Rc::new(crate::highlight::theme_of(&t.json)));
         crate::terminal::recolour(*self);
     }
