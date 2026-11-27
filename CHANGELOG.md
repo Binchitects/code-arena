@@ -406,6 +406,22 @@ Sections used:
 - **A search result opens as a preview with its match selected.** Find in Folder... in the
   Explorer's menu fills in files to include, and Edit > Find in Files and Replace in Files are in
   the menu. The query and options are kept with the folder and come back at the next start.
+- **Source Control view.** Ctrl+Shift+G shows the repository's changes in Merge Changes, Staged
+  Changes and Changes, each with its count. A row shows the file's name, its folder and git's
+  coloured letter, and a deleted file is struck through. Hover a file or a group to Open File,
+  Stage, Unstage or Discard. Discard asks first, and a file git does not track is kept aside rather
+  than lost.
+- **Commit box.** Type a message and press Ctrl+Enter, or click 'Commit N staged' ('Commit all' when
+  nothing is staged, which stages everything first). Commit (Amend) is in the button's menu. A toast
+  says 'Committed <hash>' or what git refused.
+- **Changes tabs.** A click on a changed file opens 'name (Working Tree)', the working tree against
+  the index. A staged file opens 'name (Index)', the index against HEAD. A file in conflict, or one
+  git does not track, opens as it is.
+- **Branch and badge.** The status bar shows the branch and the Source Control icon shows the count
+  of changes. Both follow commits, checkouts and staging done in a terminal, since the driver
+  watches git's own files. A folder without a repository offers Initialize Repository.
+- **Git commands.** Git: Commit, Commit (Amend), Refresh, Stage All Changes, Unstage All Changes,
+  Discard All Changes and Initialize Repository are in the palette.
 
 
 ### :bug: Bugs fixed
