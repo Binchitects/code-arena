@@ -278,7 +278,7 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
     let width = create_rw_signal(0.0);
     let ed = text_editor_keys("", move |editor, press, mods| {
         if let KeyInput::Keyboard(key, _) = &press.key
-            && editor.with_untracked(|e| o.with_untracked(|o| crate::editor::options::key(e, o, key, mods)))
+            && editor.with_untracked(|e| o.with_untracked(|o| crate::editor::options::key(ui, e, o, key, mods)))
         {
             return CommandExecuted::Yes;
         }

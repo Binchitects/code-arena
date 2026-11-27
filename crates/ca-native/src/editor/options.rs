@@ -423,14 +423,30 @@ impl View for Wheel {
     }
 }
 
-/// The editor's own keys of its options: with `editor.emptySelectionClipboard` off, Ctrl+C and Ctrl+X on a caret
-/// with nothing selected are taken and do nothing.
-pub fn key(editor: &Editor, o: &Options, key: &Key, mods: Modifiers) -> bool {
-    let ctrl = mods.contains(Modifiers::CONTROL) && !mods.intersects(Modifiers::ALT | Modifiers::SHIFT);
-    let copy = matches!(key, Key::Character(c) if c.eq_ignore_ascii_case("c") || c.eq_ignore_ascii_case("x"));
-    ctrl && copy
+/// The editor's own keys of its options: Alt+Z toggles the file's wrap (taken here, before the editor types a z);
+/// with `editor.emptySelectionClipboard` off, Ctrl+C and Ctrl+X on a caret with nothing selected are taken and do
+/// nothing.
+pub fn key(ui: Ui, editor: &Editor, o: &Options, key: &Key, mods: Modifiers) -> bool {
+    let only = |m: Modifiers| mods & (Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT | Modifiers::META) == m;
+    let is = |k: &str| matches!(key, Key::Character(c) if c.eq_ignore_ascii_case(k));
+    if only(Modifiers::ALT) && is("z") {
+        toggle_wrap(ui);
+        return true;
+    }
+    only(Modifiers::CONTROL)
+        && (is("c") || is("x"))
         && !o.empty_selection_copies
         && editor.cursor.with_untracked(|c| matches!(&c.mode, CursorMode::Insert(s) if s.is_caret()))
+}
+
+/// Toggle Word Wrap: the file on screen wraps, or stops wrapping, whatever its setting says.
+fn toggle_wrap(ui: Ui) {
+    let Some(path) = ui.live.with_untracked(|l| l.as_ref().map(|(p, _)| p.clone())) else { return };
+    ui.state::<Zoom>().toggled.update(|t| {
+        if !t.remove(&path) {
+            t.insert(path);
+        }
+    });
 }
 
 /// A boolean setting of the person's turned over, written to their settings.json.
@@ -442,16 +458,7 @@ fn toggle(send: &Send, key: &str, now: bool) {
 pub fn register(_ui: Ui, _send: &Send) {
     use crate::commands::{add, command};
     let file = |ui: Ui| ui.live.with_untracked(|l| l.is_some());
-    add(command(TOGGLE_WORD_WRAP, "View", "Toggle Word Wrap", |ui, _| {
-        let Some(path) = ui.live.with_untracked(|l| l.as_ref().map(|(p, _)| p.clone())) else { return };
-        ui.state::<Zoom>().toggled.update(|t| {
-            if !t.remove(&path) {
-                t.insert(path);
-            }
-        });
-    })
-    .keys("Alt+Z")
-    .when(file));
+    add(command(TOGGLE_WORD_WRAP, "View", "Toggle Word Wrap", |ui, _| toggle_wrap(ui)).keys("Alt+Z").when(file));
     add(command("editor.action.toggleRenderWhitespace", "View", "Toggle Render Whitespace", |ui, send| {
         let shown = settings::now(ui, "editor.renderWhitespace", None).as_str() != Some("none");
         send(
@@ -538,6 +545,30 @@ mod tests {
         assert_eq!(line_highlight(&json!("none")), (false, false));
         assert_eq!(zoomed(10.0, 2), 12.0);
         assert_eq!(zoomed(10.0, -9), 5.0);
+    }
+
+    #[test]
+    fn alt_z_toggles_the_files_wrap_and_copy_with_nothing_selected_follows_its_setting() {
+        // A font to lay text out with, where the machine has none.
+        crate::icons::load();
+        let (ui, _, _) = window();
+        let ed = floem::views::text_editor("one\ntwo\n");
+        let editor = ed.editor().clone();
+        ui.live.set(Some(("a.rs".into(), editor.clone())));
+        let mut o = read(ui, Some("a.rs"));
+        let ch = |c: &str| Key::Character(c.into());
+        assert!(key(ui, &editor, &o, &ch("z"), Modifiers::ALT));
+        assert_eq!(read(ui, Some("a.rs")).wrap, Wrap::On);
+        assert!(key(ui, &editor, &o, &ch("Z"), Modifiers::ALT));
+        assert_eq!(read(ui, Some("a.rs")).wrap, Wrap::Off);
+        assert!(!key(ui, &editor, &o, &ch("z"), Modifiers::ALT | Modifiers::SHIFT));
+        // On (the default), the editor copies the caret's line; off, nothing is copied.
+        assert!(!key(ui, &editor, &o, &ch("c"), Modifiers::CONTROL));
+        o.empty_selection_copies = false;
+        assert!(
+            key(ui, &editor, &o, &ch("c"), Modifiers::CONTROL) && key(ui, &editor, &o, &ch("x"), Modifiers::CONTROL)
+        );
+        assert!(!key(ui, &editor, &o, &ch("v"), Modifiers::CONTROL));
     }
 
     #[test]

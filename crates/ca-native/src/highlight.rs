@@ -370,12 +370,14 @@ impl Styling for Colours {
         let height = self.line_height(edid, line) as f64;
         crate::decor::layout(&self.path, line, len, height, layout);
         let look = self.look.borrow();
+        // Down every row of a wrapped line too.
+        let rows = layout.text.size().height.max(height);
         for x in &look.rulers {
             layout.extra_style.push(LineExtraStyle {
                 x: *x,
                 y: 0.0,
                 width: Some(1.0),
-                height,
+                height: rows,
                 bg_color: Some(look.ruler),
                 under_line: None,
                 wave_line: None,
