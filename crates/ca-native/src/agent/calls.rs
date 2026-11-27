@@ -123,7 +123,10 @@ pub fn main_argument(t: &Tool) -> String {
 pub enum Group {
     One(usize),
     /// The calls from `start`, `len` of them.
-    Fold { start: usize, len: usize },
+    Fold {
+        start: usize,
+        len: usize,
+    },
 }
 
 /// An answer's calls in groups: two or more ended calls in a row (a task's excepted, which has a card of its own)
@@ -259,11 +262,9 @@ pub fn locations(text: &str) -> Vec<Location> {
             let mut parts = l.splitn(3, ':');
             let (path, second) = (parts.next()?, parts.next());
             match second.map(|s| s.trim().parse::<usize>()) {
-                Some(Ok(line)) if !path.is_empty() => Some(Location {
-                    path: path.to_string(),
-                    line,
-                    text: parts.next().unwrap_or("").trim().to_string(),
-                }),
+                Some(Ok(line)) if !path.is_empty() => {
+                    Some(Location { path: path.to_string(), line, text: parts.next().unwrap_or("").trim().to_string() })
+                }
                 None if !path.trim().is_empty() && !path.contains(' ') => {
                     Some(Location { path: path.trim().to_string(), line: 0, text: String::new() })
                 }
@@ -303,8 +304,11 @@ pub fn table(text: &str) -> Option<Table> {
     if !t.starts_with('[') {
         return None;
     }
-    let rows: Vec<serde_json::Map<String, Value>> =
-        serde_json::from_str::<Vec<Value>>(t).ok()?.into_iter().map(|v| v.as_object().cloned()).collect::<Option<_>>()?;
+    let rows: Vec<serde_json::Map<String, Value>> = serde_json::from_str::<Vec<Value>>(t)
+        .ok()?
+        .into_iter()
+        .map(|v| v.as_object().cloned())
+        .collect::<Option<_>>()?;
     if rows.is_empty() {
         return None;
     }
@@ -343,7 +347,11 @@ pub fn sorted(rows: &[Vec<String>], column: usize, down: bool) -> Vec<Vec<String
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shown {
     /// A file's lines, highlighted by its path's language, from the given line.
-    File { text: String, lang: String, first: usize },
+    File {
+        text: String,
+        lang: String,
+        first: usize,
+    },
     Locations(Vec<Location>),
     Table(Table),
     /// What a command wrote.
@@ -413,7 +421,11 @@ mod tests {
         assert_eq!(status(&denied, state(&denied, true), 0), "Not allowed");
         let failed = Tool { done: true, status: "failed".into(), ..Tool::default() };
         assert_eq!(status(&failed, state(&failed, true), 0), "Failed");
-        let read = Tool { text: "     1\ta\n     2\tb\n… 3 more lines: read on with offset 3.".into(), ms: 1400, ..call("read_file", json!({})) };
+        let read = Tool {
+            text: "     1\ta\n     2\tb\n… 3 more lines: read on with offset 3.".into(),
+            ms: 1400,
+            ..call("read_file", json!({}))
+        };
         assert_eq!(status(&read, state(&read, false), 0), "2 lines · 1.4s");
         assert_eq!(status(&call("plan", json!({})), State::Done, 0), "");
         assert_eq!((took(320), took(61_000)), ("320 ms".to_string(), "1m 1s".to_string()));
@@ -421,10 +433,8 @@ mod tests {
 
     #[test]
     fn ended_calls_in_a_row_fold_into_a_line_but_a_task_or_one_still_running_has_its_card() {
-        let mut tools: Vec<Tool> = ["read_file", "read_file", "grep", "read_file", "run_shell"]
-            .iter()
-            .map(|n| call(n, json!({})))
-            .collect();
+        let mut tools: Vec<Tool> =
+            ["read_file", "read_file", "grep", "read_file", "run_shell"].iter().map(|n| call(n, json!({}))).collect();
         assert_eq!(groups(&tools, false), [Group::Fold { start: 0, len: 5 }]);
         assert_eq!(fold_line(&tools), "Used 5 tools · read_file ×3, grep, run_shell");
         tools[2].name = "task".into();
@@ -469,7 +479,8 @@ mod tests {
         assert_eq!(count(&found).as_deref(), Some("2 results"));
         let read = Tool { text: "    12\tfn a() {}\n".into(), ..call("read_file", json!({"path": "x.rs"})) };
         assert_eq!(shown(&read), Shown::File { text: "fn a() {}\n".into(), lang: "rs".into(), first: 12 });
-        let rows = Tool { text: r#"[{"name": "b", "n": 10}, {"name": "a", "n": 9}]"#.into(), ..call("mcp__x", json!({})) };
+        let rows =
+            Tool { text: r#"[{"name": "b", "n": 10}, {"name": "a", "n": 9}]"#.into(), ..call("mcp__x", json!({})) };
         let Shown::Table(t) = shown(&rows) else { panic!("a table") };
         assert_eq!(t.columns, ["name", "n"]);
         assert_eq!(sorted(&t.rows, 1, false)[0], ["a", "9"]);

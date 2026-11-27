@@ -6,12 +6,12 @@
 
 use std::time::{Duration, Instant};
 
+use floem::AnyView;
 use floem::IntoView;
 use floem::action::exec_after;
 use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo};
 use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, dyn_container, dyn_stack, empty, h_stack, label, v_stack, v_stack_from_iter};
-use floem::AnyView;
 use serde_json::Value;
 
 use super::calls::{self, Chip, Group, Shown, State};
@@ -76,7 +76,14 @@ fn clock(ui: Ui, tools: RwSignal<Vec<Tool>>) -> RwSignal<u64> {
 }
 
 /// A folded run of ended calls: its line, and its cards when opened.
-fn fold(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>, groups: Memo<Vec<Group>>, start: usize, tick: RwSignal<u64>) -> impl IntoView {
+fn fold(
+    ui: Ui,
+    send: Send,
+    tools: RwSignal<Vec<Tool>>,
+    groups: Memo<Vec<Group>>,
+    start: usize,
+    tick: RwSignal<u64>,
+) -> impl IntoView {
     let t = ui.colors;
     let open = create_rw_signal_here(false);
     let len = create_memo(move |_| {
@@ -145,8 +152,9 @@ fn card(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>, n: usize, tick: RwSignal
         dyn_container(move || shown.get(), |o| icon(if o { "chevron-down" } else { "chevron-right" }, 16.0)),
         dyn_container(move || me.with(|m| calls::icon_of(&m.name)), |name| icon(name, 14.0)),
         label(move || title.get().0).style(move |s| s.color(t.get().fg).flex_shrink(0.0_f32)),
-        label(move || title.get().1)
-            .style(|s| s.font_family(MONO_FONT.clone()).font_size(12.0).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)),
+        label(move || title.get().1).style(|s| {
+            s.font_family(MONO_FONT.clone()).font_size(12.0).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)
+        }),
         empty().style(|s| s.flex_grow(1.0_f32)),
         label(move || status.get()).style(|s| s.flex_shrink(0.0_f32).font_size(12.0)),
         state_icon(ui, st, tick),
@@ -181,10 +189,13 @@ fn card(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>, n: usize, tick: RwSignal
             let c = t.get();
             s.width_full().min_width(0.0).border(1.0).border_color(c.widget_border).border_radius(4.0)
         }),
-        dyn_container(move || chip_of.get(), move |c| match c {
-            Some(c) => chip(ui, send.clone(), c).into_any(),
-            None => empty().into_any(),
-        }),
+        dyn_container(
+            move || chip_of.get(),
+            move |c| match c {
+                Some(c) => chip(ui, send.clone(), c).into_any(),
+                None => empty().into_any(),
+            },
+        ),
     ))
     .style(|s| s.gap(4.0).width_full().min_width(0.0))
 }
@@ -229,7 +240,9 @@ fn bar(ui: Ui, me: Memo<Tool>, st: Memo<State>, tick: RwSignal<u64>) -> impl Int
             return None;
         }
         me.with(|m| match &m.progress {
-            Some(Progress { done, total, .. }) if *total > 0 => Some((0.0, (*done as f64 / *total as f64).min(1.0) * 100.0)),
+            Some(Progress { done, total, .. }) if *total > 0 => {
+                Some((0.0, (*done as f64 / *total as f64).min(1.0) * 100.0))
+            }
             _ if m.began.is_some_and(|b| b.elapsed() >= BAR_AFTER) => {
                 tick.with(|_| ());
                 // A third of the width, going across and back in from the left.
@@ -243,18 +256,17 @@ fn bar(ui: Ui, me: Memo<Tool>, st: Memo<State>, tick: RwSignal<u64>) -> impl Int
         })
     };
     let part = create_memo(move |_| part());
-    empty()
-        .style(move |s| {
-            let c = t.get();
-            match part.get() {
-                Some((left, width)) => s
-                    .height(2.0)
-                    .width_pct(width.min(100.0 - left.max(0.0)) + left.min(0.0))
-                    .margin_left(floem::unit::PxPct::Pct(left.max(0.0)))
-                    .background(c.progress),
-                None => s.hide(),
-            }
-        })
+    empty().style(move |s| {
+        let c = t.get();
+        match part.get() {
+            Some((left, width)) => s
+                .height(2.0)
+                .width_pct(width.min(100.0 - left.max(0.0)) + left.min(0.0))
+                .margin_left(floem::unit::PxPct::Pct(left.max(0.0)))
+                .background(c.progress),
+            None => s.hide(),
+        }
+    })
 }
 
 /// The chip under a read or an edit: its file and lines, which open them.
@@ -289,7 +301,8 @@ fn chip(ui: Ui, send: Send, c: Chip) -> impl IntoView {
 /// A card opened: the question when it waits, what it was asked with, and what it gave.
 fn body(ui: Ui, send: Send, tool: Tool, st: State) -> AnyView {
     let t = ui.colors;
-    let heading = move |words: &'static str| label(move || words).style(move |s| caps(s).font_size(11.0).color(t.get().desc));
+    let heading =
+        move |words: &'static str| label(move || words).style(move |s| caps(s).font_size(11.0).color(t.get().desc));
     let mut parts: Vec<AnyView> = Vec::new();
     if st == State::Waiting {
         let ask = format!("Allow {} to run with these arguments?", tool.name);
@@ -302,8 +315,12 @@ fn body(ui: Ui, send: Send, tool: Tool, st: State) -> AnyView {
             parts.push(
                 h_stack((
                     label(move || k.clone()).style(move |s| s.color(t.get().desc).flex_shrink(0.0_f32)),
-                    label(move || v.clone())
-                        .style(|s| s.font_family(MONO_FONT.clone()).font_size(12.0).text_overflow(TextOverflow::Wrap).min_width(0.0)),
+                    label(move || v.clone()).style(|s| {
+                        s.font_family(MONO_FONT.clone())
+                            .font_size(12.0)
+                            .text_overflow(TextOverflow::Wrap)
+                            .min_width(0.0)
+                    }),
                 ))
                 .style(|s| s.gap(8.0).min_width(0.0))
                 .into_any(),
@@ -360,7 +377,8 @@ fn result(ui: Ui, send: Send, tool: &Tool) -> AnyView {
             let text = l.text.clone();
             h_stack((
                 label(move || place.clone()).style(move |s| s.color(t.get().link).flex_shrink(0.0_f32)),
-                label(move || text.clone()).style(|s| s.font_family(MONO_FONT.clone()).font_size(12.0).text_ellipsis().min_width(0.0)),
+                label(move || text.clone())
+                    .style(|s| s.font_family(MONO_FONT.clone()).font_size(12.0).text_ellipsis().min_width(0.0)),
             ))
             .on_click_stop(move |_| {
                 if l.line > 0 {
@@ -369,7 +387,9 @@ fn result(ui: Ui, send: Send, tool: &Tool) -> AnyView {
                     ui.open(&l.path, &send);
                 }
             })
-            .style(move |s| s.gap(8.0).min_width(0.0).cursor(CursorStyle::Pointer).hover(|s| s.background(t.get().list_hover)))
+            .style(move |s| {
+                s.gap(8.0).min_width(0.0).cursor(CursorStyle::Pointer).hover(|s| s.background(t.get().list_hover))
+            })
         }))
         .style(|s| s.width_full().min_width(0.0))
         .into_any(),
@@ -392,15 +412,27 @@ fn rows(ui: Ui, table: calls::Table) -> impl IntoView {
     let head = floem::views::h_stack_from_iter(columns.iter().enumerate().map(|(i, name)| {
         let name = name.clone();
         let mark = move || match sort.get() {
-            Some((c, down)) if c == i => if down { " ↓" } else { " ↑" },
+            Some((c, down)) if c == i => {
+                if down {
+                    " ↓"
+                } else {
+                    " ↑"
+                }
+            }
             _ => "",
         };
         label(move || format!("{name}{}", mark()))
-            .on_click_stop(move |_| sort.update(|s| *s = Some(match *s {
-                Some((c, false)) if c == i => (i, true),
-                _ => (i, false),
-            })))
-            .style(move |s| bold(s).width(140.0).padding_horiz(6.0).padding_vert(2.0).text_ellipsis().cursor(CursorStyle::Pointer))
+            .on_click_stop(move |_| {
+                sort.update(|s| {
+                    *s = Some(match *s {
+                        Some((c, false)) if c == i => (i, true),
+                        _ => (i, false),
+                    })
+                })
+            })
+            .style(move |s| {
+                bold(s).width(140.0).padding_horiz(6.0).padding_vert(2.0).text_ellipsis().cursor(CursorStyle::Pointer)
+            })
     }))
     .style(move |s| s.border_bottom(1.0).border_color(t.get().widget_border));
     let body = dyn_container(
@@ -410,9 +442,11 @@ fn rows(ui: Ui, table: calls::Table) -> impl IntoView {
                 Some((c, down)) => calls::sorted(&all, c, down),
                 None => all.clone(),
             };
-            v_stack_from_iter(list.into_iter().take(MOST_ROWS).map(|r| {
-                floem::views::h_stack_from_iter(r.into_iter().map(|v| cell(v, false)))
-            }))
+            v_stack_from_iter(
+                list.into_iter()
+                    .take(MOST_ROWS)
+                    .map(|r| floem::views::h_stack_from_iter(r.into_iter().map(|v| cell(v, false)))),
+            )
             .into_any()
         },
     );
@@ -452,7 +486,8 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             if !change(ui, id, |t| t.status = "waiting".into())
                 && let Kind::Assistant(answer) = ui.current().kind
             {
-                let waiting = Tool { status: "waiting".into(), ok: true, text: String::new(), ..Tool::from_json(m, false) };
+                let waiting =
+                    Tool { status: "waiting".into(), ok: true, text: String::new(), ..Tool::from_json(m, false) };
                 answer.tools.update(|t| t.push(waiting));
             }
         }
@@ -499,7 +534,8 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
                 && let Kind::Assistant(answer) = ui.current().kind
             {
                 answer.tools.update(|ts| {
-                    let same = |t: &Tool| id.is_empty() && !t.done && t.name == ended.name && t.subject == ended.subject;
+                    let same =
+                        |t: &Tool| id.is_empty() && !t.done && t.name == ended.name && t.subject == ended.subject;
                     match ts.iter_mut().rev().find(|t| same(t)) {
                         Some(t) => end(t),
                         None => ts.push(ended.clone()),
@@ -539,17 +575,26 @@ mod tests {
         let send: Send = std::rc::Rc::new(|_| {});
         ui.push(Kind::assistant(ui.scope));
         let said = |v: Value| take(ui, &v, &send);
-        said(json!({"type": "tool_waiting", "id": "c1", "name": "run_shell", "subject": "ls", "arguments": {"command": "ls"}}));
-        said(json!({"type": "tool_start", "id": "c1", "name": "run_shell", "subject": "ls", "arguments": {"command": "ls"}}));
+        said(
+            json!({"type": "tool_waiting", "id": "c1", "name": "run_shell", "subject": "ls", "arguments": {"command": "ls"}}),
+        );
+        said(
+            json!({"type": "tool_start", "id": "c1", "name": "run_shell", "subject": "ls", "arguments": {"command": "ls"}}),
+        );
         said(json!({"type": "tool_progress", "id": "c1", "progress": 2.0, "total": 5.0, "message": ""}));
         let Kind::Assistant(answer) = ui.current().kind else { panic!("an answer") };
         let now = answer.tools.get_untracked();
         assert_eq!(now.len(), 1);
         assert!(now[0].began.is_some() && now[0].status == "running");
         assert_eq!(now[0].progress.as_ref().map(|p| (p.done, p.total)), Some((2, 5)));
-        said(json!({"type": "tool_end", "id": "c1", "name": "run_shell", "subject": "ls", "ok": true, "text": "a", "ms": 40, "status": "done"}));
+        said(
+            json!({"type": "tool_end", "id": "c1", "name": "run_shell", "subject": "ls", "ok": true, "text": "a", "ms": 40, "status": "done"}),
+        );
         let now = answer.tools.get_untracked();
-        assert_eq!((now.len(), now[0].done, now[0].ms, now[0].arguments["command"].clone()), (1, true, 40, json!("ls")));
+        assert_eq!(
+            (now.len(), now[0].done, now[0].ms, now[0].arguments["command"].clone()),
+            (1, true, 40, json!("ls"))
+        );
     }
 
     #[test]
@@ -562,7 +607,9 @@ mod tests {
         said(json!({"type": "tool_start", "id": "c1", "name": "edit_file", "subject": "a.rs"}));
         said(json!({"type": "tool_end", "id": "c1", "name": "edit_file", "subject": "a.rs", "ok": true, "text": "ok"}));
         let answers: Vec<Vec<Tool>> = ui.items.with_untracked(|l| {
-            l.iter().filter_map(|i| if let Kind::Assistant(a) = &i.kind { Some(a.tools.get_untracked()) } else { None }).collect()
+            l.iter()
+                .filter_map(|i| if let Kind::Assistant(a) = &i.kind { Some(a.tools.get_untracked()) } else { None })
+                .collect()
         });
         assert_eq!(answers.len(), 1, "no answer is begun for the call's start");
         assert!(answers[0][0].done && answers[0][0].ok);

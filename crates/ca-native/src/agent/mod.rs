@@ -18,9 +18,9 @@ use crate::widgets::Theme;
 
 pub mod actions;
 pub mod answer;
-pub mod calls;
 pub mod ask;
 pub mod attach;
+pub mod calls;
 pub mod compaction;
 pub mod composer;
 pub mod diffs;
