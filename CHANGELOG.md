@@ -310,6 +310,10 @@ Sections used:
   pill forever. It now ends with the turn.
 - **Escape closes the find widget after Replace All.** Clicking Replace or Replace All used to take
   the keys out of the widget, so Escape did nothing. The keys now stay in the replace box.
+- **The @ list no longer covers the chat box.** It now sits above the box, clear of its border,
+  the same way the / list does.
+- **Show earlier keeps your place.** Loading the last earlier turns no longer moves the thread
+  down by the height of the row that went away.
 
 ## v0.5.0 (2026-11-26)
 
