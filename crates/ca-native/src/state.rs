@@ -72,7 +72,9 @@ pub enum OnDisk {
 }
 
 /// An open editor: its file, its text (kept while another tab is shown), whether it has changes not saved; or a
-/// file's changes, shown as a diff (its `path`, the tab's own name among the tabs, is then `changes:` and the file).
+/// file's changes, shown as a diff (its `path`, the tab's own name among the tabs, is then `changes:` and the file);
+/// or a tab of a kind that is not a file's text (`editor::kinds`: its `path` is the kind's name, a colon and the
+/// rest, its `file` the rest).
 #[derive(Clone)]
 pub struct Tab {
     pub path: String,
@@ -82,6 +84,8 @@ pub struct Tab {
     pub diff: Option<Rc<Vec<crate::diff::Line>>>,
     /// Its syntax colours (and the editor's font), kept with it so a tab shown again is not parsed again.
     pub colours: Rc<crate::highlight::Colours>,
+    /// The kind of tab it is, by the kind's name (`editor::kinds`); none: a file's text, or a file's changes.
+    pub kind: Option<&'static str>,
 }
 
 impl Tab {
@@ -92,6 +96,11 @@ impl Tab {
 
     pub fn text(&self) -> String {
         self.doc.text().to_string()
+    }
+
+    /// Whether it is a file's text: what is saved to disk, watched on it, and follows the file when it is moved.
+    pub fn is_file(&self) -> bool {
+        self.diff.is_none() && self.kind.is_none()
     }
 }
 
@@ -225,6 +234,9 @@ pub struct Ui {
     pub closing: RwSignal<Option<String>>,
     /// The tab to close once it is saved (Save, in that question).
     pub close_saved: RwSignal<Option<String>>,
+    /// The window's parts' own states, each kept by its type (`ext.rs`: `ui.state::<T>()`). A part's state goes
+    /// there, never in a field here.
+    pub ext: RwSignal<crate::ext::Store>,
 }
 
 impl Ui {
@@ -308,6 +320,7 @@ impl Ui {
             reloading: create_rw_signal(HashSet::new()),
             closing: create_rw_signal(None),
             close_saved: create_rw_signal(None),
+            ext: create_rw_signal(crate::ext::Store::default()),
         }
     }
 
@@ -325,7 +338,7 @@ impl Ui {
     /// The answer being written: the last item when it is one, else a new one.
     pub(crate) fn current(&self) -> Item {
         if let Some(last) = self.items.with_untracked(|l| l.last().cloned())
-            && matches!(last.kind, Kind::Assistant { .. })
+            && matches!(last.kind, Kind::Assistant(_))
         {
             return last;
         }
@@ -377,6 +390,7 @@ impl Ui {
             doc: Rc::new(TextDocument::new(self.scope, "")),
             dirty: self.scope.create_rw_signal(false),
             diff: Some(Rc::new(lines)),
+            kind: None,
         };
         self.tabs.update(|t| match t.iter_mut().find(|t| t.path == id) {
             Some(old) => *old = tab,
@@ -429,10 +443,11 @@ impl Ui {
     }
 
     pub fn save_tab(&self, path: &str, send: &Send) {
-        if let Some(tab) = self.tab(path)
-            && tab.diff.is_none()
-        {
-            send(json!({"type": "save", "path": path, "text": tab.text()}));
+        match self.tab(path) {
+            // A tab of a kind is saved its kind's way.
+            Some(tab) if tab.kind.is_some() => crate::editor::kinds::save(*self, send, &tab),
+            Some(tab) if tab.is_file() => send(json!({"type": "save", "path": path, "text": tab.text()})),
+            _ => {}
         }
     }
 
@@ -482,10 +497,13 @@ impl Ui {
     /// The look kept for this folder: where its views are, its parts' sizes.
     pub fn view_state(&self) -> Value {
         let editors: Vec<String> =
-            self.tabs.with_untracked(|t| t.iter().filter(|t| t.diff.is_none()).map(|t| t.path.clone()).collect());
-        let active = self.active.get_untracked().filter(|a| editors.contains(a));
+            self.tabs.with_untracked(|t| t.iter().filter(|t| t.is_file()).map(|t| t.path.clone()).collect());
+        // The tabs that are not files and are kept all the same (`editor::kinds`).
+        let kind_tabs = crate::editor::kinds::kept(*self);
+        let active = self.active.get_untracked().filter(|a| editors.contains(a) || kind_tabs.contains(a));
         json!({
             "editors": editors,
+            "kind_tabs": kind_tabs,
             "active": active,
             "dock": self.dock.get_untracked().to_json(),
             "hidden": self.hidden.with_untracked(|h| { let mut h: Vec<u32> = h.iter().copied().collect(); h.sort(); h }),
@@ -501,12 +519,16 @@ impl Ui {
         }
         // The files that were open, opened again in their order; the one shown last asked once more (the answers
         // come in the order asked, each shown as it comes), so it is the one shown.
-        for p in v["editors"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        let editors: Vec<&str> = v["editors"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        for p in &editors {
             send(json!({"type": "open", "path": p}));
         }
-        if let Some(a) = v["active"].as_str() {
+        if let Some(a) = v["active"].as_str().filter(|a| editors.contains(a)) {
             send(json!({"type": "open", "path": a}));
         }
+        // The kept tabs that are not files, each made again by its kind; one of them shown last is shown again
+        // once the files have come.
+        crate::editor::kinds::restore_all(*self, send, v);
         // A layout kept in the old form (three containers) is read as the default.
         let dock = Dock::from_json(&v["dock"]);
         let mut groups = Vec::new();
@@ -549,7 +571,7 @@ impl Ui {
     pub fn moved(&self, from: &str, to: &str) {
         let now = |p: &str| moved_path(p, from, to);
         self.tabs.update(|tabs| {
-            for t in tabs.iter_mut().filter(|t| t.diff.is_none()) {
+            for t in tabs.iter_mut().filter(|t| t.is_file()) {
                 if let Some(n) = now(&t.path) {
                     t.path = n.clone();
                     t.file = n;
@@ -570,7 +592,7 @@ impl Ui {
     pub fn gone(&self, path: &str) {
         let inside = |p: &str| moved_path(p, path, "").is_some();
         let open: Vec<String> = self.tabs.with_untracked(|tabs| {
-            tabs.iter().filter(|t| t.diff.is_none() && inside(&t.path)).map(|t| t.path.clone()).collect()
+            tabs.iter().filter(|t| t.is_file() && inside(&t.path)).map(|t| t.path.clone()).collect()
         });
         for p in open {
             self.close(&p);
@@ -583,17 +605,10 @@ impl Ui {
     }
 
     /// One message from the session, as the page takes it: the window's parts are given it first (`ext::take`), then
-    /// what is the whole window's is taken in here (the session's state, the theme).
+    /// what is the whole window's is taken in here (the session's state, the theme), then the parts that asked to
+    /// be called after are (`ext::after`).
     pub fn take(&self, m: &Value, send: &Send) {
-        if crate::agent::stream::take(*self, m, send)
-            || crate::save::take(*self, m, send)
-            || crate::editor::take(*self, m, send)
-            || crate::explorer::take(*self, m, send)
-            || crate::search::take(*self, m, send)
-            || crate::changes::take(*self, m, send)
-            || crate::terminal::take(*self, m, send)
-            || crate::palette::take(*self, m, send)
-        {
+        if crate::ext::take(*self, m, send) {
             return;
         }
         let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
@@ -653,6 +668,7 @@ impl Ui {
             "behind" => send(json!({"type": "state"})),
             _ => {}
         }
+        crate::ext::taken(*self, m, send);
     }
 }
 

@@ -3,11 +3,16 @@
 //! group's tabs; each view is in the tree once, the editor once, no group is empty, no split has one part only, and
 //! a split in the same direction as its parent is folded into it. Sizes are kept apart (by a part's number), so a
 //! sash only sets a size and the tree is not built again.
+//!
+//! The tree holds the views that are in the window (`layout::ready`), no others. Each view has a first place
+//! (`HOMES`): the side bar, the panel or the secondary side bar. A view that a kept layout does not have (it was
+//! kept before the view was there) goes into the group that holds the views of its first place, among them in
+//! their order; a group of its own is made, where its first place is, only when none of them is in the tree.
 
 use floem::kurbo::{Point, Rect};
 use serde_json::{Value, json};
 
-use crate::layout::{VIEWS, View};
+use crate::layout::View;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Dir {
@@ -133,39 +138,103 @@ pub const FIRST_SIZES: [(u32, f64); 3] = [(2, 260.0), (4, 230.0), (5, 380.0)];
 /// A new group's first size.
 pub const NEW_SIZE: f64 = 280.0;
 
+/// A view's first place: VS Code's side bar, its panel under the editor, or its secondary side bar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Home {
+    Side,
+    Panel,
+    Secondary,
+}
+
+/// Every view's first place, and its order among the views there (the activity bar's order, the panel's tabs').
+pub const HOMES: [(Home, &[View]); 3] = [
+    (
+        Home::Side,
+        &[
+            View::Files,
+            View::Search,
+            View::Scm,
+            View::Run,
+            View::Extensions,
+            View::Changes,
+            View::Problems,
+            View::Review,
+            View::Plan,
+            View::Memory,
+            View::Skills,
+            View::Projects,
+            View::Automation,
+            View::Sessions,
+            View::Harness,
+            View::Outline,
+        ],
+    ),
+    (Home::Panel, &[View::Terminal, View::DebugConsole, View::Output, View::Ports]),
+    (Home::Secondary, &[View::Agent, View::Tasks, View::Context]),
+];
+
+/// A view's first place, and the views of that place in their order.
+pub fn home_of(v: View) -> (Home, &'static [View]) {
+    HOMES.into_iter().find(|(_, views)| views.contains(&v)).unwrap_or(HOMES[0])
+}
+
 impl Default for Dock {
-    /// VS Code's own: the side bar, the editor over the panel, the secondary side bar.
+    /// VS Code's own, with the views that are in the window: the side bar, the editor over the panel, the secondary
+    /// side bar.
     fn default() -> Dock {
-        Dock {
-            root: Node::Split {
-                id: 1,
-                dir: Dir::Row,
-                kids: vec![
-                    Node::Tabs {
-                        id: 2,
-                        views: vec![View::Files, View::Search, View::Changes, View::Outline],
-                        active: View::Files,
-                    },
-                    Node::Split {
-                        id: 3,
-                        dir: Dir::Column,
-                        kids: vec![
-                            Node::Editor,
-                            Node::Tabs { id: 4, views: vec![View::Terminal], active: View::Terminal },
-                        ],
-                    },
-                    Node::Tabs { id: 5, views: vec![View::Agent], active: View::Agent },
-                ],
-            },
-            next: 6,
-            floating: Vec::new(),
-        }
+        Dock::of(&crate::layout::ready())
     }
 }
 
 impl Dock {
+    /// The first layout of these views: each in its first place (a place none of them has is not there). The side
+    /// bar is part 2, the panel 4 and the secondary side bar 5, whichever views there are (their first sizes are
+    /// kept by those numbers).
+    pub fn of(views: &[View]) -> Dock {
+        let group = |id: u32, home: Home| {
+            let mine: Vec<View> = HOMES
+                .into_iter()
+                .filter(|(h, _)| *h == home)
+                .flat_map(|(_, all)| all.iter().copied())
+                .filter(|v| views.contains(v))
+                .collect();
+            let active = mine.first().copied().unwrap_or(View::Files);
+            Node::Tabs { id, views: mine, active }
+        };
+        let root = Node::Split {
+            id: 1,
+            dir: Dir::Row,
+            kids: vec![
+                group(2, Home::Side),
+                Node::Split { id: 3, dir: Dir::Column, kids: vec![Node::Editor, group(4, Home::Panel)] },
+                group(5, Home::Secondary),
+            ],
+        };
+        // A place with no view is taken out (and the split left with one part folded), nothing put back.
+        Dock { root, next: 6, floating: Vec::new() }.tidied_for(views, false)
+    }
+
     pub fn find(&self, id: u32) -> Option<&Node> {
         self.root.find(id)
+    }
+
+    /// The same without these views: taken out of their groups (and of the floating ones), a group left empty gone.
+    /// The parts that stay keep their numbers. What is drawn while views are withheld.
+    pub fn without_all(&self, gone: &[View]) -> Dock {
+        if gone.is_empty() {
+            return self.clone();
+        }
+        fn strip(n: &mut Node, gone: &[View]) {
+            match n {
+                Node::Tabs { views, .. } => views.retain(|v| !gone.contains(v)),
+                Node::Split { kids, .. } => kids.iter_mut().for_each(|k| strip(k, gone)),
+                Node::Editor => {}
+            }
+        }
+        let mut d = self.clone();
+        strip(&mut d.root, gone);
+        d.floating.retain(|v| !gone.contains(v));
+        d.tidied(false)
     }
 
     /// The group a view is in.
@@ -299,14 +368,81 @@ impl Dock {
         d.normalized()
     }
 
-    /// Kept whole: no empty group, no split of one part, same-direction splits folded, each view once (one that is
-    /// missing beside the editor, on the right), the editor once.
+    /// Kept whole: no empty group, no split of one part, same-direction splits folded, each view that is in the
+    /// window once (one that is missing put in its first place), no other view, the editor once.
     pub fn normalized(&self) -> Dock {
         self.tidied(true)
     }
 
     /// The same, a missing view put back only when `fill` (not while one is being moved).
     fn tidied(&self, fill: bool) -> Dock {
+        self.tidied_for(&crate::layout::ready(), fill)
+    }
+
+    /// A view that is not in the tree put where it belongs: among the views of its first place, in the group that
+    /// holds the first of them there is, after the ones that come before it; none of them in the tree, a group of
+    /// its own where its first place is. False when it was there already.
+    fn put_home(&mut self, v: View) -> bool {
+        if self.group_of(v).is_some() || self.floating.contains(&v) {
+            return false;
+        }
+        let (home, mates) = home_of(v);
+        let at = mates.iter().position(|m| *m == v).unwrap_or(0);
+        if let Some(g) = mates.iter().find_map(|m| self.group_of(*m))
+            && let Some(Node::Tabs { views, .. }) = self.root.find_mut(g)
+        {
+            // After the last of the views that come before it; else before the first that comes after it.
+            let after = views.iter().rposition(|x| mates[..at].contains(x)).map(|i| i + 1);
+            let before = views.iter().position(|x| mates[at..].contains(x));
+            let place = after.or(before).unwrap_or(views.len());
+            views.insert(place, v);
+            return true;
+        }
+        let id = self.next;
+        self.next += 2;
+        let group = Node::Tabs { id, views: vec![v], active: v };
+        let root = std::mem::replace(&mut self.root, Node::Editor);
+        self.root = match home {
+            // Under the editor.
+            Home::Panel => {
+                fn under(n: Node, group: &mut Option<Node>, id: u32) -> Node {
+                    match n {
+                        Node::Editor => match group.take() {
+                            Some(g) => Node::Split { id, dir: Dir::Column, kids: vec![Node::Editor, g] },
+                            None => Node::Editor,
+                        },
+                        Node::Split { id: sid, dir, kids } => {
+                            Node::Split { id: sid, dir, kids: kids.into_iter().map(|k| under(k, group, id)).collect() }
+                        }
+                        tabs => tabs,
+                    }
+                }
+                under(root, &mut Some(group), id + 1)
+            }
+            // At the window's left, or its right.
+            side => {
+                let first = side == Home::Side;
+                match root {
+                    Node::Split { id: rid, dir: Dir::Row, mut kids } => {
+                        if first {
+                            kids.insert(0, group)
+                        } else {
+                            kids.push(group)
+                        }
+                        Node::Split { id: rid, dir: Dir::Row, kids }
+                    }
+                    other => {
+                        let kids = if first { vec![group, other] } else { vec![other, group] };
+                        Node::Split { id: id + 1, dir: Dir::Row, kids }
+                    }
+                }
+            }
+        };
+        true
+    }
+
+    /// Kept whole for the views given (the ones in the window).
+    fn tidied_for(&self, ready: &[View], fill: bool) -> Dock {
         fn clean(n: Node, seen: &mut Vec<View>, editor: &mut bool) -> Option<Node> {
             match n {
                 Node::Editor => {
@@ -347,10 +483,13 @@ impl Dock {
                 }
             }
         }
-        // A floating view is out of the tree: a copy of it there goes, and it is not missing.
-        let mut floating = self.floating.clone();
+        // A floating view is out of the tree: a copy of it there goes, and it is not missing. A view that is not in
+        // the window (one a later Code Arena kept) is in neither.
+        let mut floating: Vec<View> = self.floating.iter().copied().filter(|v| ready.contains(v)).collect();
         floating.dedup();
-        let mut seen = floating.clone();
+        // Seen already, so cleaned out of the tree: the floating ones, and every view that is not in the window.
+        let mut seen: Vec<View> =
+            floating.iter().copied().chain(crate::layout::VIEWS.into_iter().filter(|v| !ready.contains(v))).collect();
         let mut editor = false;
         let mut root = clean(self.root.clone(), &mut seen, &mut editor).unwrap_or(Node::Editor);
         let mut next = self.next;
@@ -358,34 +497,29 @@ impl Dock {
             root = Node::Split { id: next, dir: Dir::Row, kids: vec![root, Node::Editor] };
             next += 1;
         }
-        let missing: Vec<View> = VIEWS.into_iter().filter(|v| fill && !seen.contains(v)).collect();
         let mut d = Dock { root, next, floating };
-        if let Some(first) = missing.first() {
-            let group = Node::Tabs { id: d.next, views: missing.clone(), active: *first };
-            d.next += 1;
-            d.root = match d.root {
-                Node::Split { id, dir: Dir::Row, mut kids } => {
-                    kids.push(group);
-                    Node::Split { id, dir: Dir::Row, kids }
-                }
-                other => {
-                    let id = d.next;
-                    d.next += 1;
-                    Node::Split { id, dir: Dir::Row, kids: vec![other, group] }
-                }
-            };
+        // The ids above every part's before a part is made for a missing view.
+        d.next = d.next.max(d.most() + 1);
+        if fill && ready.iter().fold(false, |put, v| d.put_home(*v) || put) {
+            // A group made beside a split of its own direction is folded into it.
+            return d.tidied_for(ready, false);
         }
         // Numbers stay above every part's, so a new part never takes one in use.
-        let mut ids = Vec::new();
+        d.next = d.next.max(d.most() + 1);
+        d
+    }
+
+    /// The greatest number a part of the tree has.
+    fn most(&self) -> u32 {
         fn all_ids(n: &Node, out: &mut Vec<u32>) {
             out.push(n.id());
             if let Node::Split { kids, .. } = n {
                 kids.iter().for_each(|k| all_ids(k, out));
             }
         }
-        all_ids(&d.root, &mut ids);
-        d.next = d.next.max(ids.iter().copied().filter(|i| *i != ROOT).max().unwrap_or(0) + 1);
-        d
+        let mut ids = Vec::new();
+        all_ids(&self.root, &mut ids);
+        ids.into_iter().filter(|i| *i != ROOT).max().unwrap_or(0)
     }
 
     pub fn to_json(&self) -> Value {
@@ -502,7 +636,7 @@ mod tests {
         sorted.sort_by_key(|v| v.id());
         sorted.dedup();
         assert_eq!(sorted.len(), views.len(), "each view once: {d:?}");
-        assert_eq!(views.len() + d.floating.len(), VIEWS.len(), "every view: {d:?}");
+        assert_eq!(views.len() + d.floating.len(), crate::layout::ready().len(), "every view: {d:?}");
         fn walk(n: &Node, parent: Option<Dir>, editors: &mut usize) {
             match n {
                 Node::Editor => *editors += 1,
@@ -578,7 +712,8 @@ mod tests {
         let mut n: u64 = 7;
         for _ in 0..500 {
             n = n.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            let v = VIEWS[(n >> 33) as usize % VIEWS.len()];
+            let views = crate::layout::ready();
+            let v = views[(n >> 33) as usize % views.len()];
             let mut targets = vec![EDITOR, ROOT];
             d.root.groups(&mut targets);
             let target = targets[(n >> 40) as usize % targets.len()];
@@ -617,6 +752,74 @@ mod tests {
         let d = Dock::from_json(&kept);
         ok(&d);
         assert!(d.group_of(Agent).is_some());
+    }
+
+    #[test]
+    fn a_view_new_to_a_kept_layout_goes_to_its_first_place_among_the_views_there() {
+        use crate::layout::also_ready;
+        // A layout kept with the views the window began with, Search the one shown in the side bar and the terminal
+        // docked to the right of the editor.
+        let kept = Dock::default().docked(Search, 2, Side::Center).docked(Terminal, EDITOR, Side::Right);
+        let saved = kept.to_json();
+        let parts = |d: &Dock| {
+            let mut groups = Vec::new();
+            d.root.groups(&mut groups);
+            groups.len()
+        };
+        // Views written since: each in the group that holds the views of its first place, in their order, and no
+        // group more than there were.
+        also_ready(&[Scm, Problems, Sessions, Output, Tasks]);
+        let d = Dock::from_json(&saved);
+        ok(&d);
+        assert_eq!(parts(&d), parts(&kept), "no group of their own");
+        assert!(
+            matches!(d.find(2), Some(Node::Tabs { views, .. })
+                if *views == [Files, Search, Scm, Changes, Problems, Sessions, Outline]),
+            "{d:?}"
+        );
+        let terminal = d.group_of(Terminal).expect("there");
+        assert_eq!(d.group_of(Output), Some(terminal), "with the terminal, where the person put it");
+        assert_eq!(d.group_of(Tasks), d.group_of(Agent));
+        assert_eq!(Dock::from_json(&d.to_json()), d);
+        // The first layout has them in their first places, under the same numbers.
+        let first = Dock::default();
+        ok(&first);
+        assert!(matches!(first.find(4), Some(Node::Tabs { views, .. }) if *views == [Terminal, Output]));
+        assert!(matches!(first.find(5), Some(Node::Tabs { views, .. }) if *views == [Agent, Tasks]));
+        assert_eq!(first.side_bar(), Some(2));
+        // None of its first place's views in the tree (the terminal floats): a group of its own, under the editor.
+        let floating = Dock::default().floated(Terminal).floated(Output);
+        also_ready(&[Scm, Problems, Sessions, Output, Tasks, DebugConsole]);
+        let d = floating.normalized();
+        ok(&d);
+        let console = d.group_of(DebugConsole).expect("there");
+        let Node::Split { kids, .. } = &d.root else { panic!() };
+        assert!(
+            matches!(&kids[1], Node::Split { dir: Dir::Column, kids, .. }
+                if kids[0] == Node::Editor && kids[1].id() == console),
+            "{d:?}"
+        );
+        // A view that is in the window no more (a layout a later Code Arena kept) is in no group.
+        also_ready(&[]);
+        let d = Dock::from_json(&d.to_json());
+        ok(&d);
+        assert_eq!(d.group_of(Scm), None);
+        assert_eq!(d.group_of(DebugConsole), None);
+    }
+
+    #[test]
+    fn views_withheld_are_out_of_what_is_drawn_and_the_parts_that_stay_keep_their_numbers() {
+        let d = Dock::default();
+        assert_eq!(d.without_all(&[]), d);
+        // One of a group's views: the group stays, without it, another shown.
+        let shown = d.shown(Search).without_all(&[Search]);
+        assert!(matches!(shown.find(2), Some(Node::Tabs { views, active: Files, .. }) if !views.contains(&Search)));
+        // A group's only view: the group is gone, the split it left with one part folded, the others as numbered.
+        let shown = d.without_all(&[Terminal]);
+        assert_eq!(shown.group_of(Terminal), None);
+        let Node::Split { dir: Dir::Row, kids, .. } = &shown.root else { panic!() };
+        assert_eq!(kids.iter().map(Node::id).collect::<Vec<_>>(), [2, EDITOR, 5]);
+        assert!(!d.floated(Agent).without_all(&[Agent]).floating.contains(&Agent));
     }
 
     #[test]

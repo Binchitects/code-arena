@@ -127,6 +127,9 @@ pub fn diff_view(ui: Ui, lines: Rc<Vec<Line>>) -> impl IntoView {
     })
 }
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
 /// The session's message of the files the agent changed, taken in. Never taken away (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     if m["type"] == "changes" {

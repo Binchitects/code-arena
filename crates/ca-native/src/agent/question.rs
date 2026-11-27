@@ -6,7 +6,7 @@ use floem::style::TextOverflow;
 use floem::views::{Decorators, empty, h_stack, label};
 use serde_json::Value;
 
-use crate::model::{Item, Kind};
+use crate::model::{Item, Kind, Question};
 use crate::state::{Send, Ui};
 
 pub(super) fn bubble(ui: Ui, text: String) -> impl IntoView {
@@ -28,18 +28,20 @@ pub(super) fn bubble(ui: Ui, text: String) -> impl IntoView {
     .style(|s| s.width_full())
 }
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
 /// The session's messages that are a request's, taken in. Never taken away from the
 /// rest of the window (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
-    let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
     if m["type"] == "user" {
-        ui.push(Kind::User(s("text")));
+        ui.push(Kind::User(Question::from_json(m)));
     }
     false
 }
 
 /// A request the session kept, as an item (none for a note of Code Arena's own).
 pub(super) fn kept(ui: Ui, msg: &Value) -> Option<Item> {
-    let text = msg["text"].as_str().unwrap_or("").to_string();
-    (!text.starts_with("(Code Arena")).then(|| Item { id: ui.id(), kind: Kind::User(text) })
+    let question = Question::from_json(msg);
+    (!question.text.starts_with("(Code Arena")).then(|| Item { id: ui.id(), kind: Kind::User(question) })
 }

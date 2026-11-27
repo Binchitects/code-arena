@@ -13,6 +13,11 @@ pub(super) fn view(ui: Ui) -> impl IntoView {
         .style(move |s| super::bar(t, s).apply_if(ui.goal.get().is_none(), |s| s.hide()))
 }
 
+/// What it adds to the window's registries, once at start: its bar over the input.
+pub fn register(_ui: Ui, _send: &Send) {
+    super::slots::add(super::slots::Slot::Bars, "goal", 20, |ui, _| view(ui).into_any());
+}
+
 /// The session's message of its tasks, the goal's part taken in. Never taken away (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     if m["type"] == "tasks" {

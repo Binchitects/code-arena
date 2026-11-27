@@ -80,6 +80,9 @@ pub(super) fn disk_bar(ui: Ui) -> impl IntoView {
     })
 }
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
 /// The session's messages that are of the open files as they are on disk (one read, the watched ones changed), taken in. Never taken away from the
 /// rest of the window (false).
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
@@ -128,7 +131,15 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                         });
                     }
                     ui.tabs.update(|t| {
-                        t.push(Tab { path: path.clone(), file: path.clone(), doc, dirty, diff: None, colours })
+                        t.push(Tab {
+                            path: path.clone(),
+                            file: path.clone(),
+                            doc,
+                            dirty,
+                            diff: None,
+                            colours,
+                            kind: None,
+                        })
                     });
                 }
             }
@@ -141,7 +152,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         "stats" => {
             for it in m["items"].as_array().into_iter().flatten() {
                 let path = it["path"].as_str().unwrap_or("").to_string();
-                let Some(tab) = ui.tab(&path).filter(|t| t.diff.is_none()) else { continue };
+                let Some(tab) = ui.tab(&path).filter(|t| t.is_file()) else { continue };
                 let dirty = tab.dirty.get_untracked();
                 if it["gone"] == true {
                     ui.on_disk.update(|d| {

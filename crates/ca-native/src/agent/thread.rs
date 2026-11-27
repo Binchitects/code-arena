@@ -42,10 +42,18 @@ pub(super) fn thread(ui: Ui, send: Send) -> impl IntoView {
 }
 
 fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
+    use super::slots::{ItemSlot, around_item};
     let t = ui.colors;
-    match i.kind {
-        Kind::User(text) | Kind::Queued(text) => super::question::bubble(ui, text).into_any(),
-        Kind::Assistant { text, tools, open } => super::answer::view(ui, text, tools, open).into_any(),
+    match i.kind.clone() {
+        Kind::User(question) | Kind::Queued { question, .. } => {
+            let own = super::question::bubble(ui, question.text).into_any();
+            around_item(ui, &send, ItemSlot::QuestionTop, own, ItemSlot::QuestionFoot, &i)
+        }
+        Kind::Assistant(answer) => {
+            let own = super::answer::view(ui, answer).into_any();
+            around_item(ui, &send, ItemSlot::AnswerTop, own, ItemSlot::AnswerFoot, &i)
+        }
+        Kind::Compaction { .. } => super::compaction::view(ui, send, &i),
         Kind::Notice(text) => label(move || text.clone())
             .style(move |s| s.color(t.get().desc).font_size(12.0).text_overflow(TextOverflow::Wrap))
             .into_any(),
@@ -58,6 +66,9 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
         Kind::Ask { id, tool, subject, answer } => super::ask::card(ui, send, id, tool, subject, answer).into_any(),
     }
 }
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
 
 /// The session's messages that are a notice, taken in. Never taken away from the
 /// rest of the window (false).

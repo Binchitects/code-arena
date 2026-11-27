@@ -46,12 +46,12 @@ fn one_tab(ui: Ui, tab: Tab) -> impl IntoView {
     let dirty = tab.dirty;
     let shut = tab.path.clone();
     let top = is_active.clone();
+    // A tab of a kind has its kind's icon before its name, and its name from its kind (a file's has none).
+    let kind_icon = super::kinds::icon(&tab);
+    let named = tab.clone();
     let content = h_stack((
-        label({
-            let n = tab.name();
-            move || n.clone()
-        })
-        .style(|s| s.font_size(13.0).selectable(false)),
+        icon(kind_icon, 16.0).style(move |s| s.apply_if(kind_icon.is_empty(), |s| s.hide())),
+        label(move || super::kinds::title(ui, &named)).style(|s| s.font_size(13.0).selectable(false)),
         dyn_container(
             move || (dirty.get(), hover.get() || is_active()),
             move |(dirty, shown)| {
@@ -165,4 +165,12 @@ pub(super) fn close_question(ui: Ui) -> impl IntoView {
                 .selectable(false)
                 .apply_if(ui.closing.with(|c| c.is_none()), |s| s.hide())
         })
+}
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: crate::state::Ui, _send: &crate::state::Send) {}
+
+/// The session's messages that are this part's, taken in; true takes one away from the parts after it.
+pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state::Send) -> bool {
+    false
 }

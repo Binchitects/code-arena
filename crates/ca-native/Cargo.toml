@@ -9,11 +9,17 @@ rust-version.workspace = true
 
 [dependencies]
 alacritty_terminal = "0.26.0"
+# Kept for the parts to come (pictures and attachments as data, ignore and search patterns, find and replace, the
+# compare editor): each is in the lock file already, so no part has to change this file.
+base64 = "0.22"
 ca-themes.workspace = true
 crossbeam-channel = "0.5"
 floem = "0.2"
+globset.workspace = true
 im = "15.1"
+regex.workspace = true
 serde_json.workspace = true
+similar.workspace = true
 syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
 tokio.workspace = true
 

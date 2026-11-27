@@ -5,6 +5,9 @@ use serde_json::Value;
 
 use crate::state::{Send, Ui};
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
 /// The session's messages that are of a save, taken in. Never taken away from the
 /// rest of the window (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {

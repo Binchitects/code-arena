@@ -2,11 +2,13 @@
 //! close button), the breadcrumbs, then the editor (line numbers, the current line, the caret, VS Code's font); with
 //! nothing open, VS Code's watermark of keys. Over the editor, VS Code's find widget (Ctrl+F); above it, a notice
 //! when the file changed on disk under changes not saved; and the question asked before such a tab closes.
+//!
+//! A tab that is not a file's text (a picture, a preview, the settings) is of a kind its part added (`kinds.rs`),
+//! and is drawn by it in the editor's place.
 
 use std::rc::Rc;
 
 use floem::IntoView;
-use floem::keyboard::Modifiers;
 use floem::reactive::{SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::views::editor::Editor;
 use floem::views::editor::command::CommandExecuted;
@@ -17,14 +19,22 @@ use floem::views::{Decorators, dyn_container, stack, text_editor_keys, v_stack};
 
 use crate::state::{Send, Tab, Ui};
 
-mod breadcrumbs;
-mod disk;
-mod find;
-mod keys;
-mod tabs;
-mod watermark;
+pub mod breadcrumbs;
+pub mod disk;
+pub mod editing;
+pub mod find;
+pub mod folding;
+pub mod groups;
+pub mod highlights;
+pub mod keys;
+pub mod kinds;
+pub mod minimap;
+pub mod nav;
+pub mod options;
+pub mod tabs;
+pub mod watermark;
+pub mod window;
 
-pub use disk::take;
 pub use find::find_show;
 
 pub fn view(ui: Ui) -> impl IntoView {
@@ -92,6 +102,11 @@ fn body(ui: Ui) -> impl IntoView {
                 ui.live.set(None);
                 watermark::watermark(ui).into_any()
             }
+            // A tab that is not a file's text: drawn by its kind.
+            Some(tab) if tab.kind.is_some() => {
+                ui.live.set(None);
+                kinds::draw(ui, &tab)
+            }
             Some(Tab { diff: Some(lines), .. }) => {
                 ui.live.set(None);
                 crate::changes::diff_view(ui, lines).into_any()
@@ -108,7 +123,7 @@ fn body(ui: Ui) -> impl IntoView {
                         // Not the editor's: the workbench's keys (Ctrl+B, Ctrl+P, Ctrl+J…) work while it has focus.
                         CommandExecuted::No => {
                             if let KeyInput::Keyboard(key, _) = &press.key
-                                && mods.intersects(Modifiers::CONTROL | Modifiers::ALT)
+                                && crate::keys_hook::editor(key, mods)
                             {
                                 tell(ui, |send| crate::workbench::key(ui, send, key, mods));
                             }

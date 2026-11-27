@@ -9,29 +9,106 @@ use floem::IntoView;
 use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::window::WindowConfig;
 use serde_json::{Value, json};
+// Kept for the parts to come (see Cargo.toml): named here so the build does not say they are not used.
+use {base64 as _, globset as _, regex as _, similar as _};
 
+mod accessibility;
+mod accounts;
+mod activity_bar;
 mod agent;
+mod assistants;
+mod automation;
+mod badges;
+mod banners;
+mod bidi;
 mod changes;
+mod chat_bridge;
+mod checklists;
+mod citations;
 mod colors;
+mod commands;
+mod compare;
+mod complete;
+mod context_panel;
+mod debug;
+mod debug_console;
+mod decor;
+mod diagrams;
 mod diff;
 mod dock;
 mod docking;
 mod editor;
 mod explorer;
+mod explorer_decor;
+mod ext;
+mod extensions_apply;
+mod extensions_view;
+mod format;
+mod harness;
+mod help;
+mod help_text;
 mod highlight;
 mod icons;
+mod icons_table;
+mod indent;
+mod inline_complete;
+mod keymap;
+mod keys_hook;
+mod language;
+mod layers;
 mod layout;
+mod layout_commands;
+mod loops;
+mod lsp;
+mod manage;
 mod markdown;
+mod mcp;
+mod md_preview;
+mod media;
+mod memory_view;
+mod menus;
+mod merge_editor;
+mod merge_inline;
 mod model;
+mod notebook;
+mod notify;
+mod open_folder;
 mod outline;
+mod output;
 mod palette;
+mod peek;
+mod plan_view;
+mod ports;
+mod problems;
+mod project_tab;
+mod projects_view;
 mod prose;
+mod providers;
+mod quick_modes;
+mod review;
+mod run_debug;
 mod save;
+mod scm;
 mod search;
+mod sessions;
+mod sessions_arena;
+mod settings;
+mod skills_view;
+mod snippets;
 mod state;
+mod status_items;
+mod statusbar;
+mod tasks_panel;
+mod tasks_run;
 mod terminal;
+mod theme_menu;
+mod tools_dialog;
+mod trust;
+mod update;
+mod vm_login;
 mod widgets;
 mod workbench;
+mod workspaces;
 
 pub use model::summary;
 use state::{Send, Ui};
@@ -114,8 +191,7 @@ fn keep_view_state(ui: Ui, send: Send) {
 /// (the session says when one changes, and lists a changed folder again).
 fn watch_disk(ui: Ui, send: Send) {
     create_effect(move |_| {
-        let files: Vec<String> =
-            ui.tabs.with(|t| t.iter().filter(|t| t.diff.is_none()).map(|t| t.path.clone()).collect());
+        let files: Vec<String> = ui.tabs.with(|t| t.iter().filter(|t| t.is_file()).map(|t| t.path.clone()).collect());
         let mut folders: Vec<String> = ui.expanded.with(|e| e.iter().cloned().collect());
         folders.sort();
         folders.insert(0, String::new());
@@ -143,12 +219,8 @@ fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_chan
     ui.out.set(Some(send.clone()));
     send(json!({"type": "hello"}));
     docking::set_send(send.clone());
-    palette::set_runner(Rc::new(workbench::run_command));
-    // The dock's own commands, as Visual Studio's Window menu has them.
-    palette::add("View: Reset View Locations", "", |ui, _| ui.reset_dock());
-    for v in layout::VIEWS {
-        palette::add(&format!("View: Float {}", v.title()), "", move |ui, _| ui.float(v));
-    }
+    // Every part's commands, menus and status bar items, before anything is drawn from them.
+    ext::register(ui, &send);
     keep_view_state(ui, send.clone());
     watch_disk(ui, send.clone());
     workbench::view(ui, send)

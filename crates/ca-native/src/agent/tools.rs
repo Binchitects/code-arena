@@ -56,29 +56,41 @@ pub(super) fn list(ui: Ui, tools: RwSignal<Vec<Tool>>, open: RwSignal<bool>) -> 
     .style(|s| s.flex_col().gap(6.0))
 }
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
 /// The session's messages that are a call's (begun, ended), taken in. Never taken away from the
 /// rest of the window (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
-    let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
     match m["type"].as_str().unwrap_or("") {
         "tool_start" => {
-            if let Kind::Assistant { tools, .. } = ui.current().kind {
-                tools.update(|t| {
-                    t.push(Tool { name: s("name"), subject: s("subject"), done: false, ok: true, text: String::new() })
-                });
+            if let Kind::Assistant(answer) = ui.current().kind {
+                answer.tools.update(|t| t.push(Tool { ok: true, text: String::new(), ..Tool::from_json(m, false) }));
             }
         }
         "tool_end" => {
-            if let Kind::Assistant { tools, .. } = ui.current().kind {
-                tools.update(|ts| {
-                    let (name, subject) = (s("name"), s("subject"));
-                    match ts.iter_mut().rev().find(|t| !t.done && t.name == name && t.subject == subject) {
-                        Some(t) => {
-                            t.done = true;
-                            t.ok = m["ok"] == true;
-                            t.text = s("text");
+            if let Kind::Assistant(answer) = ui.current().kind {
+                answer.tools.update(|ts| {
+                    // The call as it ended: what the session says of it now, over what it said when it began.
+                    let ended = Tool { ok: m["ok"] == true, ..Tool::from_json(m, true) };
+                    // The call it ends: the one of its id, when the session numbers its calls; else the last one
+                    // of its name and subject that has not ended.
+                    let same = |t: &Tool| {
+                        if ended.id.is_empty() {
+                            !t.done && t.name == ended.name && t.subject == ended.subject
+                        } else {
+                            t.id == ended.id
                         }
-                        None => ts.push(Tool { name, subject, done: true, ok: m["ok"] == true, text: s("text") }),
+                    };
+                    match ts.iter_mut().rev().find(|t| same(t)) {
+                        Some(t) => {
+                            let arguments = std::mem::take(&mut t.arguments);
+                            *t = ended;
+                            if t.arguments.is_null() {
+                                t.arguments = arguments;
+                            }
+                        }
+                        None => ts.push(ended),
                     }
                 });
             }

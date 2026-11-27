@@ -369,6 +369,9 @@ pub fn key_bytes(key: &Key, text: Option<&str>, m: Modifiers, mode: TermMode) ->
     Some(if alt && !s.starts_with('\x1b') { format!("\x1b{s}") } else { s })
 }
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
 /// The session's messages of a terminal (what it wrote, that it ended), taken in. Never taken away (false).
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     match m["type"].as_str().unwrap_or("") {
@@ -1025,10 +1028,7 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
             let ctrl = m.contains(Modifiers::CONTROL);
             let letter = |l: &str| matches!(&k.key.logical_key, Key::Character(c) if c.eq_ignore_ascii_case(l));
             // The workbench's own keys stay the workbench's, as VS Code skips them in the shell.
-            if let Key::Character(c) = &k.key.logical_key
-                && ctrl
-                && matches!(c.to_lowercase().as_str(), "b" | "j" | "`" | "~" | "p" | "w")
-            {
+            if crate::keys_hook::terminal(&k.key.logical_key, m) {
                 return EventPropagation::Continue;
             }
             // Ctrl+Shift+C copies the selection, as in VS Code's terminal.

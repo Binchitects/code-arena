@@ -724,6 +724,9 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         .style(|s| s.size_full().min_height(0.0))
 }
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
 /// The session's messages that are the Explorer's, taken in. Never taken away from the
 /// rest of the window (false).
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {

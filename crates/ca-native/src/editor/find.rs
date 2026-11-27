@@ -118,7 +118,7 @@ fn follow_find(ui: Ui) {
     let look = move |reveal: bool| {
         generation.update(|g| *g += 1);
         let g = generation.get_untracked();
-        let tab = ui.active.get_untracked().and_then(|p| ui.tab(&p)).filter(|t| t.diff.is_none());
+        let tab = ui.active.get_untracked().and_then(|p| ui.tab(&p)).filter(|t| t.is_file());
         let query = ui.find_query.get_untracked();
         let (Some(tab), true, false) = (tab, ui.find.get_untracked(), query.is_empty()) else {
             ui.find_hits.set(Rc::new(Vec::new()));
@@ -367,6 +367,14 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
             .box_shadow_color(c.shadow)
             .apply_if(!over, |s| s.hide())
     })
+}
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: crate::state::Ui, _send: &crate::state::Send) {}
+
+/// The session's messages that are this part's, taken in; true takes one away from the parts after it.
+pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state::Send) -> bool {
+    false
 }
 
 #[cfg(test)]

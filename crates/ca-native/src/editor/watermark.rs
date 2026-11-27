@@ -42,3 +42,11 @@ pub(super) fn watermark(ui: Ui) -> impl IntoView {
     ))
     .style(move |s| s.gap(10.0).size_full().items_center().justify_center().color(t.get().watermark).selectable(false))
 }
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: crate::state::Ui, _send: &crate::state::Send) {}
+
+/// The session's messages that are this part's, taken in; true takes one away from the parts after it.
+pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state::Send) -> bool {
+    false
+}

@@ -6,10 +6,11 @@ use floem::keyboard::{Key, NamedKey};
 use floem::kurbo::Rect;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, create_effect, create_rw_signal};
 use floem::style::TextOverflow;
-use floem::views::{Decorators, TextInput, dyn_container, empty, h_stack, label, v_stack};
+use floem::views::{Decorators, TextInput, dyn_container, empty, h_stack_from_iter, label, v_stack, v_stack_from_iter};
 use serde_json::json;
 
 use super::pickers::pill;
+use super::slots::{self, Slot};
 use crate::icons::icon;
 use crate::state::{Picker, Send, Ui};
 use crate::widgets::{action, bold};
@@ -48,45 +49,54 @@ pub(super) fn input(ui: Ui, send: Send, field: TextInput, anchor: RwSignal<Rect>
             ui.picker.set(None);
         }
     });
-    v_stack((
-        field
-            .placeholder("Ask Code Arena")
-            .on_key_down(Key::Named(NamedKey::Enter), |m| m.is_empty(), move |_| enter())
-            .on_key_down(Key::Named(NamedKey::Escape), |_| true, move |_| stop(json!({"type": "stop"})))
-            .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true))
-            .on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false))
-            .style(move |s| {
-                let c = t.get();
-                s.width_full()
-                    .padding_horiz(2.0)
-                    .padding_vert(4.0)
-                    .border(0.0)
-                    .background(floem::peniko::Color::TRANSPARENT)
-                    .color(c.input_fg)
-                    .font_size(13.0)
-                    .cursor_color(floem::peniko::Brush::Solid(c.cursor))
-            }),
-        h_stack((
-            pill(ui, Picker::Mode, anchor),
-            pill(ui, Picker::Model, anchor),
-            pill(ui, Picker::Thinking, anchor),
-            empty().style(|s| s.flex_grow(1.0_f32)),
-            dyn_container(
-                move || ui.running.get(),
-                move |running| {
-                    let send = send_or_stop.clone();
-                    let submit = submit.clone();
-                    if running {
-                        action(t, "debug-stop", move || send(json!({"type": "stop"}))).into_any()
-                    } else {
-                        action(t, "send", submit).into_any()
-                    }
-                },
-            ),
-        ))
-        .style(|s| s.gap(2.0).items_center().width_full().min_width(0.0)),
-    ))
-    .style(move |s| {
+    let field = field
+        .placeholder("Ask Code Arena")
+        .on_key_down(Key::Named(NamedKey::Enter), |m| m.is_empty(), move |_| enter())
+        .on_key_down(Key::Named(NamedKey::Escape), |_| true, move |_| stop(json!({"type": "stop"})))
+        .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true))
+        .on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false))
+        .style(move |s| {
+            let c = t.get();
+            s.width_full()
+                .padding_horiz(2.0)
+                .padding_vert(4.0)
+                .border(0.0)
+                .background(floem::peniko::Color::TRANSPARENT)
+                .color(c.input_fg)
+                .font_size(13.0)
+                .cursor_color(floem::peniko::Brush::Solid(c.cursor))
+        });
+    // The text, with what is sent with the message over it (no gap of the box's between them: what is there brings
+    // its own space, and nothing takes none).
+    let text = match slots::column(ui, &send, Slot::BoxTop) {
+        Some(over) => v_stack((over, field)).style(|s| s.width_full().min_width(0.0)).into_any(),
+        None => field.into_any(),
+    };
+    let send_button = dyn_container(
+        move || ui.running.get(),
+        move |running| {
+            let send = send_or_stop.clone();
+            let submit = submit.clone();
+            if running {
+                action(t, "debug-stop", move || send(json!({"type": "stop"}))).into_any()
+            } else {
+                action(t, "send", submit).into_any()
+            }
+        },
+    );
+    // The toolbar: the pickers, what other parts add after them, the room between, what they add before the send
+    // button, and it.
+    let mut tools = vec![
+        pill(ui, Picker::Mode, anchor).into_any(),
+        pill(ui, Picker::Model, anchor).into_any(),
+        pill(ui, Picker::Thinking, anchor).into_any(),
+    ];
+    tools.extend(slots::row(ui, &send, Slot::BoxLeft));
+    tools.push(empty().style(|s| s.flex_grow(1.0_f32)).into_any());
+    tools.extend(slots::row(ui, &send, Slot::BoxRight));
+    tools.push(send_button.into_any());
+    let toolbar = h_stack_from_iter(tools).style(|s| s.gap(2.0).items_center().width_full().min_width(0.0));
+    v_stack_from_iter([text, toolbar.into_any()]).style(move |s| {
         let c = t.get();
         s.margin(12.0)
             .margin_top(6.0)
@@ -97,4 +107,12 @@ pub(super) fn input(ui: Ui, send: Send, field: TextInput, anchor: RwSignal<Rect>
             .border_radius(6.0)
             .background(c.input_bg)
     })
+}
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: crate::state::Ui, _send: &crate::state::Send) {}
+
+/// The session's messages that are this part's, taken in; true takes one away from the parts after it.
+pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state::Send) -> bool {
+    false
 }

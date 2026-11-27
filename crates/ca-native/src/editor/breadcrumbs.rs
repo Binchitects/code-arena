@@ -1,7 +1,7 @@
 //! The breadcrumbs under the tabs, as VS Code's: the shown file's path, part by part.
 
 use floem::IntoView;
-use floem::reactive::{SignalGet, SignalWith};
+use floem::reactive::SignalGet;
 use floem::views::{Decorators, dyn_container, dyn_stack, h_stack, label};
 
 use crate::icons::icon;
@@ -40,6 +40,14 @@ pub(super) fn breadcrumbs(ui: Ui) -> impl IntoView {
             .color(c.breadcrumb)
             .background(c.editor_bg)
             .selectable(false)
-            .apply_if(ui.active.with(|a| a.is_none()), |s| s.hide())
+            .apply_if(!super::kinds::text_shown(ui), |s| s.hide())
     })
+}
+
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: crate::state::Ui, _send: &crate::state::Send) {}
+
+/// The session's messages that are this part's, taken in; true takes one away from the parts after it.
+pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state::Send) -> bool {
+    false
 }

@@ -1,7 +1,7 @@
-//! The session's messages about the thread: each goes to the part of the Agent view it belongs to (a request's to
-//! `question`, an answer's words and its turn's end to `answer`, a call's to `tools`, a notice to `thread`, the
-//! agent's question to `ask`, a queued message to `queue`, the bars' to each bar), in that order; and the thread the
-//! session kept, made into items.
+//! The session's messages about the thread as a whole: that a turn began, and the thread the session kept, made
+//! into items. What is one part's is taken in by that part (a request's by `question`, an answer's words and its
+//! turn's end by `answer`, a call's by `tools`, a notice by `thread`, the agent's question by `ask`, a queued
+//! message by `queue`, the bars' by each bar): see `ext.rs` for the order.
 
 use floem::reactive::SignalUpdate;
 use serde_json::Value;
@@ -9,25 +9,15 @@ use serde_json::Value;
 use crate::model::Item;
 use crate::state::{Send, Ui};
 
-/// The parts of the Agent view that take messages, in the order they are given one.
-const PARTS: &[fn(Ui, &Value, &Send) -> bool] = &[
-    super::question::take,
-    super::queue::take,
-    super::answer::take,
-    super::tools::take,
-    super::thread::take,
-    super::ask::take,
-    super::plan_bar::take,
-    super::goal_bar::take,
-    super::jobs_bar::take,
-];
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
 
-/// One message from the session, given to the Agent view's parts; true when one of them took it away.
-pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
+/// The session's message that a turn began, taken in. Never taken away from the rest of the window (false).
+pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     if m["type"] == "turn_start" {
         ui.running.set(true);
     }
-    PARTS.iter().any(|part| part(ui, m, send))
+    false
 }
 
 /// The thread the session kept, as items.

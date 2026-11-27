@@ -217,6 +217,9 @@ fn file_group(ui: Ui, send: Send, path: String, hits: Vec<Hit>) -> impl IntoView
     v_stack((head, lines)).style(move |s| s.width_full().color(t.get().side_fg))
 }
 
+/// What it adds to the window's registries, once at start.
+pub fn register(_ui: Ui, _send: &Send) {}
+
 /// The session's messages that are the Search view's, taken in. Never taken away from the
 /// rest of the window (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {

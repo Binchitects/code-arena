@@ -27,6 +27,11 @@ pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
     .style(|s| s.flex_col().gap(6.0))
 }
 
+/// What it adds to the window's registries, once at start: its bar over the input.
+pub fn register(_ui: Ui, _send: &Send) {
+    super::slots::add(super::slots::Slot::Bars, "jobs", 30, |ui, send| view(ui, send).into_any());
+}
+
 /// The session's message of its tasks, the running commands' part taken in. Never taken away (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     if m["type"] == "tasks" {
