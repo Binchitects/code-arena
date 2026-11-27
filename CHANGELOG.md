@@ -333,6 +333,12 @@ Sections used:
   beside it. With the widget closed, Tab completes the word as editor.tabCompletion says.
 - **Ghost text in the editor.** An inline suggestion can be shown at the caret in grey
   (editor.inlineSuggest.enabled). Tab takes it and Escape drops it, as does moving the caret away.
+- **Code folding.** Fold and unfold regions as in VS Code. A region is a block of deeper indentation
+  or a `#region`/`#endregion` pair. Click the gutter chevrons (shown on hover, and always on a
+  folded line), or use Fold (Ctrl+Shift+[), Unfold (Ctrl+Shift+]), Toggle Fold (Ctrl+K Ctrl+L), Fold
+  All (Ctrl+K Ctrl+0), Unfold All (Ctrl+K Ctrl+J), Fold/Unfold Recursively (Ctrl+K Ctrl+[ / ]) or
+  Fold Level 1-7 (Ctrl+K Ctrl+1...7). A folded line shows ⋯ on the fold background. Folds stay with
+  each file while the window is open and move as you edit. `editor.folding` turns folding off.
 
 
 ### :bug: Bugs fixed
