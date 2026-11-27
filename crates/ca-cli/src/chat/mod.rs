@@ -2,7 +2,7 @@
 //! typed while a turn runs is read by the model at the turn's next step; Ctrl+C stops the turn and keeps what was said.
 
 mod editor;
-mod history;
+pub(crate) mod history;
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
