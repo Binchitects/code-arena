@@ -46,11 +46,11 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
     let t = ui.colors;
     match i.kind.clone() {
         Kind::User(question) | Kind::Queued { question, .. } => {
-            let own = super::question::bubble(ui, question.text).into_any();
+            let own = super::question::bubble(ui, question);
             around_item(ui, &send, ItemSlot::QuestionTop, own, ItemSlot::QuestionFoot, &i)
         }
         Kind::Assistant(answer) => {
-            let own = super::answer::view(ui, answer, send.clone()).into_any();
+            let own = super::question::flashable(ui, i.id, super::answer::view(ui, answer, send.clone()).into_any());
             around_item(ui, &send, ItemSlot::AnswerTop, own, ItemSlot::AnswerFoot, &i)
         }
         Kind::Compaction { .. } => super::compaction::view(ui, send, &i),

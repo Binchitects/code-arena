@@ -289,6 +289,37 @@ fn locked(edition: ca_settings::Edition) -> Value {
     Value::Object(names.chain(settings).map(|(name, why)| (name.to_string(), json!(why))).collect())
 }
 
+/// What a kept request is shown with beyond its words: what was kept with it when it was sent (its `details`: the
+/// words as typed, its quote, the files sent with it, the skill it ran), whether it is a note of Code Arena's own,
+/// and whether it was sent while an answer was written and read at its next step (a request that is not the first
+/// of its turn).
+fn question_details(v: &mut Value, first: bool, details: Option<&Value>) {
+    let note = is_note(v["text"].as_str().unwrap_or(""));
+    if let Some(o) = details.and_then(Value::as_object) {
+        for (k, f) in o {
+            if !matches!(k.as_str(), "role" | "text" | "turn" | "q" | "tools") {
+                v[k] = f.clone();
+            }
+        }
+    }
+    if note {
+        v["note"] = json!(true);
+    } else if !first {
+        v["taken_in"] = json!(true);
+    }
+}
+
+/// A request that is a note of Code Arena's own (a goal's next turn, a loop's report), not the person's words.
+fn is_note(text: &str) -> bool {
+    text.starts_with("(Code Arena")
+}
+
+/// The skill a request ran: its name, when what the model was sent is a skill's instructions for `/NAME`.
+fn skill_of(typed: &str, message: &str) -> Option<String> {
+    let name = typed.strip_prefix('/')?.split_whitespace().next()?;
+    message.starts_with(&format!("Use the skill {name}:")).then(|| name.to_string())
+}
+
 /// The session as a page that just connected needs it: who and where, and its last turns.
 fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
     let numbers: HashMap<i64, usize> =
@@ -323,8 +354,12 @@ fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
         .store
         .lock()
         .ok()
-        .and_then(|s| s.page(&p.session, 30, None).ok())
-        .map(|page| {
+        .and_then(|s| {
+            let page = s.page(&p.session, 30, None).ok()?;
+            let details = page.messages.first().and_then(|m| s.details(&p.session, m.seq).ok()).unwrap_or_default();
+            Some((page, details))
+        })
+        .map(|(page, details)| {
             page.messages
                 .iter()
                 .enumerate()
@@ -340,6 +375,10 @@ fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
                     // Each call with what the session kept of it, beside their names (which stay as they were).
                     if !m.message.tool_calls.is_empty() {
                         v["tool_calls"] = json!(kept_calls(&m.message, &page.messages[at + 1..], &read, &fact));
+                    }
+                    if m.message.role == ca_llm::Role::User {
+                        let first = at == 0 || page.messages[at - 1].turn != m.turn;
+                        question_details(&mut v, first, details.get(&m.seq));
                     }
                     v
                 })
@@ -975,7 +1014,7 @@ async fn turn(
     drv: &mut Driver,
     side: &mut Arc<Side>,
     sh: &mut Shared,
-    sent: Sent,
+    mut sent: Sent,
     how: How,
 ) {
     let ui = p.ui;
@@ -994,13 +1033,27 @@ async fn turn(
         sent.model.clone()
     };
     let q = session::questions(p).map(|qs| qs.len() + 1).unwrap_or(0);
-    match how {
-        How::Typed => send(&out, sent.with_fields(json!({"type": "user", "text": sent.shown, "q": q}))),
-        How::Carried => send(&out, json!({"type": "user", "text": sent.shown, "q": q, "carried": true})),
+    if how == How::Typed
+        && let Some(skill) = skill_of(&sent.model, &message)
+    {
+        sent.fields.insert("skill".into(), json!(skill));
+    }
+    if is_note(&sent.shown) {
+        sent.fields.insert("note".into(), json!(true));
+    }
+    let mut user = match how {
+        How::Typed => sent.with_fields(json!({"type": "user", "text": sent.shown, "q": q})),
+        How::Carried => json!({"type": "user", "text": sent.shown, "q": q, "carried": true}),
         // The faces showed it as `queued` when it was sent. It is the question of this turn all the same: without
         // it they would write this answer on as the end of the last one.
-        How::Late => send(&out, json!({"type": "user", "text": sent.shown, "q": q, "late": true})),
+        How::Late => json!({"type": "user", "text": sent.shown, "q": q, "late": true}),
+    };
+    if sent.fields.contains_key("note") {
+        user["note"] = json!(true);
     }
+    send(&out, user);
+    // Where the request will be kept, to keep its details beside it once the turn has written it.
+    let at = p.store.lock().ok().and_then(|s| s.summary(&p.session).ok()).map(|s| s.messages);
     send(&out, json!({"type": "turn_start"}));
     ide_ext::before_turn(&mut Ctx { app: &mut *app, p: &mut *p, side: &mut *side, drv: &mut *drv, sh: &*sh }, &message)
         .await;
@@ -1037,6 +1090,9 @@ async fn turn(
     if let Ok(mut g) = w.pending.lock() {
         g.clear();
     }
+    if let Some(at) = at {
+        keep_details(p, at, &sent);
+    }
     send(&out, tasks(sh));
     let took = started.elapsed();
     let ms = took.as_millis() as u64;
@@ -1072,9 +1128,54 @@ async fn turn(
     send(&out, status(p, sh));
 }
 
+/// Keeps with the request the turn wrote at `at` what it was sent with (the areas' fields) and the words as typed,
+/// for a page that connects later. Nothing when it was not written there (the turn was blocked before it began).
+fn keep_details(p: &Prepared, at: i64, sent: &Sent) {
+    let Ok(store) = p.store.lock() else { return };
+    let Ok(page) = store.page(&p.session, 1, None) else { return };
+    let written = page.messages.iter().any(|m| m.seq == at && m.message.role == ca_llm::Role::User);
+    let mut fields = sent.fields.clone();
+    // The key a face asked with answers only that send; a note is told by its words.
+    for k in ["note", "key", "id"] {
+        fields.remove(k);
+    }
+    if sent.shown != page.messages.iter().find(|m| m.seq == at).map(|m| m.message.content.as_str()).unwrap_or("") {
+        fields.insert("typed".into(), json!(sent.shown));
+    }
+    if written && !fields.is_empty() {
+        let _ = store.merge_details(&p.session, at, &fields);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_kept_request_is_shown_with_its_details_as_a_note_or_as_read_meanwhile() {
+        let kept = json!({"typed": "explain", "quote": "the part", "text": "not this", "skill": "review"});
+        let mut v = json!({"role": "user", "text": "@a.rs\n…\nexplain", "turn": 2, "q": 3});
+        question_details(&mut v, true, Some(&kept));
+        assert_eq!(v["typed"], "explain");
+        assert_eq!(v["quote"], "the part");
+        assert_eq!(v["skill"], "review");
+        assert_eq!(v["text"], "@a.rs\n…\nexplain", "the words the model read stay");
+        assert!(v.get("taken_in").is_none() && v.get("note").is_none());
+        // The second request of a turn was read at its next step; a note of Code Arena's is said as such.
+        let mut v = json!({"role": "user", "text": "and the tests", "turn": 2});
+        question_details(&mut v, false, None);
+        assert_eq!(v["taken_in"], true);
+        let mut v = json!({"role": "user", "text": "(Code Arena: loop 2's run 1 (x) reports:\nok)", "turn": 2});
+        question_details(&mut v, false, None);
+        assert_eq!((v["note"].clone(), v.get("taken_in")), (json!(true), None));
+    }
+
+    #[test]
+    fn a_skill_is_named_only_when_the_model_was_given_its_instructions() {
+        assert_eq!(skill_of("/review the parser", "Use the skill review: follow…"), Some("review".into()));
+        assert_eq!(skill_of("/explain it", "Explain this: it"), None);
+        assert_eq!(skill_of("review", "Use the skill review: follow…"), None);
+    }
 
     #[test]
     fn a_kept_call_carries_its_arguments_its_results_start_and_how_it_ended_in_this_run() {
