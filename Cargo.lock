@@ -572,6 +572,7 @@ dependencies = [
  "im",
  "image",
  "regex",
+ "resvg",
  "serde_json",
  "similar",
  "syntect",

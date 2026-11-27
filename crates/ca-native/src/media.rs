@@ -18,7 +18,7 @@ use floem::kurbo::Rect;
 use floem::peniko::{self, Blob};
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo};
 use floem::style::CursorStyle;
-use floem::views::{Decorators, container, dyn_container, empty, h_stack, label, scroll, svg, v_stack};
+use floem::views::{Decorators, container, dyn_container, empty, h_stack, label, scroll, v_stack};
 use floem::{AnyView, IntoView, View, ViewId};
 use floem_renderer::Renderer as _;
 use serde_json::{Value, json};
@@ -112,11 +112,23 @@ pub struct Decoded {
     pub rgba: Vec<u8>,
 }
 
-/// A picture's bytes decoded, made smaller when it is very large, and laid on the checkerboard of these two colours.
-pub fn decode(bytes: &[u8], gif: bool, checker: [[u8; 3]; 2]) -> Result<Decoded, String> {
-    let picture = if gif { first_frame(bytes)? } else { still(bytes)? };
-    let (width, height) = (picture.width(), picture.height());
-    let picture = if width.max(height) > MOST_DRAWN { picture.thumbnail(MOST_DRAWN, MOST_DRAWN) } else { picture };
+/// A picture's bytes decoded (by its file's ending: a GIF's first frame, an SVG drawn), made smaller when it is
+/// very large, and laid on the checkerboard of these two colours.
+pub fn decode(bytes: &[u8], path: &str, checker: [[u8; 3]; 2]) -> Result<Decoded, String> {
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let (width, height, picture) = match ext.as_str() {
+        "svg" => drawn_svg(bytes)?,
+        "gif" => {
+            let p = first_frame(bytes)?;
+            (p.width(), p.height(), p)
+        }
+        _ => {
+            let p = still(bytes)?;
+            (p.width(), p.height(), p)
+        }
+    };
+    let large = picture.width().max(picture.height()) > MOST_DRAWN;
+    let picture = if large { picture.thumbnail(MOST_DRAWN, MOST_DRAWN) } else { picture };
     let mut rgba = picture.into_rgba8();
     for (x, y, px) in rgba.enumerate_pixels_mut() {
         let under = checker[((x / SQUARE + y / SQUARE) % 2) as usize];
@@ -137,6 +149,28 @@ fn still(bytes: &[u8]) -> Result<image::DynamicImage, String> {
         return Err(format!("{w} × {h} is too large to draw"));
     }
     image::load_from_memory(bytes).map_err(|e| e.to_string())
+}
+
+/// An SVG drawn (twice its own size, for a sharp picture on a dense screen), with its own size.
+fn drawn_svg(bytes: &[u8]) -> Result<(u32, u32, image::DynamicImage), String> {
+    use resvg::{tiny_skia, usvg};
+    let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).map_err(|e| e.to_string())?;
+    let size = tree.size();
+    let (w, h) = (size.width().ceil().max(1.0), size.height().ceil().max(1.0));
+    let scale = (MOST_DRAWN as f32 / w.max(h)).min(2.0);
+    let (dw, dh) = ((w * scale).round().max(1.0) as u32, (h * scale).round().max(1.0) as u32);
+    let mut pixmap = tiny_skia::Pixmap::new(dw, dh).ok_or("too large to draw")?;
+    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    let rgba = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|p| {
+            let c = p.demultiply();
+            [c.red(), c.green(), c.blue(), c.alpha()]
+        })
+        .collect();
+    let drawn = image::RgbaImage::from_raw(dw, dh, rgba).ok_or("it could not be drawn")?;
+    Ok((w as u32, h as u32, image::DynamicImage::ImageRgba8(drawn)))
 }
 
 /// A GIF's first frame, laid where it is on its screen.
@@ -172,7 +206,6 @@ pub struct Picture {
 enum Item {
     Loading,
     Picture(Rc<Picture>),
-    Svg(Rc<str>, u64),
     Sound(u64),
     Video(u64),
     Cannot(String),
@@ -303,7 +336,7 @@ pub fn register(_ui: Ui, _send: &Send) {
         let text = move || {
             shown_item(ui).and_then(|i| match i {
                 Item::Picture(p) => Some(bytes(p.size)),
-                Item::Svg(_, n) | Item::Sound(n) | Item::Video(n) => Some(bytes(n)),
+                Item::Sound(n) | Item::Video(n) => Some(bytes(n)),
                 _ => None,
             })
         };
@@ -361,12 +394,6 @@ fn view(ui: Ui, send: Send, tab: &Tab) -> AnyView {
             match item.unwrap_or(Item::Loading) {
                 Item::Loading => empty().into_any(),
                 Item::Picture(p) => picture(st, &path, p),
-                Item::Svg(text, _) => {
-                    let text = text.to_string();
-                    container(svg(text).style(|s| s.size_full()))
-                        .style(|s| s.size_full().padding(16.0))
-                        .into_any()
-                }
                 Item::Sound(size) => player(ui, send.clone(), &path, "unmute", size),
                 Item::Video(size) => player(ui, send.clone(), &path, "device-camera-video", size),
                 Item::Cannot(text) => {
@@ -479,14 +506,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             match media_of(&path) {
                 Some(Media::Sound) => st.set(&path, Item::Sound(size)),
                 Some(Media::Video) => st.set(&path, Item::Video(size)),
-                Some(Media::Svg) => {
-                    let data = base64::engine::general_purpose::STANDARD.decode(m["data"].as_str().unwrap_or(""));
-                    match data.ok().and_then(|d| String::from_utf8(d).ok()) {
-                        Some(text) => st.set(&path, Item::Svg(text.into(), size)),
-                        None => st.set(&path, Item::Cannot(format!("{} is not UTF-8 text", name_of(&path)))),
-                    }
-                }
-                Some(Media::Picture) => decode_off_thread(ui, st, path, m, size),
+                Some(Media::Picture | Media::Svg) => decode_off_thread(ui, st, path, m, size),
                 None => {}
             }
         }
@@ -522,7 +542,6 @@ fn decode_off_thread(ui: Ui, st: State, path: String, m: &Value, size: u64) {
     let c = ui.colors.get_untracked();
     let rgb = |c: peniko::Color| [c.r, c.g, c.b];
     let checker = [rgb(c.editor_bg), if c.dark { [20, 20, 20] } else { [230, 230, 230] }];
-    let gif = path.to_ascii_lowercase().ends_with(".gif");
     let hash = format!("{path}\0{modified}\0{}", c.dark).into_bytes();
     let file = path.clone();
     let done = floem::ext_event::create_ext_action(ui.scope, move |made: Result<Decoded, String>| {
@@ -543,7 +562,7 @@ fn decode_off_thread(ui: Ui, st: State, path: String, m: &Value, size: u64) {
         let made = base64::engine::general_purpose::STANDARD
             .decode(data)
             .map_err(|e| e.to_string())
-            .and_then(|bytes| decode(&bytes, gif, checker));
+            .and_then(|bytes| decode(&bytes, &path, checker));
         done(made);
     });
 }
@@ -599,7 +618,6 @@ mod tests {
         assert_eq!(kinds::title(ui, &ui.tab("media:logo.svg").expect("tab")), "Preview logo.svg");
         let data = base64::engine::general_purpose::STANDARD.encode("<svg/>");
         ui.take(&json!({"type": "media", "path": "logo.svg", "size": 6, "modified": 1, "data": data}), &send);
-        assert!(matches!(shown(ui, "logo.svg"), Some(Item::Svg(t, 6)) if &*t == "<svg/>"));
         ui.take(&json!({"type": "stats", "items": [{"path": "logo.svg", "modified": 1}]}), &send);
         ui.take(&json!({"type": "stats", "items": [{"path": "logo.svg", "modified": 2}]}), &send);
         let asked: Vec<Value> = said.borrow().iter().filter(|m| m["type"] == "media").cloned().collect();
@@ -639,10 +657,19 @@ mod tests {
         let mut png = Vec::new();
         let img = image::RgbaImage::from_raw(2, 1, vec![255, 0, 0, 255, 0, 0, 0, 0]).expect("raw");
         img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).expect("png");
-        let d = decode(&png, false, [[30, 30, 30], [20, 20, 20]]).expect("decoded");
+        let d = decode(&png, "a.png", [[30, 30, 30], [20, 20, 20]]).expect("decoded");
         assert_eq!((d.width, d.height, d.drawn), (2, 1, (2, 1)));
         assert_eq!(d.rgba, [255, 0, 0, 255, 30, 30, 30, 255]);
-        assert!(decode(b"not a picture", false, [[0; 3]; 2]).is_err());
+        assert!(decode(b"not a picture", "a.png", [[0; 3]; 2]).is_err());
+    }
+
+    #[test]
+    fn an_svg_is_drawn_twice_its_size_in_its_own_colours() {
+        let text = r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="20"><rect width="10" height="20" fill="#f00"/></svg>"##;
+        let d = decode(text.as_bytes(), "logo.svg", [[0; 3]; 2]).expect("drawn");
+        assert_eq!((d.width, d.height, d.drawn), (10, 20, (20, 40)));
+        assert_eq!(&d.rgba[..4], [255, 0, 0, 255]);
+        assert!(decode(b"<svg", "bad.svg", [[0; 3]; 2]).is_err());
     }
 
     #[test]
@@ -653,7 +680,7 @@ mod tests {
             let frame = gif::Frame { width: 2, height: 2, buffer: std::borrow::Cow::Borrowed(&[1, 1, 1, 0]), ..Default::default() };
             e.write_frame(&frame).expect("frame");
         }
-        let d = decode(&out, true, [[9, 9, 9], [9, 9, 9]]).expect("decoded");
+        let d = decode(&out, "a.GIF", [[9, 9, 9], [9, 9, 9]]).expect("decoded");
         assert_eq!((d.width, d.height), (2, 2));
         assert_eq!(&d.rgba[..4], [0, 255, 0, 255]);
         assert_eq!(&d.rgba[12..], [0, 0, 0, 255]);
@@ -664,7 +691,7 @@ mod tests {
         let img = image::RgbaImage::from_pixel(5000, 10, image::Rgba([1, 2, 3, 255]));
         let mut png = Vec::new();
         img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).expect("png");
-        let d = decode(&png, false, [[0; 3]; 2]).expect("decoded");
+        let d = decode(&png, "a.png", [[0; 3]; 2]).expect("decoded");
         assert_eq!((d.width, d.height), (5000, 10), "its own size is what is said");
         assert_eq!(d.drawn.0, MOST_DRAWN);
         assert_eq!(d.rgba.len() as u32, d.drawn.0 * d.drawn.1 * 4);
