@@ -267,7 +267,12 @@ pub fn readable(t: &mut Theme) {
     let rows: [(&[&str], &str, &str, Vec<&str>); 5] = [
         (&["editorLineNumber.foreground"], "#858585", "#237893", vec![&gutter]),
         (&["editorSuggestWidget.foreground", "editor.foreground"], &text, &text, vec![&suggest]),
-        (&["editorSuggestWidget.highlightForeground", "list.highlightForeground"], "#2AAAFF", "#0066BF", vec![&suggest]),
+        (
+            &["editorSuggestWidget.highlightForeground", "list.highlightForeground"],
+            "#2AAAFF",
+            "#0066BF",
+            vec![&suggest],
+        ),
         (&["list.highlightForeground"], "#2AAAFF", "#0066BF", vec![&side]),
         (&["textLink.foreground"], "#3794FF", "#006AB1", vec![&editor, &side]),
     ];
@@ -438,10 +443,10 @@ mod tests {
     fn a_colour_is_raised_only_as_much_as_it_needs() {
         assert_eq!(raised("#ffffff", &["#000000"], true), "#ffffff");
         let up = raised("#444444", &["#1f1f1f"], true);
-        assert!(contrast(&up, "#1f1f1f").unwrap() >= 4.5);
-        assert!(contrast(&up, "#1f1f1f").unwrap() < 5.0, "{up}");
+        assert!(contrast(&up, "#1f1f1f").unwrap_or(0.0) >= 4.5);
+        assert!(contrast(&up, "#1f1f1f").unwrap_or(0.0) < 5.0, "{up}");
         let down = raised("#aaaaaa", &["#ffffff"], false);
-        assert!(contrast(&down, "#ffffff").unwrap() >= 4.5);
+        assert!(contrast(&down, "#ffffff").unwrap_or(0.0) >= 4.5);
         // A colour with its own alpha is left as it is.
         assert_eq!(raised("#44444480", &["#1f1f1f"], true), "#44444480");
     }

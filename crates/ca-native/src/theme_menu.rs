@@ -14,10 +14,10 @@
 //! families: choosing one makes its two modes the preferred ones (so System keeps it), and Light or Dark goes to the
 //! same family's other mode. A setting the session refuses to keep (`setting_refused`) is said in a toast.
 
+use floem::IntoView;
 use floem::event::{Event, EventListener};
 use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith};
 use floem::views::{Decorators, empty};
-use floem::IntoView;
 use serde_json::{Value, json};
 
 use crate::commands::{add, command};
@@ -248,7 +248,8 @@ pub fn menu(ui: Ui, send: &Send, at: popup::At) {
     let s4 = send.clone();
     families.push(popup::line());
     families.push(popup::Item::Entry(
-        popup::entry("Browse Color Themes…", move || pick(ui, &s4)).keys(&crate::commands::keys_of(crate::workbench::SELECT_THEME)),
+        popup::entry("Browse Color Themes…", move || pick(ui, &s4))
+            .keys(&crate::commands::keys_of(crate::workbench::SELECT_THEME)),
     ));
     let items = vec![
         popup::Item::Entry(popup::entry("Light", move || mode(ui, &s1, false)).radio(!now.auto && !dark)),
@@ -299,10 +300,10 @@ pub fn register(ui: Ui, _send: &Send) {
         s.preview.with(|_| ());
         ui.choice.with(|_| ());
         ui.themes.with(|_| ());
-        if let Some(p) = s.pending.get() {
-            if of(ui, &p).id == settled(ui).id {
-                s.pending.set(None);
-            }
+        if let Some(p) = s.pending.get()
+            && of(ui, &p).id == settled(ui).id
+        {
+            s.pending.set(None);
         }
         ui.apply_theme();
     });
