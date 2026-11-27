@@ -5,7 +5,7 @@
 //! be opened (not text, larger than 5 MB, or what reading it said).
 //!
 //! All are tabs of the kind `media` ("media:<path>"), kept with the layout. A picture is decoded off the window's
-//! thread, made into the copy that is drawn (at most 4096 px a side, its see-through parts on the checkerboard)
+//! thread, made into the copy that is drawn (at most 1024 px a side, its see-through parts on the checkerboard)
 //! there, and drawn by a view of its own: floem's `img` would decode it again each time its tab is shown.
 
 use std::collections::{HashMap, HashSet};
@@ -32,8 +32,9 @@ use crate::widgets::button;
 /// The kind of tab, and what its tabs' paths begin with.
 pub const KIND: &str = "media";
 
-/// The longest side of the copy of a picture that is drawn.
-const MOST_DRAWN: u32 = 4096;
+/// The longest side of the copy of a picture that is drawn: the renderer keeps pictures in a texture it makes twice
+/// as large as the largest it was given (with the glyphs, and another of the same size for their masks).
+const MOST_DRAWN: u32 = 1024;
 /// A picture larger than this a side is not drawn at all.
 const MOST_SIDE: u32 = 32_768;
 /// The side of a square of the checkerboard, in the drawn copy's pixels (VS Code's is 8 px).
@@ -221,6 +222,11 @@ fn ask(send: &Send, path: &str, media: Option<Media>) {
 
 /// A file opened as media: its tab shown, or made and its file asked for. False when it does not open as media.
 pub fn open(ui: Ui, path: &str, send: &Send) -> bool {
+    // A file whose tab says it could not be opened has that tab shown again.
+    if ui.tab(&tab_of(path)).is_some() && !matches!(media_of(path), Some(Media::Svg)) {
+        kinds::open(ui, &tab_of(path));
+        return true;
+    }
     if !opens_as_media(path) {
         return false;
     }
@@ -245,7 +251,9 @@ fn show(ui: Ui, path: &str, send: &Send) {
 /// A file that could not be opened as text: a tab that says why, in place of a word in the status bar only.
 pub fn cannot(ui: Ui, path: &str, kind: &str, error: &str) {
     ui.state::<State>().set(path, Item::Cannot(cannot_text(path, kind, error)));
-    kinds::open(ui, &tab_of(path));
+    if ui.tab(&tab_of(path)).is_none() {
+        kinds::open(ui, &tab_of(path));
+    }
 }
 
 /// What it adds to the window's registries, once at start.
@@ -265,7 +273,12 @@ pub fn register(_ui: Ui, _send: &Send) {
             match media_of(rest) {
                 Some(_) => show(ui, rest, send),
                 // A file that could not be opened is asked for again: it may be text now.
-                None => send(json!({"type": "open", "path": rest})),
+                // Its tab is made at once, so it keeps its place among the tabs.
+                None => {
+                    ui.state::<State>().set(rest, Item::Loading);
+                    kinds::open(ui, path);
+                    send(json!({"type": "open", "path": rest}));
+                }
             }
         }),
     );
@@ -570,6 +583,11 @@ mod tests {
         assert_eq!(ui.active.get_untracked().as_deref(), Some("media:bin/tool"));
         assert!(matches!(shown(ui, "bin/tool"), Some(Item::Cannot(t)) if t == "tool is not text (or not UTF-8)"));
         assert!(ui.message.get_untracked().is_empty());
+        ui.active.set(Some("media:song.mp3".into()));
+        said.borrow_mut().clear();
+        ui.open("bin/tool", &send);
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("media:bin/tool"), "its tab shown again");
+        assert!(said.borrow().is_empty(), "not asked for again");
         // An SVG's preview, drawn again when its file changes on disk.
         said.borrow_mut().clear();
         preview(ui, "logo.svg", &send);
