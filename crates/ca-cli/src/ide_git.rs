@@ -557,6 +557,14 @@ fn show_working(dir: &Path, path: &str) -> Value {
         return json!({"exists": false, "error": "not a path inside the project"});
     }
     let file = dir.join(path.trim_start_matches("./"));
+    // A link that leads out of the repository is not read.
+    let inside = match (std::fs::canonicalize(&file), std::fs::canonicalize(dir)) {
+        (Ok(f), Ok(d)) => f.starts_with(d),
+        _ => true,
+    };
+    if !inside {
+        return json!({"exists": false, "error": "it leads out of the project"});
+    }
     match std::fs::metadata(&file) {
         Ok(m) if m.len() > MOST_SHOWN => json!({"exists": true, "too_large": true}),
         Ok(m) if m.is_file() => match std::fs::read(&file) {
@@ -763,6 +771,36 @@ mod tests {
         commit(dir, "Second", true, false).expect("all");
         let (v, _) = status(dir);
         assert_eq!(v["files"].as_array().map(Vec::len), Some(0), "{v}");
+    }
+
+    #[test]
+    fn a_renamed_file_changed_again_is_staged_and_unstaged_by_its_paths() {
+        let Some(d) = repo() else { return };
+        let dir = d.path();
+        std::fs::write(dir.join("old.rs"), "one\n").expect("w");
+        commit(dir, "First", true, false).expect("commit");
+        git(dir, &["mv", "old.rs", "new.rs"], None).expect("mv");
+        std::fs::write(dir.join("new.rs"), "two\n").expect("w");
+        let (v, _) = status(dir);
+        assert_eq!((v["files"][0]["x"].as_str(), v["files"][0]["from"].as_str()), (Some("R"), Some("old.rs")), "{v}");
+        stage(dir, &["new.rs".into()]).expect("the new path alone is staged");
+        unstage(dir, &["new.rs".into(), "old.rs".into()]).expect("both halves are unstaged");
+        let (v, _) = status(dir);
+        let xy: Vec<String> = v["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|f| format!("{}{} {}", f["x"].as_str().unwrap_or(""), f["y"].as_str().unwrap_or(""), f["path"]))
+            .collect();
+        assert_eq!(xy, [" D \"old.rs\"", "?? \"new.rs\""]);
+        #[cfg(unix)]
+        {
+            let out = tempfile::tempdir().expect("temp");
+            std::fs::write(out.path().join("secret.txt"), "not yours").expect("w");
+            std::os::unix::fs::symlink(out.path().join("secret.txt"), dir.join("link.txt")).expect("link");
+            assert_eq!(show_working(dir, "link.txt")["exists"], false, "a link out of the project is not read");
+            assert_eq!(show_working(dir, "new.rs")["text"], "two\n");
+        }
     }
 
     #[test]

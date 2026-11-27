@@ -232,13 +232,14 @@ pub fn rows(s: &Status, folded: &[Group]) -> im::Vector<wt::Node> {
     out
 }
 
-/// The paths git is given for files: a renamed file's old path too (to unstage both halves).
-fn paths_of(files: &[&File]) -> Vec<String> {
+/// The paths git is given for files; with `from`, a renamed file's old path too (to unstage both halves: it is
+/// neither in the index nor on disk, so staging it would fail).
+fn paths_of(files: &[&File], from: bool) -> Vec<String> {
     let mut out = Vec::new();
     for f in files {
         out.push(f.path.clone());
-        if let Some(from) = &f.from {
-            out.push(from.clone());
+        if let (true, Some(old)) = (from, &f.from) {
+            out.push(old.clone());
         }
     }
     out
@@ -384,13 +385,13 @@ fn files_of(ui: Ui, g: Group) -> Vec<File> {
 
 fn stage(send: &Send, files: &[File]) {
     if !files.is_empty() {
-        send(json!({"type": "git_stage", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>())}));
+        send(json!({"type": "git_stage", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>(), false)}));
     }
 }
 
 fn unstage(send: &Send, files: &[File]) {
     if !files.is_empty() {
-        send(json!({"type": "git_unstage", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>())}));
+        send(json!({"type": "git_unstage", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>(), true)}));
     }
 }
 
@@ -431,7 +432,9 @@ fn discard(ui: Ui, send: &Send, files: Vec<File>) {
     }
     ask.open(ui, move |a| {
         if a.yes() {
-            send(json!({"type": "git_discard", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>())}));
+            send(
+                json!({"type": "git_discard", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>(), false)}),
+            );
         }
     });
 }
@@ -455,7 +458,7 @@ fn commit(ui: Ui, send: &Send, amend: bool) {
         return;
     }
     me.busy.set(true);
-    send(json!({"type": "git_commit", "repo": "", "message": message, "all": staged == 0, "amend": amend}));
+    send(json!({"type": "git_commit", "repo": "", "message": message, "all": staged == 0 && !amend, "amend": amend}));
 }
 
 /// A file's row opened: its changes in a tab, or the file itself (one git does not track yet, one in conflict).
@@ -504,16 +507,22 @@ fn compare(ui: Ui, rest: &str) {
     let (a, b) = match (text(&a), text(&b)) {
         (Ok(a), Ok(b)) => (a, b),
         (Err(e), _) | (_, Err(e)) => {
-            me.compared.update(|c| {
-                c.insert(tab, Compared::Note(e));
-            });
+            if me.compared.with_untracked(|c| c.get(&tab) != Some(&Compared::Note(e))) {
+                me.compared.update(|c| {
+                    c.insert(tab, Compared::Note(e));
+                });
+            }
             return;
         }
     };
+    // Set only when the lines are others: the tab is drawn again (and scrolled to its top) only then.
     let done = floem::ext_event::create_ext_action(ui.scope, move |lines: Vec<Line>| {
-        me.compared.update(|c| {
-            c.insert(tab, Compared::Lines(Rc::new(lines)));
-        });
+        let same = me.compared.with_untracked(|c| matches!(c.get(&tab), Some(Compared::Lines(was)) if **was == lines));
+        if !same {
+            me.compared.update(|c| {
+                c.insert(tab, Compared::Lines(Rc::new(lines)));
+            });
+        }
     });
     std::thread::spawn(move || done(crate::diff::lines(&a, &b)));
 }
@@ -969,12 +978,12 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 me.shown.update(|s| {
                     s.insert(key, shown);
                 });
-            }
-            for rest in open_tabs(ui) {
-                compare(ui, &rest);
+                for rest in open_tabs(ui) {
+                    compare(ui, &rest);
+                }
             }
         }
-        "state" | "saved" | "created" | "renamed" | "deleted" | "turn_end" => refresh_soon(ui, send),
+        "state" | "saved" | "created" | "renamed" | "deleted" | "stats" | "turn_end" => refresh_soon(ui, send),
         _ => {}
     }
     false
@@ -1084,7 +1093,7 @@ mod tests {
         assert_eq!(sides(&s, "w:n.txt"), Some((None, at("", true, "n.txt"))));
         assert_eq!(title_of("w:src/a.rs"), "a.rs (Working Tree)");
         assert_eq!(title_of("i:a.rs"), "a.rs (Index)");
-        assert_eq!(paths_of(&[&s.files[4]]), ["new.rs", "old.rs"], "both halves of a rename are unstaged");
+        assert_eq!(paths_of(&[&s.files[4]], true), ["new.rs", "old.rs"], "both halves of a rename are unstaged");
     }
 
     #[test]
@@ -1126,6 +1135,14 @@ mod tests {
         assert_eq!(sets.get(), 1, "the same status is not set again");
         take(ui, &json!({"type": "git_status", "repo": "", "root": "/r", "branch": "dev", "files": []}), &none);
         assert_eq!((sets.get(), crate::badges::count(ui, View::Scm).get_untracked()), (2, 0));
+        // A commit that failed keeps the message; one made clears it, and each is said.
+        let me = state(ui);
+        me.message.set("Fix the cart".into());
+        let toasts = toast::count(ui);
+        take(ui, &json!({"type": "git_committed", "repo": "", "error": "Author identity unknown"}), &none);
+        assert_eq!((me.message.get_untracked().as_str(), toast::count(ui)), ("Fix the cart", toasts + 1));
+        take(ui, &json!({"type": "git_committed", "repo": "", "hash": "abc1234"}), &none);
+        assert_eq!((me.message.get_untracked().as_str(), toast::count(ui)), ("", toasts + 2));
         crate::layout::also_ready(&[]);
     }
 }

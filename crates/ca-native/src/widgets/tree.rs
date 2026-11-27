@@ -531,16 +531,19 @@ fn row_view(shared: Shared, node: Node) -> impl IntoView {
     let actions: Vec<Action> = shared.actions.as_ref().map(|of| of(&node)).unwrap_or_default();
     let buttons = h_stack_from_iter(actions.into_iter().map(move |a| {
         let Action { icon: name, tip, run } = a;
-        let button = container(icon(name, 16.0)).on_click_stop(move |_| run()).style(move |s| {
-            let c = t.get();
-            s.width(20.0)
-                .height(20.0)
-                .items_center()
-                .justify_center()
-                .border_radius(5.0)
-                .cursor(CursorStyle::Pointer)
-                .hover(|s| s.background(c.toolbar_hover))
-        });
+        // The press is the button's own: else it reaches the row too, which opens or folds it.
+        let button = container(icon(name, 16.0));
+        let button =
+            button.on_event_stop(EventListener::PointerDown, |_| {}).on_click_stop(move |_| run()).style(move |s| {
+                let c = t.get();
+                s.width(20.0)
+                    .height(20.0)
+                    .items_center()
+                    .justify_center()
+                    .border_radius(5.0)
+                    .cursor(CursorStyle::Pointer)
+                    .hover(|s| s.background(c.toolbar_hover))
+            });
         tooltip(button, move || {
             let tip = tip.clone();
             label(move || tip.clone())
