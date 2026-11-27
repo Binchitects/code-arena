@@ -1020,6 +1020,10 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                     // One that waited for the turn's end goes with its words as they are now, or not at all.
                     let text = if msg["late"] == true {
                         let Some(t) = crate::ide_chat::queue::due(&sh, &msg) else { continue };
+                        // It waits no more, though a command the session does not know gets no question.
+                        if msg["queued"].is_u64() {
+                            crate::ide_chat::queue::said(&sh, None);
+                        }
                         t.trim().to_string()
                     } else {
                         msg["text"].as_str().unwrap_or("").trim().to_string()

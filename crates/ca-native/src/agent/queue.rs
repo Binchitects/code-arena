@@ -129,6 +129,12 @@ fn taken_in(ui: Ui, m: &Value) {
             Some(Kind::Queued { question, .. }) => question.clone(),
             _ => Question::from_json(m),
         };
+        // Its words as read: a window that came in late was shown them before they were changed.
+        if let Some(w) = m["text"].as_str()
+            && w != question.text
+        {
+            (question.text, question.typed) = (w.to_string(), String::new());
+        }
         question.taken_in = true;
         question.q = m["q"].as_u64().unwrap_or(question.q);
         let item = Item { id, kind: Kind::User(question) };
@@ -473,6 +479,13 @@ mod tests {
         assert_ne!(before[3], after[3], "what changed is");
         // The second is read at the next step: it, not the first of these words, becomes the question.
         take(json!({"type": "took_in", "id": 2, "q": 1, "text": "other words"}));
+        // One changed before a late window saw it is read with its words now.
+        take(json!({"type": "queued", "id": 5, "text": "old words"}));
+        take(json!({"type": "took_in", "id": 5, "q": 1, "text": "new words"}));
+        assert_eq!(thread(ui).last().map(String::as_str), Some("user new words (taken in)"));
+        ui.items.update(|l| {
+            l.pop();
+        });
         take(json!({"type": "notice", "text": "› other words  (sent while it worked)", "took_in": 2}));
         assert_eq!(
             thread(ui),
