@@ -325,6 +325,14 @@ Sections used:
 - **Links in the editor.** Hold Ctrl (Cmd on macOS) over an address or a project file path to
   underline it. Ctrl+click opens it: an address in the system browser, a file in the editor at its
   line.
+- **Suggestions at the caret.** Typing a word's letters (editor.quickSuggestions) or pressing
+  Ctrl+Space opens VS Code's suggest widget. It lists the words of the open documents
+  (editor.wordBasedSuggestions), each row with its kind's icon and the typed letters lit. Up, Down,
+  PageUp and PageDown move; Enter (editor.acceptSuggestionOnEnter: on, smart, off), Tab or a click
+  takes one; Escape closes it. Ctrl+Space while it is open shows the focused suggestion's details
+  beside it. With the widget closed, Tab completes the word as editor.tabCompletion says.
+- **Ghost text in the editor.** An inline suggestion can be shown at the caret in grey
+  (editor.inlineSuggest.enabled). Tab takes it and Escape drops it, as does moving the caret away.
 
 
 ### :bug: Bugs fixed
