@@ -63,14 +63,14 @@ fn list(path: &str, home: Option<&Path>) -> Value {
         .collect();
     entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
     reply["more"] = json!(entries.len() > MOST);
-    reply["entries"] =
-        entries.into_iter().take(MOST).map(|(dir, name)| json!({"name": name, "dir": dir})).collect();
+    reply["entries"] = entries.into_iter().take(MOST).map(|(dir, name)| json!({"name": name, "dir": dir})).collect();
     reply
 }
 
 /// `folders`: the folder listed off the driver's loop.
 pub fn asked(sh: &Shared, m: &Value) -> bool {
-    let (path, key, home, out) = (m["path"].as_str().unwrap_or("").to_string(), m["key"].clone(), sh.home.clone(), sh.out.clone());
+    let (path, key, home, out) =
+        (m["path"].as_str().unwrap_or("").to_string(), m["key"].clone(), sh.home.clone(), sh.out.clone());
     let work = move || {
         let mut reply = list(&path, home.as_deref());
         if key.is_string() || key.is_number() {

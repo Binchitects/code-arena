@@ -26,7 +26,7 @@ use floem::kurbo::Rect;
 use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo};
 use floem::style::{CursorStyle, FlexWrap, Position};
 use floem::views::{Decorators, clip, dyn_stack, empty, h_stack, label, rich_text, scroll, v_stack};
-use floem::{AnyView, IntoView};
+use floem::IntoView;
 use serde_json::{Value, json};
 
 use super::slots::{ItemSlot, add_item};
@@ -183,7 +183,11 @@ pub fn project_rows(pool: &Pool, path: &str, pages: usize) -> (Vec<Entry>, usize
 
 /// "Show N more".
 fn more_row(n: usize) -> Entry {
-    Entry { row: Row::new(&format!("Show {n} more"), "", Vec::new(), "", crate::palette::Pick::File(String::new())), folder: false, choice: Choice::More }
+    Entry {
+        row: Row::new(&format!("Show {n} more"), "", Vec::new(), "", crate::palette::Pick::File(String::new())),
+        folder: false,
+        choice: Choice::More,
+    }
 }
 
 /// A folder on this machine as the session listed it.
@@ -500,7 +504,8 @@ fn row_view(ui: Ui, send: Send, n: usize, entry: Entry) -> impl IntoView {
     let me = ui.state::<Mentions>();
     let selected = create_memo(move |_| me.at.get() == n);
     let more = entry.choice == Choice::More;
-    let name = if more { "" } else if entry.folder { "folder" } else { "file" };
+    // "Show N more" has none (hidden).
+    let name = if entry.folder { "folder" } else { "file" };
     let row = entry.row.clone();
     h_stack((
         icon(name, 16.0).style(move |s| s.flex_shrink(0.0_f32).apply_if(more, |s| s.hide())),
@@ -587,7 +592,8 @@ fn menu(ui: Ui, send: Send) -> impl IntoView {
             + 10.0;
         let (caret, frame) = (me.caret.get(), me.frame.get());
         let width = if frame.width() > 0.0 { WIDTH.min(frame.width()) } else { WIDTH };
-        let left = if frame.width() > 0.0 { (caret.x0 - 8.0).min(frame.x1 - width).max(frame.x0) } else { caret.x0 - 8.0 };
+        let left =
+            if frame.width() > 0.0 { (caret.x0 - 8.0).min(frame.x1 - width).max(frame.x0) } else { caret.x0 - 8.0 };
         let top = if caret.y0 - height - 4.0 >= 0.0 { caret.y0 - height - 4.0 } else { caret.y1 + 4.0 };
         s.position(Position::Absolute)
             .inset_left(left.max(4.0))
