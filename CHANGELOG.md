@@ -142,6 +142,19 @@ Sections used:
   them; Up and Down bring back what you sent before (kept per folder, with the terminal's
   history); what you typed stays when you look elsewhere. With no thread yet, the box stands in the
   middle of the view under "What should we work on?" with first messages to start from.
+- **One quick pick for every picker.** Pickers and input boxes share VS Code's look: a title,
+  group headings, descriptions and details, live preview of the active row, a free-text row such as
+  'Go to <path>', validation messages and a password mode with dots. Escape cancels.
+- **Dialogs over the window.** Questions such as the Explorer's delete confirmation ask with
+  VS Code's buttons: the default one, a destructive one, Escape to cancel and an optional checkbox.
+- **Notifications.** Info, warning and error toasts appear in the bottom-right corner, three at
+  most, with action buttons. They go away on their own unless they need an answer, and they stay
+  in a list. The status bar's bell opens that list, shows a dot when there is something new, and
+  has Clear All.
+- **Menus.** Right-click menus have separators, checks, radios, submenus, key hints and keyboard
+  navigation. The Explorer's context menu is one of them now.
+- **Trees for long lists.** A virtual tree for views with many rows: arrow keys, Home and End,
+  selecting several rows, folding, and actions on the row under the pointer.
 
 
 ### :bug: Bugs fixed
