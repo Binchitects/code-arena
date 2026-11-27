@@ -743,6 +743,18 @@ mod tests {
     }
 
     #[test]
+    fn panel_tabs_that_do_not_fit_go_under_the_ellipsis_but_the_shown_one_stays() {
+        use crate::docking::fitting;
+        let w = [80.0, 100.0, 70.0, 60.0];
+        assert_eq!(fitting(&w, 400.0, 3), [0, 1, 2, 3]);
+        // 250 less the button's 28: the first two fit.
+        assert_eq!(fitting(&w, 250.0, 0), [0, 1]);
+        // The shown one past them takes the last place's stead.
+        assert_eq!(fitting(&w, 250.0, 3), [0, 3]);
+        assert_eq!(fitting(&w, 60.0, 2), [2]);
+    }
+
+    #[test]
     fn a_views_menu_moves_it_and_the_panel() {
         use View::*;
         also_ready(&[Output]);

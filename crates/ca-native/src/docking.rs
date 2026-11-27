@@ -410,6 +410,10 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     });
     let shown = create_memo(move |_| views.with(|v| v.1));
     let side_bar = drawn.with_untracked(|d| d.side_bar()) == Some(id);
+    // The title's width for its tabs (set only when it changes), and the "…" button that lists the ones that do
+    // not fit.
+    let room = RwSignal::new(f64::INFINITY);
+    let more_id = RwSignal::new(None::<ViewId>);
     let header = dyn_container(
         move || views.get(),
         move |(views, active)| {
@@ -421,7 +425,31 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
                     .style(move |s| caps(s).padding_left(20.0).height_full().items_center().color(t.get().side_title));
                 handle(ui, v, title, move || {}).into_any()
             } else {
-                h_stack_from_iter(views.into_iter().map(|v| {
+                // The tabs that fit the title's width, the shown one always; the rest under VS Code's "…".
+                let widths: Vec<f64> =
+                    views.iter().map(|v| crate::widgets::text_width(&v.title().to_uppercase(), 11.0) + 20.0).collect();
+                let at = active.and_then(|a| views.iter().position(|v| *v == a)).unwrap_or(0);
+                let fit = create_memo(move |_| fitting(&widths, room.get(), at));
+                let all = views.clone();
+                let more = action(t, "ellipsis", move || {
+                    let shown = fit.get_untracked();
+                    let items = all
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !shown.contains(i))
+                        .map(|(_, v)| {
+                            let v = *v;
+                            crate::widgets::popup::entry(v.title(), move || ui.reveal(v)).into()
+                        })
+                        .collect();
+                    if let Some(id) = more_id.get_untracked() {
+                        crate::widgets::popup::open(ui, crate::widgets::popup::At::under(id), items);
+                    }
+                });
+                let count = views.len();
+                let more = more.style(move |s| s.margin_top(4.0).apply_if(fit.with(|f| f.len()) == count, |s| s.hide()));
+                more_id.set(Some(more.id()));
+                let mut tabs: Vec<floem::AnyView> = views.into_iter().enumerate().map(|(i, v)| {
                     let on = active == Some(v);
                     let tab = v_stack((
                         label(move || v.title().to_uppercase()).style(caps),
@@ -444,9 +472,11 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
                             .hover(|s| s.color(c.panel_title))
                     });
                     handle(ui, v, tab, move || ui.reveal(v))
-                }))
-                .style(|s| s.height_full())
-                .into_any()
+                        .style(move |s| s.apply_if(!fit.with(|f| f.contains(&i)), |s| s.hide()))
+                        .into_any()
+                }).collect();
+                tabs.push(more.into_any());
+                h_stack_from_iter(tabs).style(|s| s.height_full()).into_any()
             }
         },
     );
@@ -491,7 +521,12 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
         )
         .style(|s| s.padding_right(8.0))
     };
-    let title = h_stack((header.style(|s| s.flex_grow(1.0_f32).height_full()), actions))
+    let header = header.on_resize(move |r| {
+        if room.get_untracked() != r.width() {
+            room.set(r.width());
+        }
+    });
+    let title = h_stack((header.style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full()), actions))
         .style(|s| s.height(35.0).width_full().items_center().selectable(false));
     // The side bar holds the activity bar when it is put at the top (hidden otherwise).
     let top = if side_bar { crate::activity_bar::top(ui, send.clone()).into_any() } else { empty().into_any() };
@@ -517,6 +552,31 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     });
     keep(id, view.id());
     view
+}
+
+/// The tabs (by their widths) that fit in `room` beside the "…" button, in their order, the shown one (`active`)
+/// always among them in the last place's stead when it would not be.
+pub fn fitting(widths: &[f64], room: f64, active: usize) -> Vec<usize> {
+    if widths.iter().sum::<f64>() <= room {
+        return (0..widths.len()).collect();
+    }
+    let room = room - 28.0;
+    let mut used = 0.0;
+    let mut out: Vec<usize> = Vec::new();
+    for (i, w) in widths.iter().enumerate() {
+        if used + w > room {
+            break;
+        }
+        used += w;
+        out.push(i);
+    }
+    if active < widths.len() && !out.contains(&active) {
+        while !out.is_empty() && used + widths[active] > room {
+            used -= widths[out.pop().unwrap_or(0)];
+        }
+        out.push(active);
+    }
+    out
 }
 
 /// A floating view's window: its title with a button that docks it back, and the view, in the theme; closed, the
