@@ -1946,7 +1946,7 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     assert!(at(&meanwhile, &|v| v["type"] == "state").is_none(), "nothing went back: {meanwhile:?}");
 
     // The turn ended: what waited is answered in the order asked, then the message that came too late for the
-    // turn to read runs as a turn of its own (the thread shows it already: no second question).
+    // turn to read runs as a turn of its own, said as its question (marked late: the thread showed it as queued).
     let after = until(&mut page, &|v| v["type"] == "turn_end").await;
     let model = at(&after, &|v| v["type"] == "status" && v["model"] == "qwen-large" && v["thinking"] == "default")
         .expect("the model, first");
@@ -1955,8 +1955,9 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     let kept = at(&after, &|v| v["type"] == "setting_kept" && v["key"] == "workbench.colorTheme").expect("kept");
     let theme = at(&after, &|v| v["type"] == "theme" && v["theme"] == "Light Modern").expect("theme");
     let started = at(&after, &|v| v["type"] == "turn_start").expect("the late message's turn");
-    assert!(model < thinking && thinking < kept && kept < theme && theme < started, "{after:?}");
-    assert!(at(&after, &|v| v["type"] == "user").is_none(), "{after:?}");
+    let asked = at(&after, &|v| v["type"] == "user").expect("the late message as a question");
+    assert_eq!(after[asked], json!({"type": "user", "text": "and then?", "q": 2, "late": true}));
+    assert!(model < thinking && thinking < kept && kept < theme && theme < asked && asked < started, "{after:?}");
     let text: String = after.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
     assert_eq!(text, "The second answer.");
     assert_eq!(after.last().expect("end")["ok"], true, "{after:?}");

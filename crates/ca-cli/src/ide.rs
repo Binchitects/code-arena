@@ -405,7 +405,8 @@ struct Wires {
 enum How {
     /// The person sent it.
     Typed,
-    /// The person sent it while a turn ran, too late for that turn to read: the thread shows it already.
+    /// The person sent it while a turn ran, too late for that turn to read. The faces showed it as `queued`
+    /// then; it is said again as the question (`user{late}`), so that its answer is one of its own.
     Late,
     /// The session says it itself (`said_next`): a plan's review, a goal's next turn.
     Carried,
@@ -786,8 +787,9 @@ async fn turn(
     match how {
         How::Typed => send(&out, sent.with_fields(json!({"type": "user", "text": sent.shown, "q": q}))),
         How::Carried => send(&out, json!({"type": "user", "text": sent.shown, "q": q, "carried": true})),
-        // The thread shows it already, as sent while the last turn ran.
-        How::Late => {}
+        // The faces showed it as `queued` when it was sent. It is the question of this turn all the same: without
+        // it they would write this answer on as the end of the last one.
+        How::Late => send(&out, json!({"type": "user", "text": sent.shown, "q": q, "late": true})),
     }
     send(&out, json!({"type": "turn_start"}));
     ide_ext::before_turn(&mut Ctx { app: &mut *app, p: &mut *p, side: &mut *side, drv: &mut *drv, sh: &*sh }, &message)

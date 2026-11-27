@@ -62,8 +62,9 @@
 //! review, a goal's next turn, a job that ended), with `user{carried: true}`. A turn the person stopped, or one
 //! that failed, ends the chain (`said_next` is dropped after the areas' `after_turn`). After a turn the order is:
 //! `turn_end`, each area's `after_turn`, `status`; then what waited for the turn ([Q]) in the order asked; then a
-//! message the person sent too late for the turn to read (it runs as a turn of its own, with no second `user`:
-//! the thread shows it since `queued`); then `said_next`.
+//! message the person sent too late for the turn to read (it runs as a turn of its own, begun with
+//! `user{late: true}`: the faces showed it as `queued` when it was sent, and a face that keeps that bubble may put
+//! the question in its place); then `said_next`.
 //!
 //! # Whose the shared messages are
 //!
@@ -251,11 +252,19 @@ pub struct Kept(Arc<Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>>);
 impl Kept {
     #[allow(dead_code)] // The areas' own state: none keeps any yet.
     pub fn of<T: Default + Send + Sync + 'static>(&self) -> Arc<T> {
-        let mut all = match self.0.lock() {
+        let held = || match self.0.lock() {
             Ok(g) => g,
             Err(e) => e.into_inner(),
         };
-        let any = all.entry(TypeId::of::<T>()).or_insert_with(|| Arc::new(T::default())).clone();
+        let had = held().get(&TypeId::of::<T>()).cloned();
+        // Made with nothing held, so that a value whose making asks for another one's does not wait on itself.
+        let any = match had {
+            Some(any) => any,
+            None => {
+                let made: Arc<dyn Any + Send + Sync> = Arc::new(T::default());
+                held().entry(TypeId::of::<T>()).or_insert(made).clone()
+            }
+        };
         // Kept by its own type, so it is that type.
         any.downcast::<T>().unwrap_or_else(|_| Arc::new(T::default()))
     }
@@ -800,6 +809,20 @@ mod tests {
         assert_eq!(*kept.of::<Mine>().0.lock().expect("lock"), 5, "the same value each time");
         assert_eq!(*kept.of::<Other>().0.lock().expect("lock"), 0, "another type, another value");
         assert_eq!(*Kept::default().of::<Mine>().0.lock().expect("lock"), 0, "another keeper, another value");
+        // A value that is made from another one's: asked for while the first is being made.
+        struct Both(Kept, Arc<Mine>);
+        impl Default for Both {
+            fn default() -> Self {
+                let kept = KEEPER.with(|k| k.borrow().clone());
+                let mine = kept.of::<Mine>();
+                Both(kept, mine)
+            }
+        }
+        thread_local!(static KEEPER: std::cell::RefCell<Kept> = std::cell::RefCell::new(Kept::default()));
+        KEEPER.with(|k| *k.borrow_mut() = kept.clone());
+        let both = kept.of::<Both>();
+        assert_eq!(*both.1.0.lock().expect("lock"), 5, "and it is the one kept");
+        assert!(Arc::ptr_eq(&both, &both.0.of::<Both>()));
     }
 
     #[test]
