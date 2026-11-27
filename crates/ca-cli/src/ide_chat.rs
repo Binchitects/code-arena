@@ -26,7 +26,8 @@ pub mod rewind;
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] = &[("history", Rule::Turn), ("library", Rule::Turn), ("rewind_preview", Rule::Turn)];
+    const MESSAGES: &'static [(&'static str, Rule)] =
+        &[("history", Rule::Turn), ("library", Rule::Turn), ("rewind_preview", Rule::Turn)];
 
     fn shared(sh: &Shared, m: &Value) -> bool {
         match kind(m) {

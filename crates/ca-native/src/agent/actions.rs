@@ -143,7 +143,8 @@ pub fn preview_detail(m: &Value) -> String {
         let s = if n == 1 { "" } else { "s" };
         lines.push(format!("{n} file{s} would change: {}{more}.", names.join(", ")));
     }
-    let lost: Vec<&str> = m["lost"].as_array().map(|l| l.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    let lost: Vec<&str> =
+        m["lost"].as_array().map(|l| l.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     if !lost.is_empty() {
         lines.push(format!("Too big to have been kept, so not put back: {}.", lost.join(", ")));
     }
@@ -154,13 +155,10 @@ pub fn preview_detail(m: &Value) -> String {
 /// Whether the turn of the request at `id` changed files: an edit of one of its answers did.
 pub fn turn_changed_files(items: &[Item], id: u64) -> bool {
     let Some(at) = items.iter().position(|i| i.id == id) else { return false };
-    items[at + 1..]
-        .iter()
-        .take_while(|i| !matches!(i.kind, Kind::User(_)))
-        .any(|i| match &i.kind {
-            Kind::Assistant(a) => a.tools.with_untracked(|t| t.iter().any(|t| t.ok && t.diff.is_some())),
-            _ => false,
-        })
+    items[at + 1..].iter().take_while(|i| !matches!(i.kind, Kind::User(_))).any(|i| match &i.kind {
+        Kind::Assistant(a) => a.tools.with_untracked(|t| t.iter().any(|t| t.ok && t.diff.is_some())),
+        _ => false,
+    })
 }
 
 /// The request an item is, when it can have actions (a note has none).
@@ -282,11 +280,8 @@ fn row(ui: Ui, send: Send, id: u64, q: &Question) -> impl IntoView {
     let again = container(again);
     place.set(Some(again.id()));
     let (quote, rewind_words) = (q.quote.clone(), words);
-    let rewind = gated(
-        "discard",
-        REWIND,
-        Rc::new(move || ask_rewind(ui, &send, n, rewind_words.clone(), quote.clone())),
-    );
+    let rewind =
+        gated("discard", REWIND, Rc::new(move || ask_rewind(ui, &send, n, rewind_words.clone(), quote.clone())));
     let shown = create_memo(move |_| a.hovered.get() == Some(id));
     container(h_stack((copy, edit, again, rewind)).style(move |s| s.gap(2.0).apply_if(!shown.get(), |s| s.hide())))
         .style(|s| s.width_full().height(24.0).margin_top(2.0).flex_row().justify_end().items_center())
@@ -508,7 +503,9 @@ mod tests {
         assert!(d.ends_with("What commands changed is not put back: git has it."));
         let d = preview_detail(&json!({"messages": 1, "checkpoint": false, "files": [], "lost": ["big.bin"]}));
         assert!(d.contains("1 message goes") && d.contains("cannot be put back") && d.contains("big.bin"), "{d}");
-        assert!(preview_detail(&json!({"messages": 2, "checkpoint": true, "files": []})).contains("No file would change"));
+        assert!(
+            preview_detail(&json!({"messages": 2, "checkpoint": true, "files": []})).contains("No file would change")
+        );
     }
 
     #[test]
@@ -523,11 +520,7 @@ mod tests {
         ];
         assert!(!turn_changed_files(&items, 1));
         answer.tools.update(|t| {
-            t.push(crate::model::Tool {
-                ok: true,
-                diff: Some(Rc::new(Default::default())),
-                ..Default::default()
-            })
+            t.push(crate::model::Tool { ok: true, diff: Some(Rc::new(Default::default())), ..Default::default() })
         });
         assert!(turn_changed_files(&items, 1));
         assert!(!turn_changed_files(&items, 3), "the next turn changed none");

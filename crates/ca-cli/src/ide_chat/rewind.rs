@@ -24,7 +24,8 @@ pub fn asked(sh: &Shared, m: &Value) -> bool {
         return false;
     }
     let q = m["q"].as_u64().unwrap_or(0) as usize;
-    let mut reply = json!({"type": "rewind_preview", "q": q, "messages": 0, "files": [], "lost": [], "checkpoint": false});
+    let mut reply =
+        json!({"type": "rewind_preview", "q": q, "messages": 0, "files": [], "lost": [], "checkpoint": false});
     if let Ok(store) = sh.store.lock()
         && let Ok(questions) = questions_in(&store, &sh.session)
         && let Some((_, seq, _)) = questions.iter().find(|(k, _, _)| *k == q)
