@@ -20,7 +20,6 @@ pub struct Pty {
 
 impl Pty {
     /// Runs `program` (with `args`) in `cwd` on a terminal of `cols` × `rows`, `env` added to its environment.
-    #[cfg(unix)]
     pub fn spawn(
         program: &Path,
         args: &[String],
@@ -29,11 +28,29 @@ impl Pty {
         cols: u16,
         rows: u16,
     ) -> std::io::Result<Pty> {
+        Pty::spawn_without(program, args, cwd, env, &[], cols, rows)
+    }
+
+    /// As [`Pty::spawn`], the variables named in `without` taken out of what it inherits (a key the program is not
+    /// to see).
+    #[cfg(unix)]
+    pub fn spawn_without(
+        program: &Path,
+        args: &[String],
+        cwd: &Path,
+        env: &[(String, String)],
+        without: &[&str],
+        cols: u16,
+        rows: u16,
+    ) -> std::io::Result<Pty> {
         use std::os::unix::process::CommandExt;
         let size = nix::pty::Winsize { ws_row: rows.max(1), ws_col: cols.max(1), ws_xpixel: 0, ws_ypixel: 0 };
         let pair = nix::pty::openpty(Some(&size), None).map_err(std::io::Error::from)?;
         let slave = std::fs::File::from(pair.slave);
         let mut cmd = std::process::Command::new(program);
+        for name in without {
+            cmd.env_remove(name);
+        }
         cmd.args(args)
             .current_dir(cwd)
             .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
@@ -60,11 +77,12 @@ impl Pty {
     }
 
     #[cfg(not(unix))]
-    pub fn spawn(
+    pub fn spawn_without(
         _program: &Path,
         _args: &[String],
         _cwd: &Path,
         _env: &[(String, String)],
+        _without: &[&str],
         _cols: u16,
         _rows: u16,
     ) -> std::io::Result<Pty> {
@@ -196,6 +214,27 @@ mod tests {
         let text = String::from_utf8_lossy(&out);
         assert!(text.contains("is-a-tty"), "{text}");
         assert!(text.contains("30 100"), "{text}");
+        p.stop();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_variable_taken_out_is_not_inherited() {
+        let d = tempfile::tempdir().expect("temp");
+        let mut p = Pty::spawn_without(Path::new("/bin/sh"), &[], d.path(), &[], &["HOME"], 80, 24).expect("spawn");
+        let mut w = p.writer().expect("writer");
+        let mut r = p.reader().expect("reader");
+        w.write_all(b"echo \"[${HOME-taken}]\"; exit\n").expect("write");
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = r.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..n]);
+        }
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.contains("[taken]"), "{text}");
         p.stop();
     }
 }
