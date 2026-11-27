@@ -339,6 +339,19 @@ Sections used:
   All (Ctrl+K Ctrl+0), Unfold All (Ctrl+K Ctrl+J), Fold/Unfold Recursively (Ctrl+K Ctrl+[ / ]) or
   Fold Level 1-7 (Ctrl+K Ctrl+1...7). A folded line shows ⋯ on the fold background. Folds stay with
   each file while the window is open and move as you edit. `editor.folding` turns folding off.
+- **Tabs work like VS Code's.** A file clicked in the Explorer opens as a preview that the next
+  click replaces. A double click, an edit, a drag or Keep Open (Ctrl+K Enter) keeps it. Pin a tab
+  (Ctrl+K Shift+Enter) to put it first and keep it from closing with the others. A middle click
+  closes a tab. Drag a tab to reorder it, move it to another group, or drop it on a group's edge to
+  split.
+- **Tab menu and close commands.** The tab's menu has Close, Close Others, Close to the Right, Close
+  Saved, Close All, Copy Path, Copy Relative Path, Reveal in Explorer View, Keep Open, Pin/Unpin,
+  Split and Move to Group. Closing several tabs asks once about every unsaved file (Save, Don't
+  Save, Cancel).
+- **Move between editors.** Go Back and Go Forward (Alt+Left/Right), Reopen Closed Editor
+  (Ctrl+Shift+T), Next and Previous Editor (Ctrl+PageDown/Up, Ctrl+Alt+PageDown/Up), Alt+1..9, Move
+  Editor Left/Right (Ctrl+Shift+PageUp/Down). Copy the active file's path with Ctrl+K P, or its
+  relative path with Ctrl+K Ctrl+Shift+C.
 
 
 ### :bug: Bugs fixed
@@ -390,6 +403,10 @@ Sections used:
   down by the height of the row that went away.
 - **Going back to a question no longer closes the window.** This happened when an answer with a code
   block was on screen; the theme is no longer applied again when the session sends the same one.
+- **Ctrl+K chords work in the editor.** Ctrl+K Enter and Ctrl+K Shift+Enter now run their command
+  while the editor has focus, instead of typing a new line.
+- **No crash on a machine without italic fonts.** A preview tab is drawn upright when no italic font
+  is installed, so opening one no longer closes the window.
 
 ## v0.5.0 (2026-11-26)
 
