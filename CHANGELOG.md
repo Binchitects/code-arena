@@ -299,6 +299,17 @@ Sections used:
   paragraph of its own instead of running on from what it said before it ('first.Done.').
 - **Saving a code block into a new folder works.** Save as a File from the chat makes the folders
   of the path first, where it used to fail.
+- **Skip thinking answers in the same block.** After Skip thinking, the answer used to start under a
+  'Thinking skipped' notice, and the first block was left showing 'Answering now…'. It now goes on
+  right under its block, which folds to 'Thought for N s, cut short'.
+- **The chat follows a streaming answer.** The thread used to scroll only when a new item came, so a
+  long answer, a growing thinking block or the answer's footer ran below the view. It now follows
+  them while the end is in view, and stays where you scrolled if you scrolled up to read.
+- **A thinking block cut by a message you send no longer ticks on.** When you send a message while
+  the model thinks, the thinking part above your message used to keep 'Thinking… N s' and its Skip
+  pill forever. It now ends with the turn.
+- **Escape closes the find widget after Replace All.** Clicking Replace or Replace All used to take
+  the keys out of the widget, so Escape did nothing. The keys now stay in the replace box.
 
 ## v0.5.0 (2026-11-26)
 
