@@ -15,7 +15,7 @@ use floem::views::editor::command::CommandExecuted;
 use floem::views::editor::core::selection::Selection;
 use floem::views::editor::keypress::KeypressMap;
 use floem::views::editor::keypress::key::KeyInput;
-use floem::views::{Decorators, dyn_container, stack, text_editor_keys, v_stack};
+use floem::views::{Decorators, dyn_container, stack, v_stack};
 
 use crate::state::{Send, Tab, Ui};
 
@@ -72,17 +72,48 @@ pub(super) fn focus(editor: &Editor) {
     }
 }
 
-/// The caret put on a line (from 1), shown in the middle once it is laid out, as VS Code shows a search's hit.
-fn go_to_line(editor: &Editor, line: usize) {
+/// The caret put on a line (from 1), shown in the middle once it is laid out, as VS Code shows a search's hit (a
+/// fold it is in opens).
+fn go_to_line(editor: &Editor, path: &str, line: usize) {
     let at = editor.offset_of_line(line.saturating_sub(1).min(editor.last_line()));
     editor.cursor.update(|c| c.set_insert(Selection::caret(at)));
-    let e = editor.clone();
+    let (e, path) = (editor.clone(), path.to_string());
     floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
         // Unless another tab was shown meanwhile (this editor is gone then).
         if e.cursor.try_get_untracked().is_some() {
-            e.center_window();
+            folding::center(&e, &path);
         }
     });
+}
+
+/// The file editor's colours and gutter, as Floem's `TextEditor::editor_style` sets them: the line numbers with
+/// their padding (the chevrons right of them), the current line, the selection, the caret, the guides.
+fn editor_look(s: floem::style::Style, c: &crate::colors::Colors) -> floem::style::Style {
+    use floem::views::editor::gutter::{DimColor, GutterClass, LeftOfCenterPadding, RightOfCenterPadding};
+    use floem::views::editor::view::EditorViewClass;
+    use floem::views::editor::*;
+    let c = *c;
+    s.size_full()
+        .set(Foreground, c.editor_fg)
+        .color(c.editor_fg)
+        .class(GutterClass, |s| {
+            s.color(c.line_number_active)
+                .set(DimColor, Some(c.line_number))
+                .set(CurrentLineColor, Some(c.editor_bg))
+                .set(LeftOfCenterPadding, 18.0)
+                .set(RightOfCenterPadding, folding::CHEVRONS)
+        })
+        .class(EditorViewClass, |s| {
+            s.set(CurrentLineColor, Some(c.line_highlight))
+                .set(SelectionColor, c.selection)
+                .set(floem::style::CursorColor, c.cursor)
+                .set(IndentGuideColor, c.indent_guide)
+                .set(VisibleWhitespaceColor, c.whitespace)
+                .set(PhantomColor, c.desc)
+                .set(PlaceholderColor, c.placeholder)
+                // As VS Code: long lines go on, scrolled to, not wrapped.
+                .set(WrapProp, text::WrapMethod::None)
+        })
 }
 
 /// What the session's driver is told from the editor group's own keys and buttons.
@@ -124,7 +155,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
             && let Some(editor) = live(ui, &path)
         {
             gone.set(Some(n));
-            go_to_line(&editor, line);
+            go_to_line(&editor, &path, line);
         }
     });
     // Focused: its editor is the window's, and the caret said is its.
@@ -182,7 +213,10 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 tab.colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
                 let caret = ui.caret;
                 let map = map.clone();
-                let ed = text_editor_keys("", move |editor, press, mods| {
+                let doc = crate::decor::doc(tab.doc.clone(), &tab.path);
+                let editor = Editor::new(floem::reactive::Scope::current(), doc, tab.colours.clone(), false);
+                // Floem's editor, drawn with the folds (`folding.rs`).
+                let ed = folding::view(ui, editor.clone(), &tab.doc, &tab.path, move |editor, press, mods| {
                     if keys::editor_key(ui, press, mods) {
                         return CommandExecuted::Yes;
                     }
@@ -199,27 +233,8 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                         done => done,
                     }
                 })
-                .use_doc(crate::decor::doc(tab.doc.clone(), &tab.path))
-                .styling_rc(tab.colours.clone())
-                .editor_style(move |s| {
-                    s.gutter_dim_color(c.line_number)
-                        .gutter_accent_color(c.line_number_active)
-                        .gutter_current_color(c.editor_bg)
-                        .gutter_left_padding(18.0)
-                        .gutter_right_padding(22.0)
-                        .current_line_color(c.line_highlight)
-                        .selection_color(c.selection)
-                        .cursor_color(c.cursor)
-                        .indent_guide_color(c.indent_guide)
-                        .visible_whitespace(c.whitespace)
-                        .phantom_color(c.desc)
-                        .placeholder_color(c.placeholder)
-                        // As VS Code: long lines go on, scrolled to, not wrapped.
-                        .wrap_method(floem::views::editor::text::WrapMethod::None)
-                })
                 // No background of its own: the group's is under it, and the overview ruler between (`decor.rs`).
-                .style(move |s| s.size_full().set(floem::views::editor::Foreground, c.editor_fg).color(c.editor_fg));
-                let editor = ed.editor().clone();
+                .style(move |s| editor_look(s, &c));
                 g.editors.update(|e| {
                     e.insert(id, (tab.path.clone(), editor.clone()));
                 });
@@ -240,7 +255,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                     .filter(|g| g.0 == tab.path && gone.get_untracked() != Some(g.2) && focused.get_untracked())
                 {
                     gone.set(Some(n));
-                    go_to_line(&editor, line);
+                    go_to_line(&editor, &tab.path, line);
                 }
                 // The editor given the keys (clicked): its group is the focused one.
                 let focus_in = editor.editor_view_focused;
