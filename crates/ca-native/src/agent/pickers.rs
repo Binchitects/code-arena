@@ -21,10 +21,10 @@ const MENU_WIDTH: f64 = 160.0;
 
 /// The modes the session takes (what runs without asking), and how much it may think.
 const MODES: &[&str] = &["ask", "auto-edit", "plan", "yolo"];
-const THINKING: &[&str] = &["default", "off", "low", "medium", "high", "xhigh"];
+pub(super) const THINKING: &[&str] = &["default", "off", "low", "medium", "high", "xhigh"];
 
 /// A name with its first letter a capital, as a menu shows it.
-fn capital(s: &str) -> String {
+pub(super) fn capital(s: &str) -> String {
     let mut rest = s.chars();
     rest.next().map(|c| c.to_uppercase().chain(rest).collect()).unwrap_or_default()
 }
