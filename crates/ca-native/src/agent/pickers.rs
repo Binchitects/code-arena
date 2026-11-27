@@ -108,16 +108,16 @@ fn tokens(n: u64) -> String {
     const K: u64 = 1024;
     let short = |n: u64, by: u64, unit: &str| {
         let tenths = (n * 10 + by / 2) / by;
-        if tenths % 10 == 0 {
+        if tenths.is_multiple_of(10) {
             format!("{}{unit}", tenths / 10)
         } else {
             format!("{}.{}{unit}", tenths / 10, tenths % 10)
         }
     };
     match n {
-        n if n >= K * K && n % (K * K) == 0 => format!("{}M", n / (K * K)),
+        n if n >= K * K && n.is_multiple_of(K * K) => format!("{}M", n / (K * K)),
         n if n >= 1_000_000 => short(n, 1_000_000, "M"),
-        n if n >= K && n % K == 0 => format!("{}K", n / K),
+        n if n >= K && n.is_multiple_of(K) => format!("{}K", n / K),
         n if n >= 1000 => short(n, 1000, "K"),
         n => n.to_string(),
     }
