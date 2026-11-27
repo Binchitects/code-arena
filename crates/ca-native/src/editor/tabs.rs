@@ -22,7 +22,9 @@ use std::collections::{HashMap, HashSet};
 use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, NamedKey};
 use floem::kurbo::{Point, Rect};
-use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal};
+use floem::reactive::{
+    RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal,
+};
 use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, stack, v_stack};
 use floem::{IntoView, View, ViewId};
@@ -452,7 +454,7 @@ pub(super) fn tabs(ui: Ui, group: Shown) -> impl IntoView {
     // The tab shown is scrolled into the strip's sight, as VS Code reveals the active tab (once it is built and
     // laid out, so a moment after it is shown).
     // Again when the strip's width changes (the window opened, a group split or resized).
-    let reveal = create_rw_signal(None::<floem::ViewId>);
+    let reveal = create_rw_signal(None::<ViewId>);
     let show_active = move || {
         let Some(path) = group.active.get_untracked() else { return };
         floem::action::exec_after(std::time::Duration::ZERO, move |_| {
