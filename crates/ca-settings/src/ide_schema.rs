@@ -210,6 +210,14 @@ pub static ALL: &[&Setting] = &[
         "A file opened with a single click (the Explorer, a search's result) is a preview, in italics: the next one takes its tab, until it is edited, double-clicked or kept (Ctrl+K Enter).",
     ),
     &row(
+        "search.showLineNumbers",
+        Kind::Bool,
+        "true",
+        Scope::Project,
+        "Features",
+        "The Search view shows each result's line number. (VS Code: false.)",
+    ),
+    &row(
         "explorer.autoReveal",
         Kind::Bool,
         "true",
@@ -1254,7 +1262,7 @@ mod tests {
         for key in OLD {
             assert!(find(key).is_some(), "{key} is not in the schema");
         }
-        assert_eq!(ALL.len(), 138, "a row added here is added to the count; tests/settings_read.rs wants it read");
+        assert_eq!(ALL.len(), 139, "a row added here is added to the count; tests/settings_read.rs wants it read");
         for s in ALL {
             assert!(SECTIONS.contains(&s.section), "{} is under {:?}, which is no section", s.key, s.section);
             assert!(s.env.is_none(), "{} is not read from the environment", s.key);
