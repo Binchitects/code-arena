@@ -33,7 +33,7 @@ pub fn asked(sh: &Shared, m: &Value) -> bool {
         let turns = store.summary(&sh.session).map(|s| s.turns).unwrap_or(0);
         let shown = store
             .page(&sh.session, turns.max(1), None)
-            .map(|page| page.messages.iter().filter(|m| m.seq >= *seq && seen(&m.message)).count())
+            .map(|page| shown_count(page.messages.iter().filter(|m| m.seq >= *seq)))
             .unwrap_or(0);
         let files: Vec<Value> = sh
             .checkpoints
@@ -52,13 +52,21 @@ pub fn asked(sh: &Shared, m: &Value) -> bool {
     true
 }
 
-/// A message the thread shows: the person's and the answers' words, not a tool's result or a step that only called.
-fn seen(m: &ca_llm::Message) -> bool {
-    match m.role {
-        ca_llm::Role::User => true,
-        ca_llm::Role::Assistant => !m.content.trim().is_empty(),
-        _ => false,
+/// How many messages the thread shows of these stored ones: each of the person's, and one answer for each turn
+/// that answered (its steps and their calls are that one answer).
+fn shown_count<'a>(stored: impl Iterator<Item = &'a ca_session::Stored>) -> usize {
+    let mut answered = std::collections::BTreeSet::new();
+    let mut asked = 0;
+    for m in stored {
+        match m.message.role {
+            ca_llm::Role::User => asked += 1,
+            ca_llm::Role::Assistant => {
+                answered.insert(m.turn);
+            }
+            _ => {}
+        }
     }
+    asked + answered.len()
 }
 
 /// Question `q` as it was asked: the words the model read and the details kept beside them (as typed, its quote, the
@@ -91,6 +99,23 @@ fn length_said(length: &str) -> Option<&'static str> {
     }
 }
 
+/// The words of a question without what an earlier answer again asked of the model's length.
+fn without_length(content: &str) -> &str {
+    let mut rest = content;
+    while let Some(cut) = ["shorter", "longer"]
+        .iter()
+        .filter_map(|l| length_said(l))
+        .find_map(|said| rest.strip_suffix(said).and_then(|r| r.strip_suffix("\n\n")))
+    {
+        rest = cut;
+    }
+    rest
+}
+
+/// What a question was sent with that goes with it again; the rest of its details (a rating, marks) are its
+/// answer's or the thread's, not the question's.
+const SENT_WITH: [&str; 4] = ["quote", "files", "attachments", "skill"];
+
 /// The question asked again: `m` is the `again` message, `asked` the question as it was asked (from
 /// [`asked_as`]). None when there are no words to ask.
 pub fn again(m: &Value, asked: Option<(String, Value)>) -> Option<Sent> {
@@ -99,7 +124,7 @@ pub fn again(m: &Value, asked: Option<(String, Value)>) -> Option<Sent> {
     let mut sent = match new {
         Some(text) => Sent::new(m, text.to_string(), false),
         None if !content.trim().is_empty() => {
-            let mut sent = Sent::new(m, content.clone(), false);
+            let mut sent = Sent::new(m, without_length(&content).to_string(), false);
             if let Some(typed) = details["typed"].as_str().filter(|t| !t.is_empty()) {
                 sent.shown = typed.to_string();
             }
@@ -107,11 +132,9 @@ pub fn again(m: &Value, asked: Option<(String, Value)>) -> Option<Sent> {
         }
         None => return None,
     };
-    // What it was sent with is kept with it again: the same details, apart from the words as typed (said anew).
+    // What it was sent with is kept with it again (the words as typed are said anew).
     let mut fields: Map<String, Value> = details.as_object().cloned().unwrap_or_default();
-    for k in ["typed", "note", "key", "id", "taken_in"] {
-        fields.remove(k);
-    }
+    fields.retain(|k, _| SENT_WITH.contains(&k.as_str()));
     if new.is_some() {
         // New words: the lines sent with the old ones are not part of them; the quote is, unless the face took it.
         fields.remove("files");
@@ -168,8 +191,27 @@ mod tests {
         assert!(!sent.fields.contains_key("files") && sent.fields["quote"] == "the part");
         let sent = again(&json!({"type": "again", "q": 2, "text": "x", "quote": ""}), asked).expect("asked");
         assert!(!sent.fields.contains_key("quote"));
+        // Asked shorter before: the next again asks only what it asks itself.
+        let was = Some((format!("explain\n\n{}", length_said("shorter").unwrap_or("")), json!({"rating": "up"})));
+        let sent = again(&json!({"type": "again", "q": 2}), was.clone()).expect("asked");
+        assert_eq!(sent.model, "explain");
+        assert!(sent.fields.is_empty(), "a rating is not the question's to send again");
+        let sent = again(&json!({"type": "again", "q": 2, "length": "longer"}), was).expect("asked");
+        assert!(sent.model.starts_with("explain\n\n(Code Arena") && !sent.model.contains("shorter"));
         // Nothing to ask: no turn.
         assert!(again(&json!({"type": "again", "q": 9}), None).is_none());
+    }
+
+    #[test]
+    fn a_turn_of_several_steps_is_one_answer_among_the_messages_that_go() {
+        let at = |seq, turn, message| ca_session::Stored { seq, turn, message };
+        let stored = [
+            at(4, 2, ca_llm::Message::user("edit it")),
+            at(5, 2, ca_llm::Message::assistant("")),
+            at(6, 2, ca_llm::Message::assistant("Done.")),
+            at(7, 3, ca_llm::Message::user("thanks")),
+        ];
+        assert_eq!(shown_count(stored.iter()), 3);
     }
 
     #[test]
