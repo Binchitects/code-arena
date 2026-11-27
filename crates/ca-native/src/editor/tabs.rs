@@ -582,7 +582,9 @@ fn one_tab(ui: Ui, group: Shown, tab: Tab) -> impl IntoView {
     let content = h_stack((
         icon(kind_icon, 16.0).style(move |s| s.apply_if(kind_icon.is_empty(), |s| s.hide())),
         label(move || super::kinds::title(ui, &named)).style(move |s| {
-            s.font_size(13.0).selectable(false).apply_if(preview.get(), |s| s.font_style(floem::text::Style::Italic))
+            s.font_size(13.0)
+                .selectable(false)
+                .apply_if(preview.get() && *crate::widgets::ITALIC, |s| s.font_style(floem::text::Style::Italic))
         }),
         dyn_container(
             move || slot.get(),

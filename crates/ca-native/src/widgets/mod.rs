@@ -42,6 +42,13 @@ fn installed(names: &[&str], or: &str) -> String {
 pub static UI_FONT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| installed(UI_FONTS, "sans-serif"));
 pub static MONO_FONT: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| installed(MONO_FONTS, "monospace"));
 
+/// Whether this machine has an italic face of normal width: text asked in italics without one has no font to be
+/// drawn with (the text system finds none and stops the window), so it is drawn upright then.
+pub static ITALIC: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    let fonts = floem::text::FONT_SYSTEM.lock();
+    fonts.db().faces().any(|f| f.style == floem::text::Style::Italic && f.stretch == floem::text::Stretch::Normal)
+});
+
 pub type Theme = RwSignal<Colors>;
 
 /// A toolbar action: a 16 px codicon in a 22 px square, rounded, with VS Code's hover background.
