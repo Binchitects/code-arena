@@ -945,6 +945,11 @@ mod tests {
     #[test]
     fn a_theme_is_previewed_on_the_arrows_kept_when_chosen_and_gone_back_from_when_not() {
         let ui = Ui::new();
+        // The theme the settings name, not the system's.
+        let mut values = serde_json::Map::new();
+        values.insert("window.autoDetectColorScheme".into(), json!(false));
+        let follow = crate::settings::Said { values, ..Default::default() };
+        ui.state::<crate::settings::Settings>().said.set(Rc::new(follow));
         let (send, said) = sender();
         let before = ui.colors.get_untracked();
         open(ui, &send, Mode::Themes);

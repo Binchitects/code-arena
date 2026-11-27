@@ -1,9 +1,10 @@
 //! The activity bar, as VS Code's: the side bar's views by their icons (all the views in the window when no group
 //! is at its left), each with its badge when it has a count (`badges.rs`), each dragged to dock it elsewhere; and at
-//! its foot the Accounts and Manage buttons, which run the commands of those names (`ACCOUNTS`, `MANAGE`) once a
-//! part has added them.
+//! its foot the theme button (`theme_menu.rs`) and the Accounts and Manage buttons, which run the commands of those
+//! names (`ACCOUNTS`, `MANAGE`) once a part has added them; [`foot_button`] says which was clicked.
 
 use floem::IntoView;
+use floem::View as _;
 use floem::peniko::Color;
 use floem::reactive::{SignalGet, SignalWith};
 use floem::style::CursorStyle;
@@ -20,6 +21,16 @@ use crate::widgets::line;
 /// the commands; until then a click does nothing.
 pub const ACCOUNTS: &str = "workbench.actions.accounts";
 pub const MANAGE: &str = "workbench.actions.manage";
+
+thread_local! {
+    /// The foot's button clicked last, for the menu its command opens beside it.
+    static FOOT: std::cell::Cell<Option<floem::ViewId>> = const { std::cell::Cell::new(None) };
+}
+
+/// The foot's button clicked last (the theme button, Accounts, Manage): its command's menu opens beside it.
+pub fn foot_button() -> Option<floem::ViewId> {
+    FOOT.get()
+}
 
 /// The views the bar lists now: the side bar's, as the dock draws it; with no group at the window's left, every
 /// view that is in the window.
@@ -77,8 +88,11 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     };
     let bottom = move |name: &'static str, command: &'static str| {
         let send = send.clone();
-        container(icon(name, 24.0))
+        let button = container(icon(name, 24.0));
+        let id = button.id();
+        button
             .on_click_stop(move |_| {
+                FOOT.set(Some(id));
                 crate::commands::run(ui, &send, command);
             })
             .style(move |s| {
@@ -94,6 +108,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     v_stack((
         dyn_stack(move || listed(ui), |v: &View| *v, item).style(|s| s.flex_col()),
         empty().style(|s| s.flex_grow(1.0_f32)),
+        bottom("color-mode", crate::theme_menu::THEME_BUTTON),
         bottom("account", ACCOUNTS),
         bottom("settings-gear", MANAGE),
     ))

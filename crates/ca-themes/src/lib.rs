@@ -84,31 +84,31 @@ pub fn built_in() -> Vec<Theme> {
     .clone()
 }
 
-/// Each theme's dark and light modes, by their names: what the theme button's Light and Dark go between, and the
-/// pair a family chosen there makes the preferred ones.
-pub const FAMILIES: &[(&str, &str)] = &[
-    ("Code Arena Dark", "Code Arena Light"),
-    ("Sakura Dark", "Sakura Light"),
-    ("Midnight Dark", "Midnight Light"),
-    ("Copper Dark", "Copper Light"),
-    ("Forest Dark", "Forest Light"),
-    ("Ocean Dark", "Ocean Light"),
-    ("Lavender Dark", "Lavender Light"),
-    ("Dark Modern", "Light Modern"),
-    ("Dark+", "Light+"),
-    ("Dark High Contrast", "Light High Contrast"),
-    ("Monokai", "Monokai Light"),
-    ("Solarized Dark", "Solarized Light"),
-    ("One Dark Pro", "One Light"),
-    ("Dracula", "Alucard"),
-    ("GitHub Dark", "GitHub Light"),
-    ("Nord", "Nord Light"),
-    ("Dark (Visual Studio)", "Light (Visual Studio)"),
+/// Each theme's family: its name in the theme button's list, and its dark and light modes' names. The button's
+/// Light and Dark go between the two, and a family chosen there makes them the preferred ones.
+pub const FAMILIES: &[(&str, &str, &str)] = &[
+    ("Code Arena", "Code Arena Dark", "Code Arena Light"),
+    ("Sakura", "Sakura Dark", "Sakura Light"),
+    ("Midnight", "Midnight Dark", "Midnight Light"),
+    ("Copper", "Copper Dark", "Copper Light"),
+    ("Forest", "Forest Dark", "Forest Light"),
+    ("Ocean", "Ocean Dark", "Ocean Light"),
+    ("Lavender", "Lavender Dark", "Lavender Light"),
+    ("VS Code Modern", "Dark Modern", "Light Modern"),
+    ("VS Code", "Dark+", "Light+"),
+    ("High Contrast", "Dark High Contrast", "Light High Contrast"),
+    ("Monokai", "Monokai", "Monokai Light"),
+    ("Solarized", "Solarized Dark", "Solarized Light"),
+    ("One Dark Pro", "One Dark Pro", "One Light"),
+    ("Dracula", "Dracula", "Alucard"),
+    ("GitHub", "GitHub Dark", "GitHub Light"),
+    ("Nord", "Nord", "Nord Light"),
+    ("Visual Studio", "Dark (Visual Studio)", "Light (Visual Studio)"),
 ];
 
-/// The family a theme's name is of: its dark and its light mode's names.
-pub fn family_of(name: &str) -> Option<(&'static str, &'static str)> {
-    FAMILIES.iter().copied().find(|(d, l)| d.eq_ignore_ascii_case(name) || l.eq_ignore_ascii_case(name))
+/// The family a theme's name is of: its label, and its dark and its light mode's names.
+pub fn family_of(name: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    FAMILIES.iter().copied().find(|(_, d, l)| d.eq_ignore_ascii_case(name) || l.eq_ignore_ascii_case(name))
 }
 
 /// Other names for the themes here, the old Code Arena's list: VS Code's names in settings.json ("Default Dark
@@ -379,10 +379,10 @@ mod tests {
     #[test]
     fn every_family_is_two_themes_here_one_dark_one_light() {
         let all = built_in();
-        for (d, l) in FAMILIES {
+        for (label, d, l) in FAMILIES {
             let (dark, light) = (named(&all, d).expect(d), named(&all, l).expect(l));
             assert!(dark.is_dark() && !light.is_dark(), "{d} {l}");
-            assert_eq!(family_of(&light.name().to_uppercase()), Some((*d, *l)));
+            assert_eq!(family_of(&light.name().to_uppercase()), Some((*label, *d, *l)));
         }
         let mut names: Vec<&str> = all.iter().map(Theme::name).collect();
         names.sort_unstable();

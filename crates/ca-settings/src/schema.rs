@@ -386,7 +386,7 @@ pub static COLOR_THEME: Setting = Setting {
     key: "workbench.colorTheme",
     kind: Kind::String,
     default: "\"\"",
-    description: "The IDE's colour theme, by name or id: Dark Modern, Light Modern, Dark+, Light+, Dark High Contrast, Light High Contrast, Monokai, Solarized Dark, Solarized Light, or one of yours (a VS Code theme's JSON, or a VS Code theme extension's folder, in themes/ in the config folder, ~/.code-arena/themes or the project's .code-arena/themes). Empty: Dark Modern or Light Modern, as the system is dark or light.",
+    description: "The IDE's colour theme, by name or id: Code Arena, Sakura, Midnight, Copper, Forest, Ocean or Lavender (each Dark or Light), Dark Modern, Light Modern, Dark+, Light+, Dark High Contrast, Light High Contrast, Monokai, Monokai Light, Solarized Dark, Solarized Light, One Dark Pro, One Light, Dracula, Alucard, GitHub Dark, GitHub Light, Nord, Nord Light, Dark (Visual Studio), Light (Visual Studio), or one of yours (a VS Code theme's JSON, or a VS Code theme extension's folder, in themes/ in the config folder, ~/.code-arena/themes or the project's .code-arena/themes). Empty: Dark Modern or Light Modern, as the system is dark or light; a name none has, the nearest (VS Code's and older names read as these). Not used while \"window.autoDetectColorScheme\" is on.",
     scope: Scope::User,
     env: None,
     section: "Appearance",
