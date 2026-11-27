@@ -1048,6 +1048,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_kept_call_carries_its_arguments_its_results_start_and_how_it_ended_in_this_run() {
+        let message = |v: Value| -> ca_llm::Message { serde_json::from_value(v).expect("a message") };
+        let stored = |m: ca_llm::Message| ca_session::Stored { seq: 0, turn: 1, message: m };
+        let step = message(json!({"role": "assistant", "tool_calls": [
+            {"id": "a", "name": "read_file", "arguments": "{\"path\":\"src/a.rs\"}"},
+            {"id": "b", "name": "run_shell", "arguments": "{\"command\":\"rm -rf x\"}"},
+            {"id": "c", "name": "grep", "arguments": "{\"pattern\":\"x\"}"},
+        ]}));
+        let said_no = format!("{}.", ca_agent::SAID_NO);
+        let after = [
+            stored(message(json!({"role": "tool", "tool_call_id": "a", "content": "x".repeat(SHOWN_RESULT + 5)}))),
+            stored(message(json!({"role": "tool", "tool_call_id": "b", "content": said_no}))),
+        ];
+        let read = |c: &ca_llm::ToolCall| Read {
+            name: c.name.clone(),
+            arguments: serde_json::from_str(&c.arguments).unwrap_or(Value::Null),
+            subject: "s".into(),
+        };
+        let fact = |id: &str| (id == "a").then_some(Fact { ok: true, ms: 12, status: "done" });
+        let calls = kept_calls(&step, &after, &read, &fact);
+        assert_eq!(calls[0]["arguments"]["path"], "src/a.rs");
+        assert_eq!((&calls[0]["done"], &calls[0]["cut"], &calls[0]["ms"]), (&json!(true), &json!(true), &json!(12)));
+        assert_eq!(calls[0]["text"].as_str().map(|t| t.chars().count()), Some(SHOWN_RESULT));
+        // Said no to, though not in this run: the result's words say it.
+        assert_eq!((&calls[1]["ok"], &calls[1]["status"]), (&json!(false), &json!("denied")));
+        // No result: it did not run, and says nothing of how it ended.
+        assert_eq!(calls[2]["done"], false);
+        assert!(calls[2].get("ok").is_none() && calls[2].get("text").is_none());
+    }
+
+    #[test]
+    fn a_calls_long_argument_is_shown_by_its_start_and_the_rest_as_it_is() {
+        let long = "y".repeat(SHOWN_ARGUMENT + 1);
+        let v = shown_arguments(&json!({"content": long, "n": 3, "list": ["a"]}));
+        assert!(v["content"].as_str().is_some_and(|s| s.ends_with('…') && s.chars().count() == SHOWN_ARGUMENT + 1));
+        assert_eq!((&v["n"], &v["list"]), (&json!(3), &json!(["a"])));
+    }
+
+    #[test]
     fn the_session_runs_what_came_too_late_first_then_what_it_says_next_itself() {
         let inbox = Mutex::new(vec!["and the tests".to_string(), "then commit".to_string()]);
         let mut said = Some("Goal (turn 2): make it pass".to_string());
