@@ -1862,6 +1862,16 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
         ))
         .mount(&gateway)
         .await;
+    // The models the pickers offer: one the gateway describes, one it does not.
+    Mock::given(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [{"id": "qwen"}, {"id": "small"}]})))
+        .mount(&gateway)
+        .await;
+    Mock::given(path("/v1/model/info"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": [{"model_name": "small",
+            "model_info": {"max_input_tokens": 32768, "max_output_tokens": 4096, "supports_reasoning": false}}]})))
+        .mount(&gateway)
+        .await;
     let home = tempfile::tempdir().expect("home");
     std::fs::create_dir_all(home.path().join("config")).expect("config");
     std::fs::write(
@@ -1932,6 +1942,18 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     assert!(first["license_text"].as_str().is_some_and(|t| t.starts_with("MIT License")), "{first}");
     assert_eq!(first["manual"], "https://arena.example/help/code-arena");
     assert_eq!((&first["locked"], &first["log"]), (&json!({}), &Value::Null), "{first}");
+    // What the pickers offer: the model as the gateway describes it, the levels of thinking, the modes.
+    assert_eq!(first["models"], json!(["qwen", "small"]), "{first}");
+    assert_eq!(
+        first["model_info"],
+        json!([{"id": "qwen", "tools": true, "thinking": true, "vision": false},
+            {"id": "small", "context": 32768, "max_output": 4096, "tools": true, "thinking": false, "vision": false}])
+    );
+    assert_eq!(first["thinking_levels"][0], "default");
+    let modes: Vec<&str> =
+        first["modes"].as_array().expect("modes").iter().filter_map(|m| m["name"].as_str()).collect();
+    assert_eq!(modes, ["ask", "auto-edit", "plan", "yolo"]);
+    assert!(first["modes"][3]["description"].as_str().is_some_and(|d| !d.is_empty()));
 
     ask(&mut page, json!({"type": "send", "text": "say hello"})).await;
     until(&mut page, &|v| v["type"] == "turn_start").await;

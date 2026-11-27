@@ -13,14 +13,18 @@
 //! - `replay.rs`: the running turn kept for a face that comes in late (the driver's turn loop keeps it).
 //! - `mentions.rs`: any folder listed for a whole path typed after @ (`folders`), and what a message's mentions
 //!   sent with it named for its chips (`attached`).
+//! - `pickers.rs`: what the pickers offer, in `state` (the models as the gateway describes them, the levels of
+//!   thinking, the modes).
 
 use serde_json::Value;
 
 use crate::ide_ext::{Area, Ctx, Rule, Sent, Shared, kind};
+use crate::session::Prepared;
 
 mod history;
 pub(crate) mod library;
 mod mentions;
+pub mod pickers;
 pub mod replay;
 
 /// This area in the driver.
@@ -37,6 +41,10 @@ impl Area for Here {
             "folders" => mentions::asked(sh, m),
             _ => false,
         }
+    }
+
+    fn state(sh: &Shared, _p: Option<&Prepared>, v: &mut Value) {
+        pickers::state(sh, v);
     }
 
     fn shape(sh: &Shared, sent: &mut Sent) {
