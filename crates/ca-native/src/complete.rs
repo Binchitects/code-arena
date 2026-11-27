@@ -283,6 +283,8 @@ struct Row {
     item: Rc<Item>,
     lit: Vec<Range<usize>>,
     score: i32,
+    /// The list it is in (its view is made again for another list).
+    list: u64,
 }
 
 /// The widget open: on which editor, from which offset (the word's start), and each provider's answer.
@@ -452,7 +454,7 @@ fn filtered<'a>(lists: impl IntoIterator<Item = &'a Rc<Item>>, prefix: &str) -> 
             let (score, lit) = fuzzy(prefix, item.filtered())?;
             // The letters lit are in the label only when the label is what was matched.
             let lit = if item.filter.is_empty() || item.filter == item.label { lit } else { Vec::new() };
-            Some(Row { item: item.clone(), lit, score })
+            Some(Row { item: item.clone(), lit, score, list: 0 })
         })
         .collect();
     rows.sort_by(|a, b| {
@@ -656,9 +658,10 @@ fn show(ui: Ui, again: bool) {
     let Some((rows, explicit, place)) = shown else { return close(ui) };
     if let Some(rows) = rows {
         s.rev.update(|n| *n += 1);
+        let list = s.rev.get_untracked();
         set_if(s.at, 0);
         set_if(s.none, explicit && rows.is_empty());
-        s.rows.set(rows.into_iter().collect());
+        s.rows.set(rows.into_iter().map(|r| Row { list, ..r }).collect());
     }
     set_if(s.place, place);
 }
@@ -1052,10 +1055,9 @@ fn widget(ui: Ui) -> AnyView {
         VirtualDirection::Vertical,
         VirtualItemSize::Fixed(Box::new(move || s.place.with_untracked(|p| p.map_or(19.0, |p| p.row)))),
         move || {
-            let rev = s.rev.get();
-            s.rows.get().into_iter().enumerate().map(move |(i, r)| (i, rev, r)).collect::<im::Vector<_>>()
+            s.rows.get().into_iter().enumerate().map(|(i, r)| (i, r.list, r)).collect::<im::Vector<_>>()
         },
-        |(i, rev, _): &(usize, u64, Row)| (*i, *rev),
+        |(i, list, _): &(usize, u64, Row)| (*i, *list),
         move |(i, _, r): (usize, u64, Row)| {
             let h = s.place.with_untracked(|p| p.map_or(19.0, |p| p.row));
             row_view(ui, i, r, h)
