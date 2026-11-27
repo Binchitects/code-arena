@@ -561,6 +561,7 @@ impl Ui {
             }),
             "draft": self.draft.get_untracked(),
             "search": crate::search::kept(*self),
+            "quick": crate::quick_modes::kept(*self),
         })
     }
 

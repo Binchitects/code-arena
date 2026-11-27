@@ -170,6 +170,7 @@ pub fn register(_ui: Ui, _send: &Send) {
     // Commands of a key or of a menu only: not in the palette.
     add(command(SHOW_COMMANDS, "View", "Show All Commands", |ui, send| open(ui, send, Mode::Commands))
         .keys("Ctrl+Shift+P")
+        .keys("F1")
         .hidden());
     add(command(FIND, "", "Find", |ui, _| crate::editor::find_show(ui)).keys("Ctrl+F").hidden());
     // After Focus Terminal, so the key they share is this one's: it hides the terminal when it is the view shown.
@@ -209,7 +210,7 @@ fn register_menus() {
     add(bar(VIEW), item(TOGGLE_SECONDARY).title("Secondary Side Bar").group("2_parts").order(2));
     add(bar(VIEW), item(TOGGLE_PANEL).title("Panel").group("2_parts").order(3));
     add(bar(VIEW), item(RESET_VIEWS).group("3_reset"));
-    add(bar(GO), soon("Go to File...", "Ctrl+P"));
+    add(bar(GO), item(QUICK_OPEN).title("Go to File...").group("3_file_nav"));
     add(bar(RUN), soon("Start Debugging", "F5"));
     add(bar(TERMINAL), soon("New Terminal", "Ctrl+Shift+`"));
     add(bar(HELP), item(ABOUT));
@@ -539,12 +540,13 @@ fn register_status() {
             .style(move |s| item(t, s).apply_if(ui.message.with(|m| m.is_empty()), |s| s.hide()))
             .into_any()
     });
-    add("status.selection", Side::Right, 200, |ui, _| {
+    add("status.selection", Side::Right, 200, |ui, send| {
         let t = ui.colors;
         label(move || {
             let (l, c) = ui.caret.get();
             format!("Ln {l}, Col {c}")
         })
+        .on_click_stop(move |_| crate::palette::open(ui, &send, crate::palette::Mode::Line))
         .style(move |s| item(t, s).apply_if(!crate::editor::kinds::text_shown(ui), |s| s.hide()))
         .into_any()
     });
