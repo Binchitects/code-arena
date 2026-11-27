@@ -447,34 +447,39 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
                     }
                 });
                 let count = views.len();
-                let more = more.style(move |s| s.margin_top(4.0).apply_if(fit.with(|f| f.len()) == count, |s| s.hide()));
+                let more =
+                    more.style(move |s| s.margin_top(4.0).apply_if(fit.with(|f| f.len()) == count, |s| s.hide()));
                 more_id.set(Some(more.id()));
-                let mut tabs: Vec<floem::AnyView> = views.into_iter().enumerate().map(|(i, v)| {
-                    let on = active == Some(v);
-                    let tab = v_stack((
-                        label(move || v.title().to_uppercase()).style(caps),
-                        empty().style(move |s| {
+                let mut tabs: Vec<floem::AnyView> = views
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        let on = active == Some(v);
+                        let tab = v_stack((
+                            label(move || v.title().to_uppercase()).style(caps),
+                            empty().style(move |s| {
+                                let c = t.get();
+                                s.height(1.0).width_full().background(if on {
+                                    c.panel_title_border
+                                } else {
+                                    Color::TRANSPARENT
+                                })
+                            }),
+                        ))
+                        .style(move |s| {
                             let c = t.get();
-                            s.height(1.0).width_full().background(if on {
-                                c.panel_title_border
-                            } else {
-                                Color::TRANSPARENT
-                            })
-                        }),
-                    ))
-                    .style(move |s| {
-                        let c = t.get();
-                        s.gap(5.0)
-                            .padding_top(6.0)
-                            .margin_horiz(10.0)
-                            .cursor(CursorStyle::Pointer)
-                            .color(if on { c.panel_title } else { c.panel_title_inactive })
-                            .hover(|s| s.color(c.panel_title))
-                    });
-                    handle(ui, v, tab, move || ui.reveal(v))
-                        .style(move |s| s.apply_if(!fit.with(|f| f.contains(&i)), |s| s.hide()))
-                        .into_any()
-                }).collect();
+                            s.gap(5.0)
+                                .padding_top(6.0)
+                                .margin_horiz(10.0)
+                                .cursor(CursorStyle::Pointer)
+                                .color(if on { c.panel_title } else { c.panel_title_inactive })
+                                .hover(|s| s.color(c.panel_title))
+                        });
+                        handle(ui, v, tab, move || ui.reveal(v))
+                            .style(move |s| s.apply_if(!fit.with(|f| f.contains(&i)), |s| s.hide()))
+                            .into_any()
+                    })
+                    .collect();
                 tabs.push(more.into_any());
                 h_stack_from_iter(tabs).style(|s| s.height_full()).into_any()
             }

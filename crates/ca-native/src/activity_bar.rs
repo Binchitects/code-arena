@@ -310,7 +310,8 @@ fn bar_items(ui: Ui) -> Vec<Item> {
     }
     items.push(popup::line());
     let now = floem::reactive::untrack(|| location(ui));
-    let place = |name: &str, at: Location| -> Item { entry(name, move || set_location(ui, at)).radio(now == at).into() };
+    let place =
+        |name: &str, at: Location| -> Item { entry(name, move || set_location(ui, at)).radio(now == at).into() };
     items.push(
         submenu(
             "Activity Bar Position",
@@ -361,7 +362,9 @@ pub fn view_items(ui: Ui, v: View) -> Vec<Item> {
     if in_bar {
         let on = floem::reactive::untrack(|| pinned(ui, v));
         let last = pinned_count(ui) <= 1;
-        items.push(entry(&format!("Hide '{}'", v.title()), move || set_pinned(ui, v, false)).enabled(on && !last).into());
+        items.push(
+            entry(&format!("Hide '{}'", v.title()), move || set_pinned(ui, v, false)).enabled(on && !last).into(),
+        );
         items.push(entry("Move to Panel", move || move_to_panel(ui, v)).enabled(group != panel).into());
         if group.is_some() && group == side_bar {
             let order = floem::reactive::untrack(|| views(ui));
@@ -411,12 +414,9 @@ fn foot(ui: Ui, send: Send, name: &'static str, tip: &'static str, command: &'st
             };
             match menu {
                 Some(m) if crate::commands::find(command).is_none() => popup::open_menu(ui, &send, At::beside(id), m),
-                None if command == HELP_MENU => popup::open_menu(
-                    ui,
-                    &send,
-                    At::beside(id),
-                    crate::menus::Menu::TitleBar(crate::menus::HELP),
-                ),
+                None if command == HELP_MENU => {
+                    popup::open_menu(ui, &send, At::beside(id), crate::menus::Menu::TitleBar(crate::menus::HELP))
+                }
                 _ => {
                     crate::commands::run(ui, &send, command);
                 }
@@ -547,10 +547,11 @@ pub fn top(ui: Ui, send: Send) -> impl IntoView {
                 .style(|s| s.flex_grow(1.0_f32).items_center().justify_center()),
             empty().style(move |s| {
                 let c = t.get();
-                s.height(1.0)
-                    .width(16.0)
-                    .margin_bottom(4.0)
-                    .background(if lit() { c.activity_top_border } else { Color::TRANSPARENT })
+                s.height(1.0).width(16.0).margin_bottom(4.0).background(if lit() {
+                    c.activity_top_border
+                } else {
+                    Color::TRANSPARENT
+                })
             }),
         ))
         .style(|s| s.items_center());
@@ -783,16 +784,19 @@ mod tests {
             Item::Entry(e) if e.label == "Dock With" => Some(labels(&e.sub)),
             _ => None,
         });
-        assert_eq!(with.unwrap(), ["Panel", Agent.title()]);
+        assert_eq!(with.expect("Dock With"), ["Panel", Agent.title()]);
         run(&icon, "Move Down");
         assert_eq!(listed(ui), [Files, Changes, Search, Outline]);
         run(&view_items(ui, Search), "Move to Panel");
         assert_eq!(ui.dock.with_untracked(|d| d.group_of(Search)), ui.dock.with_untracked(|d| d.panel()));
         // A panel tab's menu: back to the side bar, the panel elsewhere.
         let tab = view_items(ui, Output);
-        assert_eq!(labels(&tab)[..5], ["Move to Side Bar", "Move Panel to Bottom", "Move Panel Left", "Move Panel Right", "Hide Panel"]);
+        assert_eq!(
+            labels(&tab)[..5],
+            ["Move to Side Bar", "Move Panel to Bottom", "Move Panel Left", "Move Panel Right", "Hide Panel"]
+        );
         run(&tab, "Move Panel Right");
-        let p = ui.dock.with_untracked(|d| d.panel()).unwrap();
+        let p = ui.dock.with_untracked(|d| d.panel()).expect("a panel");
         assert_eq!(ui.dock.with_untracked(|d| d.side_of_editor(p)), Some(Side::Right));
         run(&view_items(ui, Search), "Move to Side Bar");
         assert_eq!(listed(ui), [Files, Changes, Outline, Search]);
