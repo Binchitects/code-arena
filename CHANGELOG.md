@@ -247,6 +247,12 @@ Sections used:
 - **A single change to the layout is remembered.** In the native window the first change after
   opening a folder (the panel hidden, a side bar resized, a tab opened) was forgotten at the next
   start unless a second change followed; it is now kept.
+- **Tool cards read cleanly.** The wrapped 'Allow TOOL to run with these arguments?' line and a call's
+  console output no longer draw their lines over each other.
+- **An answer's words around a call stay apart.** What the agent says after a call starts a paragraph of
+  its own instead of running on from what it said before it ('first.Done.').
+- **Saving a code block into a new folder works.** Save as a File from the chat makes the folders of the
+  path first, where it used to fail.
 
 ## v0.5.0 (2026-11-26)
 
