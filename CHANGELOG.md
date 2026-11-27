@@ -118,6 +118,12 @@ Sections used:
   settings.json), Esc goes back. By default it follows the system: Dark Modern or Light Modern.
 - **A setting changed from the IDE is checked as the schema says** (its kind, where it may be set,
   the edition's locks) and kept in your settings.json or the project's, its comments kept.
+- **The IDE's session can carry on by itself.** What a command hands the agent as the next message
+  (a plan's review, a goal's next turn) is run as the next turn in the IDE as in the terminal; Stop,
+  or a turn that fails, ends the chain.
+- **The IDE knows what the About box and Help need.** The session's state now carries the licence
+  and its text, the source link, the log's place, the link to the Arena's manual and what this
+  edition locks, each with why.
 
 
 ### :bug: Bugs fixed
@@ -125,6 +131,18 @@ Sections used:
 - **Answers are drawn in the native window again.** An answer's text lived in signals that could go when the next
   message came in, so it streamed into nothing; a fast answer could even stop the window. The thread is no longer
   built again at each message, and a group's view no longer at each change of the layout.
+- **What you change while the agent answers is no longer lost.** A model, mode, thinking level or
+  setting (a colour theme too) chosen in the IDE while an answer is being written is applied when
+  the answer ends, in the order you chose them.
+- **A message sent as the answer ends is answered.** What you send in the IDE too late for the
+  running turn to read now runs as a turn of its own right after it (after Stop too), under its own
+  question, instead of waiting for your next message.
+- **A command sent while the agent answers runs when the answer ends.** `/name` typed in the IDE
+  during an answer is no longer read by the running turn as plain words: it waits, and runs as its
+  own turn once the answer has ended, as in the terminal.
+- **The IDE says why it cannot do something yet.** Going back to an earlier question, asking again
+  or compacting while an answer is written now says "Wait for the answer, or stop it, to ..."
+  instead of doing nothing.
 
 ## v0.5.0 (2026-11-26)
 
