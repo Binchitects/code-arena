@@ -496,7 +496,7 @@ fn enter_takes(setting: &str, typed: &str, inserted: &str) -> bool {
 }
 
 /// VS Code's language id of a file, by its name, for the languages it is plain to tell.
-fn lang_of(path: &str) -> Option<&'static str> {
+pub(crate) fn lang_of(path: &str) -> Option<&'static str> {
     let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase())?;
     Some(match ext.as_str() {
         "rs" => "rust",

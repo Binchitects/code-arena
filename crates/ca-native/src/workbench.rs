@@ -218,6 +218,10 @@ fn register_menus() {
 /// VS Code's keys for the workbench: the command a key (or a chord of two) is bound to runs; Escape, bound to
 /// none, closes what is open over the window.
 pub(crate) fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
+    // An editing command's key does nothing where no editor has the keys (the editor runs it itself).
+    if crate::editor::editing::editor_only(key, m) {
+        return;
+    }
     if crate::commands::press(ui, send, key, m) != crate::commands::Pressed::Free {
         return;
     }

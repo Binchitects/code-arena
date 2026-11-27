@@ -219,6 +219,11 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 })
                 // No background of its own: the group's is under it, and the overview ruler between (`decor.rs`).
                 .style(move |s| s.size_full().set(floem::views::editor::Foreground, c.editor_fg).color(c.editor_fg));
+                // Its right-click menu (`editing.rs`).
+                let view = floem::View::id(&ed);
+                let ed = ed.on_event_stop(floem::event::EventListener::SecondaryClick, move |e| {
+                    editing::context_menu(ui, view, e)
+                });
                 let editor = ed.editor().clone();
                 g.editors.update(|e| {
                     e.insert(id, (tab.path.clone(), editor.clone()));

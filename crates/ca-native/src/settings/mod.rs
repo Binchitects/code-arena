@@ -274,7 +274,7 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
     colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
     let map = KEYMAP.with(Rc::clone);
     let ed = text_editor_keys("", move |editor, press, mods| {
-        if own_key(ui, &send, press, mods) {
+        if own_key(ui, &send, press, mods) || crate::editor::editing::key(ui, press, mods) {
             return CommandExecuted::Yes;
         }
         let command = map.keymaps.get(press).or_else(|| {
