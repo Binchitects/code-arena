@@ -310,6 +310,21 @@ Sections used:
   model or with other thinking (for that answer only), and can put the files back as they were. Rewind
   to here says how many messages go and which files would be put back or removed, and lets you take back
   the conversation, the code or both. Afterwards the question's words are back in the box.
+- **Bracket colours and matching.** Brackets are coloured by how deeply they are nested, using the
+  theme's editorBracketHighlight colours (an unexpected bracket shows in red), and the bracket at
+  the caret is highlighted with its pair, or the pair the caret is inside (editor.matchBrackets,
+  editor.bracketPairColorization.enabled).
+- **The word and the selection found again.** Every place of the word at the caret is highlighted
+  (editor.occurrencesHighlight), and so is every place of the selected text
+  (editor.selectionHighlight).
+- **Find matches marked.** All of the find widget's matches are highlighted, the current one in its
+  own colour, and they show in the overview ruler.
+- **Odd Unicode marked.** Invisible characters, and characters that could be taken for ASCII ones,
+  are underlined outside comments, with VS Code's hover saying which character it is
+  (editor.unicodeHighlight.ambiguousCharacters).
+- **Links in the editor.** Hold Ctrl (Cmd on macOS) over an address or a project file path to
+  underline it. Ctrl+click opens it: an address in the system browser, a file in the editor at its
+  line.
 
 
 ### :bug: Bugs fixed
