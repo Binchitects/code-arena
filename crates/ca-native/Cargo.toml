@@ -16,7 +16,12 @@ ca-settings.workspace = true
 ca-themes.workspace = true
 crossbeam-channel = "0.5"
 floem = "0.2"
+# What draws a picture decoded off the window's thread (floem's own `img` decodes where it is built).
+floem_renderer = "0.2"
+# A GIF's first frame: the locked `image` reads no GIF (it wants a newer `gif` than the lock has).
+gif = "0.13"
 globset.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "ico", "bmp"] }
 im = "15.1"
 regex.workspace = true
 serde_json.workspace = true

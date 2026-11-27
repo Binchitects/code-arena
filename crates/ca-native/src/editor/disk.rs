@@ -98,7 +98,11 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 });
             }
             if let Some(e) = m["error"].as_str() {
-                ui.message.set(format!("Could not open {path}: {e}"));
+                // A file asked for to be opened says why in a tab of its own; one read again only here.
+                match ui.tab(&path) {
+                    None if !again => crate::media::cannot(ui, &path, m["kind"].as_str().unwrap_or("other"), e),
+                    _ => ui.message.set(format!("Could not open {path}: {e}")),
+                }
                 return false;
             }
             if let Some(at) = m["modified"].as_u64() {
