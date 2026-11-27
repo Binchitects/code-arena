@@ -615,13 +615,18 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
                 }),
             ))
             .style(|s| s.flex_shrink(0.0_f32));
-            h_stack((
+            // The name and folder take exactly the room left of the letter, so the letters line up in one column
+            // whatever the names' widths.
+            let text = h_stack((
                 icon("file", 16.0).style(move |s| s.color(t.get().icon).flex_shrink(0.0_f32)),
                 name_view,
                 label(move || dir.clone()).style(move |s| {
                     s.font_size(12.0).color(t.get().desc).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)
                 }),
-                empty().style(|s| s.flex_grow(1.0_f32)),
+            ))
+            .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).items_center().gap(6.0));
+            h_stack((
+                text,
                 label(move || letter.to_string()).style(move |s| {
                     let c = t.get();
                     s.font_size(12.0)
@@ -703,23 +708,46 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
         move |words| {
             let focused = create_rw_signal(false);
             let go = send.clone();
-            text_input(me.message)
-                .placeholder(words)
+            // The border and padding sit on the box that holds both the input and its placeholder.
+            // floem paints its own placeholder past the box's edge, so the words are a label under the input that
+            // ends in an ellipsis, hidden once something is typed.
+            let hint = container(label(move || words.clone()).style(|s| s.text_ellipsis().min_width(0.0))).style(
+                move |s| {
+                    s.absolute()
+                        .inset(0.0)
+                        .padding_horiz(6.0)
+                        .items_center()
+                        .color(t.get().desc)
+                        .apply_if(me.message.with(|m| !m.is_empty()), |s| s.hide())
+                },
+            );
+            let input = text_input(me.message)
                 .on_key_down(Key::Named(NamedKey::Enter), |m| m.control(), move |_| commit(ui, &go, false))
                 .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true))
                 .on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false))
                 .style(move |s| {
                     let c = t.get();
+                    // A width in percent: with none, floem gives the input a fixed width of so many characters.
+                    s.width_full()
+                        .min_width(0.0)
+                        .border(0.0)
+                        .padding(0.0)
+                        .background(Color::TRANSPARENT)
+                        .color(c.input_fg)
+                        .cursor_color(floem::peniko::Brush::Solid(c.cursor))
+                });
+            stack((hint, input))
+                .style(move |s| {
+                    let c = t.get();
                     s.width_full()
                         .min_width(0.0)
                         .height(26.0)
+                        .items_center()
                         .padding_horiz(6.0)
                         .border(1.0)
                         .border_radius(2.0)
                         .border_color(if focused.get() { c.focus } else { c.input_border })
                         .background(c.input_bg)
-                        .color(c.input_fg)
-                        .cursor_color(floem::peniko::Brush::Solid(c.cursor))
                 })
                 .into_any()
         },

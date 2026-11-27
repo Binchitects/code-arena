@@ -448,11 +448,24 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
             }
         },
     );
+    // The title's actions from the menu, told again when one comes or goes: their `when` reads the parts' state (Source
+    // Control's Commit waits for the first status), which a container's build does not watch.
+    let title_rows = create_memo(move |_| {
+        shown.get().map(|v| {
+            crate::menus::rows(ui, crate::menus::Menu::ViewTitle(v))
+                .into_iter()
+                .filter_map(|row| match row {
+                    crate::menus::Row::Entry { icon, command: Some(id), .. } if !icon.is_empty() => Some((icon, id)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+    });
     let actions = {
         let send = send.clone();
         dyn_container(
-            move || shown.get(),
-            move |active| {
+            move || (shown.get(), title_rows.get()),
+            move |(active, rows)| {
                 let send = send.clone();
                 let close = action(t, "close", move || {
                     ui.hidden.update(|h| {
@@ -464,18 +477,14 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
                 // icon), then the cross that hides the group (not in the side bar, where the activity bar does it;
                 // the Explorer has none, the terminal always one).
                 let mut parts: Vec<floem::AnyView> = v.actions(ui, send.clone()).into_iter().collect();
-                for row in crate::menus::rows(ui, crate::menus::Menu::ViewTitle(v)) {
-                    if let crate::menus::Row::Entry { icon: name, command: Some(id), .. } = row
-                        && !name.is_empty()
-                    {
-                        let send = send.clone();
-                        parts.push(
-                            action(t, name, move || {
-                                crate::commands::run(ui, &send, &id);
-                            })
-                            .into_any(),
-                        );
-                    }
+                for (name, id) in rows.into_iter().flatten() {
+                    let send = send.clone();
+                    parts.push(
+                        action(t, name, move || {
+                            crate::commands::run(ui, &send, &id);
+                        })
+                        .into_any(),
+                    );
                 }
                 if v != View::Files && (v == View::Terminal || !side_bar) {
                     parts.push(close.into_any());
