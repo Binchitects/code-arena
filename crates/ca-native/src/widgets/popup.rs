@@ -266,6 +266,9 @@ const EDGE: f64 = 5.0;
 /// The room before a row's name (the mark is in it), and after its keys.
 const BEFORE: f64 = 26.0;
 const AFTER: f64 = 20.0;
+/// Room over the measured text: Floem puts each part of a row at whole pixels, so the name's room can come out a
+/// pixel or two under its measured width, and the longest name was cut short ("Copy Relative Pa...").
+const SLACK: f64 = 4.0;
 /// How far a menu stays from the window's edge.
 const MARGIN: f64 = 4.0;
 
@@ -290,7 +293,7 @@ pub fn size_of(rows: &[Item], width: &dyn Fn(&str) -> f64) -> Size {
         // A row that opens a menu has its arrow in the room after the keys.
         .map(|e| width(&e.label) + if e.keys.is_empty() { 0.0 } else { width(&e.keys) + 30.0 })
         .fold(0.0, f64::max);
-    let wide = (2.0 * EDGE + BEFORE + widest + AFTER).ceil().clamp(220.0, 520.0);
+    let wide = (2.0 * EDGE + BEFORE + widest + SLACK + AFTER).ceil().clamp(220.0, 520.0);
     Size::new(wide, 2.0 * EDGE + rows.iter().map(height_of).sum::<f64>())
 }
 
@@ -738,9 +741,9 @@ mod tests {
             entry("Copy Relative Path of the Active File", || {}).into(),
             entry("Cut", || {}).keys("Ctrl+Shift+Alt+X").into(),
         ];
-        assert_eq!(size_of(&long, &width).width, 10.0 + 26.0 + 37.0 * 7.0 + 20.0);
+        assert_eq!(size_of(&long, &width).width, 10.0 + 26.0 + 37.0 * 7.0 + 4.0 + 20.0);
         let keyed = vec![entry("Copy Relative Path of the Active File", || {}).keys("Ctrl+K").into()];
-        assert_eq!(size_of(&keyed, &width).width, 10.0 + 26.0 + 37.0 * 7.0 + 6.0 * 7.0 + 30.0 + 20.0);
+        assert_eq!(size_of(&keyed, &width).width, 10.0 + 26.0 + 37.0 * 7.0 + 6.0 * 7.0 + 30.0 + 4.0 + 20.0);
         assert_eq!(size_of(&[entry(&"x".repeat(200), || {}).into()], &width).width, 520.0, "nor wider than this");
         let window = Size::new(800.0, 600.0);
         let at = |x: f64, y: f64| Rect::new(x, y, x, y);
