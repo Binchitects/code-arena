@@ -222,7 +222,7 @@ fn rects(layout: &TextLayout, marks: &[Range<usize>], width: f64) -> Vec<Rect> {
 /// A fenced block as VS Code's chat draws it: the editor's font at 13 px on the editor's background, in a bordered
 /// box that scrolls across, coloured by its language's grammar and the theme's token colours. Each of its lines is
 /// a view of its own, so a block being written lays out its last line only.
-fn code(ui: Ui, lang: &str, text: impl Fn() -> String + 'static) -> impl IntoView {
+pub(crate) fn code(ui: Ui, lang: &str, text: impl Fn() -> String + 'static) -> impl IntoView {
     let t = ui.colors;
     let kept = Rc::new(RefCell::new(Snippet::new(lang)));
     let lines = dyn_stack(

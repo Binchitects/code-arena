@@ -59,6 +59,7 @@ colors! {
     preformat_bg: ["textPreformat.background"], "#FFFFFF1A", "#0000001A";
     quote_border: ["textBlockQuote.border"], "#007ACC80", "#007ACC80";
     ok: ["testing.iconPassed", "terminal.ansiGreen"], "#73C991", "#388A34";
+    progress: ["progressBar.background"], "#0E70C0", "#0E70C0";
 
     title_bg: ["titleBar.activeBackground"], "#3C3C3C", "#DDDDDD";
     title_fg: ["titleBar.activeForeground"], "#CCCCCC", "#333333";

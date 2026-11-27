@@ -1,33 +1,17 @@
-//! An answer in the thread: its calls in a line that opens, then its words.
+//! An answer in the thread: its calls, each a card (`tools.rs`), then its words.
 
 use floem::IntoView;
 use floem::reactive::{SignalGet, SignalUpdate, SignalWith};
-use floem::style::CursorStyle;
-use floem::views::{Decorators, dyn_container, h_stack, label, v_stack};
+use floem::views::{Decorators, v_stack};
 use serde_json::{Value, json};
 
-use crate::icons::icon;
-use crate::model::{Answer, Item, Kind, Tool, summary};
+use crate::model::{Answer, Item, Kind};
 use crate::state::{Send, Ui};
 
-pub(super) fn view(ui: Ui, answer: Answer) -> impl IntoView {
-    let t = ui.colors;
-    let Answer { text, tools, open, .. } = answer;
+pub(super) fn view(ui: Ui, answer: Answer, send: Send) -> impl IntoView {
+    let Answer { text, tools, .. } = answer;
     v_stack((
-        h_stack((
-            dyn_container(move || open.get(), |o| icon(if o { "chevron-down" } else { "chevron-right" }, 16.0)),
-            label(move || summary(&tools.get())),
-        ))
-        .on_click_stop(move |_| open.update(|o| *o = !*o))
-        .style(move |s| {
-            s.gap(4.0)
-                .items_center()
-                .color(t.get().desc)
-                .cursor(CursorStyle::Pointer)
-                .selectable(false)
-                .apply_if(tools.with(|t| t.is_empty()), |s| s.hide())
-        }),
-        super::tools::list(ui, tools, open),
+        super::tools::list(ui, send, tools).style(move |s| s.apply_if(tools.with(|t| t.is_empty()), |s| s.hide())),
         crate::prose::answer(ui, text),
     ))
     .style(|s| s.gap(8.0).width_full())
@@ -73,13 +57,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
 /// An answer's step the session kept, put after the items before it: into the answer it carries on, or a new one.
 pub(super) fn kept(ui: Ui, msg: &Value, items: &mut Vec<Item>) {
     let text = msg["text"].as_str().unwrap_or("").to_string();
-    let tools: Vec<Tool> = msg["tools"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|t| t.as_str())
-        .map(|n| Tool { name: n.into(), done: true, ok: true, ..Tool::default() })
-        .collect();
+    let tools = super::tools::kept(msg);
     if !matches!(items.last(), Some(Item { kind: Kind::Assistant(_), .. })) {
         items.push(Item { id: ui.id(), kind: Kind::assistant(ui.scope) });
     }

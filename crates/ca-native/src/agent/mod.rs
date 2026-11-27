@@ -1,5 +1,5 @@
 //! The Agent view, drawn as VS Code's chat view: the requests in bubbles on the right, the answers in full width
-//! with their calls in a line that opens, the agent's questions as cards, and the input box at the bottom with its
+//! with their calls as cards that open, the agent's questions as cards, and the input box at the bottom with its
 //! toolbar (the mode, the model and the thinking, each a picker; send or stop).
 //!
 //! Each file here is one part of the view. What a part draws in another's place (a chip in the box, a footer under
@@ -18,6 +18,7 @@ use crate::widgets::Theme;
 
 pub mod actions;
 pub mod answer;
+pub mod calls;
 pub mod ask;
 pub mod attach;
 pub mod compaction;
