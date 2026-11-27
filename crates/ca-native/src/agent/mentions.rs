@@ -262,6 +262,8 @@ pub struct Mentions {
     open: RwSignal<Option<Typed>>,
     /// Where the caret was in the window when it was last typed at.
     caret: RwSignal<Rect>,
+    /// Where the box is in the window: the list stays within its sides.
+    frame: RwSignal<Rect>,
     rows: RwSignal<Rc<Vec<Entry>>>,
     /// How many match, and what is said under the rows (a note, an error, "No matching files").
     total: RwSignal<usize>,
@@ -285,6 +287,7 @@ impl crate::ext::State for Mentions {
         Mentions {
             open: s.create_rw_signal(None),
             caret: s.create_rw_signal(Rect::ZERO),
+            frame: s.create_rw_signal(Rect::ZERO),
             rows: s.create_rw_signal(Rc::new(Vec::new())),
             total: s.create_rw_signal(0),
             note: s.create_rw_signal(String::new()),
@@ -393,6 +396,7 @@ fn follow(ui: Ui, send: &Send) {
         me.pages.set(1);
     }
     me.caret.set(rect);
+    me.frame.set(crate::chat_bridge::place(ui).unwrap_or(Rect::ZERO));
     if was.as_ref() != Some(&typed) {
         me.open.set(Some(typed));
     }
@@ -581,12 +585,14 @@ fn menu(ui: Ui, send: Send) -> impl IntoView {
             + if me.total.get() > 0 { ROW } else { 0.0 }
             + if me.note.with(String::is_empty) { 0.0 } else { ROW + 2.0 }
             + 10.0;
-        let caret = me.caret.get();
+        let (caret, frame) = (me.caret.get(), me.frame.get());
+        let width = if frame.width() > 0.0 { WIDTH.min(frame.width()) } else { WIDTH };
+        let left = if frame.width() > 0.0 { (caret.x0 - 8.0).min(frame.x1 - width).max(frame.x0) } else { caret.x0 - 8.0 };
         let top = if caret.y0 - height - 4.0 >= 0.0 { caret.y0 - height - 4.0 } else { caret.y1 + 4.0 };
         s.position(Position::Absolute)
-            .inset_left((caret.x0 - 8.0).max(4.0))
+            .inset_left(left.max(4.0))
             .inset_top(top)
-            .width(WIDTH)
+            .width(width)
             .padding_vert(4.0)
             .border(1.0)
             .border_color(c.menu_border)
