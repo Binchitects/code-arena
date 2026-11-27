@@ -309,7 +309,11 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
     use super::slots::{ItemSlot, around_item};
     let t = ui.colors;
     match i.kind.clone() {
-        Kind::User(question) | Kind::Queued { question, .. } => {
+        Kind::Queued { .. } => {
+            let own = super::queue::bubble(ui, send.clone(), &i);
+            around_item(ui, &send, ItemSlot::QuestionTop, own, ItemSlot::QuestionFoot, &i)
+        }
+        Kind::User(question) => {
             let own = super::question::bubble(ui, question);
             around_item(ui, &send, ItemSlot::QuestionTop, own, ItemSlot::QuestionFoot, &i)
         }

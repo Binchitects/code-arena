@@ -1978,8 +1978,21 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     ask(&mut page, json!({"type": "themes"})).await;
     ask(&mut page, json!({"type": "send", "text": "/explain the parser"})).await;
     ask(&mut page, json!({"type": "send", "text": "and then?"})).await;
+    // One more, taken back before it is read: the faces are told what waits now.
+    ask(&mut page, json!({"type": "send", "text": "never mind"})).await;
+    ask(&mut page, json!({"type": "queue_cancel", "id": 3})).await;
+    ask(&mut page, json!({"type": "queue_edit", "id": 3, "text": "too late"})).await;
     // All of it was taken while the model had not answered yet; only then does its answer come.
-    let mut meanwhile = until(&mut page, &|v| v["type"] == "queued" && v["text"] == "and then?").await;
+    let mut meanwhile = until(&mut page, &|v| v["type"] == "queue_error").await;
+    let left = meanwhile.iter().find(|v| v["type"] == "queue").expect("what waits");
+    assert_eq!(
+        left,
+        &json!({"type": "queue", "id": 3, "items": [
+            {"id": 1, "text": "/explain the parser", "later": true},
+            {"id": 2, "text": "and then?", "later": false}
+        ]})
+    );
+    assert_eq!(meanwhile.last(), Some(&json!({"type": "queue_error", "id": 3})), "taken back already");
     *hold.0.lock().expect("lock") = true;
     hold.1.notify_all();
     meanwhile.extend(until(&mut page, &|v| v["type"] == "turn_end").await);
@@ -2004,10 +2017,13 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     // What needs no session is answered while the turn runs, and nothing kept is answered before it ends.
     assert!(at(&meanwhile, &|v| v["type"] == "themes" && v["items"].is_array()).is_some(), "{meanwhile:?}");
     // A command is not words for the running turn to read: it waits for the turn's end, shown as waiting.
-    let command = json!({"type": "queued", "text": "/explain the parser", "later": true});
+    let command = json!({"type": "queued", "text": "/explain the parser", "later": true, "id": 1});
     assert!(at(&meanwhile, &|v| *v == command).is_some(), "{meanwhile:?}");
     assert!(at(&meanwhile, &|v| v["type"] == "deferred" && v["of"] == "send").is_some(), "{meanwhile:?}");
-    assert!(at(&meanwhile, &|v| *v == json!({"type": "queued", "text": "and then?"})).is_some(), "{meanwhile:?}");
+    assert!(
+        at(&meanwhile, &|v| *v == json!({"type": "queued", "text": "and then?", "id": 2})).is_some(),
+        "{meanwhile:?}"
+    );
     assert!(at(&meanwhile, &|v| v["type"] == "status" || v["type"] == "setting_kept").is_none(), "{meanwhile:?}");
     assert!(at(&meanwhile, &|v| v["type"] == "state").is_none(), "nothing went back: {meanwhile:?}");
 
@@ -2025,7 +2041,10 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     let theme = at(&after, &|v| v["type"] == "theme" && v["theme"] == "Light Modern").expect("theme");
     let started = at(&after, &|v| v["type"] == "turn_start").expect("the command's turn");
     let asked = at(&after, &|v| v["type"] == "user").expect("the command as a question");
-    assert_eq!(after[asked], json!({"type": "user", "text": "/explain the parser", "q": 2, "late": true}));
+    assert_eq!(
+        after[asked],
+        json!({"type": "user", "text": "/explain the parser", "q": 2, "late": true, "queued": [1]})
+    );
     assert!(
         model < thinking && thinking < mode && mode < kept && kept < theme && theme < asked && asked < started,
         "{after:?}"
@@ -2035,7 +2054,7 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     assert_eq!(after.last().expect("end")["ok"], true, "{after:?}");
     let last = until(&mut page, &|v| v["type"] == "turn_end").await;
     let asked = at(&last, &|v| v["type"] == "user").expect("the late message as a question");
-    assert_eq!(last[asked], json!({"type": "user", "text": "and then?", "q": 3, "late": true}));
+    assert_eq!(last[asked], json!({"type": "user", "text": "and then?", "q": 3, "late": true, "queued": [2]}));
     assert!(at(&last, &|v| v["type"] == "turn_start").is_some_and(|started| asked < started), "{last:?}");
     let text: String = last.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
     assert_eq!(text, "The third answer.");
@@ -2174,8 +2193,8 @@ async fn what_the_ide_is_sent_is_kept_for_the_folder_and_listed_newest_first_wit
     assert_eq!(
         queued,
         [
-            &json!({"type": "queued", "text": "and then?", "key": "w2"}),
-            &json!({"type": "queued", "text": "/explain the parser", "later": true, "key": "w3"})
+            &json!({"type": "queued", "text": "and then?", "key": "w2", "id": 1}),
+            &json!({"type": "queued", "text": "/explain the parser", "later": true, "key": "w3", "id": 2})
         ],
         "{meanwhile:?}"
     );
