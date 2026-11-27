@@ -19,6 +19,7 @@ mod ide_banners;
 mod ide_chat;
 mod ide_complete;
 mod ide_dap;
+mod ide_diffs;
 mod ide_ext;
 mod ide_extensions;
 mod ide_files;
