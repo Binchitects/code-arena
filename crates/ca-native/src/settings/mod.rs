@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use floem::keyboard::{Key, Modifiers, NamedKey};
-use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith};
+use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::views::editor::command::CommandExecuted;
 use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::core::mode::Mode;
@@ -41,7 +41,7 @@ use floem::views::editor::keypress::press::KeyPress;
 use floem::views::editor::text::Document;
 use floem::views::editor::text_document::TextDocument;
 use floem::views::{Decorators, text_editor_keys};
-use floem::{AnyView, IntoView};
+use floem::AnyView;
 use serde_json::{Map, Value, json};
 
 use crate::commands;
@@ -273,7 +273,15 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
     let colours = colours_of(ui, tab);
     colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
     let map = KEYMAP.with(Rc::clone);
+    let path = tab.path.clone();
+    let o = crate::editor::options::memo(ui, move || Some(path.clone()));
+    let width = create_rw_signal(0.0);
     let ed = text_editor_keys("", move |editor, press, mods| {
+        if let KeyInput::Keyboard(key, _) = &press.key
+            && editor.with_untracked(|e| o.with_untracked(|o| crate::editor::options::key(e, o, key, mods)))
+        {
+            return CommandExecuted::Yes;
+        }
         if own_key(ui, &send, press, mods) {
             return CommandExecuted::Yes;
         }
@@ -297,21 +305,18 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
         }
     })
     .use_doc(tab.doc.clone())
-    .styling_rc(colours)
+    .styling_rc(colours.clone())
     .editor_style(move |s| {
-        s.gutter_dim_color(c.line_number)
-            .gutter_accent_color(c.line_number_active)
-            .gutter_current_color(c.editor_bg)
+        let s = s
             .gutter_left_padding(18.0)
             .gutter_right_padding(22.0)
-            .current_line_color(c.line_highlight)
             .selection_color(c.selection)
             .cursor_color(c.cursor)
             .indent_guide_color(c.indent_guide)
             .visible_whitespace(c.whitespace)
             .phantom_color(c.desc)
-            .placeholder_color(c.placeholder)
-            .wrap_method(floem::views::editor::text::WrapMethod::None)
+            .placeholder_color(c.placeholder);
+        o.with(|o| crate::editor::options::style(s, o, &c, width.get()))
     })
     .style(move |s| {
         s.size_full().background(c.editor_bg).set(floem::views::editor::Foreground, c.editor_fg).color(c.editor_fg)
@@ -319,13 +324,20 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
     // The editor on screen: the find widget looks in it, and a text read again keeps its caret's line.
     let editor = ed.editor().clone();
     let id = editor.id();
-    ui.live.set(Some((tab.path.clone(), editor)));
-    ed.on_cleanup(move || {
+    let viewport = editor.viewport;
+    create_effect(move |_| {
+        let w = viewport.with(|v| v.width());
+        if width.get_untracked() != w {
+            width.set(w);
+        }
+    });
+    ui.live.set(Some((tab.path.clone(), editor.clone())));
+    let ed = ed.on_cleanup(move || {
         if ui.live.with_untracked(|l| l.as_ref().is_some_and(|(_, e)| e.id() == id)) {
             ui.live.set(None);
         }
-    })
-    .into_any()
+    });
+    crate::editor::options::follow(ui, ed, &editor, colours, o)
 }
 
 /// What it adds to the window's registries, once at start: the kind of tab the person's files are in, and the
