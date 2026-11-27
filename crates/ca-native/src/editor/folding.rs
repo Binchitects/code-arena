@@ -712,7 +712,9 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
     let caret_path = path.to_string();
     scroll(container(text).style(move |s| {
         let (w, h) = size.get();
-        s.width(w).height(h).min_size_full()
+        // Out of the flow, as Floem's own editor puts its text: in it, its size made the scroll view as wide as
+        // the longest line, so a long line was cut at the group's edge with nothing to scroll.
+        s.absolute().width(w).height(h).min_size_full()
     }))
     .on_move(move |p| window_origin.set(p))
     .scroll_to(move || scroll_to.get().map(Vec2::to_point))
