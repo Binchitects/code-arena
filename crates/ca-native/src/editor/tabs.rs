@@ -454,7 +454,10 @@ pub(super) fn tabs(ui: Ui, group: Shown) -> impl IntoView {
             dyn_stack(tabs, |tab: &Tab| tab.path.clone(), move |tab: Tab| one_tab(ui, group, tab))
                 .style(|s| s.flex_row().height_full()),
         )
-        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).height_full()),
+        // As narrow as the group: the tabs that do not fit scroll under it, instead of the group being made as
+        // wide as all its tabs (which pushed the parts beside the editor out of the window).
+        .scroll_style(|s| s.hide_bars(true))
+        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full()),
         h_stack((
             // An SVG's text has its preview a click away (Open Preview, as a Markdown file's has in VS Code).
             action(t, "open-preview", move || {
