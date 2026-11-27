@@ -191,6 +191,22 @@ colors! {
     symbol_namespace: ["symbolIcon.namespaceForeground", "foreground"], "#CCCCCC", "#616161";
     symbol_constant: ["symbolIcon.constantForeground", "foreground"], "#CCCCCC", "#616161";
     symbol_string: ["symbolIcon.stringForeground", "foreground"], "#CCCCCC", "#616161";
+    symbol_constructor: ["symbolIcon.constructorForeground"], "#B180D7", "#652D90";
+    symbol_event: ["symbolIcon.eventForeground"], "#EE9D28", "#D67E00";
+    symbol_enum_member: ["symbolIcon.enumeratorMemberForeground"], "#75BEFF", "#007ACC";
+    symbol_keyword: ["symbolIcon.keywordForeground", "foreground"], "#CCCCCC", "#616161";
+    symbol_snippet: ["symbolIcon.snippetForeground", "foreground"], "#CCCCCC", "#616161";
+    symbol_text: ["symbolIcon.textForeground", "foreground"], "#CCCCCC", "#616161";
+    symbol_property: ["symbolIcon.propertyForeground", "foreground"], "#CCCCCC", "#616161";
+
+    suggest_bg: ["editorSuggestWidget.background", "editorWidget.background"], "#252526", "#F3F3F3";
+    suggest_border: ["editorSuggestWidget.border", "editorWidget.border"], "#454545", "#C8C8C8";
+    suggest_fg: ["editorSuggestWidget.foreground", "editor.foreground"], "#D4D4D4", "#000000";
+    suggest_selected_bg: ["editorSuggestWidget.selectedBackground", "quickInputList.focusBackground", "list.activeSelectionBackground"], "#04395E", "#0060C0";
+    suggest_selected_fg: ["editorSuggestWidget.selectedForeground", "quickInputList.focusForeground", "list.activeSelectionForeground"], "#FFFFFF", "#FFFFFF";
+    suggest_selected_icon: ["editorSuggestWidget.selectedIconForeground", "quickInputList.focusIconForeground", "list.activeSelectionIconForeground", "list.activeSelectionForeground"], "#FFFFFF", "#FFFFFF";
+    suggest_highlight: ["editorSuggestWidget.highlightForeground", "list.highlightForeground"], "#2AAAFF", "#0066BF";
+    suggest_focus_highlight: ["editorSuggestWidget.focusHighlightForeground", "list.focusHighlightForeground", "list.highlightForeground"], "#2AAAFF", "#BBE7FF";
 
     notice_bg: ["inputValidation.warningBackground"], "#352A05", "#F6F5D2";
     notice_border: ["inputValidation.warningBorder"], "#B89500", "#B89500";

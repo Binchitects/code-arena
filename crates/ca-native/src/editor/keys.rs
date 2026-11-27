@@ -33,10 +33,14 @@ pub(super) fn default_key(
 }
 
 /// The workbench's keys that are about the editor, taken by the editor itself (a key it is given goes no further):
-/// the find widget's (`find::find_key`: Ctrl+H, F3 and Shift+F3, its toggles, Escape), Ctrl+F finds, Ctrl+S saves,
+/// the suggest widget's (`complete::key`), the find widget's (`find::find_key`: Ctrl+H, F3 and Shift+F3, its toggles, Escape), Ctrl+F finds, Ctrl+S saves,
 /// Ctrl+W closes the tab.
 pub(super) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
     let KeyInput::Keyboard(key, _) = &press.key else { return false };
+    // The suggest widget's and the ghost text's keys first (Enter, Tab, Escape, the arrows while it is open).
+    if crate::complete::key(ui, key, mods) {
+        return true;
+    }
     if super::find::find_key(ui, key, mods) {
         return true;
     }
