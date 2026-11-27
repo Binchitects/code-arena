@@ -10,12 +10,16 @@
 //!
 //! - `history.rs`: what was sent in this folder, for the box's ↑ (`history`), and each line sent kept in it.
 //! - `replay.rs`: the running turn kept for a face that comes in late (the driver's turn loop keeps it).
+//! - `pickers.rs`: what the pickers offer, in `state` (the models as the gateway describes them, the levels of
+//!   thinking, the modes).
 
 use serde_json::Value;
 
+use crate::session::Prepared;
 use crate::ide_ext::{Area, Rule, Sent, Shared, kind};
 
 mod history;
+pub mod pickers;
 pub mod replay;
 
 /// This area in the driver.
@@ -29,6 +33,10 @@ impl Area for Here {
             "history" => history::asked(sh, m),
             _ => false,
         }
+    }
+
+    fn state(sh: &Shared, _p: Option<&Prepared>, v: &mut Value) {
+        pickers::state(sh, v);
     }
 
     fn shape(sh: &Shared, sent: &mut Sent) {

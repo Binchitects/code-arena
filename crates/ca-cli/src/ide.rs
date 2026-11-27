@@ -956,11 +956,12 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
         }
     }
     // The models the pickers offer: the gateway's (and the providers' of one's own), asked once.
+    let infos = match tokio::time::timeout(std::time::Duration::from_secs(15), p.agent.gateway.models()).await {
+        Ok(Ok(ms)) => ms,
+        _ => Vec::new(),
+    };
     let models: Vec<String> =
-        match tokio::time::timeout(std::time::Duration::from_secs(15), p.agent.gateway.models()).await {
-            Ok(Ok(ms)) => ms.into_iter().map(|m| m.id).collect(),
-            _ => vec![p.agent.model.clone()],
-        };
+        if infos.is_empty() { vec![p.agent.model.clone()] } else { infos.iter().map(|m| m.id.clone()).collect() };
     let (post, own) = mpsc::unbounded_channel();
     let mut w = Wires { from_page, own, pending };
     let mut drv = Driver {
@@ -974,6 +975,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
         later: Later::default(),
         kept: Kept::default(),
     };
+    drv.kept.of::<crate::ide_chat::pickers::Infos>().set(infos);
     let mut sh = Shared::of(&p, app, &drv, &side);
     ide_ext::start(&sh);
     loop {
