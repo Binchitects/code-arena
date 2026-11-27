@@ -247,6 +247,14 @@ Sections used:
   successful edit shows just its diff.
 - **N files changed.** Under a finished turn's last answer: the files its edits changed, each listed once
   with its +/− counts and the totals. Clicking a file opens the agent's compare of it.
+- **/ menu of skills and commands in the chat.** Type / at the start of the chat box (or after a
+  /name already chosen) to see "Skills and commands": the project's and your commands with their
+  argument hints, and the skills. Names starting with what you typed come first, then names that
+  contain it. A command hides a skill of the same name. ↑/↓ choose, Enter or Tab puts '/name ' in
+  the box, and Enter on a name typed in full sends it. Esc closes the list; with the list closed,
+  Esc drops the chosen /name and keeps your words.
+- **Several skills in one message.** '/review /tests cart.rs' sends each named command or skill for
+  the same words, one after the other.
 
 
 ### :bug: Bugs fixed
