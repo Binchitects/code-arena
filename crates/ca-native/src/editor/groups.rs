@@ -762,14 +762,23 @@ pub struct Shown {
 fn one(ui: Ui, id: u64) -> impl IntoView {
     use floem::reactive::create_memo;
     let g = groups(ui);
+    // A group gone keeps what it showed until it is taken away (nothing in it is drawn again meanwhile).
     let shown = Shown {
         id,
-        tabs: create_memo(move |_| g.model.with(|m| m.group(id).map(|g| g.tabs.clone()).unwrap_or_default())),
-        active: create_memo(move |_| g.model.with(|m| m.group(id).and_then(|g| g.active.clone()))),
+        tabs: create_memo(move |was: Option<&Vec<String>>| {
+            g.model.with(|m| m.group(id).map(|g| g.tabs.clone())).or_else(|| was.cloned()).unwrap_or_default()
+        }),
+        active: create_memo(move |was: Option<&Option<String>>| {
+            g.model.with(|m| m.group(id).map(|g| g.active.clone())).or_else(|| was.cloned()).flatten()
+        }),
         focused: create_memo(move |_| g.model.with(|m| m.focused == id)),
     };
-    let at = create_memo(move |_| g.model.with(|m| m.groups.iter().position(|g| g.id == id).unwrap_or(0)));
-    let share = create_memo(move |_| g.model.with(|m| m.group(id).map_or(1.0, |g| g.share)));
+    let at = create_memo(move |was: Option<&usize>| {
+        g.model.with(|m| m.groups.iter().position(|g| g.id == id)).or(was.copied()).unwrap_or(0)
+    });
+    let share = create_memo(move |was: Option<&f64>| {
+        g.model.with(|m| m.group(id).map(|g| g.share)).or(was.copied()).unwrap_or(1.0)
+    });
     let vertical = create_memo(move |_| g.model.with(|m| m.vertical));
     let t = ui.colors;
     let body = super::group_view(ui, shown).style(move |s| {

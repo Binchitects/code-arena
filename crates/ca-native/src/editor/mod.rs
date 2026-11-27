@@ -9,7 +9,7 @@
 use std::rc::Rc;
 
 use floem::IntoView;
-use floem::reactive::{SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
+use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::views::editor::Editor;
 use floem::views::editor::command::CommandExecuted;
 use floem::views::editor::core::selection::Selection;
@@ -143,7 +143,8 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 e.remove(&id);
             });
         }
-        if shown.focused.get_untracked() {
+        // (A group being taken away has its signals gone already.)
+        if shown.focused.try_get_untracked() == Some(true) {
             make_live(ui, id);
         }
     };
@@ -259,13 +260,23 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                         caret.set((line + 1, col + 1));
                     }
                 });
-                let left = editor.clone();
+                // Where it is, noted as the caret moves and it scrolls (its signals are gone by the time it is
+                // cleaned up); not before it was put back where it was left, else that place is lost.
+                let last = Rc::new(std::cell::Cell::new(None::<groups::Place>));
+                {
+                    let (last, here, viewport) = (last.clone(), editor.clone(), editor.viewport);
+                    create_effect(move |_| {
+                        cursor.track();
+                        viewport.track();
+                        if placed.get() {
+                            last.set(Some(groups::Place::of(&here)));
+                        }
+                    });
+                }
                 // Gone from the screen (and not for the next one, which is drawn before this one goes): where it
                 // was left is kept for when it is shown again in this group.
                 let ed = ed.on_cleanup(move || {
-                    // Not before it was put back where it was left (else that place is lost).
-                    if left.cursor.try_get_untracked().is_some() && placed.get_untracked() {
-                        let at = groups::Place::of(&left);
+                    if let Some(at) = last.get() {
                         g.places.update(|p| {
                             p.insert(key.clone(), at);
                         });
