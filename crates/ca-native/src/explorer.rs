@@ -459,7 +459,8 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
             ui.selected.set(path.clone());
             ui.toggle_folder(&path, &send);
         } else {
-            ui.open(&path, &send);
+            // A click opens a preview (the next one takes its place), as VS Code's.
+            crate::editor::tabs::open_preview(ui, &path, &send);
         }
     })
     .on_secondary_click_stop(move |_| {
