@@ -1,8 +1,11 @@
 //! The thread: the requests, the answers, the notices and the agent's questions, one after the other, followed to
 //! its end as it grows.
 
-use floem::IntoView;
-use floem::reactive::{SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
+use std::cell::Cell;
+use std::rc::Rc;
+
+use floem::{IntoView, View};
+use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::style::TextOverflow;
 use floem::views::{Decorators, dyn_container, dyn_stack, h_stack, label, scroll};
 use serde_json::Value;
@@ -12,11 +15,28 @@ use crate::model::{Item, Kind};
 use crate::state::{Send, Ui};
 
 pub(super) fn thread(ui: Ui, send: Send) -> impl IntoView {
-    let follow = create_rw_signal(0.0f32);
+    // Each new item scrolls the thread to its end; the last answer growing (its words, its thinking, its calls,
+    // its footer) does too while the end is in view, so a person who scrolled up to read is left where they are.
+    let follow = create_rw_signal(0u64);
+    let at_end = Rc::new(Cell::new(true));
     create_effect(move |_| {
         ui.items.with(|l| l.len());
-        follow.set(100.0);
+        follow.update(|n| *n += 1);
     });
+    {
+        let at_end = at_end.clone();
+        create_effect(move |_| {
+            let last = ui.items.with(|l| l.last().map(|i| i.kind.clone()));
+            let Some(Kind::Assistant(a)) = last else { return };
+            a.text.with(|t| t.len());
+            a.reasoning.with(|r| r.len());
+            a.tools.with(|t| t.len());
+            a.usage.track();
+            if at_end.get() {
+                follow.update(|n| *n += 1);
+            }
+        });
+    }
     // Whether there is a thread at all, told only when that changes: the thread is built once, not again at each
     // message (Floem's dyn_container builds again whenever what it reads is set, and building it again under an
     // answer being drawn drops what the answer's blocks read).
@@ -28,11 +48,19 @@ pub(super) fn thread(ui: Ui, send: Send) -> impl IntoView {
                 super::composer::welcome(ui).into_any()
             } else {
                 let send = send.clone();
-                scroll(
+                let items =
                     dyn_stack(move || ui.items.get(), |i: &Item| i.id, move |i: Item| item(ui, i, send.clone()))
-                        .style(|s| s.flex_col().width_full().padding_horiz(16.0).padding_vert(12.0).gap(16.0)),
-                )
-                .scroll_to_percent(move || follow.get())
+                        .style(|s| s.flex_col().width_full().padding_horiz(16.0).padding_vert(12.0).gap(16.0));
+                let (content, at_end) = (items.id(), at_end.clone());
+                scroll(items)
+                    .on_scroll(move |seen| {
+                        let tall = content.get_layout().map(|l| l.size.height as f64).unwrap_or(0.0);
+                        at_end.set(seen.y1 >= tall - 24.0);
+                    })
+                    .scroll_to_percent(move || {
+                        follow.track();
+                        100.0
+                    })
                 .style(|s| s.size_full())
                 .into_any()
             }
