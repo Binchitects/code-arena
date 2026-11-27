@@ -375,11 +375,12 @@ impl Ui {
 
     /// The theme in force, as its JSON (for the editor's syntax colours).
     pub fn theme_json(&self) -> Value {
-        ca_themes::chosen(&self.themes.get_untracked(), &self.choice.get_untracked(), true).json
+        crate::theme_menu::theme(*self).json
     }
 
-    fn apply_theme(&self) {
-        let t = ca_themes::chosen(&self.themes.get_untracked(), &self.choice.get_untracked(), true);
+    /// The theme in force applied (`theme_menu.rs` says which it is: the setting, the system's, one previewed).
+    pub(crate) fn apply_theme(&self) {
+        let t = crate::theme_menu::theme(*self);
         // The same theme again (every `state` says it) changes nothing: what is drawn with its colours is not made
         // again, and a code block going with the thread it is in is not given lines first.
         let colors = Colors::of(&t);
