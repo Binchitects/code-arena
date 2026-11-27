@@ -669,6 +669,8 @@ pub fn over(ui: Ui, editor: &Editor, path: &str) -> impl IntoView + use<> {
             }
         })
         .on_event_cont(EventListener::PointerLeave, move |_| hover.hide())
+        // The editor gone (its tab closed or another shown): its hover with it.
+        .on_cleanup(move || hover.hide())
         .style(|s| s.absolute().size_full())
 }
 
@@ -845,6 +847,36 @@ mod tests {
         assert!(hover_at(path, 0, 5).is_empty() && hover_at(path, 1, 2).is_empty());
         clear(ui, "test", path);
         assert!(of(path).is_none() && phantoms(path, 0, 6).is_empty());
+    }
+
+    #[test]
+    fn an_open_files_editor_lays_out_again_when_its_marks_change_and_the_theme_colours_them_again() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        register(ui, &send);
+        let path = "decor-test/c.rs";
+        ui.take(&serde_json::json!({"type": "file", "path": path, "text": "fn a() {}\n", "modified": 1}), &send);
+        let rev = ui.tab(path).expect("open").doc.cache_rev();
+        let at = rev.get_untracked();
+        let glyph = Mark::Glyph {
+            line: 0,
+            icon: "circle-filled",
+            tint: Tint::Theme(|c| c.problem_error),
+            title: String::new(),
+            click: None,
+        };
+        set(ui, "test", path, vec![glyph]);
+        assert_eq!(rev.get_untracked(), at + 1);
+        // Another theme: the mark takes its colour, and the editor lays out again.
+        let mut c = ui.colors.get_untracked();
+        c.problem_error = Color::rgb8(1, 2, 3);
+        ui.colors.set(c);
+        assert_eq!(of(path).expect("marks").lines[&0].glyph.as_ref().map(|g| g.color), Some(Color::rgb8(1, 2, 3)));
+        assert_eq!(rev.get_untracked(), at + 2);
+        clear(ui, "test", path);
+        // Nothing left to take away: nothing is laid out again.
+        clear(ui, "test", path);
+        assert_eq!(rev.get_untracked(), at + 3);
     }
 
     #[test]
