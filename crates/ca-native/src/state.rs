@@ -223,6 +223,17 @@ pub struct Ui {
     pub find_error: RwSignal<bool>,
     /// Counted up when the find widget is asked for: its box takes the keys, with the editor's selection in it.
     pub find_asked: RwSignal<u64>,
+    /// The find widget's other options: Match Whole Word, Find in Selection (and the range it looks in, taken when
+    /// it was turned on), the replace row shown, what replaces, Preserve Case, and what was looked for and what
+    /// replaced before (the oldest first).
+    pub find_word: RwSignal<bool>,
+    pub find_in_selection: RwSignal<bool>,
+    pub find_scope: RwSignal<Option<(usize, usize)>>,
+    pub find_replacing: RwSignal<bool>,
+    pub find_replace: RwSignal<String>,
+    pub find_preserve: RwSignal<bool>,
+    pub find_history: RwSignal<Vec<String>>,
+    pub replace_history: RwSignal<Vec<String>>,
     /// When each open file was last changed on disk, as the session said last.
     pub modified: RwSignal<HashMap<String, u64>>,
     /// The open files with changes not saved that changed on disk, or are gone from it.
@@ -313,6 +324,14 @@ impl Ui {
             find_hits: create_rw_signal(Rc::new(Vec::new())),
             find_error: create_rw_signal(false),
             find_asked: create_rw_signal(0),
+            find_word: create_rw_signal(false),
+            find_in_selection: create_rw_signal(false),
+            find_scope: create_rw_signal(None),
+            find_replacing: create_rw_signal(false),
+            find_replace: create_rw_signal(String::new()),
+            find_preserve: create_rw_signal(false),
+            find_history: create_rw_signal(Vec::new()),
+            replace_history: create_rw_signal(Vec::new()),
             modified: create_rw_signal(HashMap::new()),
             on_disk: create_rw_signal(HashMap::new()),
             reloading: create_rw_signal(HashSet::new()),

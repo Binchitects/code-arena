@@ -22,16 +22,36 @@ use super::{focus, live};
 use crate::state::Ui;
 use crate::widgets::{UI_FONT, action, line, toggle};
 
-/// Where a text has what is looked for: each match's place (from, to), the first 20 000 of them (as VS Code counts
-/// no further); or that what is looked for is not a regular expression. Words are looked for as they are written
-/// unless `regex`, in any case unless `case`.
-pub fn matches(text: &str, query: &str, case: bool, regex: bool) -> Result<Vec<(usize, usize)>, ()> {
-    const MOST: usize = 20_000;
-    if query.is_empty() {
-        return Ok(Vec::new());
-    }
-    let mut pattern = String::from(if case { "(?m)" } else { "(?mi)" });
-    if regex {
+/// How what is looked for is looked for: in its case only (Match Case), as a whole word only (Match Whole Word), as
+/// a regular expression (Use Regular Expression).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct How {
+    pub case: bool,
+    pub word: bool,
+    pub regex: bool,
+}
+
+/// The most matches the widget counts, as VS Code counts no further.
+pub const MOST: usize = 20_000;
+
+/// VS Code's `editor.wordSeparators`, and white space: what a whole word stands between.
+fn separator(c: char) -> bool {
+    c.is_whitespace() || "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?".contains(c)
+}
+
+/// Whether a match (from, to) stands as a whole word: at each of its ends the text's edge, a separator beside it, or
+/// a separator its own end (as VS Code has it, `.b` is a whole word in `a.b`).
+fn whole_word(text: &str, from: usize, to: usize) -> bool {
+    let hit = &text[from..to];
+    let left = text[..from].chars().next_back().is_none_or(separator) || hit.chars().next().is_some_and(separator);
+    let right = text[to..].chars().next().is_none_or(separator) || hit.chars().next_back().is_some_and(separator);
+    left && right
+}
+
+/// What is looked for as a regular expression over many lines; none when it is not one.
+fn regex_of(query: &str, how: How) -> Option<syntect::parsing::Regex> {
+    let mut pattern = String::from(if how.case { "(?m)" } else { "(?mi)" });
+    if how.regex {
         pattern.push_str(query);
     } else {
         for c in query.chars() {
@@ -42,23 +62,202 @@ pub fn matches(text: &str, query: &str, case: bool, regex: bool) -> Result<Vec<(
         }
     }
     if syntect::parsing::Regex::try_compile(&pattern).is_some() {
-        return Err(());
+        return None;
     }
-    let re = syntect::parsing::Regex::new(pattern);
+    Some(syntect::parsing::Regex::new(pattern))
+}
+
+/// Each match of what is looked for in a text, in order, the first `most` of them, within `scope` (from, to) when
+/// one is given; each given with the regular expression's groups. Err when it is not a regular expression.
+fn search(
+    text: &str,
+    query: &str,
+    how: How,
+    scope: Option<(usize, usize)>,
+    most: usize,
+    mut each: impl FnMut(&syntect::parsing::Region),
+) -> Result<(), ()> {
+    if query.is_empty() {
+        return Ok(());
+    }
+    let re = regex_of(query, how).ok_or(())?;
+    let (mut at, mut end) = scope.unwrap_or((0, text.len()));
+    end = end.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
     let mut region = syntect::parsing::Region::new();
-    let mut out = Vec::new();
-    let mut at = 0;
-    while at <= text.len() && out.len() < MOST && re.search(text, at, text.len(), Some(&mut region)) {
+    let mut found = 0;
+    while at <= end && found < most && re.search(text, at, end, Some(&mut region)) {
         let Some((from, to)) = region.pos(0) else { break };
         if to > from {
-            out.push((from, to));
+            if !how.word || whole_word(text, from, to) {
+                each(&region);
+                found += 1;
+            }
             at = to;
         } else {
             // What matches nothing (`x*` where there is no x) is not a match; on to the next character.
             at = to + text[to..].chars().next().map_or(1, char::len_utf8);
         }
     }
+    Ok(())
+}
+
+/// Where a text has what is looked for: each match's place (from, to), the first `MOST` of them, within `scope`
+/// when one is given; or that what is looked for is not a regular expression. Words are looked for as they are
+/// written unless `how.regex`, in any case unless `how.case`, anywhere unless `how.word`.
+pub fn matches(text: &str, query: &str, how: How, scope: Option<(usize, usize)>) -> Result<Vec<(usize, usize)>, ()> {
+    let mut out = Vec::new();
+    search(text, query, how, scope, MOST, |r| out.extend(r.pos(0)))?;
     Ok(out)
+}
+
+/// Each match (from, to) with what replaces it, every one of them (Replace All leaves none out), within `scope`
+/// when one is given.
+pub fn replacements(
+    text: &str,
+    query: &str,
+    how: How,
+    scope: Option<(usize, usize)>,
+    with: &str,
+    preserve: bool,
+) -> Result<Vec<(usize, usize, String)>, ()> {
+    let mut out = Vec::new();
+    search(text, query, how, scope, usize::MAX, |r| {
+        let Some((from, to)) = r.pos(0) else { return };
+        let mut by = if how.regex {
+            let mut groups: Vec<Option<&str>> = (0..100).map(|i| r.pos(i).map(|(a, b)| &text[a..b])).collect();
+            // Past the last group that took part there are none.
+            while groups.last().is_some_and(Option::is_none) {
+                groups.pop();
+            }
+            expand(with, &groups)
+        } else {
+            with.to_string()
+        };
+        if preserve {
+            by = preserve_case(&text[from..to], &by);
+        }
+        out.push((from, to, by));
+    })?;
+    Ok(out)
+}
+
+/// What replaces a match of a regular expression, as VS Code reads it: `$1` to `$99` its groups, `$0` and `$&` all
+/// of it, `$$` a dollar, `\n` and `\t` a new line and a tab, `\\` a backslash; the rest as it is written.
+pub fn expand(with: &str, groups: &[Option<&str>]) -> String {
+    let c: Vec<char> = with.chars().collect();
+    let group = |n: usize| groups.get(n).copied().flatten().unwrap_or("");
+    let mut out = String::new();
+    let mut i = 0;
+    while i < c.len() {
+        match (c[i], c.get(i + 1).copied()) {
+            ('$', Some('$')) => out.push('$'),
+            ('$', Some('&')) => out.push_str(group(0)),
+            ('$', Some(d)) if d.is_ascii_digit() => {
+                let one = d.to_digit(10).unwrap_or(0) as usize;
+                let two = c.get(i + 2).and_then(|e| e.to_digit(10)).map(|e| one * 10 + e as usize);
+                match two.filter(|n| *n < groups.len()) {
+                    Some(n) => {
+                        out.push_str(group(n));
+                        i += 1;
+                    }
+                    None if one < groups.len() => out.push_str(group(one)),
+                    // No such group: written as it is.
+                    None => {
+                        out.push('$');
+                        out.push(d);
+                    }
+                }
+            }
+            ('\\', Some('n')) => out.push('\n'),
+            ('\\', Some('t')) => out.push('\t'),
+            ('\\', Some('\\')) => out.push('\\'),
+            (ch, _) => {
+                out.push(ch);
+                i += 1;
+                continue;
+            }
+        }
+        i += 2;
+    }
+    out
+}
+
+/// What replaces a match in the match's case (Preserve Case): all capitals, all small letters, or its first letter's.
+pub fn preserve_case(matched: &str, with: &str) -> String {
+    let Some(first) = matched.chars().next() else { return with.to_string() };
+    if !matched.chars().any(char::is_alphabetic) || with.is_empty() {
+        return with.to_string();
+    }
+    if matched.to_uppercase() == matched {
+        return with.to_uppercase();
+    }
+    if matched.to_lowercase() == matched {
+        return with.to_lowercase();
+    }
+    let mut rest = with.chars();
+    let head: String = match rest.next() {
+        Some(h) if first.is_uppercase() => h.to_uppercase().collect(),
+        Some(h) => h.to_lowercase().collect(),
+        None => String::new(),
+    };
+    head + rest.as_str()
+}
+
+/// Where a place in a text is after edits (from, to, what replaces it) made in it at once: moved by those before
+/// it, at the start of the one it was in.
+pub fn shift(at: usize, edits: &[(usize, usize, String)]) -> usize {
+    let mut out = at as isize;
+    for (from, to, by) in edits {
+        if *to <= at {
+            out += by.len() as isize - (*to - *from) as isize;
+        } else if *from < at {
+            out -= (at - *from) as isize;
+        }
+    }
+    out.max(0) as usize
+}
+
+/// The word (letters, digits, `_`) a place in a line is in or just after: what Ctrl+F looks for when nothing is
+/// selected.
+pub fn word_around(line: &str, at: usize) -> Option<(usize, usize)> {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    let at = at.min(line.len());
+    if !line.is_char_boundary(at) {
+        return None;
+    }
+    let from = line[..at].char_indices().rev().take_while(|(_, c)| word(*c)).last().map_or(at, |(i, _)| i);
+    let to = at + line[at..].chars().take_while(|c| word(*c)).map(char::len_utf8).sum::<usize>();
+    (to > from).then_some((from, to))
+}
+
+/// What was looked for (or replaced) kept as the newest of the last 50, once.
+pub fn remember(history: &mut Vec<String>, what: &str) {
+    if what.is_empty() || history.last().is_some_and(|l| l == what) {
+        return;
+    }
+    history.retain(|h| h != what);
+    history.push(what.to_string());
+    if history.len() > 50 {
+        history.remove(0);
+    }
+}
+
+/// Up or Down in a box: the older or the newer of what it had (which one it shows now, none for what is typed, and
+/// the text); past the newest, an empty box. None where there is nothing further.
+pub fn recall(history: &[String], at: Option<usize>, current: &str, up: bool) -> Option<(Option<usize>, String)> {
+    let n = history.len();
+    // What is in the box is the newest already: Up goes to the one before it.
+    let at = at.or_else(|| history.last().is_some_and(|l| l == current).then(|| n - 1));
+    match (at, up) {
+        (None, true) if n > 0 => Some((Some(n - 1), history[n - 1].clone())),
+        (Some(i), true) if i > 0 => Some((Some(i - 1), history[i - 1].clone())),
+        (Some(i), false) if i + 1 < n => Some((Some(i + 1), history[i + 1].clone())),
+        (Some(_), false) if !current.is_empty() => Some((None, String::new())),
+        _ => None,
+    }
 }
 
 /// The match after the selection (from, to), or before it; around the end to the first, and the start to the last.
