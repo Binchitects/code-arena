@@ -1,17 +1,22 @@
-//! The settings in force: the defaults, then the person's file, then the project's, then the environment.
+//! The settings in force: the defaults, then the person's file, then the project's two (`.code-arena/settings.json`,
+//! then VS Code's `.vscode/settings.json` beside it), then the environment. A setting that may be set for one
+//! language is read for it from the `"[python]": {…}` blocks of those files first: a language's own value, from
+//! any file, wins over the same setting outside a block.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use crate::schema::{self, Scope, Setting};
-use crate::{Env, jsonc};
+use crate::schema::{self, Setting};
+use crate::{Env, ide_schema, jsonc};
 
 /// Where a value came from, as the Settings editor and `doctor` say it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     Default,
     User(PathBuf),
+    /// One of the project's two files.
     Project(PathBuf),
     Env(&'static str),
     /// Given for this run (a flag).
@@ -21,7 +26,10 @@ pub enum Source {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
     User,
+    /// The project's `.code-arena/settings.json`.
     Project,
+    /// The project's `.vscode/settings.json`, as VS Code keeps a folder's settings.
+    Workspace,
 }
 
 /// Something in a settings file that was not taken, said once.
@@ -29,25 +37,84 @@ pub enum Layer {
 pub struct Problem {
     pub file: PathBuf,
     pub message: String,
+    /// The setting it is about (empty: the file itself, which was not read).
+    pub key: String,
+}
+
+/// One settings file, read: its values by setting, and each language's own (`"[python]": {…}`; `"[a][b]"` gives
+/// both the same).
+#[derive(Debug, Default, Clone)]
+struct File {
+    path: PathBuf,
+    values: Map<String, Value>,
+    languages: BTreeMap<String, Map<String, Value>>,
+    /// What it holds that is no setting of Code Arena's (VS Code's own, an older name): left in the file.
+    unknown: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct Settings {
-    user: Option<(PathBuf, Map<String, Value>)>,
-    project: Option<(PathBuf, Map<String, Value>)>,
+    user: Option<File>,
+    project: Option<File>,
+    workspace: Option<File>,
     flags: Map<String, Value>,
     env: Env,
+    /// What was not taken of the settings the terminal reads too (the agent's, the tools', the servers'), and a
+    /// file of Code Arena's own that could not be read: said at each start.
     pub problems: Vec<Problem>,
+    /// What was not taken of the IDE's settings, and of `.vscode/settings.json`: the IDE says these, the terminal
+    /// does not (a value VS Code takes and Code Arena does not is no fault of a command's).
+    pub ide_problems: Vec<Problem>,
+}
+
+/// The project's `.vscode/settings.json`, from its `.code-arena/settings.json` beside it.
+pub fn workspace_file(project_file: &Path) -> Option<PathBuf> {
+    let dir = project_file.parent()?;
+    (dir.file_name()? == ".code-arena").then(|| dir.parent().map(|root| root.join(".vscode").join("settings.json")))?
+}
+
+/// The languages a settings key names, when it is a block of theirs: `[python]`, `[javascript][typescript]`.
+pub fn languages_of(key: &str) -> Option<Vec<&str>> {
+    let mut ids = Vec::new();
+    let mut rest = key;
+    while let Some(r) = rest.strip_prefix('[') {
+        let end = r.find(']').filter(|end| *end > 0)?;
+        ids.push(&r[..end]);
+        rest = &r[end + 1..];
+    }
+    (rest.is_empty() && !ids.is_empty()).then_some(ids)
+}
+
+/// Nested objects as VS Code reads them: `{"editor": {"fontSize": 14}}` is `editor.fontSize`. An object is gone
+/// into only while its name is no setting itself and begins one.
+fn flatten(map: Map<String, Value>, prefix: &str, out: &mut Vec<(String, Value)>) {
+    for (k, v) in map {
+        let key = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+        let begins = || {
+            let stem = format!("{key}.");
+            schema::ALL.iter().chain(ide_schema::ALL).any(|s| s.key.starts_with(&stem))
+        };
+        match v {
+            Value::Object(inner) if !k.starts_with('[') && schema::find(&key).is_none() && begins() => {
+                flatten(inner, &key, out)
+            }
+            v => out.push((key, v)),
+        }
+    }
 }
 
 impl Settings {
-    /// Reads the person's file and, when given, the project's. A file that is not there is no layer; one that does
-    /// not parse is said in [`Settings::problems`] and left out.
+    /// Reads the person's file and, when given, the project's (and `.vscode/settings.json` beside its
+    /// `.code-arena/`). A file that is not there is no layer; one that does not parse is said in the problems and
+    /// left out.
     pub fn load(user_file: &Path, project_file: Option<&Path>, env: Env) -> Self {
         let mut s = Settings { env, ..Default::default() };
         s.user = s.read(user_file, Layer::User);
         if let Some(p) = project_file {
             s.project = s.read(p, Layer::Project);
+            if let Some(w) = workspace_file(p) {
+                s.workspace = s.read(&w, Layer::Workspace);
+            }
         }
         s
     }
@@ -57,39 +124,86 @@ impl Settings {
         Settings { env, ..Default::default() }
     }
 
-    fn read(&mut self, file: &Path, layer: Layer) -> Option<(PathBuf, Map<String, Value>)> {
+    /// A problem kept: with the IDE's when it is about one of the IDE's settings or VS Code's file.
+    fn say(&mut self, file: &Path, layer: Layer, key: &str, message: String) {
+        let ide = layer == Layer::Workspace || ide_schema::ALL.iter().any(|s| s.key == key);
+        let list = if ide { &mut self.ide_problems } else { &mut self.problems };
+        list.push(Problem { file: file.to_path_buf(), message, key: key.to_string() });
+    }
+
+    fn read(&mut self, file: &Path, layer: Layer) -> Option<File> {
         let text = std::fs::read_to_string(file).ok()?;
         let value = match jsonc::parse(&text) {
             Ok(v) => v,
             Err(e) => {
-                self.problems.push(Problem { file: file.to_path_buf(), message: format!("not read: {e}") });
+                self.say(file, layer, "", format!("not read: {e}"));
                 return None;
             }
         };
         let Value::Object(map) = value else {
-            self.problems
-                .push(Problem { file: file.to_path_buf(), message: "not read: it is not a JSON object".into() });
+            self.say(file, layer, "", "not read: it is not a JSON object".into());
             return None;
         };
-        let mut kept = Map::new();
-        for (key, value) in map {
-            match schema::find(&key) {
-                // Not Code Arena's (VS Code's own, an older name): kept in the file, listed apart by the editor.
-                None => {}
-                Some(s) if layer == Layer::Project && s.scope == Scope::User => self.problems.push(Problem {
-                    file: file.to_path_buf(),
-                    message: format!("{key} is the person's own: a project's settings cannot set it"),
-                }),
-                Some(s) if !s.accepts(&value) => self.problems.push(Problem {
-                    file: file.to_path_buf(),
-                    message: format!("{key}: {value} is not of its kind, so its default holds"),
-                }),
-                Some(_) => {
-                    kept.insert(key, value);
+        let mut read = File { path: file.to_path_buf(), ..Default::default() };
+        let mut flat = Vec::new();
+        flatten(map, "", &mut flat);
+        for (key, value) in flat {
+            let Some(ids) = languages_of(&key) else {
+                if let Some(value) = self.taken(file, layer, &key, value, false, &mut read.unknown) {
+                    read.values.insert(key, value);
+                }
+                continue;
+            };
+            let Value::Object(block) = value else {
+                self.say(file, layer, &key, format!("\"{key}\" holds an object of settings."));
+                continue;
+            };
+            let mut inner = Vec::new();
+            flatten(block, "", &mut inner);
+            let mut own = Map::new();
+            for (k, v) in inner {
+                if let Some(v) = self.taken(file, layer, &k, v, true, &mut read.unknown) {
+                    own.insert(k, v);
                 }
             }
+            for id in ids {
+                read.languages.entry(id.to_string()).or_default().extend(own.clone());
+            }
         }
-        Some((file.to_path_buf(), kept))
+        Some(read)
+    }
+
+    /// One setting of a file as it is taken: `None` when it is not (no setting of Code Arena's, of the wrong
+    /// kind, the person's alone in a project's file, in a language's block and not a language's to set).
+    fn taken(
+        &mut self,
+        file: &Path,
+        layer: Layer,
+        key: &str,
+        value: Value,
+        language: bool,
+        unknown: &mut Vec<String>,
+    ) -> Option<Value> {
+        let Some(s) = schema::find(key) else {
+            // Not Code Arena's (VS Code's own, an older name): kept in the file, listed apart by the editor.
+            if !unknown.iter().any(|k| k == key) {
+                unknown.push(key.to_string());
+            }
+            return None;
+        };
+        if layer != Layer::User && !s.for_project() {
+            self.say(file, layer, key, format!("{key} is the person's own: a project's settings cannot set it"));
+            return None;
+        }
+        if let Some(why) = s.refuses(&value) {
+            self.say(file, layer, key, format!("{why} Its default holds."));
+            return None;
+        }
+        if language && !s.for_language() {
+            self.say(file, layer, key, format!("\"{key}\" cannot be set for one language."));
+            return None;
+        }
+        Some(value)
     }
 
     /// Sets a value for this run (a command-line flag), over every other layer.
@@ -99,8 +213,23 @@ impl Settings {
         }
     }
 
+    /// The files read, the least first: the person's, the project's `.code-arena/settings.json`, its
+    /// `.vscode/settings.json`.
+    fn files(&self) -> impl DoubleEndedIterator<Item = (&File, Layer)> {
+        [(&self.user, Layer::User), (&self.project, Layer::Project), (&self.workspace, Layer::Workspace)]
+            .into_iter()
+            .filter_map(|(f, layer)| f.as_ref().map(|f| (f, layer)))
+    }
+
     /// The value in force, and where it came from.
     pub fn resolve(&self, setting: &Setting) -> (Value, Source) {
+        self.resolve_for(setting, None)
+    }
+
+    /// The value in force for a language (VS Code's id: `python`, `typescriptreact`), and where it came from: the
+    /// language's own from a `"[python]"` block when the setting may be set for one (the project's block over the
+    /// person's), else the value for every language.
+    pub fn resolve_for(&self, setting: &Setting, language: Option<&str>) -> (Value, Source) {
         if let Some(v) = self.flags.get(setting.key) {
             return (v.clone(), Source::Flag);
         }
@@ -109,24 +238,32 @@ impl Settings {
         {
             return (v, Source::Env(var));
         }
-        if let Some((file, map)) = &self.project
-            && let Some(v) = map.get(setting.key)
-        {
-            return (merge_project(setting, self.user_value(setting), v.clone()), Source::Project(file.clone()));
+        if let Some(id) = language.filter(|_| setting.for_language()) {
+            for (file, layer) in self.files().rev() {
+                if let Some(v) = file.languages.get(id).and_then(|own| own.get(setting.key)) {
+                    return (v.clone(), source(file, layer));
+                }
+            }
         }
-        if let Some(v) = self.user_value(setting) {
-            let file = self.user.as_ref().map(|(f, _)| f.clone()).unwrap_or_default();
-            return (v, Source::User(file));
+        let mut found: Option<(Value, Source)> = None;
+        for (file, layer) in self.files() {
+            let Some(v) = file.values.get(setting.key) else { continue };
+            found = Some(match layer {
+                Layer::User => (v.clone(), source(file, layer)),
+                _ => (merge_project(setting, found.map(|f| f.0), v.clone()), source(file, layer)),
+            });
         }
-        (setting.default_value(), Source::Default)
-    }
-
-    fn user_value(&self, setting: &Setting) -> Option<Value> {
-        self.user.as_ref().and_then(|(_, m)| m.get(setting.key)).cloned()
+        found.unwrap_or_else(|| (setting.default_value(), Source::Default))
     }
 
     pub fn value(&self, setting: &Setting) -> Value {
         self.resolve(setting).0
+    }
+
+    /// A setting's value by its key, for a language when one is given: how the IDE's parts read theirs
+    /// (`settings.ide("git.autofetch", None)`). Null for a key that is no setting.
+    pub fn ide(&self, key: &str, language: Option<&str>) -> Value {
+        schema::find(key).map_or(Value::Null, |s| self.resolve_for(s, language).0)
     }
 
     pub fn bool(&self, setting: &Setting) -> bool {
@@ -153,8 +290,54 @@ impl Settings {
         !matches!(self.resolve(setting).1, Source::Default)
     }
 
+    /// The languages that have settings of their own in any of the files.
+    pub fn languages(&self) -> BTreeSet<String> {
+        self.files().flat_map(|(f, _)| f.languages.keys().cloned()).collect()
+    }
+
+    /// A language's own settings, by key: what its blocks give, the project's over the person's.
+    pub fn language_values(&self, language: &str) -> Map<String, Value> {
+        let mut own = Map::new();
+        for (file, _) in self.files() {
+            if let Some(block) = file.languages.get(language) {
+                own.extend(block.clone());
+            }
+        }
+        own
+    }
+
+    /// Whether a file was read for a layer (it is there, and is a JSON object).
+    pub fn has(&self, layer: Layer) -> bool {
+        self.file(layer).is_some()
+    }
+
+    fn file(&self, layer: Layer) -> Option<&File> {
+        match layer {
+            Layer::User => self.user.as_ref(),
+            Layer::Project => self.project.as_ref(),
+            Layer::Workspace => self.workspace.as_ref(),
+        }
+    }
+
+    /// What a layer's file sets itself, outside any language's block (`None`: it does not).
+    pub fn written(&self, layer: Layer, key: &str) -> Option<&Value> {
+        self.file(layer)?.values.get(key)
+    }
+
+    /// What a layer's file holds that is no setting of Code Arena's, by key (nested ones by their whole name).
+    pub fn unknown(&self, layer: Layer) -> &[String] {
+        self.file(layer).map_or(&[], |f| f.unknown.as_slice())
+    }
+
     pub fn env(&self) -> &Env {
         &self.env
+    }
+}
+
+fn source(file: &File, layer: Layer) -> Source {
+    match layer {
+        Layer::User => Source::User(file.path.clone()),
+        Layer::Project | Layer::Workspace => Source::Project(file.path.clone()),
     }
 }
 
