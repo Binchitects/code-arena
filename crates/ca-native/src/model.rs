@@ -74,6 +74,11 @@ pub struct Question {
     pub files: Vec<Piece>,
     /// Sent while an answer was written, and read at its next step.
     pub taken_in: bool,
+    /// Sent while an answer was written, too late for it (or a command, kept whole for its end): the question of a
+    /// turn of its own, which the thread showed as queued when it was sent.
+    pub late: bool,
+    /// Said by the session itself as its next turn (a plan's review, a goal's next turn), not by the person.
+    pub carried: bool,
     /// A note of Code Arena's own, not the person's words.
     pub note: bool,
     /// The skill it ran (empty: none).
@@ -97,6 +102,8 @@ impl Question {
             quote: text_of(v, "quote"),
             files: list("files").iter().map(Piece::from_json).collect(),
             taken_in: v["taken_in"] == true,
+            late: v["late"] == true,
+            carried: v["carried"] == true,
             note: v["note"] == true,
             skill: text_of(v, "skill"),
             attachments: list("attachments").iter().map(Attachment::from_json).collect(),
@@ -267,10 +274,12 @@ pub struct Item {
 pub enum Kind {
     User(Question),
     /// A message sent while an answer is written, waiting to be read: its number as the session gave it (echoed
-    /// as it is to change or cancel it; null: the session did not number it), and the message.
+    /// as it is to change or cancel it; null: the session did not number it), the message, and whether it waits
+    /// whole for the answer's end (a command), not read by the turn at its next step.
     Queued {
         id: Value,
         question: Question,
+        later: bool,
     },
     Assistant(Answer),
     Notice(String),
@@ -412,6 +421,10 @@ mod tests {
         assert_eq!(q.files, [Piece { path: "src/a.rs".into(), start: 2, end: 4, text: String::new() }]);
         assert_eq!(q.attachments[0].name, "shot.png");
         assert_eq!(q.skill, "review");
+        // A request that waited for the answer's end, and one the session said itself.
+        let late = Question::from_json(&json!({"type": "user", "text": "/explain it", "q": 2, "late": true}));
+        assert!(late.late && !late.carried && !q.late);
+        assert!(Question::from_json(&json!({"type": "user", "text": "go on", "q": 3, "carried": true})).carried);
         // A call as it is said today, and with all it is to carry.
         let plain = Tool::from_json(&json!({"type": "tool_start", "name": "run_shell", "subject": "ls"}), false);
         assert_eq!(plain, Tool { name: "run_shell".into(), subject: "ls".into(), ok: true, ..Tool::default() });
