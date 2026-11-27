@@ -579,6 +579,13 @@ impl Side {
         {
             return fail("not a plain file");
         }
+        // A file saved into a folder not made yet (a code block saved from the chat as new/dir/a.rs): its folders
+        // are made first, all inside the project as the path was checked.
+        if let Some(dir) = real.parent()
+            && let Err(e) = std::fs::create_dir_all(dir)
+        {
+            return fail(&e.to_string());
+        }
         if let Err(e) = std::fs::write(&real, text) {
             return fail(&e.to_string());
         }
@@ -1060,6 +1067,19 @@ mod tests {
         );
         assert!(s.handle(&json!({"type": "backup", "path": "../x.txt", "text": "x"})));
         assert!(drain(&mut rx).iter().any(|v| v["type"] == "notice"), "a path outside is refused");
+    }
+
+    #[test]
+    fn a_save_into_folders_not_made_yet_makes_them() {
+        let (d, s, mut rx) = side();
+        s.handle(&json!({"type": "save", "path": "new/dir/a.rs", "text": "fn a() {}\n"}));
+        let got = drain(&mut rx);
+        let saved = got.iter().find(|v| v["type"] == "saved").expect("saved");
+        assert_eq!((saved["path"].as_str(), saved.get("error")), (Some("new/dir/a.rs"), None));
+        assert_eq!(std::fs::read_to_string(d.path().join("new/dir/a.rs")).expect("read"), "fn a() {}\n");
+        s.handle(&json!({"type": "save", "path": "../out/a.rs", "text": "x"}));
+        assert!(drain(&mut rx).iter().any(|v| v["type"] == "saved" && v["error"].is_string()), "outside is refused");
+        assert!(!d.path().join("../out").exists());
     }
 
     /// A project and a data folder of its own (what is deleted is kept in it).
