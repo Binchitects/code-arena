@@ -12,9 +12,19 @@ pub enum Kind {
         min: i64,
         max: i64,
     },
+    /// A number, whole or not (a font's size, a zoom level). Its bounds are whole numbers; `i64::MIN` and
+    /// `i64::MAX` are no bound, here and in `Integer`.
+    Number {
+        min: i64,
+        max: i64,
+    },
     /// One of these words.
     Enum(&'static [&'static str]),
+    /// True, false, or one of these words (VS Code's `git.autoRepositoryDetection`).
+    BoolOr(&'static [&'static str]),
     StringList,
+    /// A list of numbers (the editor's rulers).
+    NumberList,
     /// A JSON object of the setting's own shape (MCP servers, rules…).
     Object,
 }
@@ -25,8 +35,11 @@ pub enum Kind {
 pub enum Scope {
     /// The person's settings.json only.
     User,
-    /// The person's, and the project's `.code-arena/settings.json`.
+    /// The person's, and the project's `.code-arena/settings.json` and `.vscode/settings.json`.
     Project,
+    /// As `Project`, and for one language besides: in a `"[python]": {…}` block of any of those files, which wins
+    /// over the same setting outside a block.
+    Language,
 }
 
 #[derive(Debug)]
@@ -54,10 +67,63 @@ impl Setting {
             Kind::Bool => value.is_boolean(),
             Kind::String => value.is_string() || value.is_null(),
             Kind::Integer { min, max } => value.as_i64().is_some_and(|n| (min..=max).contains(&n)),
+            Kind::Number { min, max } => value.as_f64().is_some_and(|n| n >= min as f64 && n <= max as f64),
             Kind::Enum(words) => value.as_str().is_some_and(|w| words.contains(&w)),
+            Kind::BoolOr(words) => value.is_boolean() || value.as_str().is_some_and(|w| words.contains(&w)),
             Kind::StringList => value.as_array().is_some_and(|a| a.iter().all(Value::is_string)),
+            Kind::NumberList => value.as_array().is_some_and(|a| a.iter().all(Value::is_number)),
             Kind::Object => value.is_object(),
         }
+    }
+
+    /// Why a value is not of this setting's kind, as a settings file's problems say it; `None` when it is.
+    pub fn refuses(&self, value: &Value) -> Option<String> {
+        if self.accepts(value) {
+            return None;
+        }
+        let key = self.key;
+        let words = |w: &[&str]| w.iter().map(|e| format!("{e:?}")).collect::<Vec<_>>().join(", ");
+        let bound = |b: Option<i64>| b.map_or_else(|| "…".to_string(), |n| n.to_string());
+        Some(match self.kind {
+            Kind::Bool => format!("\"{key}\" takes true or false."),
+            Kind::String => format!("\"{key}\" takes a string."),
+            Kind::Integer { .. } | Kind::Number { .. } => {
+                let whole = matches!(self.kind, Kind::Integer { .. });
+                let (min, max) = self.bounds();
+                match value {
+                    Value::Number(n) if !whole || n.is_i64() || n.is_u64() => {
+                        format!("\"{key}\" is from {} to {}.", bound(min), bound(max))
+                    }
+                    _ if whole => format!("\"{key}\" takes a whole number."),
+                    _ => format!("\"{key}\" takes a number."),
+                }
+            }
+            Kind::Enum(w) => format!("\"{key}\" is one of {}.", words(w)),
+            Kind::BoolOr(w) => format!("\"{key}\" is true, false or one of {}.", words(w)),
+            Kind::StringList => format!("\"{key}\" is a list of strings."),
+            Kind::NumberList => format!("\"{key}\" is a list of numbers."),
+            Kind::Object => format!("\"{key}\" takes an object."),
+        })
+    }
+
+    /// The least and the most a number may be (none: no bound that way).
+    pub fn bounds(&self) -> (Option<i64>, Option<i64>) {
+        match self.kind {
+            Kind::Integer { min, max } | Kind::Number { min, max } => {
+                ((min != i64::MIN).then_some(min), (max != i64::MAX).then_some(max))
+            }
+            _ => (None, None),
+        }
+    }
+
+    /// Whether a project's settings file may set it (else it is the person's alone).
+    pub fn for_project(&self) -> bool {
+        self.scope != Scope::User
+    }
+
+    /// Whether it may be set for one language, in a `"[python]": {…}` block.
+    pub fn for_language(&self) -> bool {
+        self.scope == Scope::Language
     }
 
     /// A variable's text as this setting's value: `true`/`false`/`1`/`0` for a bool, a number, a word, a
@@ -70,11 +136,17 @@ impl Setting {
                 _ => return None,
             },
             Kind::String | Kind::Enum(_) => Value::String(text.to_string()),
+            Kind::BoolOr(_) => match text.to_ascii_lowercase().as_str() {
+                "true" => Value::Bool(true),
+                "false" => Value::Bool(false),
+                _ => Value::String(text.to_string()),
+            },
             Kind::Integer { .. } => Value::from(text.trim().parse::<i64>().ok()?),
+            Kind::Number { .. } => Value::from(text.trim().parse::<f64>().ok()?),
             Kind::StringList => Value::Array(
                 std::env::split_paths(text).map(|p| Value::String(p.to_string_lossy().into_owned())).collect(),
             ),
-            Kind::Object => serde_json::from_str(text).ok()?,
+            Kind::NumberList | Kind::Object => serde_json::from_str(text).ok()?,
         };
         self.accepts(&value).then_some(value)
     }

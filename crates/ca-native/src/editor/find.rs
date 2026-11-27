@@ -118,7 +118,9 @@ fn follow_find(ui: Ui) {
     let look = move |reveal: bool| {
         generation.update(|g| *g += 1);
         let g = generation.get_untracked();
-        let tab = ui.active.get_untracked().and_then(|p| ui.tab(&p)).filter(|t| t.is_file());
+        // A file's text, or a tab of a kind that draws an editor on its own text (it is then the one on screen).
+        let tab =
+            ui.active.get_untracked().and_then(|p| ui.tab(&p)).filter(|t| t.is_file() || live(ui, &t.path).is_some());
         let query = ui.find_query.get_untracked();
         let (Some(tab), true, false) = (tab, ui.find.get_untracked(), query.is_empty()) else {
             ui.find_hits.set(Rc::new(Vec::new()));

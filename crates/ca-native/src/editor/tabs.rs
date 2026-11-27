@@ -95,8 +95,10 @@ fn one_tab(ui: Ui, tab: Tab) -> impl IntoView {
 /// Cancel; over the editor group, which takes no clicks meanwhile.
 pub(super) fn close_question(ui: Ui) -> impl IntoView {
     let t = ui.colors;
+    // The file's name: a tab of a kind is asked about by its file too ("settings.json", not "user:settings.json").
     let name = move || {
-        ui.closing.with(|c| c.as_deref().map(|p| p.rsplit('/').next().unwrap_or(p).to_string())).unwrap_or_default()
+        let named = |p: &str| ui.tab(p).map_or_else(|| p.rsplit('/').next().unwrap_or(p).to_string(), |tab| tab.name());
+        ui.closing.with(|c| c.as_deref().map(named)).unwrap_or_default()
     };
     let dialog = v_stack((
         label(move || format!("Do you want to save the changes you made to {}?", name()))
