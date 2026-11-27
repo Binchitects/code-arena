@@ -75,7 +75,10 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
     if m["type"] == "notice" {
         let t = s("text");
-        if !(t.starts_with("› ") && t.ends_with("(sent while it worked)")) {
+        // A request taken in mid-turn is drawn as its bubble; a skipped thinking by its block ("Answering now…"),
+        // whose answer then goes on in the same item.
+        let bubble = t.starts_with("› ") && t.ends_with("(sent while it worked)");
+        if !bubble && !t.starts_with("Thinking skipped") {
             ui.push(Kind::Notice(t));
         }
     }

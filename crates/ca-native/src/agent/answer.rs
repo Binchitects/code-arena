@@ -472,6 +472,22 @@ mod tests {
     }
 
     #[test]
+    fn a_skipped_thinking_ends_in_its_own_answer_with_no_notice_between() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let take = |m: Value| ui.take(&m, &send);
+        take(json!({"type": "user", "text": "hi", "q": 1}));
+        take(json!({"type": "turn_start"}));
+        take(json!({"type": "reasoning", "delta": "Let me weigh"}));
+        take(json!({"type": "notice", "text": "Thinking skipped: the model answers now."}));
+        take(json!({"type": "thought", "ms": 2_000, "cut_short": true}));
+        take(json!({"type": "text", "delta": "Hello."}));
+        let answers = ui.items.with_untracked(|l| l.iter().filter(|i| !matches!(i.kind, Kind::User(_))).count());
+        assert_eq!(answers, 1, "one answer, no notice");
+        assert_eq!(last(ui).1.map(thought_title).as_deref(), Some("Thought for 2 s, cut short"));
+    }
+
+    #[test]
     fn a_streamed_answer_thinks_then_ends_with_the_footer_its_thread_read_again_shows() {
         let ui = Ui::new();
         let send: Send = Rc::new(|_| {});
