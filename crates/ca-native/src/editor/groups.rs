@@ -35,6 +35,12 @@ pub const LEAST: f64 = 0.10;
 /// How far the arrow keys move a divider.
 pub const STEP: f64 = 0.05;
 
+/// The group to focus and the tab each group shows, of a kept layout.
+type Kept = (u64, Vec<(u64, Option<String>)>);
+
+/// Where each tab was left in each group (by its id), of a kept layout.
+pub type KeptPlaces = Vec<(u64, String, Place)>;
+
 /// One editor group: its tabs (their paths), the one it shows, its share of the room.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Group {
@@ -58,7 +64,7 @@ pub struct Model {
     /// While a kept layout comes back: the groups each tab not come yet is kept for.
     waiting: HashMap<String, Vec<u64>>,
     /// While a kept layout comes back: the group to focus and the tab each group shows, once all have come.
-    kept: Option<(u64, Vec<(u64, Option<String>)>)>,
+    kept: Option<Kept>,
 }
 
 impl Default for Model {
@@ -391,7 +397,7 @@ impl Model {
 
     /// A kept layout read (`to_json`'s): the groups are there at once, empty, and wait for their tabs (the tabs
     /// kept, `tabs`, among them). None for a layout kept with one group or none: it needs no waiting.
-    pub fn from_json(v: &Value, tabs: &[String]) -> Option<(Model, Vec<(u64, String, Place)>)> {
+    pub fn from_json(v: &Value, tabs: &[String]) -> Option<(Model, KeptPlaces)> {
         let list = v["list"].as_array().filter(|l| l.len() > 1)?;
         let mut m = Model { groups: Vec::new(), vertical: v["vertical"] == true, ..Model::default() };
         let mut places = Vec::new();
@@ -580,7 +586,8 @@ pub fn show(ui: Ui, id: u64, path: &str) {
 /// A tab closed in one group: when another group shows its document too only this group's tab goes, else the
 /// document closes (asked about first when it has changes not saved).
 pub fn close_in(ui: Ui, id: u64, path: &str) {
-    let elsewhere = groups(ui).model.with_untracked(|m| m.groups.iter().any(|g| g.id != id && g.tabs.iter().any(|t| t == path)));
+    let elsewhere =
+        groups(ui).model.with_untracked(|m| m.groups.iter().any(|g| g.id != id && g.tabs.iter().any(|t| t == path)));
     if elsewhere {
         change(ui, |m, _| m.drop_tab(id, path));
     } else {
@@ -710,7 +717,8 @@ fn settle(ui: Ui) {
 /// The groups drawn: a row or a column of them, a divider between two, the question before a tab closes over all.
 pub fn area(ui: Ui) -> impl IntoView {
     let g = groups(ui);
-    let ids = floem::reactive::create_memo(move |_| g.model.with(|m| m.groups.iter().map(|g| g.id).collect::<Vec<_>>()));
+    let ids =
+        floem::reactive::create_memo(move |_| g.model.with(|m| m.groups.iter().map(|g| g.id).collect::<Vec<_>>()));
     let vertical = floem::reactive::create_memo(move |_| g.model.with(|m| m.vertical));
     let row = dyn_stack(move || ids.get(), |id| *id, move |id| one(ui, id))
         .on_resize(move |r| {
@@ -758,12 +766,12 @@ fn one(ui: Ui, id: u64) -> impl IntoView {
         }
     });
     // The divider last: the pointer goes to the topmost part under it.
-    stack((body, divider(ui, at, vertical)))
-        .on_event_cont(EventListener::PointerDown, move |_| focus(ui, id))
-        .style(move |s| {
+    stack((body, divider(ui, at, vertical))).on_event_cont(EventListener::PointerDown, move |_| focus(ui, id)).style(
+        move |s| {
             let s = s.flex_grow(share.get() as f32).flex_basis(0.0).min_width(0.0).min_height(0.0);
             if vertical.get() { s.flex_col().width_full() } else { s.flex_row().height_full() }
-        })
+        },
+    )
 }
 
 /// The divider before a group (none before the first): dragged, or moved by the arrow keys while it has them;
@@ -865,17 +873,19 @@ pub fn register(ui: Ui, _send: &Send) {
     let more = |ui: Ui| groups(ui).model.with_untracked(|m| m.groups.len() > 1);
     let shown = |ui: Ui| ui.active.with_untracked(|a| a.is_some());
     let view = "View";
-    commands::add(command("workbench.action.splitEditor", view, "Split Editor", |ui, _| {
-        split(ui, None, true)
-    })
-    .keys("Ctrl+\\")
-    .enabled(shown));
-    commands::add(command("workbench.action.splitEditorOrthogonal", view, "Split Editor in Orthogonal Direction", |ui, _| {
-        let v = groups(ui).model.with_untracked(|m| m.vertical);
-        split(ui, Some(!v), true)
-    })
-    .keys("Ctrl+K Ctrl+\\")
-    .enabled(shown));
+    commands::add(
+        command("workbench.action.splitEditor", view, "Split Editor", |ui, _| split(ui, None, true))
+            .keys("Ctrl+\\")
+            .enabled(shown),
+    );
+    commands::add(
+        command("workbench.action.splitEditorOrthogonal", view, "Split Editor in Orthogonal Direction", |ui, _| {
+            let v = groups(ui).model.with_untracked(|m| m.vertical);
+            split(ui, Some(!v), true)
+        })
+        .keys("Ctrl+K Ctrl+\\")
+        .enabled(shown),
+    );
     for (id, title, vertical, after) in [
         ("workbench.action.splitEditorRight", "Split Editor Right", false, true),
         ("workbench.action.splitEditorLeft", "Split Editor Left", false, false),
@@ -892,9 +902,12 @@ pub fn register(ui: Ui, _send: &Send) {
         command("workbench.action.closeGroup", view, "Close Editor Group", |ui, _| close_group(ui)).enabled(more),
     );
     commands::add(
-        command("workbench.action.toggleEditorGroupLayout", view, "Toggle Vertical/Horizontal Editor Layout", |ui, _| {
-            change(ui, |m, _| m.vertical = !m.vertical)
-        })
+        command(
+            "workbench.action.toggleEditorGroupLayout",
+            view,
+            "Toggle Vertical/Horizontal Editor Layout",
+            |ui, _| change(ui, |m, _| m.vertical = !m.vertical),
+        )
         .keys("Alt+Shift+0"),
     );
     commands::add(
@@ -966,19 +979,17 @@ pub fn register(ui: Ui, _send: &Send) {
             .keys("Ctrl+K Ctrl+P"),
     );
     // The Explorer's file (or the tab shown) opened in the group beside.
-    commands::add(
-        command("explorer.openToSide", "File", "Open to the Side", |ui, send| {
-            let selected = ui.selected.get_untracked();
-            let path = if selected.is_empty() || ui.tree.with_untracked(|t| t.contains_key(&selected)) {
-                ui.active.get_untracked().and_then(|a| ui.tab(&a)).filter(|t| t.is_file()).map(|t| t.path)
-            } else {
-                Some(selected)
-            };
-            if let Some(p) = path {
-                open_to_side(ui, &p, send);
-            }
-        }),
-    );
+    commands::add(command("explorer.openToSide", "File", "Open to the Side", |ui, send| {
+        let selected = ui.selected.get_untracked();
+        let path = if selected.is_empty() || ui.tree.with_untracked(|t| t.contains_key(&selected)) {
+            ui.active.get_untracked().and_then(|a| ui.tab(&a)).filter(|t| t.is_file()).map(|t| t.path)
+        } else {
+            Some(selected)
+        };
+        if let Some(p) = path {
+            open_to_side(ui, &p, send);
+        }
+    }));
     crate::menus::add(
         crate::menus::Menu::ExplorerRow,
         crate::menus::item("explorer.openToSide").group("navigation").order(10),
@@ -1038,7 +1049,8 @@ pub fn moved(ui: Ui, from: &str, to: &str) {
     let mut model = g.model.get_untracked();
     model.rename(|p| crate::state::moved_path(p, from, to));
     g.places.update(|kept| {
-        *kept = kept.drain().map(|((id, p), at)| ((id, crate::state::moved_path(&p, from, to).unwrap_or(p)), at)).collect()
+        *kept =
+            kept.drain().map(|((id, p), at)| ((id, crate::state::moved_path(&p, from, to).unwrap_or(p)), at)).collect()
     });
     set_model(ui, g, model);
 }
@@ -1195,7 +1207,8 @@ mod tests {
     fn the_window_s_tabs_and_its_groups_follow_each_other_and_come_back_after_a_restart() {
         use std::rc::Rc;
         let send: Send = Rc::new(|_| {});
-        let file = |ui: Ui, path: &str| ui.take(&json!({"type": "file", "path": path, "text": "x\n", "modified": 1}), &send);
+        let file =
+            |ui: Ui, path: &str| ui.take(&json!({"type": "file", "path": path, "text": "x\n", "modified": 1}), &send);
         let ui = Ui::new();
         register(ui, &send);
         let model = |ui: Ui| groups(ui).model.get_untracked();

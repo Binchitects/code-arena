@@ -42,9 +42,7 @@ pub(super) fn tabs(ui: Ui, group: super::groups::Shown) -> impl IntoView {
             }),
             action(t, "ellipsis", || {}),
         ))
-        .style(move |s| {
-            s.gap(2.0).padding_horiz(8.0).items_center().apply_if(empty(), |s| s.hide())
-        }),
+        .style(move |s| s.gap(2.0).padding_horiz(8.0).items_center().apply_if(empty(), |s| s.hide())),
     ))
     .style(move |s| {
         let c = t.get();
@@ -115,7 +113,11 @@ fn one_tab(ui: Ui, group: super::groups::Shown, tab: Tab) -> impl IntoView {
             s.height_full().min_width(80.0).border_right(1.0).border_color(c.tab_border).cursor(CursorStyle::Pointer);
         if active() {
             // In a group without the keys, dimmer (tab.unfocusedActiveForeground).
-            s.background(c.tab_active_bg).color(if group.focused.get() { c.tab_active_fg } else { c.tab_unfocused_active_fg })
+            s.background(c.tab_active_bg).color(if group.focused.get() {
+                c.tab_active_fg
+            } else {
+                c.tab_unfocused_active_fg
+            })
         } else {
             s.background(c.tab_inactive_bg).color(c.tab_inactive_fg).hover(|s| s.background(c.tab_hover))
         }

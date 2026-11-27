@@ -54,8 +54,8 @@ pub(super) fn group_view(ui: Ui, shown: groups::Shown) -> floem::views::Stack {
         find::find_widget(ui).style(|s| s.position(floem::style::Position::Relative).inset_right(0.0)).into_any()
     })
     .style(|s| s.absolute().inset_top(0.0).inset_right(28.0).z_index(20));
-    let editor = stack((body(ui, shown), find))
-        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
+    let editor =
+        stack((body(ui, shown), find)).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     let disk = only_focused(|ui| disk::disk_bar(ui).into_any()).style(|s| s.width_full());
     v_stack((tabs::tabs(ui, shown), breadcrumbs::breadcrumbs(ui, shown.active), disk, editor))
 }
@@ -161,7 +161,9 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 unset();
                 let before = ui.live.get_untracked();
                 let view = kinds::draw(ui, &tab);
-                if let Some(made) = ui.live.get_untracked().filter(|(_, e)| before.as_ref().is_none_or(|(_, b)| b.id() != e.id())) {
+                if let Some(made) =
+                    ui.live.get_untracked().filter(|(_, e)| before.as_ref().is_none_or(|(_, b)| b.id() != e.id()))
+                {
                     g.editors.update(|e| {
                         e.insert(id, made);
                     });

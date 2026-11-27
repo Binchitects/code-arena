@@ -10,7 +10,10 @@ use crate::state::Ui;
 pub(super) fn breadcrumbs(ui: Ui, active: floem::reactive::Memo<Option<String>>) -> impl IntoView {
     let t = ui.colors;
     // Shown for a file's text (or its changes), not for a tab of a kind.
-    let text = move || active.with(|a| a.as_ref().is_some_and(|p| ui.tabs.with(|t| t.iter().any(|t| t.path == *p && t.kind.is_none()))));
+    let text = move || {
+        active
+            .with(|a| a.as_ref().is_some_and(|p| ui.tabs.with(|t| t.iter().any(|t| t.path == *p && t.kind.is_none()))))
+    };
     dyn_container(
         move || active.get(),
         move |path| {
