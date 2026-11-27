@@ -155,6 +155,19 @@ Sections used:
   navigation. The Explorer's context menu is one of them now.
 - **Trees for long lists.** A virtual tree for views with many rows: arrow keys, Home and End,
   selecting several rows, folding, and actions on the row under the pointer.
+- **Tool call cards.** Each call in an answer is a card with its tool's icon, its name and main
+  argument, and where it stands: Waiting for you, Running with its seconds, a spinner and a bar, N
+  of M done, Not allowed, Failed, Not run, or its count and time. Click a card to see what it was
+  asked with (short values listed, long text as highlighted code, the rest as JSON) and its result:
+  a file as code, search hits as links that open, records as a table you can sort, command output,
+  or plain text, with '…' when the result was cut. A call that waits for you opens by itself and
+  asks 'Allow TOOL to run with these arguments?'.
+- **Tool runs fold into one line.** Two or more finished calls in a row fold into 'Used 5 tools ·
+  read_file ×3, grep, run_shell', which opens to show their cards.
+- **Open-file chip.** A read_file, edit_file or write_file call has a chip under it, such as
+  'src/a.ts:12-14', that opens the file at those lines.
+- **Tool cards in history.** A thread read back from the session shows each call's arguments and
+  result, and a call that never ended shows as Not run.
 
 
 ### :bug: Bugs fixed
