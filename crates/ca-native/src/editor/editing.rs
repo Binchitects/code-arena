@@ -115,9 +115,7 @@ pub fn tokens_of(path: &str) -> Tokens {
         "sql" => (Some("--"), Some(("/*", "*/"))),
         "lua" => (Some("--"), Some(("--[[", "]]"))),
         "hs" => (Some("--"), Some(("{-", "-}"))),
-        "html" | "htm" | "xml" | "svg" | "md" | "markdown" | "vue" | "xaml" | "csproj" => {
-            (None, Some(("<!--", "-->")))
-        }
+        "html" | "htm" | "xml" | "svg" | "md" | "markdown" | "vue" | "xaml" | "csproj" => (None, Some(("<!--", "-->"))),
         "bat" | "cmd" => (Some("@REM"), None),
         "vb" => (Some("'"), None),
         _ => (None, None),
@@ -489,7 +487,7 @@ pub fn outdent(text: &Rope, sels: &[Sel], tab_size: usize) -> Option<Change> {
                 1
             } else {
                 let spaces = s.len() - s.trim_start_matches(' ').len();
-                let n = if spaces % size == 0 { spaces.min(size) } else { spaces % size };
+                let n = if spaces.is_multiple_of(size) { spaces.min(size) } else { spaces % size };
                 // A tab after the spaces back to the tab stop.
                 if n == 0 && s[spaces..].starts_with('\t') { spaces + 1 } else { n }
             };
@@ -522,8 +520,7 @@ fn word_at(t: &RopeTextRef, at: usize) -> Option<(usize, usize)> {
 pub fn next_occurrence(text: &Rope, sels: &[Sel], last: Sel) -> Option<(Vec<Sel>, Sel)> {
     let t = RopeTextRef::new(text);
     if sels.iter().all(|s| s.is_caret()) {
-        let words: Vec<Sel> =
-            sels.iter().filter_map(|s| word_at(&t, s.head)).map(|(a, b)| Sel::new(a, b)).collect();
+        let words: Vec<Sel> = sels.iter().filter_map(|s| word_at(&t, s.head)).map(|(a, b)| Sel::new(a, b)).collect();
         let shown = *words.last()?;
         return Some((words, shown));
     }
@@ -824,13 +821,16 @@ pub fn newline(text: &Rope, sels: &[Sel], unit: &str, auto: &str, colon: bool) -
 
 // ---- The window's. ----
 
+/// Expand Selection's steps in an editor (its id): the selections gone from, and those it left.
+type Grown = (u64, Vec<Vec<Sel>>, Vec<Sel>);
+
 thread_local! {
     static UI: Cell<Option<Ui>> = const { Cell::new(None) };
     /// The keys of these commands: an editor takes them, and the workbench leaves them be.
     static KEYS: RefCell<HashSet<Vec<Chord>>> = RefCell::new(HashSet::new());
     /// Expand Selection's steps: the editor's id, the selections it went from (to go back to with Shrink), and
     /// those it left (another selection since: the steps are forgotten).
-    static GROWN: RefCell<Option<(u64, Vec<Vec<Sel>>, Vec<Sel>)>> = const { RefCell::new(None) };
+    static GROWN: RefCell<Option<Grown>> = const { RefCell::new(None) };
 }
 
 /// The editor of the focused group (or the person's file shown).
@@ -1101,7 +1101,10 @@ pub fn register(ui: Ui, _send: &Send) {
     menu(Menu::EditorContext, CUT, "9_cutcopypaste", 1);
     menu(Menu::EditorContext, COPY, "9_cutcopypaste", 2);
     menu(Menu::EditorContext, PASTE, "9_cutcopypaste", 3);
-    menus::add(Menu::EditorContext, item(crate::workbench::SHOW_COMMANDS).title("Command Palette...").group("z_commands"));
+    menus::add(
+        Menu::EditorContext,
+        item(crate::workbench::SHOW_COMMANDS).title("Command Palette...").group("z_commands"),
+    );
 }
 
 /// The session's messages that are this part's, taken in; true takes one away from the parts after it.
@@ -1152,7 +1155,8 @@ pub fn key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
             if e.read_only.get_untracked() {
                 return false;
             }
-            let auto = crate::settings::now(ui, "editor.autoIndent", lang(&path)).as_str().unwrap_or("full").to_string();
+            let auto =
+                crate::settings::now(ui, "editor.autoIndent", lang(&path)).as_str().unwrap_or("full").to_string();
             edit_with(ui, EditType::InsertNewline, |p, t, s| newline(t, s, &unit(ui, p).0, &auto, colon(p)));
             true
         }
@@ -1255,7 +1259,10 @@ mod tests {
         let py = Tokens { line: Some("#"), block: None };
         assert_eq!(run("x = 1", line_comment(&r("x = 1"), &[Sel::caret(2)], py, Comment::Toggle)).0, "# x = 1");
         let html = tokens_of("a.html");
-        assert_eq!(run("  <b/>", line_comment(&r("  <b/>"), &[Sel::caret(3)], html, Comment::Toggle)).0, "  <!-- <b/> -->");
+        assert_eq!(
+            run("  <b/>", line_comment(&r("  <b/>"), &[Sel::caret(3)], html, Comment::Toggle)).0,
+            "  <!-- <b/> -->"
+        );
     }
 
     #[test]
