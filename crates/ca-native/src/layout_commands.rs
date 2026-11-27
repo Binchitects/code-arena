@@ -113,11 +113,7 @@ pub enum Place {
 
 /// The panel: the group holding the first of the panel's own views (the Terminal's) that is in the tree.
 pub fn panel_group(d: &Dock) -> Option<u32> {
-    HOMES
-        .iter()
-        .filter(|(h, _)| *h == Home::Panel)
-        .flat_map(|(_, views)| views.iter())
-        .find_map(|v| d.group_of(*v))
+    HOMES.iter().filter(|(h, _)| *h == Home::Panel).flat_map(|(_, views)| views.iter()).find_map(|v| d.group_of(*v))
 }
 
 /// The split holding the part `id`, and its place in it.
@@ -382,6 +378,18 @@ pub fn register(ui: Ui, _send: &Send) {
     add(panel(PANEL_BOTTOM, "Move Panel To Bottom", Place::Bottom));
     add(command(FOCUS_SIDE_BAR, "View", "Focus into Primary Side Bar", |ui, _| focus_side_bar(ui)).keys("Ctrl+0"));
 
+    for (n, (letter, name)) in MNEMONICS.into_iter().enumerate() {
+        let open = move |ui: Ui, _: &Send| {
+            if ui.menu.get_untracked() != Some(n) {
+                ui.menu.set(Some(n));
+            }
+        };
+        add(command(&format!("codeArena.menu.{name}"), "", name, open).keys(&format!("Alt+{letter}")).hidden());
+    }
+    add(command("workbench.action.menubarFocus", "", "Focus Application Menu", |ui, _| ui.menu.set(Some(0)))
+        .keys("F10")
+        .hidden());
+
     // VS Code's View > Appearance, in the View menu's parts group; the others' first rows made live.
     let bar = Menu::TitleBar;
     crate::menus::add(bar(VIEW), item(crate::workbench::SHOW_COMMANDS).title("Command Palette...").group("0_commands"));
@@ -407,6 +415,55 @@ pub fn register(ui: Ui, _send: &Send) {
         title
     });
 }
+
+/// What a key does in a title bar menu that has the keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuKey {
+    /// The row lit now (none: none is).
+    Lit(Option<usize>),
+    /// The menu before (-1) or after (1) it opened in its place.
+    Switch(isize),
+    /// The row to run.
+    Run(usize),
+    Close,
+    Nothing,
+}
+
+/// A key in a title bar menu whose rows that can run are `live` (a line or a dimmed row cannot), the row `lit`
+/// lit: VS Code's arrows (around the ends), Home and End, Left and Right to the menus beside it, Enter or Space to
+/// run, Escape to close.
+pub fn menu_key(live: &[bool], lit: Option<usize>, key: &Key) -> MenuKey {
+    let stops: Vec<usize> = (0..live.len()).filter(|i| live[*i]).collect();
+    match key {
+        Key::Named(NamedKey::ArrowDown) => {
+            MenuKey::Lit(stops.iter().copied().find(|i| lit.is_none_or(|l| *i > l)).or(stops.first().copied()))
+        }
+        Key::Named(NamedKey::ArrowUp) => {
+            MenuKey::Lit(stops.iter().rev().copied().find(|i| lit.is_none_or(|l| *i < l)).or(stops.last().copied()))
+        }
+        Key::Named(NamedKey::Home) => MenuKey::Lit(stops.first().copied()),
+        Key::Named(NamedKey::End) => MenuKey::Lit(stops.last().copied()),
+        Key::Named(NamedKey::ArrowLeft) => MenuKey::Switch(-1),
+        Key::Named(NamedKey::ArrowRight) => MenuKey::Switch(1),
+        Key::Named(NamedKey::Enter | NamedKey::Space) => {
+            lit.filter(|l| live.get(*l) == Some(&true)).map_or(MenuKey::Nothing, MenuKey::Run)
+        }
+        Key::Named(NamedKey::Escape | NamedKey::Tab) => MenuKey::Close,
+        _ => MenuKey::Nothing,
+    }
+}
+
+/// The title bar's menus by their letters (VS Code's mnemonics: Alt+F File … Alt+H Help), opened with the keys.
+const MNEMONICS: [(&str, &str); 8] = [
+    ("F", "file"),
+    ("E", "edit"),
+    ("S", "selection"),
+    ("V", "view"),
+    ("G", "go"),
+    ("R", "run"),
+    ("T", "terminal"),
+    ("H", "help"),
+];
 
 /// The window's title for a folder.
 pub fn window_title(folder: &str) -> String {
@@ -481,6 +538,23 @@ mod tests {
         assert_eq!(typed(&extra), 10, "up up up down … is the code from its second up");
         assert_eq!(typed(&["up", "up", "down", "x", "down"]), 0);
         assert_eq!(typed(&["up", "down", "up", "up", "down"]), 3);
+    }
+
+    #[test]
+    fn a_title_bar_menus_keys_go_over_the_rows_that_can_run_and_around_its_ends() {
+        let live = [true, false, true, true];
+        let key = |k: NamedKey| Key::Named(k);
+        assert_eq!(menu_key(&live, None, &key(NamedKey::ArrowDown)), MenuKey::Lit(Some(0)));
+        assert_eq!(menu_key(&live, Some(0), &key(NamedKey::ArrowDown)), MenuKey::Lit(Some(2)));
+        assert_eq!(menu_key(&live, Some(3), &key(NamedKey::ArrowDown)), MenuKey::Lit(Some(0)));
+        assert_eq!(menu_key(&live, None, &key(NamedKey::ArrowUp)), MenuKey::Lit(Some(3)));
+        assert_eq!(menu_key(&live, Some(2), &key(NamedKey::ArrowUp)), MenuKey::Lit(Some(0)));
+        assert_eq!(menu_key(&live, Some(2), &key(NamedKey::End)), MenuKey::Lit(Some(3)));
+        assert_eq!(menu_key(&live, Some(2), &key(NamedKey::Enter)), MenuKey::Run(2));
+        assert_eq!(menu_key(&live, Some(1), &key(NamedKey::Enter)), MenuKey::Nothing);
+        assert_eq!(menu_key(&live, None, &key(NamedKey::ArrowRight)), MenuKey::Switch(1));
+        assert_eq!(menu_key(&live, None, &key(NamedKey::Escape)), MenuKey::Close);
+        assert_eq!(menu_key(&[false], None, &key(NamedKey::ArrowDown)), MenuKey::Lit(None));
     }
 
     #[test]
