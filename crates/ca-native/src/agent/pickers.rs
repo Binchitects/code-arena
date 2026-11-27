@@ -455,7 +455,7 @@ pub(super) fn menu(ui: Ui, send: Send, anchor: RwSignal<Rect>, frame: ViewId, ba
     };
     // The note under the rows: there is no model, or what is chosen now waits for the turn to end.
     let foot = label(move || {
-        if ui.picker.get() == Some(Picker::Model) && ui.models.get().is_empty() && ui.model.get().is_empty() {
+        if ui.picker.get() == Some(Picker::Model) && ui.models.get().is_empty() {
             NO_MODEL.to_string()
         } else {
             NEXT_TURN.to_string()
@@ -463,7 +463,7 @@ pub(super) fn menu(ui: Ui, send: Send, anchor: RwSignal<Rect>, frame: ViewId, ba
     })
     .style(move |s| {
         let c = t.get();
-        let none = ui.picker.get() == Some(Picker::Model) && ui.models.get().is_empty() && ui.model.get().is_empty();
+        let none = ui.picker.get() == Some(Picker::Model) && ui.models.get().is_empty();
         s.padding_horiz(10.0)
             .padding_vert(5.0)
             .font_size(12.0)
@@ -554,7 +554,9 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             set_if_new(me.infos, infos);
             set_if_new(me.levels, levels);
             set_if_new(me.modes, modes);
-            set_if_new(me.pending, Vec::new());
+            // Said again while a turn runs (a face that asked for it), the choices made meanwhile still wait.
+            let left = if m["running"] == true { me.pending.with_untracked(|p| settled(p, m)) } else { Vec::new() };
+            set_if_new(me.pending, left);
         }
         "status" => {
             let left = me.pending.with_untracked(|p| settled(p, m));
@@ -620,6 +622,45 @@ mod tests {
         let rows = model_options(&["cold".into(), "other".into()], &infos);
         assert_eq!((rows[0].enabled, rows[0].detail.as_str()), (false, "Not loaded now"));
         assert_eq!((rows[1].enabled, rows[1].detail.as_str()), (true, ""));
+    }
+
+    #[test]
+    fn a_choice_made_during_a_turn_is_shown_until_the_session_takes_it() {
+        let ui = Ui::new();
+        let sent = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let send: Send = {
+            let sent = sent.clone();
+            Rc::new(move |m| sent.borrow_mut().push(m))
+        };
+        ui.take(
+            &json!({"type": "state", "model": "big", "mode": "ask", "thinking": "default", "models": ["big", "small"],
+                    "model_info": [{"id": "small", "thinking": false}], "running": true}),
+            &send,
+        );
+        assert!(ui.running.get_untracked());
+        assert_eq!(current(ui, Picker::Thinking), "default");
+        sent.borrow_mut().clear();
+        choose(ui, &send, Picker::Mode, "plan");
+        choose(ui, &send, Picker::Model, "small");
+        assert_eq!(sent.borrow().len(), 2, "both told at once: the session keeps them for the turn's end");
+        assert_eq!((current(ui, Picker::Mode), current(ui, Picker::Model)), ("plan".into(), "small".into()));
+        assert!(!ui.state::<Pickers>().infos.with_untracked(|i| thinks(i, &current(ui, Picker::Model))));
+        // The state said again during the turn keeps them; the status at its end, with what was before, too.
+        ui.take(
+            &json!({"type": "state", "model": "big", "mode": "ask", "models": ["big", "small"], "running": true}),
+            &send,
+        );
+        ui.take(&json!({"type": "status", "model": "big", "mode": "ask", "thinking": "default"}), &send);
+        assert_eq!(current(ui, Picker::Mode), "plan");
+        ui.take(&json!({"type": "status", "model": "big", "mode": "plan", "thinking": "default"}), &send);
+        assert_eq!(ui.state::<Pickers>().pending.get_untracked(), [(Picker::Model, "small".to_string())]);
+        ui.take(&json!({"type": "refused", "of": "model"}), &send);
+        assert!(ui.state::<Pickers>().pending.get_untracked().is_empty());
+        assert_eq!(current(ui, Picker::Model), "big");
+        // Between turns a choice is the session's at once: nothing waits.
+        ui.take(&json!({"type": "status", "model": "big", "mode": "plan", "running": false}), &send);
+        choose(ui, &send, Picker::Thinking, "high");
+        assert!(ui.state::<Pickers>().pending.get_untracked().is_empty());
     }
 
     #[test]

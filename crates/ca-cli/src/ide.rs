@@ -956,12 +956,11 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
         }
     }
     // The models the pickers offer: the gateway's (and the providers' of one's own), asked once.
-    let infos = match tokio::time::timeout(std::time::Duration::from_secs(15), p.agent.gateway.models()).await {
-        Ok(Ok(ms)) => ms,
-        _ => Vec::new(),
-    };
-    let models: Vec<String> =
-        if infos.is_empty() { vec![p.agent.model.clone()] } else { infos.iter().map(|m| m.id.clone()).collect() };
+    let (models, infos): (Vec<String>, Vec<ca_llm::ModelInfo>) =
+        match tokio::time::timeout(std::time::Duration::from_secs(15), p.agent.gateway.models()).await {
+            Ok(Ok(ms)) => (ms.iter().map(|m| m.id.clone()).collect(), ms),
+            _ => (vec![p.agent.model.clone()], Vec::new()),
+        };
     let (post, own) = mpsc::unbounded_channel();
     let mut w = Wires { from_page, own, pending };
     let mut drv = Driver {

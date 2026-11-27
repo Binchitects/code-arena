@@ -8,11 +8,12 @@
 
 use floem::reactive::{SignalGet, SignalWith};
 use floem::style::Position;
-use floem::views::{Decorators, empty, h_stack, label, stack, tooltip};
+use floem::views::{Decorators, container, empty, h_stack, label, stack, tooltip};
 use floem::{IntoView, View as _};
 use serde_json::Value;
 
 use crate::commands::{self, command};
+use crate::icons::icon;
 use crate::layout::View;
 use crate::menus::{self, Menu};
 use crate::state::{Send, Ui};
@@ -50,10 +51,25 @@ fn button(ui: Ui, send: &Send, id: &'static str, name: &'static str, tip: &'stat
 
 pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
-    let goal = button(ui, &send, GOAL, "target", "Work Toward a Goal…").style(move |s| {
-        let c = t.get();
-        s.apply_if(ui.goal.with(Option::is_some), |s| s.color(c.focus))
-    });
+    // The goal's icon in the accent while one is worked toward.
+    let goal = {
+        let send = send.clone();
+        let target = container(icon("target", 16.0)).on_click_stop(move |_| {
+            commands::run(ui, &send, GOAL);
+        });
+        tooltip(target, || label(|| "Work Toward a Goal…")).style(move |s| {
+            let c = t.get();
+            s.width(22.0)
+                .height(22.0)
+                .items_center()
+                .justify_center()
+                .border_radius(5.0)
+                .color(if ui.goal.with(Option::is_some) { c.focus } else { c.icon })
+                .cursor(floem::style::CursorStyle::Pointer)
+                .hover(|s| s.background(c.toolbar_hover))
+                .apply_if(!commands::find(GOAL).is_some_and(|c| c.offered(ui)), |s| s.hide())
+        })
+    };
     let busy = move || ui.jobs.with(Vec::len);
     let tasks = stack((
         button(ui, &send, TASKS, "tasklist", "Show Tasks and Sub-agents"),
