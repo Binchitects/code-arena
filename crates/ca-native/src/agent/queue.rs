@@ -279,9 +279,7 @@ pub fn bubble(ui: Ui, send: Send, item: &Item) -> AnyView {
             }),
         ),
     ))
-    .style(move |s| {
-        s.gap(2.0).apply_if(number.is_none() || editing.get(), |s| s.hide())
-    });
+    .style(move |s| s.gap(2.0).apply_if(number.is_none() || editing.get(), |s| s.hide()));
     let top = h_stack((
         icon("watch", 12.0).style(move |s| s.color(t.get().desc)),
         icon("quote", 12.0).style(move |s| s.color(t.get().desc).apply_if(no_quote, |s| s.hide())),
