@@ -618,6 +618,12 @@ fn one_tab(ui: Ui, group: Shown, tab: Tab) -> impl IntoView {
         content,
     ));
     let id = view.id();
+    // The tab shown is scrolled into the strip's sight, as VS Code reveals the active tab (once it is laid out).
+    create_effect(move |_| {
+        if is_active.get() {
+            floem::action::exec_after(std::time::Duration::ZERO, move |_| id.scroll_to(None));
+        }
+    });
     let key = (group.id, tab.path.clone());
     TAB_VIEWS.with(|v| v.borrow_mut().insert(key.clone(), id));
     let start = create_rw_signal(None::<Point>);
