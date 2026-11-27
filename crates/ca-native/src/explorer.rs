@@ -924,7 +924,7 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
             empty().style(|s| s.width(16.0)).into_any()
         },
         icon(icon_of(&r.name, r.dir, r.open), 16.0).style(|s| s.margin_left(2.0)),
-        label(move || name.clone()).style(|s| s.padding_left(4.0).text_ellipsis()),
+        label(move || name.clone()).style(|s| s.padding_left(4.0).text_ellipsis().selectable(false)),
     ));
     // A press, then a move past 5 px, is a drag of the rows selected; let go without one, a click.
     let start = create_rw_signal(None::<Point>);
@@ -988,8 +988,6 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
             None => {}
         }
     })
-    // The click was taken when the press ended: it is not the tree's empty part's.
-    .on_click_stop(|_| {})
     .on_secondary_click_stop(move |_| {
         // A row among those selected keeps them; another is selected alone.
         if !selection(ui).contains(&target) {
