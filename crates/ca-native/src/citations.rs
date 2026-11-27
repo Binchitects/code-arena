@@ -117,7 +117,8 @@ pub fn target(href: &str, files: &HashSet<String>) -> Option<Target> {
     if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:") {
         return Some(Target::Web(h.to_string()));
     }
-    if h.starts_with('#') || h.starts_with('/') || lower.split_once(':').is_some_and(|(s, _)| scheme(s)) {
+    // Another scheme (`file:`, `javascript:`) is no citation's form, so it leads nowhere.
+    if h.starts_with('#') || h.starts_with('/') {
         return None;
     }
     let h = unescape(h);
@@ -128,11 +129,6 @@ pub fn target(href: &str, files: &HashSet<String>) -> Option<Target> {
     let mut r = parse_ref(&h)?;
     r.path = known(files, &r.path)?;
     Some(Target::File(r))
-}
-
-/// The scheme of an address (`file`, `vscode`), not a path's drive or a line (`C`, `src/a.rs`).
-fn scheme(s: &str) -> bool {
-    s.len() > 1 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
 }
 
 /// An address's `%XX` read as the bytes they stand for.
@@ -307,6 +303,8 @@ mod tests {
         assert_eq!(target("mailto:a@b.c", &f), Some(Target::Web("mailto:a@b.c".into())));
         assert_eq!(target("./src/app.ts#L3", &f), Some(Target::File(r("src/app.ts", Some(3), None, None))));
         assert_eq!(target("docs/a%20b.md", &f), Some(Target::File(r("docs/a b.md", None, None, None))));
+        assert_eq!(target("README.md:12", &f), Some(Target::File(r("README.md", Some(12), None, None))));
+        assert_eq!(target("Program.cs(44)", &f), Some(Target::File(r("Program.cs", Some(44), None, None))));
         assert_eq!(target("#usage", &f), None);
         assert_eq!(target("javascript:alert(1)", &f), None);
         assert_eq!(target("file:///etc/passwd", &f), None);

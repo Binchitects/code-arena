@@ -210,6 +210,50 @@ fn backgrounds(
     .style(|s| s.position(Position::Absolute).inset(0.0))
 }
 
+/// A text laid out on one line with its runs (bold, slanted, code, links in their colour), and where its inline
+/// code is.
+fn lay_out(
+    words: &Text,
+    links: &[(Range<usize>, Target)],
+    c: &crate::colors::Colors,
+    size: f32,
+    heading: bool,
+) -> (TextLayout, Vec<Range<usize>>) {
+    let base = Attrs::new()
+        .family(&UI)
+        .font_size(size)
+        .line_height(LineHeightValue::Px(size * if heading { 1.4 } else { 1.5 }))
+        .weight(if heading { Weight::SEMIBOLD } else { Weight::NORMAL })
+        .color(c.fg);
+    let mut attrs = AttrsList::new(base);
+    let mut marks = Vec::new();
+    let linked = |r: &Range<usize>| links.iter().any(|(l, _)| l == r);
+    for (range, style) in &words.spans {
+        let mut a = base;
+        if style.bold {
+            a = a.weight(Weight::BOLD);
+        }
+        if style.italic {
+            a = a.style(Slant::Italic);
+        }
+        if style.code {
+            a = a.family(&MONO).font_size(size - 1.0).color(c.preformat);
+            marks.push(range.clone());
+        }
+        if style.link || linked(range) {
+            a = a.color(c.link);
+        }
+        attrs.add_span(range.clone(), a);
+    }
+    let plain = |r: &Range<usize>| !words.spans.iter().any(|(s, _)| s.start < r.end && r.start < s.end);
+    for (r, _) in links.iter().filter(|(r, _)| plain(r)) {
+        attrs.add_span(r.clone(), base.color(c.link));
+    }
+    let mut layout = TextLayout::new();
+    layout.set_text(&words.text, attrs);
+    (layout, marks)
+}
+
 /// A block's text with its runs: wrapped to its width, the backgrounds of its inline code drawn under it. Its links
 /// open with a click (a citation of a file in the editor, an address in the browser); a drag selects its text, and
 /// Ctrl+C copies what is selected.
@@ -218,45 +262,21 @@ fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool) -
     let laid = create_rw_signal(Laid::default());
     // The width the text is wrapped to, as it was laid out last.
     let width = create_rw_signal(0.0_f64);
+    // Laid out when the text, the theme or the project's files change; wrapped again only when the width does.
+    let whole = create_rw_signal(Laid::default());
     create_effect(move |_| {
-        let (c, words, files, width) = (t.get(), words(), citations::files(ui), width.get());
+        let (c, words, files) = (t.get(), words(), citations::files(ui));
         let links = cited(&words, &files);
-        let base = Attrs::new()
-            .family(&UI)
-            .font_size(size)
-            .line_height(LineHeightValue::Px(size * if heading { 1.4 } else { 1.5 }))
-            .weight(if heading { Weight::SEMIBOLD } else { Weight::NORMAL })
-            .color(c.fg);
-        let mut attrs = AttrsList::new(base);
-        let mut marks = Vec::new();
-        let linked = |r: &Range<usize>| links.iter().any(|(l, _)| l == r);
-        for (range, style) in &words.spans {
-            let mut a = base;
-            if style.bold {
-                a = a.weight(Weight::BOLD);
-            }
-            if style.italic {
-                a = a.style(Slant::Italic);
-            }
-            if style.code {
-                a = a.family(&MONO).font_size(size - 1.0).color(c.preformat);
-                marks.push(range.clone());
-            }
-            if style.link || linked(range) {
-                a = a.color(c.link);
-            }
-            attrs.add_span(range.clone(), a);
+        let (layout, marks) = lay_out(&words, &links, &c, size, heading);
+        whole.set(Laid { layout, marks, links, text: words.text });
+    });
+    create_effect(move |_| {
+        let width = width.get();
+        let mut l = whole.with(Laid::clone);
+        if width > 0.0 && l.layout.size().width > width {
+            l.layout.set_size(width as f32, f32::MAX);
         }
-        let plain = |r: &Range<usize>| !words.spans.iter().any(|(s, _)| s.start < r.end && r.start < s.end);
-        for (r, _) in links.iter().filter(|(r, _)| plain(r)) {
-            attrs.add_span(r.clone(), base.color(c.link));
-        }
-        let mut layout = TextLayout::new();
-        layout.set_text(&words.text, attrs);
-        if width > 0.0 && layout.size().width > width {
-            layout.set_size(width as f32, f32::MAX);
-        }
-        laid.set(Laid { layout, marks, links, text: words.text });
+        laid.set(l);
     });
     // What is selected (where it began, where it is now), where the pointer went down, whether it is over a link.
     let selected = create_rw_signal(None::<(usize, usize)>);
@@ -480,12 +500,9 @@ fn shown_rows(rows: &[Vec<Text>], sort: Option<(usize, bool)>, filter: &str) -> 
     order.into_iter().filter(|&r| rows[r].iter().any(|c| c.text.to_lowercase().contains(&words))).collect()
 }
 
-/// How wide a cell's text is on one line, at 13 px (bold for a header's).
-fn measure(text: &str, bold: bool) -> f64 {
-    let attrs = Attrs::new().family(&UI).font_size(13.0).weight(if bold { Weight::SEMIBOLD } else { Weight::NORMAL });
-    let mut layout = TextLayout::new();
-    layout.set_text(text, AttrsList::new(attrs));
-    layout.size().width
+/// How wide a cell's text is on one line, drawn as it is (a header's in bold).
+fn measure(text: &Text, bold: bool, c: &crate::colors::Colors) -> f64 {
+    lay_out(text, &[], c, 13.0, bold).0.size().width
 }
 
 /// A table as VS Code's chat draws one: its cells in bordered columns as wide as their widest text (to a limit, past
@@ -500,17 +517,18 @@ fn table(ui: Ui, now: Memo<Option<Rc<Block>>>) -> impl IntoView {
     let sort = create_rw_signal(None::<(usize, bool)>);
     let filter = create_rw_signal(String::new());
     // Each text measured once (the table is read again with each piece of an answer).
-    let measured = Rc::new(RefCell::new(std::collections::HashMap::<(String, bool), f64>::new()));
+    let measured = Rc::new(RefCell::new(std::collections::HashMap::<(Text, bool), f64>::new()));
     let widths = create_memo(move |_| {
         let (head, rows) = parts.get();
         let mut m = measured.borrow_mut();
+        let c = t.get_untracked();
         let mut width =
-            |text: &str, bold: bool| *m.entry((text.to_string(), bold)).or_insert_with(|| measure(text, bold));
+            |text: &Text, bold: bool| *m.entry((text.clone(), bold)).or_insert_with(|| measure(text, bold, &c));
         (0..head.len())
             .map(|c| {
-                let widest = rows.iter().filter_map(|r| r.get(c)).map(|x| width(&x.text, false)).fold(0.0, f64::max);
+                let widest = rows.iter().filter_map(|r| r.get(c)).map(|x| width(x, false)).fold(0.0, f64::max);
                 // A header has its sort mark beside it.
-                let header = width(&head[c].text, true) + 20.0;
+                let header = width(&head[c], true) + 20.0;
                 (widest.max(header).min(MOST_COLUMN) + 17.0).ceil()
             })
             .collect::<Vec<f64>>()
@@ -605,6 +623,28 @@ fn table(ui: Ui, now: Memo<Option<Rc<Block>>>) -> impl IntoView {
     .style(|s| s.width_full().min_width(0.0))
 }
 
+/// What Enter in a code block's Save box does.
+#[derive(Debug, PartialEq, Eq)]
+enum SaveStep {
+    /// No path is typed.
+    Nothing,
+    /// The path is a file of the project already: it is said so first.
+    Ask,
+    Save,
+}
+
+/// What Enter does with the path typed: a file of the project is replaced only once it has been asked about.
+fn save_step(path: &str, files: &HashSet<String>, asked: Option<&str>) -> SaveStep {
+    let path = path.trim();
+    if path.is_empty() {
+        SaveStep::Nothing
+    } else if citations::known(files, path).is_some() && asked != Some(path) {
+        SaveStep::Ask
+    } else {
+        SaveStep::Save
+    }
+}
+
 /// The file name a block is saved as when its fence names none: `snippet` with its language's extension.
 fn snippet_name(lang: &str) -> String {
     let ext = match lang {
@@ -663,6 +703,8 @@ fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static) -> 
     let wrap = create_rw_signal(true);
     let copied = create_rw_signal(false);
     let saving = create_rw_signal(false);
+    // The path asked about (a file of the project already): Enter again replaces it.
+    let asked = create_rw_signal(None::<String>);
     let path = create_rw_signal(if name.is_empty() { snippet_name(lang) } else { name.to_string() });
     let kept = Rc::new(RefCell::new(Snippet::new(lang)));
     let lines = dyn_stack(
@@ -699,19 +741,17 @@ fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static) -> 
     )
     .style(move |s| s.flex_col().apply_if(wrap.get(), |s| s.width_full().min_width(0.0)));
     // The lines' numbers, while they are not wrapped (a wrapped line would not stand by its number).
-    let numbers = label(move || {
-        let n = text.with(|t| t.lines().count().max(1));
-        (1..=n).map(|i| i.to_string()).collect::<Vec<_>>().join("\n")
-    })
-    .style(move |s| {
-        s.font_family(MONO_FONT.to_string())
-            .font_size(13.0)
-            .line_height(18.0 / 13.0)
-            .padding_right(12.0)
-            .color(t.get().line_number)
-            .selectable(false)
-            .apply_if(wrap.get(), |s| s.hide())
-    });
+    let count = create_memo(move |_| text.with(|t| t.lines().count().max(1)));
+    let numbers =
+        label(move || (1..=count.get()).map(|i| i.to_string()).collect::<Vec<_>>().join("\n")).style(move |s| {
+            s.font_family(MONO_FONT.to_string())
+                .font_size(13.0)
+                .line_height(18.0 / 13.0)
+                .padding_right(12.0)
+                .color(t.get().line_number)
+                .selectable(false)
+                .apply_if(wrap.get(), |s| s.hide())
+        });
     let body = h_stack((numbers, scroll(lines).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0))))
         .style(|s| s.width_full().min_width(0.0).padding_horiz(12.0).padding_vert(8.0));
     let label_text = code_label(lang, name);
@@ -801,10 +841,16 @@ fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static) -> 
             let Event::KeyDown(k) = e else { return EventPropagation::Continue };
             match &k.key.logical_key {
                 Key::Named(NamedKey::Enter) => {
-                    let to = path.get_untracked().trim().to_string();
-                    if !to.is_empty() {
-                        citations::save(&to, &text.get_untracked());
-                        saving.set(false);
+                    let to = path.get_untracked();
+                    let files = citations::files(ui);
+                    match asked.with_untracked(|a| save_step(&to, &files, a.as_deref())) {
+                        SaveStep::Nothing => {}
+                        SaveStep::Ask => asked.set(Some(to.trim().to_string())),
+                        SaveStep::Save => {
+                            citations::save(&to, &text.get_untracked());
+                            asked.set(None);
+                            saving.set(false);
+                        }
                     }
                 }
                 Key::Named(NamedKey::Escape) => saving.set(false),
@@ -825,18 +871,27 @@ fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static) -> 
                 .background(c.input_bg)
                 .color(c.input_fg)
         });
-    let ask =
-        h_stack((label(|| "Save as").style(move |s| s.color(t.get().desc).selectable(false)), input)).style(move |s| {
-            s.width_full()
-                .gap(8.0)
-                .items_center()
-                .padding_horiz(12.0)
-                .padding_vert(6.0)
-                .font_size(12.0)
-                .border_bottom(1.0)
-                .border_color(t.get().widget_border)
-                .apply_if(!saving.get(), |s| s.hide())
+    let warning = label(move || format!("{} is there already: press Enter again to replace it.", path.get().trim()))
+        .style(move |s| {
+            let shown = asked.with(|a| a.as_deref() == Some(path.with(|p| p.trim().to_string()).as_str()));
+            s.width_full().color(t.get().warning).apply_if(!shown, |s| s.hide())
         });
+    let ask = v_stack((
+        h_stack((label(|| "Save as").style(move |s| s.color(t.get().desc).selectable(false)), input))
+            .style(|s| s.width_full().gap(8.0).items_center()),
+        warning,
+    ))
+    .style(move |s| {
+        s.width_full()
+            .gap(8.0)
+            .items_center()
+            .padding_horiz(12.0)
+            .padding_vert(6.0)
+            .font_size(12.0)
+            .border_bottom(1.0)
+            .border_color(t.get().widget_border)
+            .apply_if(!saving.get(), |s| s.hide())
+    });
     v_stack((bar, ask, body)).style(move |s| {
         let c = t.get();
         s.width_full()
@@ -914,6 +969,12 @@ mod tests {
         assert_eq!(snippet_name("python"), "snippet.py");
         assert_eq!(snippet_name("css"), "snippet.css");
         assert_eq!(snippet_name("brainfuck"), "snippet.txt");
+        let files: HashSet<String> = ["src/app.ts".to_string()].into();
+        assert_eq!(save_step("  ", &files, None), SaveStep::Nothing);
+        assert_eq!(save_step("new.ts", &files, None), SaveStep::Save);
+        assert_eq!(save_step("src/app.ts", &files, None), SaveStep::Ask, "a file there is not replaced unasked");
+        assert_eq!(save_step("src/app.ts", &files, Some("other.ts")), SaveStep::Ask);
+        assert_eq!(save_step(" src/app.ts", &files, Some("src/app.ts")), SaveStep::Save);
     }
 
     #[test]
