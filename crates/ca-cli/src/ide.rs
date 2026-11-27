@@ -17,8 +17,8 @@ use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::app::App;
-use crate::ide_ext::{self, Ctx, Driver, Kept, Later, Rule, Sent, Shared, TurnEnd, send};
 use crate::ide_chat::replay::Replay;
+use crate::ide_ext::{self, Ctx, Driver, Kept, Later, Rule, Sent, Shared, TurnEnd, send};
 use crate::ide_files::Side;
 use crate::session::{self, Opts, Prepared, Resume};
 

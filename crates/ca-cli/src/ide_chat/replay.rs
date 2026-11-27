@@ -82,7 +82,8 @@ impl Kept {
     /// Past the most kept, the oldest go first, apart from the question and the turn's start.
     fn trim(&mut self) {
         while self.bytes > MOST {
-            let Some(at) = self.kept.iter().position(|(v, _)| !matches!(v["type"].as_str(), Some("user" | "turn_start")))
+            let Some(at) =
+                self.kept.iter().position(|(v, _)| !matches!(v["type"].as_str(), Some("user" | "turn_start")))
             else {
                 return;
             };
