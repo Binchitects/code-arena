@@ -174,7 +174,9 @@ fn body(ui: Ui) -> impl IntoView {
                         ui.live.set(None);
                     }
                 });
-                // With the decorations' glyph margin and overview ruler.
+                // With its highlights (brackets, the word at the caret, links), the decorations' glyph margin and the
+                // overview ruler.
+                let ed = highlights::follow(ui, ed, &editor, tab.doc.clone(), &tab.path);
                 crate::decor::around(ui, ed, &editor, &tab.path).into_any()
             }
         },

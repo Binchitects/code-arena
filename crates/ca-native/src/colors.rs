@@ -223,6 +223,21 @@ colors! {
     danger_bg: ["statusBarItem.errorBackground"], "#C72E0F", "#C72E0F";
     danger_fg: ["statusBarItem.errorForeground"], "#FFFFFF", "#FFFFFF";
     danger_hover: ["statusBarItem.errorHoverBackground"], "#DD3A1B", "#B02609";
+    bracket1: ["editorBracketHighlight.foreground1"], "#FFD700", "#0431FA";
+    bracket2: ["editorBracketHighlight.foreground2"], "#DA70D6", "#319331";
+    bracket3: ["editorBracketHighlight.foreground3"], "#179FFF", "#7B3814";
+    bracket4: ["editorBracketHighlight.foreground4"], "#00000000", "#00000000";
+    bracket5: ["editorBracketHighlight.foreground5"], "#00000000", "#00000000";
+    bracket6: ["editorBracketHighlight.foreground6"], "#00000000", "#00000000";
+    bracket_unexpected: ["editorBracketHighlight.unexpectedBracket.foreground"], "#FF1212CC", "#FF1212CC";
+    bracket_match_bg: ["editorBracketMatch.background"], "#0064001A", "#0064001A";
+    bracket_match_border: ["editorBracketMatch.border"], "#888888", "#B9B9B9";
+    word_highlight: ["editor.wordHighlightBackground"], "#575757B8", "#57575740";
+    selection_highlight: ["editor.selectionHighlightBackground"], "#ADD6FF26", "#ADD6FF80";
+    find_match: ["editor.findMatchBackground"], "#515C6A", "#A8AC94";
+    find_match_highlight: ["editor.findMatchHighlightBackground"], "#EA5C0055", "#EA5C0055";
+    ruler_find: ["editorOverviewRuler.findMatchForeground"], "#D186167E", "#D186167E";
+    unicode_border: ["editorUnicodeHighlight.border"], "#CCA700", "#BF8803";
 }
 
 #[cfg(test)]
