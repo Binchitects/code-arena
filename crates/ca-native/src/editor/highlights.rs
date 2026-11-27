@@ -561,10 +561,13 @@ fn marks(text: &impl RopeText, hls: &[Hl], find: &[(usize, usize)], c: &Colors) 
     out
 }
 
+/// Which editor gave highlights, of which file, and what they were (with the find matches they were made with).
+type Given = (ViewId, String, Vec<Hl>, Rc<Vec<(usize, usize)>>);
+
 thread_local! {
     /// The highlights given last: by which editor, of which file, and what they were (with the find widget's
     /// matches they were made with), so the same are not given again.
-    static GIVEN: RefCell<Option<(ViewId, String, Vec<Hl>, Rc<Vec<(usize, usize)>>)>> = const { RefCell::new(None) };
+    static GIVEN: RefCell<Option<Given>> = const { RefCell::new(None) };
 }
 
 /// The file's brackets and comments as read last, and the text they were read from.
@@ -852,7 +855,7 @@ mod tests {
         assert_eq!(styled(&hls, |s| s == Style::Find), vec![(4, 5)]);
         // The two Cyrillic letters in the string, not the one in the comment.
         assert_eq!(styled(&hls, |s| matches!(s, Style::Unicode(..))), vec![(5, 7), (7, 9)]);
-        let url = text.find("https").unwrap();
+        let url = text.find("https").expect("the address");
         assert_eq!(styled(&hls, |s| matches!(s, Style::Link(_))), vec![(url, url + 21)]);
         assert_eq!(odd('\u{200B}'), Some(Odd::Invisible));
         assert_eq!(odd('с'), Some(Odd::Like('c')));
