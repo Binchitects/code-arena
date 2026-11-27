@@ -168,6 +168,13 @@ pub struct Merged {
     pub ruler: Vec<(usize, Color)>,
 }
 
+/// A see-through colour laid on the editor's background: text is drawn without its colour's alpha.
+fn on_editor(color: Color, c: &Colors) -> Color {
+    let (a, bg) = (color.a as f64 / 255.0, c.editor_bg);
+    let mix = |f: u8, b: u8| (f as f64 * a + b as f64 * (1.0 - a)).round() as u8;
+    Color::rgb8(mix(color.r, bg.r), mix(color.g, bg.g), mix(color.b, bg.b))
+}
+
 fn squiggle_color(s: Severity, c: &Colors) -> Color {
     match s {
         Severity::Error => c.problem_error,
@@ -206,7 +213,7 @@ pub fn merge<'a>(owners: impl IntoIterator<Item = &'a [Mark]>, c: &Colors) -> Me
                     let span = Span {
                         start: 0,
                         end: None,
-                        fg: look.fg.map(|t| t.of(c)),
+                        fg: look.fg.map(|t| on_editor(t.of(c), c)),
                         bg: look.bg.map(|t| t.of(c)),
                         wave: look.squiggle.filter(|s| *s != Severity::Hint).map(|s| squiggle_color(s, c)),
                         under: look.underline.map(|t| t.of(c)).or(hint.map(|s| squiggle_color(s, c))),
@@ -233,7 +240,7 @@ pub fn merge<'a>(owners: impl IntoIterator<Item = &'a [Mark]>, c: &Colors) -> Me
                         Phantom::EndOfLine(None) => c.desc,
                         Phantom::Ghost => c.ghost_text,
                     };
-                    m.lines.entry(*line).or_default().texts.push((*col, text.clone(), *at, color));
+                    m.lines.entry(*line).or_default().texts.push((*col, text.clone(), *at, on_editor(color, c)));
                 }
                 Mark::Ruler { line, tint } => ruler.push((*line, tint.of(c))),
             }
@@ -778,7 +785,7 @@ mod tests {
         let c = colors();
         let first = [Mark::Glyph {
             line: 2,
-            icon: "debug-breakpoint",
+            icon: "circle-filled",
             tint: Tint::Theme(|c| c.problem_error),
             title: "Breakpoint".into(),
             click: None,
@@ -791,9 +798,14 @@ mod tests {
         ];
         let m = merge([&first[..], &second[..]], &c);
         let g = m.lines[&2].glyph.as_ref().expect("a glyph");
-        assert_eq!((g.icon, g.color, g.title.as_str()), ("debug-breakpoint", c.problem_error, "Breakpoint"));
+        assert_eq!((g.icon, g.color, g.title.as_str()), ("circle-filled", c.problem_error, "Breakpoint"));
         assert_eq!(m.lines[&2].bg, Some(Color::BLACK));
         assert_eq!(m.ruler, [(7, Color::WHITE)]);
+        // Ghost text is see-through: laid on the editor's background, as the text is drawn without alpha.
+        let m = merge([&[Mark::Text { line: 0, col: 0, text: "x".into(), at: Phantom::Ghost }][..]], &c);
+        let ghost = m.lines[&0].texts[0].3;
+        assert_eq!(ghost.a, 255);
+        assert!(ghost.r > c.editor_bg.r && ghost.r < c.ghost_text.r);
     }
 
     #[test]
