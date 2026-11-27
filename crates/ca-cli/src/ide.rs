@@ -263,6 +263,9 @@ impl Events for PageEvents {
     }
     fn tool_start(&mut self, call: &Call<'_>) {
         self.thought_ends(false);
+        if let Some(sh) = &self.tasks {
+            crate::ide_diffs::Diffs::begin(sh, call);
+        }
         send(&self.out, said_call("tool_start", call));
     }
     fn tool_end(&mut self, call: &Call<'_>, output: &Output, took: std::time::Duration) {
@@ -270,11 +273,12 @@ impl Events for PageEvents {
         let (ok, ms) = (!output.is_error, took.as_millis() as u64);
         let status = if ok { "done" } else { "failed" };
         self.keep(call.id, Fact { ok, ms, status });
-        send(
-            &self.out,
-            json!({"type": "tool_end", "id": call.id, "name": call.name, "subject": call.subject, "ok": ok,
-                   "text": text, "cut": cut, "ms": ms, "status": status}),
-        );
+        let mut m = json!({"type": "tool_end", "id": call.id, "name": call.name, "subject": call.subject, "ok": ok,
+                           "text": text, "cut": cut, "ms": ms, "status": status});
+        if let Some(diff) = self.tasks.as_ref().and_then(|sh| crate::ide_diffs::Diffs::end(sh, call, output)) {
+            m["diff"] = diff;
+        }
+        send(&self.out, m);
         // The plan, a goal's check or a job changed with it: the bars are told at once.
         if matches!(call.name, "plan" | "goal_check" | "run_shell" | "command_output" | "stop_command")
             && let Some(sh) = &self.tasks
@@ -393,6 +397,7 @@ fn thread_page(
     before_turn: Option<i64>,
     tools: &[ToolOf],
     facts: &CallFacts,
+    of_run: &dyn Fn(&str) -> Option<Value>,
 ) -> (Vec<Value>, i64, i64) {
     let numbers: HashMap<i64, usize> =
         session::questions_in(store, session).unwrap_or_default().into_iter().map(|(n, seq, _)| (seq, n)).collect();
@@ -435,7 +440,10 @@ fn thread_page(
             }
             // Each call with what the session kept of it, beside their names (which stay as they were).
             if !m.message.tool_calls.is_empty() {
-                v["tool_calls"] = json!(kept_calls(&m.message, &page.messages[at + 1..], &read, &fact));
+                let after = &page.messages[at + 1..];
+                let mut calls = kept_calls(&m.message, after, &read, &fact);
+                crate::ide_diffs::add_kept(&mut calls, after, &details, of_run);
+                v["tool_calls"] = json!(calls);
             }
             if m.message.role == ca_llm::Role::User {
                 let first = at == 0 || page.messages[at - 1].turn != m.turn;
@@ -455,7 +463,8 @@ fn older(sh: &Shared, m: &Value) {
         let tools = sh.kept.of::<Tools>().all();
         let facts = sh.kept.of::<CallFacts>();
         let Ok(store) = sh.store.lock() else { return };
-        let (messages, earlier, first) = thread_page(&store, &sh.session, before, &tools, &facts);
+        let of_run = |id: &str| crate::ide_diffs::Diffs::of(&sh, &sh.session, id);
+        let (messages, earlier, first) = thread_page(&store, &sh.session, before, &tools, &facts, &of_run);
         drop(store);
         send(
             &sh.out,
@@ -482,7 +491,10 @@ fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
         .store
         .lock()
         .ok()
-        .map(|s| thread_page(&s, &p.session, None, &tools.all(), &facts))
+        .map(|s| {
+            let of_run = |id: &str| crate::ide_diffs::Diffs::of(sh, &p.session, id);
+            thread_page(&s, &p.session, None, &tools.all(), &facts, &of_run)
+        })
         .unwrap_or((Vec::new(), 0, 1));
     let mut v = json!({
         "type": "state",
@@ -1211,6 +1223,7 @@ async fn turn(
         keep_details(p, at, &sent);
     }
     events.thought_ends(result.is_none());
+    crate::ide_diffs::Diffs::keep(sh, &p.store);
     send(&out, tasks(sh));
     let took = started.elapsed();
     let ms = took.as_millis() as u64;

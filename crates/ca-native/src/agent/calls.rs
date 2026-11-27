@@ -129,10 +129,12 @@ pub enum Group {
     },
 }
 
-/// An answer's calls in groups: two or more ended calls in a row (a task's excepted, which has a card of its own)
-/// fold into a line; a call that waits or runs is drawn by itself.
+/// An answer's calls in groups: two or more ended calls in a row (a task's excepted, which has a card of its own,
+/// and an edit with its diff, shown under it) fold into a line; a call that waits or runs is drawn by itself.
 pub fn groups(tools: &[Tool], running: bool) -> Vec<Group> {
-    let folds = |t: &Tool| t.name != "task" && !matches!(state(t, running), State::Waiting | State::Running);
+    let folds = |t: &Tool| {
+        t.name != "task" && !(t.ok && t.diff.is_some()) && !matches!(state(t, running), State::Waiting | State::Running)
+    };
     let mut out = Vec::new();
     let mut i = 0;
     while i < tools.len() {
