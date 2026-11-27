@@ -562,6 +562,7 @@ version = "0.5.0"
 dependencies = [
  "alacritty_terminal",
  "base64 0.22.1",
+ "ca-settings",
  "ca-themes",
  "crossbeam-channel",
  "floem",
