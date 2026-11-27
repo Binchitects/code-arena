@@ -355,7 +355,9 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     match m["type"].as_str().unwrap_or("") {
         "notice" => {
             let t = s("text");
-            if t.starts_with("› ") && t.ends_with("(sent while it worked)") {
+            // A request taken in mid-turn is drawn as its bubble; a skipped thinking by its block ("Answering
+            // now…"), whose answer then goes on in the same item.
+            if (t.starts_with("› ") && t.ends_with("(sent while it worked)")) || t.starts_with("Thinking skipped") {
                 return false;
             }
             // During a turn, over the answer being written; else a line of its own.

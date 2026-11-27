@@ -81,7 +81,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ev({"content": "Done."})
             ev({}, "stop")
         elif "think" in text:
-            for word in ("Let me weigh this. " * 40).split(" "):
+            # Asked without thinking (Skip thinking asks again so): the answer at once.
+            thinks = body.get("chat_template_kwargs", {}).get("enable_thinking") is not False
+            for word in ("Let me weigh this. " * 40 if thinks else "").split(" ")[:-1]:
                 ev({"reasoning_content": word + " "})
                 time.sleep(0.08)
             for word in ANSWER.split(" "):
