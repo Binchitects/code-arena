@@ -43,6 +43,9 @@ pub const MESSAGES: &[(&str, crate::ide_ext::Rule)] = {
         ("copy", Side),
         ("import", Side),
         ("restore_deleted", Side),
+        ("changes_accept", Side),
+        ("changes_revert", Side),
+        ("changes_accept_text", Side),
     ]
 };
 
@@ -537,6 +540,7 @@ impl Side {
                     me.answer(me.restore(&s("kept"), &s("to")))
                 });
             }
+            "changes_accept" | "changes_revert" | "changes_accept_text" => self.review_change(m),
             _ => return false,
         }
         true
@@ -859,6 +863,50 @@ impl Side {
             })
             .collect();
         json!({"type": "changes", "files": files})
+    }
+
+    /// The agent's changes to a file accepted (none named: every file's), a part of them accepted (its `text` the
+    /// file is compared with from now on), or reverted; answered with the changes as they are then, carrying the path
+    /// asked about, and for a revert the file's stat and its folder listed again. Only a file the agent wrote in this
+    /// run is touched.
+    fn review_change(&self, m: &Value) {
+        let path = m["path"].as_str().unwrap_or("");
+        let kind = m["type"].as_str().unwrap_or("");
+        let written = (!path.is_empty())
+            .then(|| self.checkpoints.originals().into_iter().map(|(p, _)| p).find(|p| self.shown(p) == path))
+            .flatten();
+        let mut error: Option<String> = None;
+        let mut reverted = false;
+        match (kind, &written) {
+            ("changes_accept", _) if path.is_empty() => self.checkpoints.accept_all(),
+            ("changes_accept", Some(p)) => {
+                self.checkpoints.accept(p);
+            }
+            ("changes_accept_text", Some(p)) => {
+                self.checkpoints.set_original(p, Some(m["text"].as_str().unwrap_or("").as_bytes().to_vec()));
+            }
+            ("changes_revert", Some(p)) => match self.checkpoints.revert(p) {
+                Some(r) if r.failed.is_empty() => reverted = true,
+                Some(r) => error = r.failed.into_iter().next().map(|(_, e)| e),
+                None => error = Some("the agent did not change it".into()),
+            },
+            _ => error = Some("the agent did not change it in this session".into()),
+        }
+        if let Some(e) = &error {
+            let what = if kind == "changes_revert" { "reverted" } else { "accepted" };
+            send(
+                &self.out,
+                json!({"type": "notice", "text": format!("The agent's changes to {path} could not be {what}: {e}")}),
+            );
+        }
+        let mut v = self.changes();
+        v["path"] = json!(path);
+        send(&self.out, v);
+        if reverted {
+            send(&self.out, self.stat(&json!({"paths": [path]})));
+            let folder = path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+            send(&self.out, self.ls(folder));
+        }
     }
 
     fn term_open(&self, m: &Value) {
@@ -1564,6 +1612,50 @@ mod tests {
         // Put back as it was: no longer a change.
         std::fs::write(&a, "one\n").expect("w");
         assert_eq!(s.changes()["files"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn the_agents_changes_are_accepted_reverted_or_refused() {
+        let d = tempfile::tempdir().expect("temp");
+        std::fs::write(d.path().join("a.txt"), "one\n").expect("w");
+        std::fs::write(d.path().join("mine.txt"), "mine\n").expect("w");
+        let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
+        let cps = Arc::new(ca_tools::checkpoints::Checkpoints::default());
+        let (out, mut rx) = broadcast::channel(64);
+        let s = Side::new(ws.clone(), cps.clone(), out, None, &std::env::temp_dir());
+        cps.begin(0);
+        for (name, text) in [("a.txt", "two\n"), ("sub/b.txt", "new\n"), ("c.txt", "made\n")] {
+            let p = ws.resolve(name).expect("p");
+            cps.before_write(&p);
+            std::fs::create_dir_all(p.parent().expect("dir")).expect("dir");
+            std::fs::write(&p, text).expect("w");
+        }
+        let paths = |v: &Value| -> Vec<String> {
+            v["files"].as_array().into_iter().flatten().filter_map(|f| f["path"].as_str().map(str::to_string)).collect()
+        };
+        let last_changes = |got: &[Value]| got.iter().rev().find(|v| v["type"] == "changes").cloned().expect("changes");
+        s.handle(&json!({"type": "changes_accept", "path": "a.txt"}));
+        let got = drain(&mut rx);
+        assert_eq!(last_changes(&got)["path"], "a.txt");
+        assert_eq!(paths(&last_changes(&got)), ["c.txt", "sub/b.txt"]);
+        assert_eq!(std::fs::read_to_string(d.path().join("a.txt")).expect("r"), "two\n", "accepting keeps the file");
+        // A made file reverted is gone; its stat and its folder are said again.
+        s.handle(&json!({"type": "changes_revert", "path": "sub/b.txt"}));
+        let got = drain(&mut rx);
+        assert!(!d.path().join("sub/b.txt").exists());
+        assert_eq!(paths(&last_changes(&got)), ["c.txt"]);
+        assert!(got.iter().any(|v| v["type"] == "stats" && v["items"][0]["gone"] == true), "{got:?}");
+        assert!(got.iter().any(|v| v["type"] == "ls" && v["path"] == "sub"), "{got:?}");
+        // A file the agent did not write is never touched.
+        s.handle(&json!({"type": "changes_revert", "path": "mine.txt"}));
+        let got = drain(&mut rx);
+        assert!(got.iter().any(|v| v["type"] == "notice"), "{got:?}");
+        assert_eq!(std::fs::read_to_string(d.path().join("mine.txt")).expect("r"), "mine\n");
+        // Part accepted, then the rest: none is left.
+        s.handle(&json!({"type": "changes_accept_text", "path": "c.txt", "text": "ma"}));
+        assert_eq!(paths(&last_changes(&drain(&mut rx))), ["c.txt"]);
+        s.handle(&json!({"type": "changes_accept"}));
+        assert!(paths(&last_changes(&drain(&mut rx))).is_empty());
     }
 
     fn drain(rx: &mut broadcast::Receiver<String>) -> Vec<Value> {

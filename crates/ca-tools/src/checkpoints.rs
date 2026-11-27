@@ -21,6 +21,10 @@ struct Inner {
     turns: BTreeMap<i64, BTreeMap<PathBuf, Option<Vec<u8>>>>,
     /// The plan's steps in the order they began in this run: each file as it was before that step wrote it.
     steps: Vec<(u32, Before)>,
+    /// What a file the person accepted the agent's changes to is compared with from then on: as it was when
+    /// accepted (or the text accepted of it). The turns and the steps keep their own copies, for `/rewind` and
+    /// `/plan undo`.
+    accepted: Before,
 }
 
 /// Each file as it was before something wrote it (`None`: it was not there).
@@ -89,6 +93,12 @@ impl Checkpoints {
                 first_state.insert(p.clone(), before.clone());
             }
         }
+        // What was accepted of a file put back is undone with it.
+        if let Ok(mut g) = self.inner.lock() {
+            for p in first_state.keys() {
+                g.accepted.remove(p);
+            }
+        }
         Some((undone.iter().map(|(n, _)| *n).collect(), put_back(first_state)))
     }
 
@@ -108,7 +118,48 @@ impl Checkpoints {
                 out.insert(p.clone(), before.clone());
             }
         }
+        for (p, before) in out.iter_mut() {
+            if let Some(kept) = g.accepted.get(p) {
+                *before = kept.clone();
+            }
+        }
         out.into_iter().collect()
+    }
+
+    /// What the agent's changes to `path` are compared with; `None` when the agent wrote no such file in this run.
+    pub fn original(&self, path: &Path) -> Option<Option<Vec<u8>>> {
+        self.originals().into_iter().find(|(p, _)| p == path).map(|(_, before)| before)
+    }
+
+    /// The agent's changes to `path` compared from now on with `bytes` (`None`: as a file that was not there), as
+    /// when only a part of them was accepted. False when the agent wrote no such file in this run.
+    pub fn set_original(&self, path: &Path, bytes: Option<Vec<u8>>) -> bool {
+        let Ok(mut g) = self.inner.lock() else { return false };
+        if !g.turns.values().any(|t| t.contains_key(path)) {
+            return false;
+        }
+        g.accepted.insert(path.to_path_buf(), bytes);
+        true
+    }
+
+    /// The agent's changes to `path` kept: it is compared from now on with what it holds now, so it is no longer
+    /// a change until the agent writes it again.
+    pub fn accept(&self, path: &Path) -> bool {
+        self.set_original(path, std::fs::read(path).ok())
+    }
+
+    /// Every change the agent made kept (see [`accept`](Self::accept)).
+    pub fn accept_all(&self) {
+        for (p, _) in self.originals() {
+            self.accept(&p);
+        }
+    }
+
+    /// The agent's changes to `path` undone: the file as it was (or as it was accepted), removed when the agent
+    /// made it. `None` when the agent wrote no such file in this run.
+    pub fn revert(&self, path: &Path) -> Option<Restored> {
+        let before = self.original(path)?;
+        Some(put_back(BTreeMap::from([(path.to_path_buf(), before)])))
     }
 
     /// The files that would change going back to before the turn at `seq`: each with whether it would be
@@ -139,6 +190,10 @@ impl Checkpoints {
             g.turns.remove(&k);
         }
         g.current = None;
+        // What was accepted of a file put back is undone with it.
+        for p in first_state.keys() {
+            g.accepted.remove(p);
+        }
         drop(g);
         put_back(first_state)
     }
@@ -221,5 +276,53 @@ mod tests {
         assert_eq!(steps, vec![1]);
         assert_eq!(std::fs::read_to_string(&a).expect("r"), "start");
         assert!(c.undo_step(1).is_none());
+    }
+
+    #[test]
+    fn an_accepted_file_is_compared_with_what_it_held_then_and_a_revert_puts_it_back_so() {
+        let d = tempfile::tempdir().expect("temp");
+        let a = d.path().join("a.txt");
+        let made = d.path().join("made.txt");
+        std::fs::write(&a, "one").expect("w");
+        let c = Checkpoints::default();
+        c.begin(0);
+        c.before_write(&a);
+        std::fs::write(&a, "two").expect("w");
+        c.before_write(&made);
+        std::fs::write(&made, "new").expect("w");
+        assert!(c.accept(&a));
+        assert_eq!(c.original(&a), Some(Some(b"two".to_vec())));
+        assert!(!c.accept(&d.path().join("never.txt")), "a file the agent did not write is not accepted");
+        // Written again: a change from the accepted text, which a revert goes back to.
+        c.begin(2);
+        c.before_write(&a);
+        std::fs::write(&a, "three").expect("w");
+        let r = c.revert(&a).expect("written");
+        assert_eq!((std::fs::read_to_string(&a).expect("r"), r.put_back.len()), ("two".into(), 1));
+        // A file the agent made goes when reverted.
+        assert_eq!(c.revert(&made).map(|r| r.removed.len()), Some(1));
+        assert!(!made.exists());
+        // Part accepted: compared with the text given.
+        assert!(c.set_original(&a, Some(b"half".to_vec())));
+        assert_eq!(c.original(&a), Some(Some(b"half".to_vec())));
+        // The rewind still puts the file back as it was before the turn, and forgets what was accepted of it.
+        c.rewind(0);
+        assert_eq!(std::fs::read_to_string(&a).expect("r"), "one");
+        assert_eq!(c.original(&a), None);
+    }
+
+    #[test]
+    fn accept_all_leaves_no_change() {
+        let d = tempfile::tempdir().expect("temp");
+        let (a, b) = (d.path().join("a.txt"), d.path().join("b.txt"));
+        std::fs::write(&a, "one").expect("w");
+        let c = Checkpoints::default();
+        c.begin(0);
+        for p in [&a, &b] {
+            c.before_write(p);
+            std::fs::write(p, "changed").expect("w");
+        }
+        c.accept_all();
+        assert!(c.originals().iter().all(|(p, before)| std::fs::read(p).ok() == *before));
     }
 }
