@@ -199,6 +199,17 @@ Sections used:
 - **Find history and seeding.** Up and Down in the Find and Replace boxes bring back earlier
   entries. Ctrl+F with nothing selected starts from the word at the caret. Tab and Shift+Tab move
   between the two boxes, and workbench keys such as Ctrl+S still work while a box has focus.
+- **Request bubbles show what came with them.** A request shows the words you typed, without the
+  text attached with @. It also shows the part of an answer it replies to: two lines, with Show
+  all/Show less and Go to the quoted answer, which scrolls to that answer and flashes it. Under the
+  bubble, 'Sent with it' has a chip for each file and its lines, and clicking one opens the file at
+  those lines. A skill run with /name gets a 'Used the skill name' card. A message the running
+  answer read at its next step says 'Sent while it worked: read at its next step'.
+- **Code Arena's own notes show in the thread.** A goal's next turn or a loop's report is now a
+  centred 'Code Arena: …' line, where before it was dropped.
+- **Request details are kept.** A session stores each request's details (as typed, quote, files,
+  skill) when it is sent and sends them again with its messages, so a window that reconnects or
+  opens the session later draws the same bubble.
 
 
 ### :bug: Bugs fixed
