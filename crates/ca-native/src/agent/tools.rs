@@ -306,7 +306,7 @@ fn body(ui: Ui, send: Send, tool: Tool, st: State) -> AnyView {
     let mut parts: Vec<AnyView> = Vec::new();
     if st == State::Waiting {
         let ask = format!("Allow {} to run with these arguments?", tool.name);
-        parts.push(label(move || ask.clone()).style(move |s| bold(s).color(t.get().fg)).into_any());
+        parts.push(label(move || ask.clone()).style(move |s| bold(s).line_height(1.4).color(t.get().fg)).into_any());
     }
     let asked = calls::asked(&tool.arguments);
     if asked != calls::Asked::default() {
@@ -358,6 +358,7 @@ fn result(ui: Ui, send: Send, tool: &Tool) -> AnyView {
             let c = t.get();
             s.font_family(MONO_FONT.clone())
                 .font_size(12.0)
+                .line_height(1.4)
                 .padding(8.0)
                 .border_radius(4.0)
                 .width_full()
