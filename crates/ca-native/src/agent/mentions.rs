@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
+use floem::IntoView;
 use floem::action::exec_after;
 use floem::event::EventListener;
 use floem::keyboard::{Key, Modifiers, NamedKey};
@@ -26,7 +27,6 @@ use floem::kurbo::Rect;
 use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo};
 use floem::style::{CursorStyle, FlexWrap, Position};
 use floem::views::{Decorators, clip, dyn_stack, empty, h_stack, label, rich_text, scroll, v_stack};
-use floem::IntoView;
 use serde_json::{Value, json};
 
 use super::slots::{ItemSlot, add_item};
