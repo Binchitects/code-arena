@@ -167,9 +167,9 @@ fn ask_revert(ui: Ui, send: &Send, c: &Change) {
     });
 }
 
-/// The path a file is mentioned by in the chat's box.
+/// The path a file is mentioned by in the chat's box, as the box's own mentions are written.
 fn mention(path: &str) -> String {
-    if path.contains(' ') { format!("@\"{path}\"") } else { format!("@{path}") }
+    crate::agent::mentions::mention(path, "", true).trim_end().to_string()
 }
 
 /// The row's menu: the file's changes and the file, the chat, accept and revert, its path; then the items the
@@ -195,7 +195,8 @@ fn open_menu(ui: Ui, send: &Send, c: Change, at: popup::At) {
         popup::entry("Open File", move || ui.open(&opened, &opener)).enabled(c.after.is_some()).into(),
         popup::line(),
         popup::entry("Add to Chat", move || {
-            chat_bridge::put_in_box(ui, &format!("{said} "));
+            // Before what is typed there, as a mention typed in the box: the draft is kept.
+            chat_bridge::insert_at_start(ui, &format!("{said} "));
             chat_bridge::focus(ui);
         })
         .into(),
@@ -546,5 +547,30 @@ mod tests {
         take(ui, &json!({"type": "changes", "files": []}), &send);
         assert_eq!(said.borrow().len(), 2);
         assert_eq!(badges::count(ui, View::Changes).get_untracked(), 0);
+    }
+
+    #[test]
+    fn a_write_reaches_the_view_past_the_parts_before_it() {
+        let ui = Ui::new();
+        let said = Rc::new(std::cell::RefCell::new(Vec::<Value>::new()));
+        let kept = said.clone();
+        let send: Send = Rc::new(move |v: Value| kept.borrow_mut().push(v));
+        ui.take(&json!({"type": "tool_end", "id": "1", "name": "write_file", "ok": true}), &send);
+        assert!(said.borrow().iter().any(|v| v["type"] == "changes"), "{:?}", said.borrow());
+    }
+
+    #[test]
+    fn the_changes_of_a_file_no_longer_changed_close() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let (a, b) = (change("a.rs", Some("a"), Some("b")), change("b.rs", None, Some("new")));
+        ui.open_changes(&a);
+        ui.open_changes(&b);
+        // Accepted or reverted elsewhere: a.rs is no longer listed.
+        take(ui, &json!({"type": "changes", "files": [{"path": "b.rs", "before": null, "after": "new"}]}), &send);
+        let open: Vec<String> = ui.tabs.with_untracked(|t| t.iter().map(|t| t.path.clone()).collect());
+        assert_eq!(open, ["changes:b.rs"]);
+        assert_eq!(mention("src/my cart.rs"), "@\"src/my cart.rs\"");
+        assert_eq!(mention("a.rs"), "@a.rs");
     }
 }
