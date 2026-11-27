@@ -37,6 +37,8 @@ pub const KIND: &str = "media";
 const MOST_DRAWN: u32 = 1024;
 /// A picture larger than this a side is not drawn at all.
 const MOST_SIDE: u32 = 32_768;
+/// A picture of more pixels than this is not drawn at all (its decoding alone would take gigabytes).
+const MOST_PIXELS: u64 = 100_000_000;
 /// The side of a square of the checkerboard, in the drawn copy's pixels (VS Code's is 8 px).
 const SQUARE: u32 = 8;
 
@@ -146,7 +148,7 @@ fn still(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let reader =
         image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
     let (w, h) = reader.into_dimensions().map_err(|e| e.to_string())?;
-    if w.max(h) > MOST_SIDE {
+    if w.max(h) > MOST_SIDE || u64::from(w) * u64::from(h) > MOST_PIXELS {
         return Err(format!("{w} × {h} is too large to draw"));
     }
     image::load_from_memory(bytes).map_err(|e| e.to_string())
@@ -180,6 +182,9 @@ fn first_frame(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     options.set_color_output(gif::ColorOutput::RGBA);
     let mut d = options.read_info(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
     let (w, h) = (u32::from(d.width()), u32::from(d.height()));
+    if w.max(h) > MOST_SIDE || u64::from(w) * u64::from(h) > MOST_PIXELS {
+        return Err(format!("{w} × {h} is too large to draw"));
+    }
     let mut screen = image::RgbaImage::new(w, h);
     if let Some(f) = d.read_next_frame().map_err(|e| e.to_string())? {
         for (i, px) in f.buffer.as_chunks::<4>().0.iter().enumerate() {
@@ -349,7 +354,7 @@ pub fn register(_ui: Ui, _send: &Send) {
     statusbar::add("status.media.dimensions", statusbar::Side::Right, 206, |ui, _send| {
         let t = ui.colors;
         let text = move || match shown_item(ui) {
-            Some(Item::Picture(p)) => Some(format!("{}x{}", p.width, p.height)),
+            Some(Item::Picture(p)) => Some(format!("{} × {}", p.width, p.height)),
             _ => None,
         };
         label(move || text().unwrap_or_default())
@@ -426,7 +431,8 @@ fn picture(st: State, path: &str, p: Rc<Picture>) -> AnyView {
                     container(drawn.style(move |s| s.width(w).height(h).flex_shrink(0.0_f32)))
                         .style(|s| s.min_size_full().items_center().justify_center()),
                 )
-                .style(|s| s.size_full().min_size(0.0, 0.0))
+                // Out of the flow, so a picture larger than the editor does not make the editor larger.
+                .style(|s| s.absolute().inset(0.0))
                 .into_any()
             } else {
                 drawn.style(|s| s.size_full()).into_any()
