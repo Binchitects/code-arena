@@ -189,6 +189,16 @@ Sections used:
   relative links, in inline code or in plain text open in the editor at that line.
 - **Selectable answer text.** Drag over an answer's text to select it, Ctrl+C copies it, and Ctrl+A
   selects the whole paragraph.
+- **Replace in the editor.** Ctrl+H, or the chevron at the find widget's left, opens the replace
+  row. Enter or Ctrl+Shift+1 replaces the selected match and goes to the next one. Ctrl+Alt+Enter
+  replaces every match as one undo step. Preserve Case is Alt+P. With Use Regular Expression on, the
+  replace text understands $1..$99, $& and $0, $$, \n and \t.
+- **Whole word and Find in Selection.** In the find widget, Alt+W matches whole words only, and
+  Alt+L limits the search to the selection (or to the caret's line). Alt+C and Alt+R toggle Match
+  Case and Use Regular Expression. Each toggle has a tooltip that shows its key.
+- **Find history and seeding.** Up and Down in the Find and Replace boxes bring back earlier
+  entries. Ctrl+F with nothing selected starts from the word at the caret. Tab and Shift+Tab move
+  between the two boxes, and workbench keys such as Ctrl+S still work while a box has focus.
 
 
 ### :bug: Bugs fixed
