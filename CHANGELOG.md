@@ -352,6 +352,17 @@ Sections used:
   (Ctrl+Shift+T), Next and Previous Editor (Ctrl+PageDown/Up, Ctrl+Alt+PageDown/Up), Alt+1..9, Move
   Editor Left/Right (Ctrl+Shift+PageUp/Down). Copy the active file's path with Ctrl+K P, or its
   relative path with Ctrl+K Ctrl+Shift+C.
+- **Editor settings applied live.** The editor follows `editor.fontFamily`, `fontSize`, `fontWeight`,
+  `lineHeight`, `wordWrap` (off, on, wordWrapColumn, bounded), `rulers`, `lineNumbers` on/off,
+  `renderWhitespace`, `renderLineHighlight`, `cursorBlinking` solid, `guides.indentation`,
+  `scrollBeyondLastLine` and `emptySelectionClipboard` as soon as a settings file changes, a
+  language's `[lang]` block first, in file tabs and in the person's settings files alike.
+- **Toggle Word Wrap and font zoom.** Alt+Z wraps or unwraps the file on screen; View: Editor Font
+  Zoom In, Out and Reset (and Ctrl with the mouse wheel when `editor.mouseWheelZoom` is on) zoom
+  the editor's font in 10% steps.
+- **View toggles write the setting.** Toggle Minimap, Toggle Sticky Scroll, Toggle Breadcrumbs and
+  Toggle Render Whitespace write the person's settings.json, and the breadcrumbs follow
+  `breadcrumbs.enabled`.
 
 
 ### :bug: Bugs fixed
