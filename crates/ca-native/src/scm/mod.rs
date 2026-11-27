@@ -18,12 +18,12 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use floem::{IntoView, View as _};
 use floem::keyboard::{Key, NamedKey};
 use floem::peniko::Color;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal};
 use floem::style::CursorStyle;
 use floem::views::{Decorators, container, dyn_container, empty, h_stack, label, stack, text_input, v_stack};
+use floem::{IntoView, View as _};
 use serde_json::{Value, json};
 
 use crate::colors::Colors;
@@ -377,7 +377,9 @@ fn refresh_soon(ui: Ui, send: &Send) {
 }
 
 fn files_of(ui: Ui, g: Group) -> Vec<File> {
-    state(ui).status.with_untracked(|s| s.as_ref().map(|s| s.of_group(g).into_iter().cloned().collect()).unwrap_or_default())
+    state(ui)
+        .status
+        .with_untracked(|s| s.as_ref().map(|s| s.of_group(g).into_iter().cloned().collect()).unwrap_or_default())
 }
 
 fn stage(send: &Send, files: &[File]) {
@@ -459,7 +461,8 @@ fn commit(ui: Ui, send: &Send, amend: bool) {
 /// A file's row opened: its changes in a tab, or the file itself (one git does not track yet, one in conflict).
 fn open_row(ui: Ui, send: &Send, id: &str) {
     let Some(Row::File(g, path)) = row_of(id) else { return };
-    let f = state(ui).status.with_untracked(|s| s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned()));
+    let f =
+        state(ui).status.with_untracked(|s| s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned()));
     let Some(f) = f else { return };
     match g {
         Group::Merge => ui.open(path, send),
@@ -574,7 +577,8 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
             .into_any()
         }
         Some(Row::File(g, path)) => {
-            let f = me.status.with_untracked(|s| s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned()));
+            let f =
+                me.status.with_untracked(|s| s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned()));
             let Some(f) = f else { return empty().into_any() };
             let letter = g.letter(&f);
             let deleted = letter == 'D';
@@ -592,7 +596,12 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
                 // VS Code strikes a deleted file's name through.
                 empty().style(move |s| {
                     let c = t.get();
-                    s.absolute().inset_left(0.0).inset_right(0.0).inset_top(9.0).height(1.0).background(letter_colour(&c, letter))
+                    s.absolute()
+                        .inset_left(0.0)
+                        .inset_right(0.0)
+                        .inset_top(9.0)
+                        .height(1.0)
+                        .background(letter_colour(&c, letter))
                         .apply_if(!deleted, |s| s.hide())
                 }),
             ))
@@ -606,7 +615,11 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
                 empty().style(|s| s.flex_grow(1.0_f32)),
                 label(move || letter.to_string()).style(move |s| {
                     let c = t.get();
-                    s.font_size(12.0).width(12.0).margin_right(10.0).color(letter_colour(&c, letter)).flex_shrink(0.0_f32)
+                    s.font_size(12.0)
+                        .width(12.0)
+                        .margin_right(10.0)
+                        .color(letter_colour(&c, letter))
+                        .flex_shrink(0.0_f32)
                 }),
             ))
             .style(|s| s.width_full().items_center().gap(6.0))
@@ -640,7 +653,10 @@ fn row_actions(ui: Ui, send: &Send, node: &wt::Node) -> Vec<wt::Action> {
                 let path = path.clone();
                 move || {
                     state(ui).status.with_untracked(|st| {
-                        st.as_ref().and_then(|st| st.files.iter().find(|f| f.path == path).cloned()).into_iter().collect::<Vec<_>>()
+                        st.as_ref()
+                            .and_then(|st| st.files.iter().find(|f| f.path == path).cloned())
+                            .into_iter()
+                            .collect::<Vec<_>>()
                     })
                 }
             };
@@ -665,7 +681,6 @@ fn row_actions(ui: Ui, send: &Send, node: &wt::Node) -> Vec<wt::Action> {
     }
 }
 
-
 /// The message box. Its placeholder names the branch, so it is made again when the branch is another.
 fn message_box(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
@@ -687,6 +702,7 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
                 .style(move |s| {
                     let c = t.get();
                     s.width_full()
+                        .min_width(0.0)
                         .height(26.0)
                         .padding_horiz(6.0)
                         .border(1.0)
@@ -699,7 +715,7 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
                 .into_any()
         },
     )
-    .style(|s| s.width_full())
+    .style(|s| s.width_full().min_width(0.0))
 }
 
 /// The commit box: the message, then the Commit button and its menu (Commit, Commit (Amend)).
@@ -895,9 +911,11 @@ pub fn register(_ui: Ui, _send: &Send) {
     crate::menus::add(title, item("git.commit").title("Commit").icon("check").group("navigation").order(1));
     crate::menus::add(title, item("git.refresh").title("Refresh").icon("refresh").group("navigation").order(2));
     crate::editor::kinds::add(
-        crate::editor::kinds::kind(KIND, |_ui, rest| title_of(rest), |ui, send, tab| {
-            changes_tab(ui, send, tab.path.clone())
-        })
+        crate::editor::kinds::kind(
+            KIND,
+            |_ui, rest| title_of(rest),
+            |ui, send, tab| changes_tab(ui, send, tab.path.clone()),
+        )
         .icon("git-compare"),
     );
 }
@@ -999,7 +1017,8 @@ mod tests {
             (s.branch.as_deref(), s.upstream.as_deref(), s.ahead, s.behind),
             (Some("main"), Some("origin/main"), 1, 2)
         );
-        let renamed = File { path: "b.rs".into(), from: Some("a.rs".into()), x: 'R', y: ' ', staged: true, ..File::default() };
+        let renamed =
+            File { path: "b.rs".into(), from: Some("a.rs".into()), x: 'R', y: ' ', staged: true, ..File::default() };
         assert_eq!(s.files[0], renamed);
         assert_eq!(empty_of(Some(&s)), Empty::Changes);
         assert_eq!(empty_of(Some(&Status::of(&json!({"root": null})))), Empty::NoRepo);

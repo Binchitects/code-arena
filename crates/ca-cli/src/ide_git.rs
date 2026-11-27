@@ -90,7 +90,10 @@ impl Area for Here {
         let dir = match dir_of(side, &repo) {
             Ok(d) => d,
             Err(e) => {
-                send(&out, json!({"type": if of == "git_status" { "git_status" } else { "git_failed" }, "repo": repo, "of": of, "error": e}));
+                send(
+                    &out,
+                    json!({"type": if of == "git_status" { "git_status" } else { "git_failed" }, "repo": repo, "of": of, "error": e}),
+                );
                 return true;
             }
         };
@@ -293,7 +296,10 @@ pub(crate) struct Entry {
 
 impl Entry {
     pub fn conflict(&self) -> bool {
-        matches!((self.x, self.y), ('D', 'D') | ('A', 'U') | ('U', 'D') | ('U', 'A') | ('D', 'U') | ('A', 'A') | ('U', 'U'))
+        matches!(
+            (self.x, self.y),
+            ('D', 'D') | ('A', 'U') | ('U', 'D') | ('U', 'A') | ('D', 'U') | ('A', 'A') | ('U', 'U')
+        )
     }
 
     pub fn untracked(&self) -> bool {
@@ -324,7 +330,8 @@ pub(crate) fn parse_status(out: &[u8]) -> (Branch, Vec<Entry>) {
         let mut chars = p.chars();
         let (Some(x), Some(y)) = (chars.next(), chars.next()) else { continue };
         let path = p.get(3..).unwrap_or("").to_string();
-        let from = if matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C') { parts.next().map(str::to_string) } else { None };
+        let from =
+            if matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C') { parts.next().map(str::to_string) } else { None };
         if x == '!' {
             continue;
         }
@@ -561,7 +568,15 @@ fn show_working(dir: &Path, path: &str) -> Value {
 }
 
 /// A request answered, on git's thread.
-fn answer(of: &str, m: &Value, repo: &str, dir: &Path, out: &broadcast::Sender<String>, kept: &Git, side: Option<&Side>) {
+fn answer(
+    of: &str,
+    m: &Value,
+    repo: &str,
+    dir: &Path,
+    out: &broadcast::Sender<String>,
+    kept: &Git,
+    side: Option<&Side>,
+) {
     let failed = |e: String| send(out, json!({"type": "git_failed", "repo": repo, "of": of, "error": e}));
     match of {
         "git_status" => push_status(kept, out, repo, dir),
@@ -668,7 +683,13 @@ mod tests {
     #[test]
     fn only_paths_inside_the_project_are_handed_to_git() {
         assert!(path_ok("src/a.rs") && path_ok("./src") && path_ok("."));
-        assert!(!path_ok("../x") && !path_ok("/etc/passwd") && !path_ok("a/../../b") && !path_ok("") && !path_ok(":(glob)*"));
+        assert!(
+            !path_ok("../x")
+                && !path_ok("/etc/passwd")
+                && !path_ok("a/../../b")
+                && !path_ok("")
+                && !path_ok(":(glob)*")
+        );
         assert_eq!(from_project("sub/", "sub/a.rs"), "a.rs");
         assert_eq!(from_project("", "a.rs"), "a.rs");
         assert_eq!(from_project("sub/", "other/a.rs"), "../other/a.rs");
@@ -706,7 +727,12 @@ mod tests {
         unstage(dir, &["src".into()]).expect("unstage");
         let (v, _) = status(dir);
         let x_of = |v: &Value, p: &str| {
-            v["files"].as_array().into_iter().flatten().find(|f| f["path"] == p).map(|f| f["x"].as_str().unwrap_or("").to_string())
+            v["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|f| f["path"] == p)
+                .map(|f| f["x"].as_str().unwrap_or("").to_string())
         };
         assert_eq!((x_of(&v, "a.txt").as_deref(), x_of(&v, "src/b.txt").as_deref()), (Some("A"), Some("?")));
         assert_eq!(commit(dir, "  ", false, false), Err("Type a message to commit.".into()));
