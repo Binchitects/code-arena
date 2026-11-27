@@ -1661,7 +1661,12 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     let gateway = MockServer::start().await;
     Mock::given(path("/v1/chat/completions"))
         .respond_with(Script(
-            vec![sse(json!({"choices": [{"delta": {"content": "Hello from the IDE."}, "finish_reason": "stop"}]}))],
+            vec![format!(
+                "data: {}\n\n{}",
+                json!({"choices": [{"delta": {"reasoning_content": "Say it kindly."}}]}),
+                sse(json!({"choices": [{"delta": {"content": "Hello from the IDE."}, "finish_reason": "stop"}],
+                           "usage": {"prompt_tokens": 120, "completion_tokens": 7}}))
+            )],
             AtomicUsize::new(0),
         ))
         .mount(&gateway)
@@ -1761,6 +1766,14 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     assert_eq!(text, "Hello from the IDE.");
     assert_eq!(seen.last().expect("end")["ok"], true, "{seen:?}");
     assert_eq!(seen.iter().find(|v| v["type"] == "user").expect("user")["q"], 1);
+    // The thinking gives way to the words: how long it took is said between them; the end says the model and what
+    // the turn used.
+    let at = |k: &str| kinds.iter().position(|x| *x == k).unwrap_or(usize::MAX);
+    assert!(at("reasoning") < at("thought") && at("thought") < at("text"), "{kinds:?}");
+    assert_eq!(seen.iter().find(|v| v["type"] == "thought").expect("thought")["cut_short"], false);
+    let end = seen.last().expect("end");
+    assert_eq!((end["model"].as_str(), end["usage"]["prompt"].as_u64()), (Some("qwen"), Some(120)), "{end}");
+    assert_eq!(end["usage"]["model"], "qwen");
     // What the page asks between turns, each answered by its kind.
     let until = async |page: &mut tokio_tungstenite::WebSocketStream<_>, kind: &str| -> Value {
         loop {
@@ -1785,6 +1798,13 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
         "{d}"
     );
     assert!(d["context"]["size"].as_u64() > Some(0), "{d}");
+    // The answer as the session kept it: its thinking, and what its turn used, for its footer after a reload.
+    page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
+    let st = until(&mut page, "state").await;
+    let answer = st["messages"].as_array().and_then(|l| l.iter().find(|m| m["role"] == "assistant")).cloned();
+    let answer = answer.expect("the answer kept");
+    assert_eq!(answer["reasoning"], "Say it kindly.", "{answer}");
+    assert_eq!((answer["usage"]["prompt"].as_u64(), answer["usage"]["model"].as_str()), (Some(120), Some("qwen")));
     page.send(Message::text(json!({"type": "model", "model": "qwen-large"}).to_string())).await.expect("send");
     assert_eq!(until(&mut page, "status").await["model"], "qwen-large");
     page.send(Message::text(json!({"type": "thinking", "level": "high"}).to_string())).await.expect("send");
