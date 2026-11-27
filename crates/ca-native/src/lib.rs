@@ -201,6 +201,17 @@ fn watch_disk(ui: Ui, send: Send) {
     });
 }
 
+/// Each message that comes in is taken in, once. What taking it reads is not followed: were it, a signal a part
+/// read while it took a message would have the same message taken again the next time that signal is set (an
+/// answer's words written twice).
+fn take_incoming(ui: Ui, send: Send, incoming: floem::reactive::RwSignal<Option<Value>>) {
+    create_effect(move |_| {
+        if let Some(m) = incoming.get() {
+            floem::reactive::untrack(|| ui.take(&m, &send));
+        }
+    });
+}
+
 fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_channel::Receiver<Value>) -> impl IntoView {
     let ui = Ui::new();
     let send: Send = Rc::new(move |v: Value| {
@@ -208,14 +219,7 @@ fn app(out: tokio::sync::mpsc::UnboundedSender<(u64, Value)>, rx: crossbeam_chan
     });
     let incoming = create_rw_signal::<Option<Value>>(None);
     floem::ext_event::update_signal_from_channel(incoming.write_only(), rx);
-    {
-        let send = send.clone();
-        create_effect(move |_| {
-            if let Some(m) = incoming.get() {
-                ui.take(&m, &send);
-            }
-        });
-    }
+    take_incoming(ui, send.clone(), incoming);
     ui.out.set(Some(send.clone()));
     send(json!({"type": "hello"}));
     docking::set_send(send.clone());

@@ -53,6 +53,10 @@
 //! Replies go to every window and page of the session and carry no request number: a part knows its own reply by
 //! the key it echoes (the path, the id, the query), never by assuming the reply is its own.
 //!
+//! Each message is taken once. What a `take` reads is not followed (the window takes a message in with following
+//! off), so a signal read there, with `get` or with `get_untracked`, never has the message taken again when it is
+//! set.
+//!
 //! A part that must read what the others made of a message (the thread once `state` is taken in, an answer once
 //! its `turn_end` is) asks to be called after them, from its `register`: `ext::after("mine", |ui, m, send| …)`.
 //!
@@ -473,6 +477,32 @@ mod tests {
         assert!(ui.available(Scm) && ui.view_shown(Scm));
         assert_eq!(ui.drawn().get_untracked(), kept);
         crate::layout::also_ready(&[]);
+    }
+
+    #[test]
+    fn a_message_that_comes_in_is_taken_once_whatever_taking_it_reads() {
+        use floem::reactive::create_rw_signal;
+
+        use crate::layout::View;
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let incoming = create_rw_signal(None::<Value>);
+        crate::take_incoming(ui, send, incoming);
+        // A part that reads a signal while it takes a message in, as one that asks whether a view is there does.
+        after("test.reads", |ui, m, _| {
+            if m["type"] == "test-read" && ui.available(View::Files) {
+                ui.message.update(|t| t.push('.'));
+            }
+        });
+        incoming.set(Some(json!({"type": "test-read"})));
+        assert_eq!(ui.message.get_untracked(), ".");
+        // The signal it read is set: the message is not taken again.
+        ui.withhold(View::Outline, true);
+        assert_eq!(ui.message.get_untracked(), ".");
+        // The same message said again by the session is another message.
+        incoming.set(Some(json!({"type": "test-read"})));
+        assert_eq!(ui.message.get_untracked(), "..");
+        after("test.reads", |_, _, _| {});
     }
 
     #[test]
