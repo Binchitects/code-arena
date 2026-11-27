@@ -34,6 +34,7 @@ pub const MESSAGES: &[(&str, crate::ide_ext::Rule)] = {
         ("changes", Side),
         ("files", Side),
         ("search", Side),
+        ("replace", Side),
         ("term_open", Side),
         ("term_in", Side),
         ("term_resize", Side),
@@ -465,10 +466,10 @@ impl Side {
             }
             "search" => {
                 let (root, out) = (self.ws.root().to_path_buf(), self.out.clone());
-                let (query, regex, case) =
-                    (m["query"].as_str().unwrap_or("").to_string(), m["regex"] == true, m["case"] == true);
-                tokio::task::spawn_blocking(move || send(&out, search(&root, &query, regex, case)));
+                let ask = Ask::of(m);
+                tokio::task::spawn_blocking(move || send(&out, search(&root, &ask)));
             }
+            "replace" => self.replace_in_files(m),
             "term_open" => self.term_open(m),
             "term_in" => {
                 let id = m["id"].as_u64().unwrap_or(0);
@@ -746,6 +747,69 @@ impl Side {
         json!({"type": "stats", "items": items})
     }
 
+    /// `replace{query, regex, case, word, include, exclude, replacement, paths?, matches?}`: the matches replaced
+    /// in `paths` (the files searched when none), or only the `matches` given ({path, line, col}); answered with
+    /// `replaced{files: [{path, count}], errors: [{path, error}]}` and then the files' `stats`, so an editor
+    /// showing one without changes takes the new text in.
+    fn replace_in_files(&self, m: &Value) {
+        let ask = Ask::of(m);
+        let with = m["replacement"].as_str().unwrap_or("").to_string();
+        let mut only: HashMap<String, Vec<(usize, usize)>> = HashMap::new();
+        for h in m["matches"].as_array().into_iter().flatten() {
+            let (line, col) = (h["line"].as_u64().unwrap_or(0) as usize, h["col"].as_u64().unwrap_or(0) as usize);
+            only.entry(h["path"].as_str().unwrap_or("").to_string()).or_default().push((line, col));
+        }
+        let mut named: Vec<String> =
+            m["paths"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect();
+        if named.is_empty() && !only.is_empty() {
+            named = only.keys().cloned().collect();
+            named.sort();
+        }
+        let mut refused = Vec::new();
+        let files: Option<Vec<(String, PathBuf)>> = (!named.is_empty()).then(|| {
+            named
+                .iter()
+                .filter_map(|p| match self.real(p) {
+                    Ok(r) => Some((p.clone(), r)),
+                    Err(e) => {
+                        refused.push(json!({"path": p, "error": e}));
+                        None
+                    }
+                })
+                .collect()
+        });
+        let (root, out) = (self.ws.root().to_path_buf(), self.out.clone());
+        tokio::task::spawn_blocking(move || {
+            let files = match files.map(Ok).unwrap_or_else(|| searched(&root, &ask)) {
+                Ok(f) => f,
+                Err(e) => {
+                    let mut reply = ask.keys("replaced");
+                    reply["files"] = json!([]);
+                    reply["errors"] = json!([{"path": "", "error": e}]);
+                    return send(&out, reply);
+                }
+            };
+            let mut reply = replace(&ask, &with, files, &only);
+            if let Some(errors) = reply["errors"].as_array_mut() {
+                errors.extend(refused);
+            }
+            let items: Vec<Value> = reply["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|f| f["path"].as_str())
+                .map(|p| match std::fs::metadata(root.join(p)) {
+                    Ok(meta) => json!({"path": p, "modified": modified(&meta)}),
+                    Err(_) => json!({"path": p, "gone": true}),
+                })
+                .collect();
+            send(&out, reply);
+            if !items.is_empty() {
+                send(&out, json!({"type": "stats", "items": items}));
+            }
+        });
+    }
+
     /// The files the agent changed in this run: each as it was before and as it is now (text only).
     fn changes(&self) -> Value {
         let text = |b: Option<Vec<u8>>| -> Option<String> {
@@ -857,48 +921,285 @@ fn files(root: &Path) -> Value {
     json!({"type": "files", "paths": paths, "more": more})
 }
 
-/// Each line that holds `query` (a regex when `regex`; any case unless `case`), in the files git sees.
-fn search(root: &Path, query: &str, regex: bool, case: bool) -> Value {
-    use grep_searcher::{BinaryDetection, SearcherBuilder, sinks::UTF8};
-    let fail = |e: String| json!({"type": "search", "query": query, "error": e});
-    if query.is_empty() {
-        return json!({"type": "search", "query": query, "hits": []});
+/// What a search (or a replace) looks for, as the Search view says it: the query (a regex when `regex`; any case
+/// unless `case`; whole words only when `word`), in the files `include` names (none: all) and not in those
+/// `exclude` names, both comma-separated globs as VS Code reads them.
+#[derive(Clone, Debug, Default)]
+struct Ask {
+    query: String,
+    regex: bool,
+    case: bool,
+    word: bool,
+    include: String,
+    exclude: String,
+}
+
+impl Ask {
+    fn of(m: &Value) -> Ask {
+        let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
+        Ask {
+            query: s("query"),
+            regex: m["regex"] == true,
+            case: m["case"] == true,
+            word: m["word"] == true,
+            include: s("include"),
+            exclude: s("exclude"),
+        }
     }
-    let pattern = if regex { query.to_string() } else { regex_escape(query) };
-    let matcher = match grep_regex::RegexMatcherBuilder::new().case_insensitive(!case).build(&pattern) {
-        Ok(m) => m,
-        Err(e) => return fail(e.to_string()),
-    };
-    let mut searcher = SearcherBuilder::new().binary_detection(BinaryDetection::quit(0)).line_number(true).build();
-    let mut hits: Vec<Value> = Vec::new();
-    let mut files = 0;
-    let mut more = false;
-    'walk: for e in walker(root).flatten() {
+
+    /// The reply's keys: what it answers, so a page knows an answer to what it asked before.
+    fn keys(&self, kind: &str) -> Value {
+        json!({"type": kind, "query": self.query, "regex": self.regex, "case": self.case, "word": self.word,
+            "include": self.include, "exclude": self.exclude})
+    }
+
+    /// The pattern a line is searched with, one for the search and the replace alike.
+    fn pattern(&self) -> Result<regex::Regex, String> {
+        let body = if self.regex { self.query.clone() } else { regex_escape(&self.query) };
+        let wordy = |c: Option<char>| self.regex || c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+        let body = if self.word {
+            let (a, z) = (wordy(self.query.chars().next()), wordy(self.query.chars().last()));
+            format!("{}(?:{body}){}", if a { r"\b" } else { "" }, if z { r"\b" } else { "" })
+        } else {
+            body
+        };
+        // Any case unless asked, and lines as the editor reads them (`$` before a \r\n too).
+        let body = if self.case { body } else { format!("(?i){body}") };
+        regex::RegexBuilder::new(&body).multi_line(true).crlf(true).build().map_err(|e| e.to_string())
+    }
+}
+
+/// Comma-separated globs as VS Code's Search view reads them: `*.rs` and `src` match at any depth, `./src` from
+/// the project's root, and a folder's name means everything in it. None when there are none.
+fn globs(text: &str) -> Result<Option<globset::GlobSet>, String> {
+    let mut set = globset::GlobSetBuilder::new();
+    let mut any = false;
+    for p in text.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let p = p.replace('\\', "/");
+        let p = match p.strip_prefix("./").or_else(|| p.strip_prefix('/')) {
+            Some(rooted) => rooted.to_string(),
+            None if p.starts_with("**/") => p,
+            None => format!("**/{p}"),
+        };
+        let p = p.trim_end_matches('/');
+        for g in [p.to_string(), format!("{p}/**")] {
+            let glob = globset::GlobBuilder::new(&g)
+                .literal_separator(true)
+                .build()
+                .map_err(|e| format!("Invalid glob pattern {g}: {e}"))?;
+            set.add(glob);
+        }
+        any = true;
+    }
+    if !any {
+        return Ok(None);
+    }
+    set.build().map(Some).map_err(|e| e.to_string())
+}
+
+/// The files a search or a replace looks in: those git sees, the include and exclude kept, not over 5 MB.
+fn searched(root: &Path, ask: &Ask) -> Result<Vec<(String, PathBuf)>, String> {
+    let (include, exclude) = (globs(&ask.include)?, globs(&ask.exclude)?);
+    let mut out = Vec::new();
+    for e in walker(root).flatten() {
         if !e.file_type().is_some_and(|t| t.is_file()) || e.metadata().map(|m| m.len() > MOST_BYTES).unwrap_or(true) {
             continue;
         }
         let rel = e.path().strip_prefix(root).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-        let mut found = Vec::new();
-        let _ = searcher.search_path(
-            &matcher,
-            e.path(),
-            UTF8(|line, text| {
-                found.push((line, text.trim_end().chars().take(240).collect::<String>()));
-                Ok(found.len() < MOST_HITS)
-            }),
-        );
-        if !found.is_empty() {
-            files += 1;
+        if include.as_ref().is_some_and(|g| !g.is_match(&rel)) || exclude.as_ref().is_some_and(|g| g.is_match(&rel)) {
+            continue;
         }
-        for (line, text) in found {
-            if hits.len() >= MOST_HITS {
-                more = true;
-                break 'walk;
+        out.push((rel, e.path().to_path_buf()));
+    }
+    Ok(out)
+}
+
+/// A line without its end (`\n` or `\r\n`), and that end.
+fn line_and_end(piece: &str) -> (&str, &str) {
+    let body = piece.strip_suffix('\n').map(|b| b.strip_suffix('\r').unwrap_or(b)).unwrap_or(piece);
+    (body, &piece[body.len()..])
+}
+
+/// The largest char boundary at or before `at`.
+fn boundary_before(text: &str, mut at: usize) -> usize {
+    at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+/// What of a long line a hit shows: from a little before the match to a little after it, and where the match is
+/// in that. A short line is shown whole.
+fn shown_part(line: &str, col: usize, len: usize) -> (String, usize) {
+    let from = if col > 120 { boundary_before(line, col - 60) } else { 0 };
+    let to = boundary_before(line, (col + len.min(300)).max(from + 300));
+    (line[from..to].to_string(), col - from)
+}
+
+/// Each match of `ask.query` in the files git sees, one hit a match: its file, its line (from 1), its column and
+/// length (in bytes of the line, as the editor counts), and the part of the line shown with where the match is in
+/// it (`at`, in bytes too).
+fn search(root: &Path, ask: &Ask) -> Value {
+    let mut reply = ask.keys("search");
+    let fail = |mut reply: Value, e: String| {
+        reply["error"] = json!(e);
+        reply
+    };
+    if ask.query.is_empty() {
+        reply["hits"] = json!([]);
+        return reply;
+    }
+    let re = match ask.pattern() {
+        Ok(r) => r,
+        Err(e) => return fail(reply, e),
+    };
+    let files_in = match searched(root, ask) {
+        Ok(f) => f,
+        Err(e) => return fail(reply, e),
+    };
+    let mut hits: Vec<Value> = Vec::new();
+    let mut files = 0;
+    let mut more = false;
+    'walk: for (rel, real) in files_in {
+        // Read whole (5 MB at most), looked through at once, and line by line only when it has a match; a file
+        // with a NUL in it is binary, one not UTF-8 is not text: neither is searched.
+        let Ok(bytes) = std::fs::read(&real) else { continue };
+        if bytes.contains(&0) {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(&bytes) else { continue };
+        if !re.is_match(text) {
+            continue;
+        }
+        let mut found = false;
+        for (n, piece) in text.split_inclusive('\n').enumerate() {
+            let (body, _) = line_and_end(piece);
+            for m in re.find_iter(body).filter(|m| !m.is_empty()) {
+                if hits.len() >= MOST_HITS {
+                    more = true;
+                    break 'walk;
+                }
+                if !found {
+                    found = true;
+                    files += 1;
+                }
+                let (shown, at) = shown_part(body, m.start(), m.len());
+                hits.push(
+                    json!({"path": rel, "line": n + 1, "col": m.start(), "len": m.len(), "text": shown, "at": at}),
+                );
             }
-            hits.push(json!({"path": rel, "line": line, "text": text}));
         }
     }
-    json!({"type": "search", "query": query, "hits": hits, "files": files, "more": more})
+    reply["hits"] = json!(hits);
+    reply["files"] = json!(files);
+    reply["more"] = json!(more);
+    reply
+}
+
+/// `$1abc` read as group 1 then `abc` (the regex crate would read a group named `1abc`), as VS Code reads it.
+fn replacement_of(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '$' && chars.peek().is_some_and(char::is_ascii_digit) {
+            out.push_str("${");
+            while let Some(d) = chars.peek().copied().filter(char::is_ascii_digit) {
+                out.push(d);
+                chars.next();
+            }
+            out.push('}');
+        } else if c == '$' && chars.peek() == Some(&'$') {
+            out.push_str("$$");
+            chars.next();
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A file's text with each match replaced (only those at `only`'s (line, col) when given), each line's own end
+/// kept; and how many were.
+fn replace_text(
+    text: &str,
+    re: &regex::Regex,
+    with: &str,
+    regex: bool,
+    only: Option<&[(usize, usize)]>,
+) -> (String, usize) {
+    let with = if regex { replacement_of(with) } else { with.to_string() };
+    let mut out = String::with_capacity(text.len());
+    let mut count = 0;
+    for (n, piece) in text.split_inclusive('\n').enumerate() {
+        let (body, end) = line_and_end(piece);
+        let mut last = 0;
+        for caps in re.captures_iter(body) {
+            let Some(m) = caps.get(0) else { continue };
+            if m.is_empty() || only.is_some_and(|o| !o.contains(&(n + 1, m.start()))) {
+                continue;
+            }
+            out.push_str(&body[last..m.start()]);
+            if regex {
+                caps.expand(&with, &mut out);
+            } else {
+                out.push_str(&with);
+            }
+            last = m.end();
+            count += 1;
+        }
+        out.push_str(&body[last..]);
+        out.push_str(end);
+    }
+    (out, count)
+}
+
+/// Every match replaced in the files given, or only the matches `only` gives (by file: line, col): a file not
+/// plain UTF-8 text, or that could not be written, is said in `errors` and left as it was.
+fn replace(ask: &Ask, with: &str, files: Vec<(String, PathBuf)>, only: &HashMap<String, Vec<(usize, usize)>>) -> Value {
+    let mut reply = ask.keys("replaced");
+    reply["files"] = json!([]);
+    reply["errors"] = json!([]);
+    let re = match ask.pattern() {
+        Ok(r) if !ask.query.is_empty() => r,
+        Ok(_) => return reply,
+        Err(e) => {
+            reply["errors"] = json!([{"path": "", "error": e}]);
+            return reply;
+        }
+    };
+    let (mut done, mut errors) = (Vec::new(), Vec::new());
+    for (rel, real) in files {
+        let at = only.get(&rel).map(Vec::as_slice);
+        if !only.is_empty() && at.is_none() {
+            continue;
+        }
+        let text = match std::fs::metadata(&real) {
+            Ok(m) if !m.is_file() || m.len() > MOST_BYTES => Err("not a plain file under 5 MB".to_string()),
+            Ok(_) => std::fs::read(&real)
+                .map_err(|e| e.to_string())
+                .and_then(|b| String::from_utf8(b).map_err(|_| "not UTF-8 text".to_string())),
+            Err(e) => Err(e.to_string()),
+        };
+        let text = match text {
+            Ok(t) => t,
+            Err(e) => {
+                errors.push(json!({"path": rel, "error": e}));
+                continue;
+            }
+        };
+        let (new, count) = replace_text(&text, &re, with, ask.regex, at);
+        if count == 0 {
+            continue;
+        }
+        match std::fs::write(&real, new) {
+            Ok(()) => done.push(json!({"path": rel, "count": count})),
+            Err(e) => errors.push(json!({"path": rel, "error": e.to_string()})),
+        }
+    }
+    reply["files"] = json!(done);
+    reply["errors"] = json!(errors);
+    reply
 }
 
 fn regex_escape(text: &str) -> String {
@@ -949,6 +1250,107 @@ mod tests {
         }
     }
 
+    fn ask(query: &str, regex: bool, case: bool) -> Ask {
+        Ask { query: query.into(), regex, case, ..Ask::default() }
+    }
+
+    fn found(r: &Value) -> Vec<String> {
+        r["hits"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|h| format!("{}:{}:{}:{}", h["path"].as_str().unwrap_or(""), h["line"], h["col"], h["len"]))
+            .collect()
+    }
+
+    #[test]
+    fn a_search_gives_each_match_with_its_column_whole_words_and_globs_kept() {
+        let (d, _s, _rx) = side();
+        std::fs::create_dir_all(d.path().join("docs/deep")).expect("dir");
+        std::fs::write(d.path().join("src/lib.rs"), "let cart = cart_of(cart);\r\n// é cart\n").expect("w");
+        std::fs::write(d.path().join("docs/deep/a.md"), "cart\n").expect("w");
+        let r = search(d.path(), &ask("cart", false, false));
+        assert_eq!(
+            found(&r),
+            ["docs/deep/a.md:1:0:4", "src/lib.rs:1:4:4", "src/lib.rs:1:11:4", "src/lib.rs:1:19:4", "src/lib.rs:2:6:4"]
+        );
+        assert_eq!((r["files"].as_u64(), r["word"].as_bool(), r["include"].as_str()), (Some(2), Some(false), Some("")));
+        let word = Ask { word: true, ..ask("cart", false, false) };
+        assert_eq!(found(&search(d.path(), &word)).len(), 4, "cart_of is not the word cart");
+        let only = |include: &str, exclude: &str| {
+            let a = Ask { include: include.into(), exclude: exclude.into(), ..ask("cart", false, false) };
+            let mut paths: Vec<String> =
+                found(&search(d.path(), &a)).iter().map(|h| h.split(':').next().unwrap_or("").to_string()).collect();
+            paths.dedup();
+            paths
+        };
+        assert_eq!(only("*.md", ""), ["docs/deep/a.md"]);
+        assert_eq!(only("docs", ""), ["docs/deep/a.md"], "a folder's name: all in it, at any depth");
+        assert_eq!(only("deep", ""), ["docs/deep/a.md"]);
+        assert!(only("./deep", "").is_empty(), "./ is from the root");
+        assert_eq!(only("./src, *.md", "deep"), ["src/lib.rs"]);
+        let bad = Ask { include: "{a".into(), ..ask("cart", false, false) };
+        assert!(search(d.path(), &bad)["error"].is_string());
+        // A long line shows the part around its match, and where the match is in it.
+        std::fs::write(d.path().join("src/long.rs"), format!("{}needle{}\n", "x".repeat(500), "y".repeat(500)))
+            .expect("w");
+        let r = search(d.path(), &ask("needle", false, true));
+        let h = &r["hits"][0];
+        let (text, at) = (h["text"].as_str().unwrap_or(""), h["at"].as_u64().unwrap_or(0) as usize);
+        assert_eq!((h["col"].as_u64(), &text[at..at + 6]), (Some(500), "needle"));
+        assert!(text.len() < 400, "{}", text.len());
+    }
+
+    #[test]
+    fn a_replace_changes_what_the_search_found_and_keeps_each_line_end() {
+        let (d, _s, _rx) = side();
+        let file = d.path().join("src/lib.rs");
+        std::fs::write(&file, "foo(1) foo\r\nbar foo\nfoo").expect("w");
+        let files = || vec![("src/lib.rs".to_string(), file.clone())];
+        let none = HashMap::new();
+        let end = ask("foo$", true, true);
+        assert_eq!(found(&search(d.path(), &end)).len(), 3, "foo at a line's end, CRLF or not");
+        let r = replace(&end, "x", files(), &none);
+        assert_eq!(r["files"], json!([{"path": "src/lib.rs", "count": 3}]));
+        assert_eq!(std::fs::read_to_string(&file).expect("r"), "foo(1) x\r\nbar x\nx");
+        // Groups with a regex, `$1abc` as group 1 then abc; the text as it is without.
+        replace(&ask(r"foo\((\d)\)", true, true), "$1abc", files(), &none);
+        assert_eq!(std::fs::read_to_string(&file).expect("r"), "1abc x\r\nbar x\nx");
+        replace(&ask("x", false, true), "$1", files(), &none);
+        assert_eq!(std::fs::read_to_string(&file).expect("r"), "1abc $1\r\nbar $1\n$1");
+        // Only the match asked for, by its line and column.
+        let one: HashMap<String, Vec<(usize, usize)>> = [("src/lib.rs".to_string(), vec![(2, 4)])].into();
+        let r = replace(&ask("$1", false, true), "y", files(), &one);
+        assert_eq!(r["files"][0]["count"], 1);
+        assert_eq!(std::fs::read_to_string(&file).expect("r"), "1abc $1\r\nbar y\n$1");
+        // Not UTF-8: said, and left as it was.
+        std::fs::write(&file, b"foo \xff").expect("w");
+        let r = replace(&ask("foo", false, true), "x", files(), &none);
+        assert!(r["errors"][0]["error"].is_string() && r["files"] == json!([]), "{r}");
+        assert_eq!(std::fs::read(&file).expect("r"), b"foo \xff");
+    }
+
+    #[tokio::test]
+    async fn a_replace_asked_of_the_side_answers_then_says_the_files_changed() {
+        let (d, s, mut rx) = side();
+        s.handle(
+            &json!({"type": "replace", "query": "main", "replacement": "start", "paths": ["src/main.rs", "../out"]}),
+        );
+        let mut got = Vec::new();
+        for _ in 0..200 {
+            got.extend(drain(&mut rx));
+            if got.iter().any(|v| v["type"] == "stats") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let r = got.iter().find(|v| v["type"] == "replaced").expect("replaced");
+        assert_eq!((r["query"].as_str(), r["files"][0]["count"].as_u64()), (Some("main"), Some(1)));
+        assert_eq!(r["errors"][0]["path"], "../out");
+        assert!(got.iter().any(|v| v["type"] == "stats" && v["items"][0]["path"] == "src/main.rs"), "{got:?}");
+        assert_eq!(std::fs::read_to_string(d.path().join("src/main.rs")).expect("r"), "fn start() {}\n");
+    }
+
     #[test]
     fn quick_open_and_search_see_what_git_sees() {
         let (d, _s, _rx) = side();
@@ -960,7 +1362,7 @@ mod tests {
         let paths: Vec<&str> = f["paths"].as_array().expect("paths").iter().filter_map(Value::as_str).collect();
         assert!(paths.contains(&"src/main.rs") && paths.contains(&"src/lib.rs"), "{paths:?}");
         assert!(!paths.iter().any(|p| p.starts_with("target/")), "ignored by git: {paths:?}");
-        let r = search(d.path(), "main", false, false);
+        let r = search(d.path(), &ask("main", false, false));
         let hits: Vec<String> = r["hits"]
             .as_array()
             .expect("hits")
@@ -969,9 +1371,9 @@ mod tests {
             .collect();
         assert_eq!(hits, ["src/lib.rs:1", "src/lib.rs:2", "src/main.rs:1"]);
         // As typed: the dot and the brackets are not a pattern; with case kept, "Main" only.
-        assert_eq!(search(d.path(), "(a.b)", false, false)["hits"].as_array().map(Vec::len), Some(1));
-        assert_eq!(search(d.path(), "Main", false, true)["hits"].as_array().map(Vec::len), Some(1));
-        assert!(search(d.path(), "(", true, false)["error"].is_string());
+        assert_eq!(search(d.path(), &ask("(a.b)", false, false))["hits"].as_array().map(Vec::len), Some(1));
+        assert_eq!(search(d.path(), &ask("Main", false, true))["hits"].as_array().map(Vec::len), Some(1));
+        assert!(search(d.path(), &ask("(", true, false))["error"].is_string());
     }
 
     #[test]
