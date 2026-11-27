@@ -296,7 +296,8 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
             }
         }
     })
-    .use_doc(tab.doc.clone())
+    // As a file's (`decor::doc`): its brackets and quotes closed as they are typed.
+    .use_doc(crate::decor::doc(tab.doc.clone(), &tab.path))
     .styling_rc(colours)
     .editor_style(move |s| {
         s.gutter_dim_color(c.line_number)

@@ -133,8 +133,7 @@ pub enum Comment {
 
 /// The text's line ending (`\r\n` when it has one, else `\n`).
 fn ending(t: &RopeTextRef) -> &'static str {
-    let probe = t.slice_to_cow(0..t.len().min(4096));
-    if probe.contains("\r\n") { "\r\n" } else { "\n" }
+    if t.line_content(0).ends_with("\r\n") { "\r\n" } else { "\n" }
 }
 
 /// A line's text, without its ending.
@@ -615,10 +614,9 @@ pub fn bracket_jump(text: &str, at: usize) -> Option<usize> {
 
 /// Expand Selection (Shift+Alt+Right): the least of what holds the selection and is more: its word, the inside of
 /// the quotes or brackets it is in, those with the quotes or brackets, its line's text, its whole lines, the text.
-pub fn expand(text: &str, s: Sel) -> Sel {
+pub fn expand(rope: &Rope, text: &str, s: Sel) -> Sel {
     let (lo, hi) = (s.min(), s.max());
-    let rope = Rope::from(text);
-    let t = RopeTextRef::new(&rope);
+    let t = RopeTextRef::new(rope);
     let b = text.as_bytes();
     let mut spans: Vec<(usize, usize)> = Vec::new();
     if let Some(w) = word_at(&t, lo) {
@@ -714,11 +712,11 @@ fn closer(c: char) -> Option<char> {
 }
 
 fn char_at(t: &RopeTextRef, at: usize) -> Option<char> {
-    t.slice_to_cow(at..t.len().min(at + 4)).chars().next()
+    t.slice_to_cow(at..t.next_grapheme_offset(at, 1, t.len())).chars().next()
 }
 
 fn char_before(t: &RopeTextRef, at: usize) -> Option<char> {
-    t.slice_to_cow(at.saturating_sub(4)..at).chars().next_back()
+    t.slice_to_cow(t.prev_grapheme_offset(at, 1, 0)..at).chars().next_back()
 }
 
 /// A character typed, as VS Code closes pairs: a closer typed before the same closer goes over it; an opened
@@ -728,7 +726,8 @@ pub fn typed(text: &Rope, sels: &[Sel], c: char, brackets: Close, quotes: Close,
     let t = RopeTextRef::new(text);
     let quote = quote_chars.contains(c);
     let rule = if quote { quotes } else { brackets };
-    if sels.is_empty() || rule == Close::Never && !")]}".contains(c) {
+    // Never: not closed, nor typed over.
+    if sels.is_empty() || rule == Close::Never {
         return None;
     }
     let carets = sels.iter().all(|s| s.is_caret());
@@ -959,9 +958,9 @@ fn grow(ui: Ui, out: bool) {
     let id = e.id().to_raw();
     let kept = GROWN.with(|g| g.borrow().clone()).filter(|(i, _, now)| *i == id && *now == sels);
     if out {
-        let text = e.doc().text();
-        let text = text.slice_to_cow(0..text.len());
-        let wider: Vec<Sel> = sels.iter().map(|s| expand(&text, *s)).collect();
+        let rope = e.doc().text();
+        let text = rope.slice_to_cow(0..rope.len());
+        let wider: Vec<Sel> = sels.iter().map(|s| expand(&rope, &text, *s)).collect();
         if wider == sels {
             return;
         }
@@ -1176,11 +1175,11 @@ pub fn key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
                 None => false,
             }
         }
+        // Taken when a command ran (else Floem's own keymap has it).
         _ if editor_only(key, mods) => {
-            super::tell(ui, |send| {
-                commands::press(ui, send, key, mods);
-            });
-            true
+            let mut ran = false;
+            super::tell(ui, |send| ran = commands::press(ui, send, key, mods) != commands::Pressed::Free);
+            ran
         }
         _ => false,
     }
@@ -1344,17 +1343,17 @@ mod tests {
         assert_eq!(bracket_jump(text, 6), Some(7));
         assert_eq!(bracket_jump(text, 13), Some(14));
         assert_eq!(bracket_jump("abc", 1), None);
-        let s = expand(text, Sel::caret(6));
+        let s = expand(&r(text), text, Sel::caret(6));
         assert_eq!(s, Sel::new(6, 7));
-        let s = expand(text, s);
+        let s = expand(&r(text), text, s);
         assert_eq!(s, Sel::new(5, 8));
-        let s = expand(text, s);
+        let s = expand(&r(text), text, s);
         assert_eq!(s, Sel::new(2, 8));
-        let s = expand(text, s);
+        let s = expand(&r(text), text, s);
         assert_eq!(s, Sel::new(1, 9));
-        assert_eq!(expand(text, s), Sel::new(0, text.len()));
-        assert_eq!(expand("say \"hi there\"", Sel::caret(6)), Sel::new(5, 7));
-        assert_eq!(expand("say \"hi there\"", Sel::new(5, 7)), Sel::new(5, 13));
+        assert_eq!(expand(&r(text), text, s), Sel::new(0, text.len()));
+        assert_eq!(expand(&r("say \"hi there\""), "say \"hi there\"", Sel::caret(6)), Sel::new(5, 7));
+        assert_eq!(expand(&r("say \"hi there\""), "say \"hi there\"", Sel::new(5, 7)), Sel::new(5, 13));
     }
 
     #[test]
@@ -1400,11 +1399,25 @@ mod tests {
     }
 
     #[test]
+    fn a_character_of_several_bytes_is_never_cut() {
+        let lang = Close::LanguageDefined;
+        assert!(delete_pair(&r("éabc"), &[Sel::caret(2)]).is_none());
+        assert!(delete_pair(&r("é"), &[Sel::caret(2)]).is_none());
+        assert!(typed(&r("aéé"), &[Sel::caret(0)], '(', lang, lang, "\"").is_none());
+        assert_eq!(run("é", typed(&r("é"), &[Sel::caret(2)], '(', lang, lang, "\"")).0, "é()");
+        let long = "é".repeat(3000);
+        assert!(newline(&r(&long), &[Sel::caret(long.len())], "  ", "full", false).is_some());
+        assert!(typed(&r("é)"), &[Sel::caret(2)], ')', Close::Never, lang, "\"").is_none());
+    }
+
+    #[test]
     fn the_keys_parse_as_bindings() {
         for keys in ["Ctrl+/", "Ctrl+]", "Ctrl+[", "Ctrl+Shift+\\", "Shift+Alt+A", "Ctrl+K Ctrl+C"] {
             assert!(commands::parse_keys(keys).is_some(), "{keys}");
         }
         let slash = Chord::of(&Key::Character("/".into()), Modifiers::CONTROL).expect("a chord");
         assert_eq!(commands::parse_keys("Ctrl+/"), Some(vec![slash]));
+        let bar = Chord::of(&Key::Character("|".into()), Modifiers::CONTROL | Modifiers::SHIFT).expect("a chord");
+        assert_eq!(commands::parse_keys("Ctrl+Shift+\\"), Some(vec![bar]));
     }
 }
