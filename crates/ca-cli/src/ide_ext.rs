@@ -127,6 +127,8 @@ pub const TAKEN: &[&str] = &[
     "notice",
     "tool_start",
     "tool_end",
+    "tool_waiting",
+    "tool_progress",
     "step_end",
     "ask",
     "answered",

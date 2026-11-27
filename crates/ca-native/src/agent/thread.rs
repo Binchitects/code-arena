@@ -50,7 +50,7 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
             around_item(ui, &send, ItemSlot::QuestionTop, own, ItemSlot::QuestionFoot, &i)
         }
         Kind::Assistant(answer) => {
-            let own = super::answer::view(ui, answer).into_any();
+            let own = super::answer::view(ui, answer, send.clone()).into_any();
             around_item(ui, &send, ItemSlot::AnswerTop, own, ItemSlot::AnswerFoot, &i)
         }
         Kind::Compaction { .. } => super::compaction::view(ui, send, &i),

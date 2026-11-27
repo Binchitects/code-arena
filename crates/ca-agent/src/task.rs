@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::context::Window;
 use crate::library::Source;
 use crate::policy::{Approver, Policy};
-use crate::{Agent, Events, TurnError};
+use crate::{Agent, Call, Events, TurnError};
 
 /// What a sub-agent starts from: the session as it is (kept up to date by the session: its model, its mode).
 #[derive(Clone)]
@@ -56,9 +56,9 @@ impl Events for Steps {
     fn notice(&mut self, t: &str) {
         (self.say)(format!("  ↳ {}: {t}", self.name));
     }
-    fn tool_end(&mut self, name: &str, subject: &str, o: &Output) {
-        let s: String = subject.lines().next().unwrap_or("").chars().take(80).collect();
-        (self.say)(format!("  ↳ {}: ● {name} {s}{}", self.name, if o.is_error { " (failed)" } else { "" }));
+    fn tool_end(&mut self, call: &Call<'_>, o: &Output, _took: std::time::Duration) {
+        let s: String = call.subject.lines().next().unwrap_or("").chars().take(80).collect();
+        (self.say)(format!("  ↳ {}: ● {} {s}{}", self.name, call.name, if o.is_error { " (failed)" } else { "" }));
     }
 }
 

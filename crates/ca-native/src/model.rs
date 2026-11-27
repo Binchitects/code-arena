@@ -187,6 +187,8 @@ pub struct Tool {
     /// What it changed in a file, when it is an edit.
     pub diff: Option<Rc<EditDiff>>,
     pub progress: Option<Progress>,
+    /// When it began to run in this window (none: not running, or read back from the session).
+    pub began: Option<std::time::Instant>,
 }
 
 impl Tool {
@@ -205,6 +207,7 @@ impl Tool {
             cut: v["cut"] == true,
             diff: EditDiff::from_json(&v["diff"]).map(Rc::new),
             progress: None,
+            began: None,
         }
     }
 }
