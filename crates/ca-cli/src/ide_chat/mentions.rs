@@ -1,9 +1,9 @@
 //! The box's @ mentions: any folder on this machine listed for a whole path typed after @, and what a message's
 //! mentions sent with it.
 //!
-//! - `folders{path}` → `folders{path, dir, parent, entries: [{name, dir}], more, error}`: the folder `path` names
-//!   (`~/` the home folder's), its folders first and then its files, each by name as the system sorts them less
-//!   case, `MOST` at most (`more`: there were others). `path` is said again as it came, `dir` is the folder as a
+//! - `folders{path, files}` → `folders{path, dir, parent, entries: [{name, dir}], more, error}`: the folder `path`
+//!   names (`~/` the home folder's), its folders first and then its files (none for `files: false`), each by
+//!   name, case aside, `MOST` at most (`more`: there were others). `path` is said again as it came, `dir` is the folder as a
 //!   whole path, `parent` the one above it (null at the top); a folder that cannot be read says why in `error`.
 //!   A `key` the request carries is said again.
 //! - `attached{q, labels}` after `user`: what the engine's mention expansion (`ca_agent::mentions`) sent with
@@ -31,7 +31,7 @@ fn whole(path: &str, home: Option<&Path>) -> PathBuf {
 }
 
 /// The folder a path names, listed as the reply says it.
-fn list(path: &str, home: Option<&Path>) -> Value {
+fn list(path: &str, files: bool, home: Option<&Path>) -> Value {
     let dir = whole(path, home);
     let mut reply = json!({
         "type": "folders",
@@ -60,6 +60,7 @@ fn list(path: &str, home: Option<&Path>) -> Value {
             let is_dir = std::fs::metadata(e.path()).map(|m| m.is_dir()).unwrap_or(false);
             (is_dir, e.file_name().to_string_lossy().into_owned())
         })
+        .filter(|(dir, _)| files || *dir)
         .collect();
     entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase())));
     reply["more"] = json!(entries.len() > MOST);
@@ -69,10 +70,11 @@ fn list(path: &str, home: Option<&Path>) -> Value {
 
 /// `folders`: the folder listed off the driver's loop.
 pub fn asked(sh: &Shared, m: &Value) -> bool {
+    let files = m["files"] != false;
     let (path, key, home, out) =
         (m["path"].as_str().unwrap_or("").to_string(), m["key"].clone(), sh.home.clone(), sh.out.clone());
     let work = move || {
-        let mut reply = list(&path, home.as_deref());
+        let mut reply = list(&path, files, home.as_deref());
         if key.is_string() || key.is_number() {
             reply["key"] = key;
         }
@@ -117,7 +119,9 @@ mod tests {
         std::fs::write(d.path().join("b.txt"), "").expect("write");
         std::fs::write(d.path().join("A.md"), "").expect("write");
         let path = d.path().to_string_lossy().replace('\\', "/");
-        let m = list(&path, None);
+        let m = list(&path, true, None);
+        let folders = list(&path, false, None);
+        assert_eq!(folders["entries"].as_array().map(Vec::len), Some(2));
         assert_eq!(m["type"], "folders");
         assert_eq!(m["path"], path.as_str());
         assert!(m["error"].is_null());
@@ -136,12 +140,12 @@ mod tests {
         let home = tempfile::tempdir().expect("temp");
         std::fs::create_dir(home.path().join("notes")).expect("mkdir");
         std::fs::write(home.path().join("notes/n.md"), "").expect("write");
-        let m = list("~/notes/", Some(home.path()));
+        let m = list("~/notes/", true, Some(home.path()));
         assert_eq!(m["path"], "~/notes/");
         assert_eq!(m["entries"][0]["name"], "n.md");
         assert!(m["dir"].as_str().unwrap_or("").ends_with("notes"));
-        let gone = list("~/gone/", Some(home.path()));
+        let gone = list("~/gone/", true, Some(home.path()));
         assert!(gone["error"].is_string() && gone["entries"].as_array().is_some_and(Vec::is_empty));
-        assert_eq!(list("relative/", None)["error"], "Not a whole path.");
+        assert_eq!(list("relative/", true, None)["error"], "Not a whole path.");
     }
 }

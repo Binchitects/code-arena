@@ -283,6 +283,10 @@ pub struct Mentions {
     next_key: RwSignal<u64>,
     /// What each question's mentions sent with it, by its number.
     attached: RwSignal<HashMap<u64, Rc<Vec<String>>>>,
+    /// The session they are of: another's thread has none of them.
+    session: RwSignal<String>,
+    /// The list is to follow the box once the key or the change at hand has been acted on.
+    pending: RwSignal<bool>,
 }
 
 impl crate::ext::State for Mentions {
@@ -302,6 +306,8 @@ impl crate::ext::State for Mentions {
             asked: s.create_rw_signal((String::new(), String::new())),
             next_key: s.create_rw_signal(1),
             attached: s.create_rw_signal(HashMap::new()),
+            session: s.create_rw_signal(String::new()),
+            pending: s.create_rw_signal(false),
         }
     }
 }
@@ -343,7 +349,7 @@ fn refresh(ui: Ui, send: &Send) {
                     let key = format!("mention-{}", me.next_key.get_untracked());
                     me.next_key.update(|n| *n += 1);
                     me.asked.set((dir.to_string(), key.clone()));
-                    send(json!({"type": "folders", "path": dir, "key": key}));
+                    send(json!({"type": "folders", "path": dir, "files": true, "key": key}));
                 }
                 (Vec::new(), 0, "Listing the folder…".into())
             }
@@ -476,26 +482,29 @@ fn key(ui: Ui, send: &Send, key: &Key, mods: Modifiers) -> bool {
             _ => {}
         }
     }
-    // Only what is typed opens it: a letter, or a key that edits or moves through the text.
-    let edits = matches!(key, Key::Character(_))
-        || matches!(
-            key,
-            Key::Named(
-                NamedKey::Backspace
-                    | NamedKey::Delete
-                    | NamedKey::ArrowLeft
-                    | NamedKey::ArrowRight
-                    | NamedKey::Home
-                    | NamedKey::End
-                    | NamedKey::Space
-            )
-        );
+    // Only what is typed opens it: a letter, or a key that takes one away. Once open, any key may move the caret
+    // out of the mention.
+    let edits = matches!(key, Key::Character(_) | Key::Named(NamedKey::Backspace | NamedKey::Delete | NamedKey::Space));
     let ctrl = mods.intersects(Modifiers::CONTROL | Modifiers::META);
     if (edits && !ctrl) || me.open.with_untracked(Option::is_some) {
-        let send = send.clone();
-        exec_after(Duration::ZERO, move |_| follow(ui, &send));
+        follow_soon(ui, send);
     }
     false
+}
+
+/// The list follows the box once what is at hand has been acted on (the key, the text changed): once, however
+/// many asked.
+fn follow_soon(ui: Ui, send: &Send) {
+    let me = ui.state::<Mentions>();
+    if me.pending.get_untracked() {
+        return;
+    }
+    me.pending.set(true);
+    let send = send.clone();
+    exec_after(Duration::ZERO, move |_| {
+        me.pending.set(false);
+        follow(ui, &send);
+    });
 }
 
 /// A row: its icon, its name and folder with the letters typed lit; chosen on the press (the box keeps the keys).
@@ -540,12 +549,26 @@ fn menu(ui: Ui, send: Send) -> impl IntoView {
     let me = ui.state::<Mentions>();
     {
         // The files or a folder came while the list is open: its rows made again.
-        let send = send.clone();
+        let again = send.clone();
         create_effect(move |_| {
             ui.quick_files.track();
             me.listing.track();
             if me.open.with_untracked(Option::is_some) {
-                refresh(ui, &send);
+                refresh(ui, &again);
+            }
+        });
+        // The box's text changed while the list is open (sent, put in from elsewhere): the list follows it. Quick
+        // Open or a picker opened: it closes.
+        let send = send.clone();
+        create_effect(move |_| {
+            ui.draft.track();
+            if me.open.with_untracked(Option::is_some) {
+                follow_soon(ui, &send);
+            }
+        });
+        create_effect(move |_| {
+            if ui.quick.with(Option::is_some) || ui.picker.with(Option::is_some) {
+                close(ui);
             }
         });
     }
@@ -686,6 +709,25 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
                 me.listing.set(Some(Rc::new(Listing::from_json(m))));
             }
         }
+        // A question numbered as one before it (a rewind, another session): what that one sent is not its.
+        "user" => {
+            if let Some(q) = m["q"].as_u64()
+                && me.attached.with_untracked(|a| a.contains_key(&q))
+            {
+                me.attached.update(|a| {
+                    a.remove(&q);
+                });
+            }
+        }
+        "state" => {
+            let session = m["session"].as_str().unwrap_or("");
+            if me.session.with_untracked(|s| s != session) {
+                me.session.set(session.to_string());
+                if me.attached.with_untracked(|a| !a.is_empty()) {
+                    me.attached.set(HashMap::new());
+                }
+            }
+        }
         "attached" => {
             let labels: Vec<String> =
                 m["labels"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
@@ -811,5 +853,25 @@ mod tests {
         assert_eq!(me.listing.get_untracked().map(|l| l.dir.clone()), Some("/tmp".into()));
         take(ui, &json!({"type": "attached", "q": 2, "labels": ["src/a.rs:1-3", "src/"]}), &send);
         assert_eq!(me.attached.with_untracked(|a| a.get(&2).map(|l| l.len())), Some(2));
+        // The same session again (a window that came back): its chips stay.
+        take(ui, &json!({"type": "state", "session": ""}), &send);
+        assert!(me.attached.with_untracked(|a| a.contains_key(&2)));
+    }
+
+    #[test]
+    fn a_question_numbered_again_or_another_session_has_none_of_the_chips_before() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let me = ui.state::<Mentions>();
+        take(ui, &json!({"type": "state", "session": "s1"}), &send);
+        take(ui, &json!({"type": "attached", "q": 1, "labels": ["a.rs"]}), &send);
+        take(ui, &json!({"type": "attached", "q": 2, "labels": ["b.rs"]}), &send);
+        // Rewound to before question 2, and a question 2 sent again with no mention.
+        take(ui, &json!({"type": "user", "q": 2, "text": "plain"}), &send);
+        assert_eq!(me.attached.with_untracked(|a| a.keys().copied().collect::<Vec<_>>()), [1]);
+        take(ui, &json!({"type": "state", "session": "s1"}), &send);
+        assert!(me.attached.with_untracked(|a| a.contains_key(&1)));
+        take(ui, &json!({"type": "state", "session": "s2"}), &send);
+        assert!(me.attached.with_untracked(HashMap::is_empty));
     }
 }
