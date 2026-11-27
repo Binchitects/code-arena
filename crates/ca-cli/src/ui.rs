@@ -1,8 +1,11 @@
 //! What the program says on the terminal: progress on stderr (dimmed, coloured when it is a terminal), the answer
-//! on stdout.
+//! on stdout. Where there is no terminal to say it on (the IDE), a [`Capture`] collects the lines instead, and
+//! whoever asked for it says them its own way (a notice in the thread).
 
+use std::collections::HashMap;
 use std::io::{IsTerminal, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 /// Whether the terminal is in raw mode (the chat): lines must then end with `\r\n`.
 static RAW: AtomicBool = AtomicBool::new(false);
@@ -30,11 +33,59 @@ pub fn out(text: &str) {
 #[derive(Debug, Clone, Copy)]
 pub struct Ui {
     pub color: bool,
+    /// Which [`Capture`] takes what is said (0: none, it goes to stderr).
+    capture: u32,
+}
+
+/// What each capture was told so far, by its number. A number and not the lines themselves, so that a `Ui` stays
+/// a plain copyable value that closures and other threads may hold.
+fn captured() -> &'static Mutex<HashMap<u32, Vec<String>>> {
+    static ALL: OnceLock<Mutex<HashMap<u32, Vec<String>>>> = OnceLock::new();
+    ALL.get_or_init(Mutex::default)
+}
+
+/// A `Ui` whose lines are kept instead of written to the terminal, for as long as this lives: what a command
+/// written for the terminal says can then be shown elsewhere. Its `ui` has no colours.
+#[allow(dead_code)] // For the IDE's commands: none is answered through it yet.
+pub struct Capture {
+    pub ui: Ui,
+}
+
+#[allow(dead_code)] // As `Capture`.
+impl Capture {
+    /// The lines said so far, taken out (a second call gives what was said since).
+    pub fn lines(&self) -> Vec<String> {
+        captured().lock().ok().and_then(|mut all| all.get_mut(&self.ui.capture).map(std::mem::take)).unwrap_or_default()
+    }
+
+    /// The lines said so far as one text, taken out.
+    pub fn text(&self) -> String {
+        self.lines().join("\n")
+    }
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        if let Ok(mut all) = captured().lock() {
+            all.remove(&self.ui.capture);
+        }
+    }
 }
 
 impl Ui {
     pub fn new(color_setting: bool, no_color_env: bool) -> Self {
-        Self { color: color_setting && !no_color_env && std::io::stderr().is_terminal() }
+        Self { color: color_setting && !no_color_env && std::io::stderr().is_terminal(), capture: 0 }
+    }
+
+    /// A `Ui` that keeps what it is told ([`Capture::lines`]) instead of writing it to the terminal.
+    #[allow(dead_code)] // As `Capture`.
+    pub fn capture() -> Capture {
+        static NEXT: AtomicU32 = AtomicU32::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed).max(1);
+        if let Ok(mut all) = captured().lock() {
+            all.insert(id, Vec::new());
+        }
+        Capture { ui: Ui { color: false, capture: id } }
     }
 
     fn paint(&self, code: &str, text: &str) -> String {
@@ -57,8 +108,16 @@ impl Ui {
         self.paint("33", text)
     }
 
-    /// A line of progress on stderr.
+    /// A line of progress on stderr (or to the capture this `Ui` belongs to; nowhere once that capture is gone).
     pub fn say(&self, text: &str) {
+        if self.capture != 0 {
+            if let Ok(mut all) = captured().lock()
+                && let Some(lines) = all.get_mut(&self.capture)
+            {
+                lines.push(text.to_string());
+            }
+            return;
+        }
         let mut e = std::io::stderr().lock();
         let _ = e.write_all(term(&format!("{text}\n")).as_bytes());
         let _ = e.flush();
@@ -109,5 +168,25 @@ mod tests {
         assert_eq!(short(12_400), "12.4k");
         assert_eq!(short(131_000), "131k");
         assert_eq!(short(1_500_000), "1.5M");
+    }
+
+    #[test]
+    fn a_capture_keeps_what_is_said_plain_and_each_its_own() {
+        let (one, two) = (Ui::capture(), Ui::capture());
+        let ui = one.ui;
+        // A copy in another thread says to the same capture.
+        std::thread::spawn(move || ui.say(&ui.red("from a thread"))).join().expect("joined");
+        one.ui.say(&one.ui.bold("second"));
+        two.ui.say("the other");
+        assert_eq!(one.lines(), ["from a thread", "second"], "no colours, in order");
+        assert_eq!(one.lines(), Vec::<String>::new(), "taken out once");
+        one.ui.say("third");
+        assert_eq!(one.text(), "third");
+        assert_eq!(two.text(), "the other");
+        // Once the capture is gone, what its `Ui` is told goes nowhere (and not to the terminal).
+        let late = two.ui;
+        drop(two);
+        late.say("lost");
+        assert!(captured().lock().expect("lock").get(&late.capture).is_none());
     }
 }

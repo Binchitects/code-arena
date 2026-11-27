@@ -16,6 +16,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 url.workspace = true
+# An attachment's content as text.
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile.workspace = true

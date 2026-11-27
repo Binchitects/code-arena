@@ -1,8 +1,10 @@
 //! The agent's own tools: files, search, commands and git, inside the folders it may use.
 
 pub mod checkpoints;
+pub mod code_index;
 pub mod commits;
 mod files;
+pub mod formatters;
 mod git;
 pub mod jobs;
 pub mod plan;
@@ -10,6 +12,7 @@ pub mod sandbox;
 mod search;
 mod shell;
 pub mod text;
+pub mod vm;
 
 use std::path::PathBuf;
 use std::sync::Arc;

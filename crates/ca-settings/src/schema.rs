@@ -458,8 +458,9 @@ pub static ALL: &[&Setting] = &[
     &SANDBOX_WRITABLE,
 ];
 
+/// A setting by its key: one of [`ALL`], or one of the IDE's own ([`crate::ide_schema::ALL`]).
 pub fn find(key: &str) -> Option<&'static Setting> {
-    ALL.iter().copied().find(|s| s.key == key)
+    ALL.iter().chain(crate::ide_schema::ALL).copied().find(|s| s.key == key)
 }
 
 #[cfg(test)]
@@ -470,7 +471,7 @@ mod tests {
     #[test]
     fn keys_are_unique_and_defaults_fit() {
         let mut seen = HashSet::new();
-        for s in ALL {
+        for s in ALL.iter().chain(crate::ide_schema::ALL) {
             assert!(seen.insert(s.key), "{} twice", s.key);
             assert!(s.accepts(&s.default_value()), "{}'s default is not of its kind", s.key);
             assert!(!s.description.is_empty(), "{} says nothing", s.key);

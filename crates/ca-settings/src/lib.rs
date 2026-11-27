@@ -7,6 +7,7 @@
 
 pub mod connection;
 pub mod env;
+pub mod ide_schema;
 pub mod jsonc;
 pub mod schema;
 pub mod settings;

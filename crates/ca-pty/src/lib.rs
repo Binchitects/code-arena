@@ -7,6 +7,10 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
+// Windows' own calls, for its pseudo-terminal: named here until that is written.
+#[cfg(windows)]
+use windows_sys as _;
+
 /// A program running on a pseudo-terminal.
 pub struct Pty {
     #[cfg(unix)]
