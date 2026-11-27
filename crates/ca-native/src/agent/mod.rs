@@ -10,7 +10,7 @@
 use floem::kurbo::Rect;
 use floem::reactive::{SignalGet, create_rw_signal};
 use floem::style::Style;
-use floem::views::{Decorators, stack, text_input, v_stack_from_iter};
+use floem::views::{Decorators, stack, v_stack_from_iter};
 use floem::{IntoView, View};
 
 use crate::state::{Send, Ui};
@@ -47,11 +47,10 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     // Where the pill that opened a picker is in the window (its menu is placed over it), and the input, which the
     // keys go back to when the menu closes.
     let anchor = create_rw_signal(Rect::ZERO);
-    let field = text_input(ui.draft);
-    let back = field.id();
+    let (input, back) = composer::input(ui, send.clone(), anchor);
     let mut parts = vec![header::view(ui, send.clone()).into_any(), thread::thread(ui, send.clone()).into_any()];
     parts.extend(bars(ui, &send));
-    parts.push(composer::input(ui, send.clone(), field, anchor).into_any());
+    parts.push(input);
     parts.extend(slots::column(ui, &send, slots::Slot::BoxFoot));
     let column = v_stack_from_iter(parts);
     // The view's place in the window: the menu's layer fills the same.

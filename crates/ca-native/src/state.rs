@@ -515,6 +515,7 @@ impl Ui {
             "sizes": self.sizes.with_untracked(|m| {
                 m.iter().map(|(id, s)| (id.to_string(), json!(s.get_untracked()))).collect::<serde_json::Map<_, _>>()
             }),
+            "draft": self.draft.get_untracked(),
         })
     }
 
