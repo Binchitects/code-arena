@@ -111,6 +111,10 @@ impl Diffs {
     /// The turn ended: each diff of its calls is kept with the call's result in the session.
     pub fn keep(sh: &Shared, store: &Mutex<ca_session::Store>) {
         let me = sh.kept.of::<Diffs>();
+        // A call the turn's stop cut off never ended: its file's text before it goes.
+        if let Ok(mut g) = me.0.lock() {
+            g.before.retain(|(session, _), _| *session != sh.session);
+        }
         let Ok(store) = store.lock() else { return };
         let Ok(page) = store.page(&sh.session, 1, None) else { return };
         for m in &page.messages {

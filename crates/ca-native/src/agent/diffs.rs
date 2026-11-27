@@ -281,17 +281,58 @@ fn line(ui: Ui, send: Send, path: &str, l: DiffLine) -> impl IntoView {
     })
 }
 
-/// Under a finished answer: the files its edits changed.
+/// What an item of the thread is to a turn: a request begins one, an answer is part of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Mark {
+    Request,
+    Answer,
+    Other,
+}
+
+/// The items of the turn whose answer is at `at`, when it is the turn's last answer (the one "N files changed" is
+/// under); none for an answer before it. A turn runs from after its request to the next request.
+pub fn turn_span(marks: &[Mark], at: usize) -> Option<std::ops::Range<usize>> {
+    if marks.get(at) != Some(&Mark::Answer) {
+        return None;
+    }
+    let start = marks[..at].iter().rposition(|m| *m == Mark::Request).map(|r| r + 1).unwrap_or(0);
+    let end = marks[at..].iter().position(|m| *m == Mark::Request).map(|r| at + r).unwrap_or(marks.len());
+    let last = (start..end).rev().find(|i| marks[*i] == Mark::Answer)?;
+    (last == at).then_some(start..end)
+}
+
+/// Under a turn's last answer, once the turn is over: the files its edits changed.
 fn changed(ui: Ui, send: Send, item: &Item) -> AnyView {
-    let Kind::Assistant(answer) = &item.kind else { return empty().into_any() };
+    if !matches!(item.kind, Kind::Assistant(_)) {
+        return empty().into_any();
+    }
     let t = ui.colors;
     let id = item.id;
-    let tools = answer.tools;
     let running = ui.running;
     let items = ui.items;
     let files = create_memo(move |_| {
-        let writing = running.get() && items.with(|l| l.last().is_some_and(|i| i.id == id));
-        if writing { Vec::new() } else { tools.with(|ts| totals(ts)) }
+        let busy = running.get();
+        items.with(|l| {
+            let mark = |i: &Item| match i.kind {
+                Kind::User(_) => Mark::Request,
+                Kind::Assistant(_) => Mark::Answer,
+                _ => Mark::Other,
+            };
+            let marks: Vec<Mark> = l.iter().map(mark).collect();
+            let Some(span) = l.iter().position(|i| i.id == id).and_then(|at| turn_span(&marks, at)) else {
+                return Vec::new();
+            };
+            if busy && span.end == l.len() {
+                return Vec::new();
+            }
+            let mut all: Vec<Tool> = Vec::new();
+            for i in &l[span] {
+                if let Kind::Assistant(a) = &i.kind {
+                    a.tools.with(|ts| all.extend(ts.iter().filter(|t| t.diff.is_some()).cloned()));
+                }
+            }
+            totals(&all)
+        })
     });
     let open: RwSignal<bool> = floem::reactive::create_rw_signal(true);
     let head = h_stack((
@@ -446,6 +487,26 @@ mod tests {
         assert_eq!(t.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.rs", "b.rs"]);
         assert_eq!((t[0].added, t[0].removed, t[0].first), (1, 1, 10));
         assert!(t[1].created && !t[0].created);
+    }
+
+    #[test]
+    fn an_edit_with_its_diff_is_not_folded_with_the_calls_around_it() {
+        use crate::agent::calls::{Group, groups};
+        let read = || Tool { name: "read_file".into(), done: true, ok: true, ..Tool::default() };
+        let tools = vec![read(), read(), edit(diff("a", vec![l('+', 0, 1)]), true), read()];
+        assert_eq!(groups(&tools, false), vec![Group::Fold { start: 0, len: 2 }, Group::One(2), Group::One(3)]);
+    }
+
+    #[test]
+    fn a_turns_files_are_under_its_last_answer_from_its_request_to_the_next() {
+        use Mark::{Answer as A, Other as O, Request as R};
+        let marks = [R, A, O, A, R, A, A];
+        assert_eq!(turn_span(&marks, 1), None);
+        assert_eq!(turn_span(&marks, 3), Some(1..4));
+        assert_eq!(turn_span(&marks, 5), None);
+        assert_eq!(turn_span(&marks, 6), Some(5..7));
+        assert_eq!(turn_span(&marks, 2), None);
+        assert_eq!(turn_span(&[A], 0), Some(0..1));
     }
 
     #[test]
