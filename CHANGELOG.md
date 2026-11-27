@@ -363,6 +363,20 @@ Sections used:
 - **View toggles write the setting.** Toggle Minimap, Toggle Sticky Scroll, Toggle Breadcrumbs and
   Toggle Render Whitespace write the person's settings.json, and the breadcrumbs follow
   `breadcrumbs.enabled`.
+- **VS Code's editing commands in the editor.** Toggle Line Comment (Ctrl+/; Add and Remove with
+  Ctrl+K Ctrl+C / Ctrl+K Ctrl+U) and Toggle Block Comment (Shift+Alt+A) use each language's own
+  tokens. You can also use Move Line Up/Down (Alt+Up/Down), Copy Line Up/Down (Shift+Alt+Up/Down),
+  Delete Line (Ctrl+Shift+K), Insert Line Below/Above (Ctrl+Enter, Ctrl+Shift+Enter), Indent/Outdent
+  Line (Ctrl+], Ctrl+[, or Tab and Shift+Tab on selected lines) and Go to Bracket (Ctrl+Shift+\).
+- **Multiple cursors and smart select.** Add Cursor Above/Below (Ctrl+Alt+Up/Down), Add Next
+  Occurrence (Ctrl+D), Select All Occurrences (Ctrl+Shift+L), Add Cursors to Line Ends (Shift+Alt+I)
+  and Expand/Shrink Selection (Shift+Alt+Right/Left).
+- **Brackets and quotes close themselves.** As `editor.autoClosingBrackets` and
+  `editor.autoClosingQuotes` say, a closer can be typed over, a selection is wrapped in the pair,
+  and Backspace between a pair deletes both. Enter keeps the line's indent and indents after an
+  opened bracket, as `editor.autoIndent` says.
+- **Edit, Selection and right-click menus that work.** The Edit and Selection menus now run their
+  commands, and right-clicking in the editor offers Cut, Copy, Paste and Command Palette....
 
 
 ### :bug: Bugs fixed
