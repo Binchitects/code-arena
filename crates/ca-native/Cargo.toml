@@ -16,6 +16,9 @@ ca-settings.workspace = true
 ca-themes.workspace = true
 crossbeam-channel = "0.5"
 floem = "0.2"
+# Floem's own drawing (fills, strokes, text) for the views this crate paints itself: the editor's margin, the
+# overview ruler. Floem draws with it and does not give its trait out.
+floem_renderer = "0.2"
 globset.workspace = true
 im = "15.1"
 regex.workspace = true

@@ -132,7 +132,7 @@ fn body(ui: Ui) -> impl IntoView {
                         done => done,
                     }
                 })
-                .use_doc(tab.doc.clone())
+                .use_doc(crate::decor::doc(tab.doc.clone(), &tab.path))
                 .styling_rc(tab.colours.clone())
                 .editor_style(move |s| {
                     s.gutter_dim_color(c.line_number)
@@ -150,12 +150,8 @@ fn body(ui: Ui) -> impl IntoView {
                         // As VS Code: long lines go on, scrolled to, not wrapped.
                         .wrap_method(floem::views::editor::text::WrapMethod::None)
                 })
-                .style(move |s| {
-                    s.size_full()
-                        .background(c.editor_bg)
-                        .set(floem::views::editor::Foreground, c.editor_fg)
-                        .color(c.editor_fg)
-                });
+                // No background of its own: the group's is under it, and the overview ruler between (`decor.rs`).
+                .style(move |s| s.size_full().set(floem::views::editor::Foreground, c.editor_fg).color(c.editor_fg));
                 let editor = ed.editor().clone();
                 ui.live.set(Some((tab.path.clone(), editor.clone())));
                 if let Some((_, line, n)) =
@@ -173,12 +169,13 @@ fn body(ui: Ui) -> impl IntoView {
                     caret.set((line + 1, col + 1));
                 });
                 // Gone from the screen (and not for the next one, which is drawn before this one goes).
-                ed.on_cleanup(move || {
+                let ed = ed.on_cleanup(move || {
                     if ui.live.with_untracked(|l| l.as_ref().is_some_and(|(_, e)| e.id() == id)) {
                         ui.live.set(None);
                     }
-                })
-                .into_any()
+                });
+                // With the decorations' glyph margin and overview ruler.
+                crate::decor::around(ui, ed, &editor, &tab.path).into_any()
             }
         },
     )

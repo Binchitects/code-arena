@@ -13,6 +13,7 @@ use floem::text::{Attrs, AttrsList, FamilyOwned, Stretch, Style as FontSlant, We
 use floem::views::editor::EditorStyle;
 use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::id::EditorId;
+use floem::views::editor::layout::TextLayoutLine;
 use floem::views::editor::text::{Document, Styling};
 use floem::views::editor::text_document::TextDocument;
 use serde_json::Value;
@@ -201,6 +202,8 @@ pub struct Colours {
     parsed: RefCell<Parsed>,
     id: Cell<u64>,
     family: Vec<FamilyOwned>,
+    /// The file's path, by which its decorations are found (`decor.rs`).
+    path: String,
 }
 
 impl Colours {
@@ -213,6 +216,7 @@ impl Colours {
             parsed: RefCell::new(Parsed { after: Vec::new() }),
             id: Cell::new(1),
             family: FamilyOwned::parse_list(&MONO_FONT).collect(),
+            path: path.to_string(),
         })
     }
 
@@ -299,15 +303,16 @@ impl Styling for Colours {
         4
     }
 
-    fn apply_attr_styles(&self, _: EditorId, _: &EditorStyle, line: usize, default: Attrs, attrs: &mut AttrsList) {
+    fn apply_attr_styles(&self, edid: EditorId, es: &EditorStyle, line: usize, default: Attrs, attrs: &mut AttrsList) {
+        let phantom = crate::decor::phantom_line(&self.doc, &self.path, edid, es, line);
         let runs = self.runs(line);
+        let mut spans = Vec::with_capacity(runs.len().max(1));
         if runs.is_empty() {
             // Plain text: the editor's own foreground.
             if let Some(f) = self.theme.borrow().settings.foreground {
                 let len = self.doc.rope_text().line_content(line).len();
-                attrs.add_span(0..len, default.color(Color::rgba8(f.r, f.g, f.b, f.a)));
+                spans.push((0..len, default.color(Color::rgba8(f.r, f.g, f.b, f.a))));
             }
-            return;
         }
         for (range, style) in runs {
             let f = style.foreground;
@@ -318,8 +323,14 @@ impl Styling for Colours {
             if style.font_style.contains(FontStyle::ITALIC) {
                 a = a.style(FontSlant::Italic);
             }
-            attrs.add_span(range, a);
+            spans.push((range, a));
         }
+        crate::decor::attrs(&self.path, line, &phantom, spans, default, attrs);
+    }
+
+    fn apply_layout_styles(&self, edid: EditorId, _: &EditorStyle, line: usize, layout: &mut TextLayoutLine) {
+        let len = self.doc.rope_text().line_end_col(line, true);
+        crate::decor::layout(&self.path, line, len, self.line_height(edid, line) as f64, layout);
     }
 }
 
