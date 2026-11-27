@@ -452,6 +452,22 @@ Sections used:
   `/clear` and `/new` in the input) starts a fresh session and keeps the last one. It stays on the
   same model, mode and thinking. Fork Session copies all of the session, and Fork from a Question...
   copies what came before the question you pick. While an answer is written these wait or say why.
+- **Terminal links.** Ctrl+click a project path in terminal output (`src/main.rs:12:5`,
+  `./src/a.rs`, or the full path under the project folder) to open it at that line and column.
+  Ctrl+click a web address to open it in the browser. The link under the pointer is underlined.
+- **Terminal settings apply live.** `terminal.integrated.fontFamily`, `fontSize`, `lineHeight`,
+  `cursorStyle`, `cursorBlinking`, `scrollback`, `minimumContrastRatio` and `sendKeybindingsToShell`
+  take effect as soon as they change, and the screen is fitted again to the new font.
+- **Terminal tabs and panel.** Tabs read 'bash 1', 'bash 2' and gain '(ended)' when the shell exits.
+  The panel then says 'The shell ended with exit code N.' A middle-click on a tab ends that
+  terminal. The screen has a draggable scrollbar, the panel has a 'Hide the panel' chevron, and the
+  status bar has a terminal toggle.
+- **The session's own terminals show at once.** A terminal the session starts for a task, a run or a
+  debuggee appears in the panel straight away. If the window falls behind the session's messages, it
+  redraws every terminal from what it last showed.
+- **Terminal shells.** A terminal runs the shell it is asked for, else `$SHELL`, else bash, else sh.
+  It sets `TERM_PROGRAM=code-arena`, does not pass `ARENA_API_KEY` on, and at most 10 of your own
+  terminals run at once.
 
 
 ### :bug: Bugs fixed
