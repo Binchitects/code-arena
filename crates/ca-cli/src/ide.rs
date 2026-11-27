@@ -1127,9 +1127,9 @@ async fn turn(
 ) {
     let ui = p.ui;
     let out = drv.out.clone();
-    // `/NAME words`: a command or a skill of the project's or yours.
+    // `/NAME words`: a command or a skill of the project's or yours (`/one /two words`: each of them).
     let message = if how == How::Typed && sent.model.starts_with('/') {
-        match ca_agent::library::load(&p.sources).slash(&sent.model) {
+        match crate::ide_chat::library::expand(&ca_agent::library::load(&p.sources), &sent.model) {
             Some(expanded) => expanded,
             None => {
                 let name = sent.model.split_whitespace().next().unwrap_or(&sent.model);
