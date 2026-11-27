@@ -288,6 +288,22 @@ Sections used:
   place. Matching is by number, not words, so two messages with the same words, or one changed
   since it was sent, are never mixed up. A window that comes in mid-answer sees the queue as it is
   now.
+- **Editor groups.** Split the editor into up to eight groups, side by side or one under the other
+  (Split Editor Ctrl+\, Split Editor Right/Left/Down/Up, Split Editor in Orthogonal Direction
+  Ctrl+K Ctrl+\, Toggle Vertical/Horizontal Editor Layout Alt+Shift+0). Each group has its own tabs
+  and its own tab shown, and a file open in two groups is one document. Drag the divider, move it
+  5% with the arrow keys, or double-click it to share the room evenly; each group keeps at least
+  10%. A group whose last tab closes goes.
+- **Move between groups.** Move Editor into Next/Previous Group (Ctrl+Alt+Right/Left; past the last
+  group it makes a new one), Focus First..Eighth Editor Group (Ctrl+1..8; one past the last splits),
+  Focus Next/Previous/Left/Right/Above/Below Editor Group, Join All Editor Groups and Close Editor
+  Group. Save, Close Editor and Find act on the group you are in.
+- **Open to the Side and Show All Editors.** Open a file from the Explorer's menu in the group
+  beside the one you are in. Show All Editors By Appearance (Ctrl+K Ctrl+P) lists every open editor
+  under Group 1, Group 2 and so on.
+- **Groups come back after a restart.** The groups, their tabs, the tab each shows, their sizes, the
+  layout, the group you were in, and where each tab's caret and scroll were come back after a
+  reload.
 
 
 ### :bug: Bugs fixed
