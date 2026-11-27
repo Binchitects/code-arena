@@ -426,7 +426,8 @@ impl View for Wheel {
 /// The editor's own keys of its options: Alt+Z toggles the file's wrap (taken here, before the editor types a z);
 /// with `editor.emptySelectionClipboard` off, Ctrl+C and Ctrl+X on a caret with nothing selected are taken and do
 /// nothing.
-pub fn key(ui: Ui, editor: &Editor, o: &Options, key: &Key, mods: Modifiers) -> bool {
+/// Nothing is held while the wrap is toggled: the editor's options are read again from it.
+pub fn key(ui: Ui, editor: RwSignal<Editor>, o: Memo<Options>, key: &Key, mods: Modifiers) -> bool {
     let only = |m: Modifiers| mods & (Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT | Modifiers::META) == m;
     let is = |k: &str| matches!(key, Key::Character(c) if c.eq_ignore_ascii_case(k));
     if only(Modifiers::ALT) && is("z") {
@@ -435,8 +436,9 @@ pub fn key(ui: Ui, editor: &Editor, o: &Options, key: &Key, mods: Modifiers) -> 
     }
     only(Modifiers::CONTROL)
         && (is("c") || is("x"))
-        && !o.empty_selection_copies
-        && editor.cursor.with_untracked(|c| matches!(&c.mode, CursorMode::Insert(s) if s.is_caret()))
+        && !o.with_untracked(|o| o.empty_selection_copies)
+        && editor
+            .with_untracked(|e| e.cursor.with_untracked(|c| matches!(&c.mode, CursorMode::Insert(s) if s.is_caret())))
 }
 
 /// Toggle Word Wrap: the file on screen wraps, or stops wrapping, whatever its setting says.
@@ -553,22 +555,23 @@ mod tests {
         crate::icons::load();
         let (ui, _, _) = window();
         let ed = floem::views::text_editor("one\ntwo\n");
-        let editor = ed.editor().clone();
-        ui.live.set(Some(("a.rs".into(), editor.clone())));
-        let mut o = read(ui, Some("a.rs"));
+        ui.live.set(Some(("a.rs".into(), ed.editor().clone())));
+        let editor = ui.scope.create_rw_signal(ed.editor().clone());
+        let (ui2, off) = (ui, ui.scope.create_rw_signal(false));
+        let o = memo(ui, move || Some("a.rs".into()));
+        let o2 = create_memo(move |_| Options { empty_selection_copies: !off.get(), ..read(ui2, Some("a.rs")) });
         let ch = |c: &str| Key::Character(c.into());
-        assert!(key(ui, &editor, &o, &ch("z"), Modifiers::ALT));
+        assert!(key(ui, editor, o, &ch("z"), Modifiers::ALT));
         assert_eq!(read(ui, Some("a.rs")).wrap, Wrap::On);
-        assert!(key(ui, &editor, &o, &ch("Z"), Modifiers::ALT));
+        assert!(key(ui, editor, o, &ch("Z"), Modifiers::ALT));
         assert_eq!(read(ui, Some("a.rs")).wrap, Wrap::Off);
-        assert!(!key(ui, &editor, &o, &ch("z"), Modifiers::ALT | Modifiers::SHIFT));
+        assert!(!key(ui, editor, o, &ch("z"), Modifiers::ALT | Modifiers::SHIFT));
         // On (the default), the editor copies the caret's line; off, nothing is copied.
-        assert!(!key(ui, &editor, &o, &ch("c"), Modifiers::CONTROL));
-        o.empty_selection_copies = false;
-        assert!(
-            key(ui, &editor, &o, &ch("c"), Modifiers::CONTROL) && key(ui, &editor, &o, &ch("x"), Modifiers::CONTROL)
-        );
-        assert!(!key(ui, &editor, &o, &ch("v"), Modifiers::CONTROL));
+        assert!(!key(ui, editor, o, &ch("c"), Modifiers::CONTROL));
+        assert!(!key(ui, editor, o2, &ch("c"), Modifiers::CONTROL));
+        off.set(true);
+        assert!(key(ui, editor, o2, &ch("c"), Modifiers::CONTROL) && key(ui, editor, o2, &ch("x"), Modifiers::CONTROL));
+        assert!(!key(ui, editor, o2, &ch("v"), Modifiers::CONTROL));
     }
 
     #[test]

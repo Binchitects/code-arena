@@ -189,7 +189,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 let width = create_rw_signal(0.0);
                 let ed = text_editor_keys("", move |editor, press, mods| {
                     if let KeyInput::Keyboard(key, _) = &press.key
-                        && editor.with_untracked(|e| o.with_untracked(|o| options::key(ui, e, o, key, mods)))
+                        && options::key(ui, editor, o, key, mods)
                     {
                         return CommandExecuted::Yes;
                     }
