@@ -19,8 +19,8 @@ n=0
 s() { n=$((n + 1)); sleep 0.7; $u shot "target/ui/$p/$(printf %02d $n)-$1.png" >/dev/null; }
 esc() { $u key Escape; sleep 0.2; }
 s start
-# The agent.
-$u click 1000 719; $u type 'hello there'; $u key Return; sleep 3; s agent-answer
+# The agent. With no thread yet its box stands in the middle of the view; under a thread, at the bottom.
+$u click 1000 300; $u type 'hello there'; $u key Return; sleep 3; s agent-answer
 $u type 'please run it'; $u key Return; sleep 3; s agent-ask
 $u type 'queued one'; $u key Return; s agent-queued
 $u click 961 563; sleep 6; s agent-allowed

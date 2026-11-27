@@ -2014,3 +2014,151 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     assert!(at(&back, &|v| v["type"] == "refused" || v["type"] == "deferred").is_none(), "{back:?}");
     assert_eq!(back.last().expect("state")["messages"].as_array().map(Vec::len), Some(2), "{back:?}");
 }
+
+#[tokio::test]
+async fn what_the_ide_is_sent_is_kept_for_the_folder_and_listed_newest_first_with_the_terminals() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::io::BufRead;
+    use tokio_tungstenite::tungstenite::Message;
+    let said = |text: &str| sse(json!({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}));
+    let gateway = MockServer::start().await;
+    let hold = Hold::default();
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(HeldFirst(
+            vec![said("The first answer."), said("The second answer.")],
+            AtomicUsize::new(0),
+            hold.clone(),
+        ))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    std::fs::create_dir(folder.path().join(".git")).expect("a repository");
+    let mut child = code_arena(home.path())
+        .args(["ide", "--no-open", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("runs");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stderr = child.stderr.take().expect("stderr");
+    let _child = Kill(child);
+    let url = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| l.split("The IDE: ").nth(1).map(str::to_string))
+        .expect("the address");
+    let (base, key) = url.split_once("/?k=").expect("key in it");
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+        format!("ws://{}/ws", base.trim_start_matches("http://")).as_str(),
+    )
+    .expect("request");
+    request.headers_mut().insert("cookie", format!("code_arena={key}").parse().expect("h"));
+    request.headers_mut().insert("origin", base.parse().expect("h"));
+    let (mut page, _) = tokio_tungstenite::connect_async(request).await.expect("the page connects");
+    // Every message up to (and with) the first for which `end` holds.
+    let until = async |page: &mut tokio_tungstenite::WebSocketStream<_>, end: &dyn Fn(&Value) -> bool| -> Vec<Value> {
+        let mut seen = Vec::new();
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            let Message::Text(t) = m else { continue };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            let done = end(&v);
+            seen.push(v);
+            if done {
+                return seen;
+            }
+        }
+    };
+    let ask = async |page: &mut tokio_tungstenite::WebSocketStream<_>, m: Value| {
+        page.send(Message::text(m.to_string())).await.expect("send");
+    };
+    let listed = |seen: Vec<Value>| seen.last().cloned().expect("the folder's history");
+    until(&mut page, &|v| v["type"] == "state").await;
+    // Nothing was sent in this folder yet; the reply says the request's key again.
+    ask(&mut page, json!({"type": "history", "key": "h1"})).await;
+    let none = listed(until(&mut page, &|v| v["type"] == "history").await);
+    assert_eq!(none, json!({"type": "history", "items": [], "key": "h1"}));
+
+    // A message sent: the question says its key again (the face that sent it knows it was taken).
+    ask(&mut page, json!({"type": "send", "text": "say hello", "key": "w1"})).await;
+    let begun = until(&mut page, &|v| v["type"] == "turn_start").await;
+    let asked = begun.iter().find(|v| v["type"] == "user").expect("the question");
+    assert_eq!(*asked, json!({"type": "user", "text": "say hello", "q": 1, "key": "w1"}));
+    // While the answer is held: a message for the turn to read, and a command that waits for the turn's end. Each
+    // is told as queued with its key, and the history is answered meanwhile, the newest first.
+    ask(&mut page, json!({"type": "send", "text": "and then?", "key": "w2"})).await;
+    ask(&mut page, json!({"type": "send", "text": "/explain the parser", "key": "w3"})).await;
+    ask(&mut page, json!({"type": "history"})).await;
+    let meanwhile = until(&mut page, &|v| v["type"] == "history").await;
+    let queued: Vec<&Value> = meanwhile.iter().filter(|v| v["type"] == "queued").collect();
+    assert_eq!(
+        queued,
+        [
+            &json!({"type": "queued", "text": "and then?", "key": "w2"}),
+            &json!({"type": "queued", "text": "/explain the parser", "later": true, "key": "w3"})
+        ],
+        "{meanwhile:?}"
+    );
+    assert!(meanwhile.contains(&json!({"type": "deferred", "of": "send", "key": "w3"})), "{meanwhile:?}");
+    assert_eq!(
+        listed(meanwhile),
+        json!({"type": "history", "items": ["/explain the parser", "and then?", "say hello"]})
+    );
+    {
+        let (go, told) = &*hold;
+        *go.lock().expect("lock") = true;
+        told.notify_all();
+    }
+    // The command runs as a turn of its own once the first has ended, said again with its key.
+    until(&mut page, &|v| v["type"] == "turn_end").await;
+    let second = until(&mut page, &|v| v["type"] == "turn_end").await;
+    let asked = second.iter().find(|v| v["type"] == "user").expect("the command as a question");
+    assert_eq!(
+        (&asked["text"], &asked["late"], &asked["key"]),
+        (&json!("/explain the parser"), &json!(true), &json!("w3"))
+    );
+    until(&mut page, &|v| v["type"] == "turn_end").await;
+    // Sent on after the turn it waited for, a message is not kept a second time; one sent again moves to the front.
+    ask(&mut page, json!({"type": "send", "text": "say hello"})).await;
+    until(&mut page, &|v| v["type"] == "turn_end").await;
+    ask(&mut page, json!({"type": "history"})).await;
+    assert_eq!(
+        listed(until(&mut page, &|v| v["type"] == "history").await)["items"],
+        json!(["say hello", "/explain the parser", "and then?"])
+    );
+    // The file is the terminal's own (one per folder, the person's only): ↑ there brings the same lines back.
+    let kept: Vec<std::path::PathBuf> = std::fs::read_dir(home.path().join("data/history"))
+        .expect("the history's folder")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .collect();
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    let lines = std::fs::read_to_string(&kept[0]).expect("read");
+    assert_eq!(lines.lines().count(), 4, "{lines}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&kept[0]).expect("kept").permissions().mode() & 0o777, 0o600);
+    }
+}
