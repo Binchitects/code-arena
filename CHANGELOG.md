@@ -210,6 +210,15 @@ Sections used:
 - **Request details are kept.** A session stores each request's details (as typed, quote, files,
   skill) when it is sent and sends them again with its messages, so a window that reconnects or
   opens the session later draws the same bubble.
+- **The model's thinking, as VS Code shows it.** While the model thinks, its answer shows an open
+  'Thinking… 12 s' block that ticks and keeps its newest words in view. When the answer begins it
+  folds to 'Thought for 12 s' (', cut short' if it was cut), and a chat you open again shows
+  'Thought process'.
+- **Skip thinking.** A 'Skip thinking' pill on the thinking block tells the model to answer now; the
+  block then says 'Answering now…'.
+- **Answer footer.** Under a finished answer: Copy answer, the model, '· 12 s', and '· 8.6K in (73%
+  cached) · 1.2K out' (exact counts in its tooltip). The session keeps it, so the footer is still
+  there after a reload.
 
 
 ### :bug: Bugs fixed
