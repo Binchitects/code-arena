@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use super::calls::{self, Chip, Group, Shown, State};
 use crate::icons::icon;
-use crate::model::{Kind, Progress, Tool};
+use crate::model::{Answer, Kind, Progress, Tool};
 use crate::state::{Send, Ui};
 use crate::widgets::{MONO_FONT, bold, caps};
 
@@ -306,7 +306,7 @@ fn body(ui: Ui, send: Send, tool: Tool, st: State) -> AnyView {
     let mut parts: Vec<AnyView> = Vec::new();
     if st == State::Waiting {
         let ask = format!("Allow {} to run with these arguments?", tool.name);
-        parts.push(label(move || ask.clone()).style(move |s| bold(s).color(t.get().fg)).into_any());
+        parts.push(label(move || ask.clone()).style(move |s| bold(s).line_height(1.4).color(t.get().fg)).into_any());
     }
     let asked = calls::asked(&tool.arguments);
     if asked != calls::Asked::default() {
@@ -358,6 +358,7 @@ fn result(ui: Ui, send: Send, tool: &Tool) -> AnyView {
             let c = t.get();
             s.font_family(MONO_FONT.clone())
                 .font_size(12.0)
+                .line_height(1.4)
                 .padding(8.0)
                 .border_radius(4.0)
                 .width_full()
@@ -479,6 +480,19 @@ fn change(ui: Ui, id: &str, f: impl FnOnce(&mut Tool)) -> bool {
     true
 }
 
+/// A call that is new to the answer being written, put in it. The words said before it end their paragraph, so the
+/// words after it start a new one, as the answer read back from the session shows them.
+fn add(answer: &Answer, tool: Tool) {
+    if answer.text.with_untracked(|t| !t.is_empty() && !t.ends_with("\n\n")) {
+        answer.text.update(|t| {
+            let words = t.trim_end_matches('\n').len();
+            t.truncate(words);
+            t.push_str("\n\n");
+        });
+    }
+    answer.tools.update(|t| t.push(tool));
+}
+
 /// The session's messages that are a call's (waiting, begun, going, ended), taken in. Never taken away from the
 /// rest of the window (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
@@ -490,7 +504,7 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             {
                 let waiting =
                     Tool { status: "waiting".into(), ok: true, text: String::new(), ..Tool::from_json(m, false) };
-                answer.tools.update(|t| t.push(waiting));
+                add(&answer, waiting);
             }
         }
         "tool_start" => {
@@ -508,7 +522,7 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             });
             if !found && let Kind::Assistant(answer) = ui.current().kind {
                 let started = Tool { ok: true, text: String::new(), status: "running".into(), began, ..said };
-                answer.tools.update(|t| t.push(started));
+                add(&answer, started);
             }
         }
         "tool_progress" => {
@@ -535,14 +549,12 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             if !change(ui, id, end)
                 && let Kind::Assistant(answer) = ui.current().kind
             {
-                answer.tools.update(|ts| {
-                    let same =
-                        |t: &Tool| id.is_empty() && !t.done && t.name == ended.name && t.subject == ended.subject;
-                    match ts.iter_mut().rev().find(|t| same(t)) {
-                        Some(t) => end(t),
-                        None => ts.push(ended.clone()),
-                    }
-                });
+                let same = |t: &Tool| id.is_empty() && !t.done && t.name == ended.name && t.subject == ended.subject;
+                if answer.tools.with_untracked(|ts| ts.iter().any(same)) {
+                    answer.tools.update(|ts| ts.iter_mut().rev().find(|t| same(t)).into_iter().for_each(end));
+                } else {
+                    add(&answer, ended.clone());
+                }
             }
         }
         "turn_end" => ui.items.with_untracked(|l| {
@@ -676,5 +688,20 @@ mod tests {
         assert_eq!(now.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["grep", "run_shell"]);
         assert_eq!((now[0].text.as_str(), calls::state(&now[0], true)), ("a", State::Done));
         assert_eq!((calls::state(&now[1], true), now[1].began), (State::NotRun, None));
+    }
+
+    #[test]
+    fn the_words_after_a_call_start_a_paragraph_of_their_own() {
+        let ui = Ui::new();
+        let send: Send = std::rc::Rc::new(|_| {});
+        let words = |d: &str| super::super::answer::take(ui, &json!({"type": "text", "delta": d}), &send);
+        words("I'll look first.");
+        take(ui, &json!({"type": "tool_start", "id": "c1", "name": "run_shell", "subject": "ls"}), &send);
+        take(ui, &json!({"type": "tool_end", "id": "c1", "name": "run_shell", "ok": true, "text": "a"}), &send);
+        words("Done.");
+        take(ui, &json!({"type": "tool_start", "id": "c2", "name": "grep", "subject": "x"}), &send);
+        let Kind::Assistant(answer) = ui.current().kind else { panic!("an answer") };
+        assert_eq!(answer.text.get_untracked(), "I'll look first.\n\nDone.\n\n");
+        assert_eq!(answer.tools.with_untracked(|t| t.len()), 2, "both calls in the one answer, still folded together");
     }
 }
