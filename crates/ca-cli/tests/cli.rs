@@ -1950,7 +1950,8 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
             {"id": "small", "context": 32768, "max_output": 4096, "tools": true, "thinking": false, "vision": false}])
     );
     assert_eq!(first["thinking_levels"][0], "default");
-    let modes: Vec<&str> = first["modes"].as_array().expect("modes").iter().filter_map(|m| m["name"].as_str()).collect();
+    let modes: Vec<&str> =
+        first["modes"].as_array().expect("modes").iter().filter_map(|m| m["name"].as_str()).collect();
     assert_eq!(modes, ["ask", "auto-edit", "plan", "yolo"]);
     assert!(first["modes"][3]["description"].as_str().is_some_and(|d| !d.is_empty()));
 

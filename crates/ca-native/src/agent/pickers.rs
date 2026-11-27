@@ -108,7 +108,11 @@ fn tokens(n: u64) -> String {
     const K: u64 = 1024;
     let short = |n: u64, by: u64, unit: &str| {
         let tenths = (n * 10 + by / 2) / by;
-        if tenths % 10 == 0 { format!("{}{unit}", tenths / 10) } else { format!("{}.{}{unit}", tenths / 10, tenths % 10) }
+        if tenths % 10 == 0 {
+            format!("{}{unit}", tenths / 10)
+        } else {
+            format!("{}.{}{unit}", tenths / 10, tenths % 10)
+        }
     };
     match n {
         n if n >= K * K && n % (K * K) == 0 => format!("{}M", n / (K * K)),
@@ -529,13 +533,19 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
         "state" => {
             let infos: Vec<ModelRow> =
                 m["model_info"].as_array().into_iter().flatten().filter_map(ModelRow::from_json).collect();
-            let levels: Vec<String> =
-                m["thinking_levels"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(str::to_string)).collect();
+            let levels: Vec<String> = m["thinking_levels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|l| l.as_str().map(str::to_string))
+                .collect();
             let modes: Vec<(String, String)> = m["modes"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|v| Some((v["name"].as_str()?.to_string(), v["description"].as_str().unwrap_or("").to_string())))
+                .filter_map(|v| {
+                    Some((v["name"].as_str()?.to_string(), v["description"].as_str().unwrap_or("").to_string()))
+                })
                 .collect();
             set_if_new(me.infos, infos);
             set_if_new(me.levels, levels);

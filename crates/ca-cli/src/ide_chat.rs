@@ -15,8 +15,8 @@
 
 use serde_json::Value;
 
-use crate::session::Prepared;
 use crate::ide_ext::{Area, Rule, Sent, Shared, kind};
+use crate::session::Prepared;
 
 mod history;
 pub mod pickers;
