@@ -333,7 +333,8 @@ fn thinking(ui: Ui, send: Send, answer: Answer) -> impl IntoView {
     // Its words a paragraph a view, so a word streamed lays out its own paragraph again and not those before.
     let paragraphs = create_memo(move |_| reasoning.with(|r| r.split("\n\n").count()));
     let paragraph = move |n: usize| {
-        label(move || reasoning.with(|r| r.split("\n\n").nth(n).unwrap_or("").trim().to_string()))
+        let words = create_memo(move |_| reasoning.with(|r| r.split("\n\n").nth(n).unwrap_or("").trim().to_string()));
+        label(move || words.get())
             .style(|s| s.text_overflow(TextOverflow::Wrap).line_height(1.5).width_full().min_width(0.0))
     };
     let words = dyn_stack(move || 0..paragraphs.get(), |n| *n, paragraph)
@@ -391,8 +392,10 @@ fn footer(ui: Ui, answer: Answer) -> impl IntoView {
     let copy = container(dyn_container(move || copied.get(), |c| icon(if c { "check" } else { "copy" }, 14.0)))
         .on_click_stop(move |_| {
             let _ = floem::Clipboard::set_contents(text.get_untracked());
-            copied.set(true);
-            exec_after(Duration::from_millis(1500), move |_| copied.set(false));
+            if !copied.get_untracked() {
+                copied.set(true);
+                exec_after(Duration::from_millis(1500), move |_| copied.set(false));
+            }
         })
         .style(move |s| {
             let c = t.get();

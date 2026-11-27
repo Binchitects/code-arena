@@ -802,6 +802,10 @@ mod tests {
             let db = Connection::open(&path).expect("db");
             db.execute_batch(&CREATE.replace("  usage TEXT,\n", "")).expect("create");
             db.pragma_update(None, "user_version", SCHEMA).expect("version");
+            let has: i64 = db
+                .query_row("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'usage'", [], |r| r.get(0))
+                .expect("columns");
+            assert_eq!(has, 0, "made without the column");
         }
         let id = {
             let s = Store::open(&path).expect("open");
