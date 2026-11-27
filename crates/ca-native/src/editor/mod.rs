@@ -150,12 +150,8 @@ fn body(ui: Ui) -> impl IntoView {
                         // As VS Code: long lines go on, scrolled to, not wrapped.
                         .wrap_method(floem::views::editor::text::WrapMethod::None)
                 })
-                .style(move |s| {
-                    s.size_full()
-                        .background(c.editor_bg)
-                        .set(floem::views::editor::Foreground, c.editor_fg)
-                        .color(c.editor_fg)
-                });
+                // No background of its own: the group's is under it, and the overview ruler between (`decor.rs`).
+                .style(move |s| s.size_full().set(floem::views::editor::Foreground, c.editor_fg).color(c.editor_fg));
                 let editor = ed.editor().clone();
                 ui.live.set(Some((tab.path.clone(), editor.clone())));
                 if let Some((_, line, n)) =
@@ -178,8 +174,8 @@ fn body(ui: Ui) -> impl IntoView {
                         ui.live.set(None);
                     }
                 });
-                // The decorations' glyph margin and overview ruler, over it.
-                stack((ed, crate::decor::over(ui, &editor, &tab.path))).style(|s| s.size_full()).into_any()
+                // With the decorations' glyph margin and overview ruler.
+                crate::decor::around(ui, ed, &editor, &tab.path).into_any()
             }
         },
     )

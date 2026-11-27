@@ -168,7 +168,8 @@ pub struct Merged {
     pub ruler: Vec<(usize, Color)>,
 }
 
-/// A see-through colour laid on the editor's background: text is drawn without its colour's alpha.
+/// A see-through colour laid on the editor's background: text is drawn without its colour's alpha (and a thin fill
+/// with it comes out near black).
 fn on_editor(color: Color, c: &Colors) -> Color {
     let (a, bg) = (color.a as f64 / 255.0, c.editor_bg);
     let mix = |f: u8, b: u8| (f as f64 * a + b as f64 * (1.0 - a)).round() as u8;
@@ -620,9 +621,11 @@ pub const MARGIN: f64 = 18.0;
 /// The overview ruler's width, VS Code's (that of the scroll bar it is drawn in).
 pub const RULER: f64 = 14.0;
 
-/// What is drawn over an editor of a file: its glyph margin (left) and its overview ruler (right). Only painted again
-/// when the lines on screen, the scroll, the marks or the theme change.
-pub fn over(ui: Ui, editor: &Editor, path: &str) -> impl IntoView + use<> {
+/// An editor of a file with its glyph margin (left, over the gutter's padding) and its overview ruler (right, under
+/// the editor, which is drawn without a background so the ruler shows through and its scroll bar is still dragged):
+/// the pointer goes to the topmost view only. Only painted again when the lines on screen, the scroll, the marks or
+/// the theme change.
+pub fn around<V: IntoView + 'static>(ui: Ui, view: V, editor: &Editor, path: &str) -> impl IntoView + use<V> {
     let margin = Margin { id: ViewId::new(), ui, editor: editor.clone(), path: path.to_string(), ruler: false };
     let ruler = Margin { id: ViewId::new(), ui, editor: editor.clone(), path: path.to_string(), ruler: true };
     let (screen, viewport, rev, colors) = (editor.screen_lines, editor.viewport, ui.state::<Decor>().rev, ui.colors);
@@ -661,7 +664,7 @@ pub fn over(ui: Ui, editor: &Editor, path: &str) -> impl IntoView + use<> {
         })
         .style(|s| s.absolute().inset_left(0.0).inset_top(0.0).width(MARGIN).height_full());
     let ruler = ruler.style(|s| s.absolute().inset_right(0.0).inset_top(0.0).width(RULER).height_full());
-    floem::views::stack((margin, ruler))
+    floem::views::stack((ruler, view.into_view().style(|s| s.size_full()), margin))
         .on_move(move |p| origin.set(p))
         .on_event_cont(EventListener::PointerMove, move |e| {
             if let Event::PointerMove(p) = e {
@@ -671,7 +674,7 @@ pub fn over(ui: Ui, editor: &Editor, path: &str) -> impl IntoView + use<> {
         .on_event_cont(EventListener::PointerLeave, move |_| hover.hide())
         // The editor gone (its tab closed or another shown): its hover with it.
         .on_cleanup(move || hover.hide())
-        .style(|s| s.absolute().size_full())
+        .style(|s| s.size_full())
 }
 
 /// The line drawn at a height in the editor's view (none: below the last).
@@ -706,7 +709,7 @@ impl View for Margin {
             if m.ruler.is_empty() {
                 return;
             }
-            cx.fill(&Rect::new(0.0, 0.0, 1.0, size.height), c.ruler_border, 0.0);
+            cx.fill(&Rect::new(0.0, 0.0, 1.0, size.height), on_editor(c.ruler_border, &c), 0.0);
             let lines = (self.editor.last_line() + 1) as f64;
             for (line, color) in &m.ruler {
                 let y = ((*line as f64 / lines) * size.height).min(size.height - 3.0).max(0.0);
