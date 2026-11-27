@@ -183,6 +183,19 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 let caret = ui.caret;
                 let map = map.clone();
                 let ed = text_editor_keys("", move |editor, press, mods| {
+                    // The key after a chord's first (Ctrl+K Enter, Ctrl+K Shift+Enter) ends the chord: the
+                    // editor does not take it as its own (a new line) when the chord runs a command.
+                    if crate::commands::waiting().is_some()
+                        && let KeyInput::Keyboard(key, _) = &press.key
+                    {
+                        let mut ran = false;
+                        tell(ui, |send| {
+                            ran = crate::commands::press(ui, send, key, mods) != crate::commands::Pressed::Free;
+                        });
+                        if ran {
+                            return CommandExecuted::Yes;
+                        }
+                    }
                     if keys::editor_key(ui, press, mods) {
                         return CommandExecuted::Yes;
                     }
