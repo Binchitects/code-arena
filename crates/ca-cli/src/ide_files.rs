@@ -39,6 +39,9 @@ pub const MESSAGES: &[(&str, crate::ide_ext::Rule)] = {
         ("term_resize", Side),
         ("terms", Side),
         ("term_close", Side),
+        ("copy", Side),
+        ("import", Side),
+        ("restore_deleted", Side),
     ]
 };
 
@@ -72,6 +75,7 @@ fn keep_screen(screen: &Mutex<String>, text: &str) {
 }
 
 /// What Coder mode needs, apart from the session: the workspace, the terminals, the stream.
+#[derive(Clone)]
 pub struct Side {
     ws: Arc<ca_workspace::Workspace>,
     checkpoints: Arc<ca_tools::checkpoints::Checkpoints>,
@@ -510,6 +514,28 @@ impl Side {
                     t.remove(&id);
                 }
             }
+            // Copied, brought in or put back off the loop: a big tree takes a while.
+            "copy" => {
+                let (me, m) = (self.clone(), m.clone());
+                tokio::task::spawn_blocking(move || {
+                    let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
+                    me.answer(me.copy(&s("path"), &s("to")))
+                });
+            }
+            "import" => {
+                let (me, m) = (self.clone(), m.clone());
+                tokio::task::spawn_blocking(move || {
+                    let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
+                    me.answer(me.import(&s("from"), &s("to"), m["replace"] == true))
+                });
+            }
+            "restore_deleted" => {
+                let (me, m) = (self.clone(), m.clone());
+                tokio::task::spawn_blocking(move || {
+                    let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
+                    me.answer(me.restore(&s("kept"), &s("to")))
+                });
+            }
             _ => return false,
         }
         true
@@ -776,7 +802,10 @@ impl Side {
         let cols = m["cols"].as_u64().unwrap_or(80) as u16;
         let rows = m["rows"].as_u64().unwrap_or(24) as u16;
         let env = vec![("TERM".to_string(), "xterm-256color".to_string()), ("COLORTERM".into(), "truecolor".into())];
-        let pty = match ca_pty::Pty::spawn(&self.shell, &[], self.ws.cwd(), &env, cols, rows) {
+        // In the folder asked for (the Explorer's Open in Integrated Terminal), when it is one of the project's.
+        let asked = m["cwd"].as_str().and_then(|c| self.real(c).ok()).filter(|p| p.is_dir());
+        let cwd = asked.as_deref().unwrap_or(self.ws.cwd());
+        let pty = match ca_pty::Pty::spawn(&self.shell, &[], cwd, &env, cols, rows) {
             Ok(p) => p,
             Err(e) => {
                 send(&self.out, json!({"type": "term_exit", "id": id, "error": e.to_string()}));
@@ -818,6 +847,135 @@ impl Side {
             });
             send(&out, json!({"type": "term_exit", "id": id, "code": code}));
         });
+    }
+}
+
+/// The largest file or folder brought in from outside the project.
+const MOST_IMPORTED: u64 = 256 * 1024 * 1024;
+
+/// The name a copy is given in a folder, as VS Code names it: the name itself while it is free, then "name copy.ext",
+/// "name copy 2.ext" and on (a folder's, or a name with no extension, gets no extension).
+pub(crate) fn copy_name(name: &str, dir: bool, taken: impl Fn(&str) -> bool) -> String {
+    if !taken(name) {
+        return name.to_string();
+    }
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if !dir && i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    let mut n = 1;
+    loop {
+        let candidate = if n == 1 { format!("{stem} copy{ext}") } else { format!("{stem} copy {n}{ext}") };
+        if !taken(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+impl Side {
+    /// A file or a folder's tree copied inside the project, to `to` or, when something is there, to the first free
+    /// copy's name beside it ("name copy.ext"). The reply says where it went (`asked`: the `to` it answers); never
+    /// into itself.
+    fn copy(&self, path: &str, to: &str) -> (Value, Vec<String>) {
+        let fail = |e: String| (json!({"type": "copied", "path": path, "asked": to, "error": e}), Vec::new());
+        let (from, wanted) = match (self.entry(path), self.entry(to)) {
+            (Ok(f), Ok(d)) => (f, d),
+            (Err(e), _) | (_, Err(e)) => return fail(e),
+        };
+        let Ok(meta) = std::fs::symlink_metadata(&from) else { return fail("not there".into()) };
+        let (Some(dir), Some(name)) = (wanted.parent(), wanted.file_name()) else {
+            return fail("not the name of a file or a folder".into());
+        };
+        if !dir.is_dir() {
+            return fail("the folder it goes in is not there".into());
+        }
+        let taken = |n: &str| std::fs::symlink_metadata(dir.join(n)).is_ok();
+        let dest = dir.join(copy_name(&name.to_string_lossy(), meta.is_dir(), taken));
+        if dest.starts_with(&from) {
+            return fail("a folder is not copied into itself".into());
+        }
+        if let Err(e) = copy_tree(&from, &dest) {
+            let _ = remove_tree(&dest);
+            return fail(e.to_string());
+        }
+        let now = self.shown(&dest);
+        (json!({"type": "copied", "path": self.shown(&from), "asked": to, "to": now}), vec![parent_of(&now)])
+    }
+
+    /// A file or a folder from elsewhere on this machine (dropped on the Explorer) copied in at `to`; one there
+    /// already is replaced only when asked (it is then kept aside first, as a deleted one is), else the reply's
+    /// error is "exists". Nothing over 256 MB.
+    fn import(&self, from: &str, to: &str, replace: bool) -> (Value, Vec<String>) {
+        let fail = |e: &str| (json!({"type": "imported", "from": from, "to": to, "error": e}), Vec::new());
+        let source = Path::new(from);
+        if !source.is_absolute() {
+            return fail("only a file or a folder on this machine, by its whole path");
+        }
+        let dest = match self.entry(to) {
+            Ok(d) => d,
+            Err(e) => return fail(&e),
+        };
+        if std::fs::symlink_metadata(source).is_err() {
+            return fail("not there");
+        }
+        if tree_size(source, MOST_IMPORTED) > MOST_IMPORTED {
+            return fail("bigger than 256 MB: copy it outside the editor");
+        }
+        if dest.starts_with(source) || source.starts_with(&dest) {
+            return fail("a folder is not copied into itself");
+        }
+        if !dest.parent().is_some_and(Path::is_dir) {
+            return fail("the folder it goes in is not there");
+        }
+        if std::fs::symlink_metadata(&dest).is_ok() {
+            if !replace {
+                return fail("exists");
+            }
+            let shown = self.shown(&dest);
+            if let Err(e) = self.keep_aside(&dest, &shown) {
+                return fail(&format!("what is there could not be kept aside, so it was not replaced: {e}"));
+            }
+        }
+        if let Err(e) = copy_tree(source, &dest) {
+            let _ = remove_tree(&dest);
+            return fail(&e.to_string());
+        }
+        let now = self.shown(&dest);
+        (json!({"type": "imported", "from": from, "to": now}), vec![parent_of(&now)])
+    }
+
+    /// A file or a folder the Explorer deleted put back where it was (`kept`: where the delete said it is kept,
+    /// which must be among the deleted ones); not over what is there now.
+    fn restore(&self, kept: &str, to: &str) -> (Value, Vec<String>) {
+        let fail = |e: &str| (json!({"type": "restored", "kept": kept, "to": to, "error": e}), Vec::new());
+        let Ok(all) = std::fs::canonicalize(self.deleted()) else { return fail("nothing deleted is kept") };
+        let source = Path::new(kept);
+        // The folder it is in resolved (never a link out of the deleted ones), its own name as it is.
+        let inside = source.parent().and_then(|p| std::fs::canonicalize(p).ok()).zip(source.file_name());
+        let Some(source) = inside.map(|(dir, name)| dir.join(name)).filter(|s| s.starts_with(&all) && *s != all)
+        else {
+            return fail("only what the Explorer deleted is put back");
+        };
+        if std::fs::symlink_metadata(&source).is_err() {
+            return fail("it is no longer kept");
+        }
+        let dest = match self.entry(to) {
+            Ok(d) => d,
+            Err(e) => return fail(&e),
+        };
+        if std::fs::symlink_metadata(&dest).is_ok() {
+            return fail("a file or folder of that name is already there");
+        }
+        let moved = match dest.parent() {
+            Some(p) => std::fs::create_dir_all(p).and_then(|()| move_aside(&source, &dest)),
+            None => move_aside(&source, &dest),
+        };
+        if let Err(e) = moved {
+            return fail(&e.to_string());
+        }
+        let now = self.shown(&dest);
+        (json!({"type": "restored", "kept": kept, "to": now}), vec![parent_of(&now)])
     }
 }
 
@@ -1348,5 +1506,81 @@ mod tests {
         keep_screen(&screen, "end");
         let s = screen.lock().expect("lock");
         assert!(s.len() <= SCREEN_KEPT && s.ends_with("end"));
+    }
+
+    #[test]
+    fn a_copy_is_named_as_vs_code_names_it() {
+        let taken = |names: &'static [&'static str]| move |n: &str| names.contains(&n);
+        assert_eq!(copy_name("a.rs", false, taken(&[])), "a.rs");
+        assert_eq!(copy_name("a.rs", false, taken(&["a.rs"])), "a copy.rs");
+        assert_eq!(copy_name("a.rs", false, taken(&["a.rs", "a copy.rs"])), "a copy 2.rs");
+        assert_eq!(copy_name("a.tar.gz", false, taken(&["a.tar.gz"])), "a.tar copy.gz");
+        assert_eq!(copy_name(".env", false, taken(&[".env"])), ".env copy");
+        assert_eq!(copy_name("v1.2", true, taken(&["v1.2", "v1.2 copy"])), "v1.2 copy 2");
+    }
+
+    #[test]
+    fn a_copy_goes_beside_what_is_there_and_never_into_itself() {
+        let (d, _data, s, mut rx) = side_with_data();
+        let (v, folders) = s.copy("src/main.rs", "src/main.rs");
+        assert_eq!((v["to"].as_str(), v["asked"].as_str()), (Some("src/main copy.rs"), Some("src/main.rs")));
+        assert_eq!(folders, ["src"]);
+        assert_eq!(std::fs::read_to_string(d.path().join("src/main copy.rs")).expect("r"), "fn main() {}\n");
+        // A folder into another: its whole tree.
+        std::fs::create_dir_all(d.path().join("lib")).expect("dir");
+        let (v, _) = s.copy("src", "lib/src");
+        assert_eq!(v["to"], "lib/src");
+        assert!(d.path().join("lib/src/main copy.rs").is_file());
+        // Into itself: refused, and nothing half made.
+        let (v, folders) = s.copy("lib", "lib/src/lib");
+        assert!(v["error"].as_str().is_some_and(|e| e.contains("into itself")), "{v}");
+        assert!(folders.is_empty() && !d.path().join("lib/src/lib").exists());
+        let (v, _) = s.copy("gone.rs", "src/gone.rs");
+        assert_eq!(v["error"], "not there");
+        assert!(drain(&mut rx).is_empty(), "the worker itself says nothing; handle sends what it gives");
+    }
+
+    #[test]
+    fn a_file_from_outside_is_brought_in_and_replaces_only_when_asked() {
+        let (d, _data, s, _rx) = side_with_data();
+        let outside = tempfile::tempdir().expect("outside");
+        let from = outside.path().join("notes.txt");
+        std::fs::write(&from, "theirs").expect("w");
+        let from = from.to_string_lossy().into_owned();
+        let (v, folders) = s.import(&from, "src/notes.txt", false);
+        assert!(v["error"].is_null() && v["to"] == "src/notes.txt", "{v}");
+        assert_eq!(folders, ["src"]);
+        let (v, _) = s.import(&from, "src/main.rs", false);
+        assert_eq!(v["error"], "exists");
+        assert_eq!(std::fs::read_to_string(d.path().join("src/main.rs")).expect("r"), "fn main() {}\n");
+        let (v, _) = s.import(&from, "src/main.rs", true);
+        assert!(v["error"].is_null(), "{v}");
+        assert_eq!(std::fs::read_to_string(d.path().join("src/main.rs")).expect("r"), "theirs");
+        // What was replaced is kept among the deleted ones.
+        assert!(walkdir::WalkDir::new(s.deleted()).into_iter().flatten().any(|e| e.file_name() == "main.rs"));
+        let (v, _) = s.import("notes.txt", "src/x.txt", false);
+        assert!(v["error"].as_str().is_some_and(|e| e.contains("whole path")));
+        let (v, _) = s.import(&from, "../x.txt", false);
+        assert!(v["error"].is_string());
+    }
+
+    #[test]
+    fn what_was_deleted_is_put_back_and_nothing_else_is_brought_in_that_way() {
+        let (d, _data, s, _rx) = side_with_data();
+        let (v, _) = s.delete("src/main.rs");
+        let kept = v["kept"].as_str().expect("kept").to_string();
+        let (v, folders) = s.restore(&kept, "src/main.rs");
+        assert!(v["error"].is_null() && v["to"] == "src/main.rs", "{v}");
+        assert_eq!(folders, ["src"]);
+        assert_eq!(std::fs::read_to_string(d.path().join("src/main.rs")).expect("r"), "fn main() {}\n");
+        // Not twice, not over what is there, and never a file from anywhere else.
+        assert_eq!(s.restore(&kept, "src/again.rs").0["error"], "it is no longer kept");
+        let outside = tempfile::tempdir().expect("outside");
+        std::fs::write(outside.path().join("x"), "x").expect("w");
+        let (v, _) = s.restore(&outside.path().join("x").to_string_lossy(), "x");
+        assert_eq!(v["error"], "only what the Explorer deleted is put back");
+        let escape = format!("{}/../../x", s.deleted().display());
+        assert!(s.restore(&escape, "x").0["error"].is_string());
+        assert!(!d.path().join("x").exists());
     }
 }
