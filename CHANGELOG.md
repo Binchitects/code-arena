@@ -175,6 +175,20 @@ Sections used:
 - **Hovers on marks.** Resting the pointer on a marked range shows its message under the line after
   a short delay, and resting it on a glyph shows the glyph's title. The hover closes when the
   pointer moves off it, the editor scrolls or the caret moves.
+- **Tables in answers.** A Markdown table in an answer is drawn in bordered columns, each as wide as
+  its widest text. Click a header to sort by that column: ascending, then descending, then back to
+  the order written. Numbers sort as numbers and empty cells go last. A table of more than 8 rows
+  has a 'Filter rows' box.
+- **Code blocks with a bar.** Each fenced block in an answer has a bar naming its file
+  (```` ```ts:src/app.ts ````) or its language. The bar has Copy (says 'Copied'), Wrap Lines (on;
+  turned off, the block scrolls sideways with line numbers) and Save as a File (asks for a path, and
+  asks again before replacing a project file). When the block names a project file, it also has
+  'Open NAME in the editor'.
+- **Clickable links and file citations.** In an answer, links to the web open in the system's
+  browser. Project files cited as `src/app.ts:12`, `:12-30`, `#L12`, `Program.cs(44,13)`, in
+  relative links, in inline code or in plain text open in the editor at that line.
+- **Selectable answer text.** Drag over an answer's text to select it, Ctrl+C copies it, and Ctrl+A
+  selects the whole paragraph.
 
 
 ### :bug: Bugs fixed
