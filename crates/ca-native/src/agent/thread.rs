@@ -25,6 +25,9 @@ use crate::state::{Send, Ui};
 /// How near the bottom (px) the thread is still read at its end, and so follows what comes.
 pub const NEAR_END: f64 = 80.0;
 
+/// The space between the thread's rows.
+const GAP: f64 = 16.0;
+
 /// Where the running turn stands, for the line under the thread.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Phase {
@@ -57,6 +60,8 @@ struct Follow {
     earlier: RwSignal<i64>,
     first_turn: RwSignal<i64>,
     asked: RwSignal<Option<i64>>,
+    /// The height 'Show earlier' takes over the first turn, as last laid out.
+    row: RwSignal<f64>,
     phase: RwSignal<Phase>,
     /// The block's blink and the dots' count, and whether their timer runs.
     tick: RwSignal<u32>,
@@ -76,6 +81,7 @@ impl crate::ext::State for Follow {
             earlier: s.create_rw_signal(0),
             first_turn: s.create_rw_signal(1),
             asked: s.create_rw_signal(None),
+            row: s.create_rw_signal(0.0),
             phase: s.create_rw_signal(Phase::Idle),
             tick: s.create_rw_signal(0),
             ticking: s.create_rw_signal(false),
@@ -109,6 +115,12 @@ pub fn scrolled(top: f64, stick: bool, above: Option<f64>, new: f64) -> Option<f
         None if stick => Some(new),
         None => None,
     }
+}
+
+/// The content's height the place is kept from when earlier turns come: all of it, less 'Show earlier' (`row`
+/// high, and the gap under it) when those were the last turns before, since it goes then.
+pub fn kept_from(content: f64, row: f64, earlier_was: i64, earlier: i64) -> f64 {
+    if earlier_was > 0 && earlier <= 0 { content - row - GAP } else { content }
 }
 
 /// The phase a message of the session leads to (none: it does not change it).
@@ -174,7 +186,7 @@ pub(super) fn thread(ui: Ui, send: Send) -> impl IntoView {
                     f.scroll_to(y);
                 }
             })
-            .style(|s| s.flex_col().width_full().padding_horiz(16.0).padding_vert(12.0).gap(16.0));
+            .style(|s| s.flex_col().width_full().padding_horiz(16.0).padding_vert(12.0).gap(GAP));
             let view = scroll(list)
                 .on_scroll(move |r: Rect| {
                     let (old, content) = (f.top.get_untracked(), f.content.get_untracked());
@@ -209,6 +221,11 @@ fn earlier_row(ui: Ui, send: Send) -> impl IntoView {
         if f.asked.get().is_some() { "Loading…".to_string() } else { earlier_words(f.earlier.get()) }
     };
     label(words)
+        .on_resize(move |r: Rect| {
+            if r.height() > 0.0 {
+                change(f.row, r.height());
+            }
+        })
         .on_click_stop(move |_| {
             if f.asked.get_untracked().is_some() {
                 return;
@@ -379,11 +396,13 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
         "user" if m["replay"] != true && m["carried"] != true => f.follow_on(),
         "older" if f.asked.get_untracked().is_some() && m["before_turn"].as_i64() == f.asked.get_untracked() => {
             let mut older = super::stream::thread_of(ui, m);
-            change(f.earlier, m["earlier"].as_i64().unwrap_or(0));
+            let earlier = m["earlier"].as_i64().unwrap_or(0);
+            let from = kept_from(f.content.get_untracked(), f.row.get_untracked(), f.earlier.get_untracked(), earlier);
+            change(f.earlier, earlier);
             change(f.first_turn, m["first_turn"].as_i64().unwrap_or(1));
             f.asked.set(None);
             if !older.is_empty() {
-                f.above.set(Some(f.content.get_untracked()));
+                f.above.set(Some(from));
                 ui.items.update(|l| {
                     older.append(l);
                     *l = older;
@@ -398,6 +417,12 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn earlier_turns_keep_the_place_read_and_the_row_that_brought_the_last_of_them_goes() {
+        assert_eq!(kept_from(2000.0, 18.0, 32, 2), 2000.0);
+        assert_eq!(kept_from(2000.0, 18.0, 2, 0), 2000.0 - 18.0 - 16.0);
+    }
 
     #[test]
     fn the_thread_follows_only_while_it_is_read_within_80_px_of_its_end() {
