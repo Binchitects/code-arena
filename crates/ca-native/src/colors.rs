@@ -196,6 +196,7 @@ colors! {
     notice_border: ["inputValidation.warningBorder"], "#B89500", "#B89500";
 
     chat_request: ["chat.requestBubbleBackground", "chat.requestBackground", "list.hoverBackground"], "#2A2D2E", "#F2F2F2";
+    chat_flash: ["editor.findMatchHighlightBackground"], "#EA5C0055", "#EA5C0055";
     terminal_bg: ["terminal.background", "panel.background"], "#1E1E1E", "#FFFFFF";
     terminal_fg: ["terminal.foreground"], "#CCCCCC", "#333333";
     terminal_selection: ["terminal.selectionBackground", "editor.selectionBackground"], "#264F78", "#ADD6FF";
