@@ -791,7 +791,13 @@ mod tests {
             click: None,
         }];
         let second = [
-            Mark::Glyph { line: 2, icon: "lightbulb", tint: Tint::Fixed(Color::WHITE), title: "Fix".into(), click: None },
+            Mark::Glyph {
+                line: 2,
+                icon: "lightbulb",
+                tint: Tint::Fixed(Color::WHITE),
+                title: "Fix".into(),
+                click: None,
+            },
             Mark::Line { line: 2, bg: Tint::Fixed(Color::BLACK) },
             Mark::Ruler { line: 7, tint: Tint::Fixed(Color::WHITE) },
             Mark::Ruler { line: 7, tint: Tint::Fixed(Color::WHITE) },
