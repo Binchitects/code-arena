@@ -459,12 +459,9 @@ fn session_row(ui: Ui, send: Send, s: Session) -> impl IntoView {
 fn hit_row(ui: Ui, send: Send, h: Hit, title: String) -> impl IntoView {
     let t = ui.colors;
     let (text, id) = (h.text.clone(), h.id.clone());
-    h_stack((
+    let row = h_stack((
         icon("comment", 16.0),
-        label(move || text.clone()).style(|s| s.min_width(0.0).flex_shrink(1.0_f32).text_ellipsis()),
-        label(move || title.clone()).style(move |s| {
-            s.font_size(12.0).min_width(0.0).flex_shrink(1.0_f32).flex_grow(1.0_f32).color(t.get().desc).text_ellipsis()
-        }),
+        label(move || text.clone()).style(|s| s.min_width(0.0).flex_grow(1.0_f32).text_ellipsis()),
     ))
     .on_click_stop(move |_| resume(ui, &send, &id))
     .style(move |s| {
@@ -479,6 +476,11 @@ fn hit_row(ui: Ui, send: Send, h: Hit, title: String) -> impl IntoView {
             .selectable(false)
             .cursor(CursorStyle::Pointer)
             .hover(|s| s.background(c.list_hover))
+    });
+    // The session it is in, when the pointer rests on it.
+    tooltip(row, move || {
+        let title = title.clone();
+        label(move || title.clone())
     })
 }
 
