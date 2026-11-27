@@ -120,7 +120,7 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyVi
             };
             code(ui, lang, name, text).style(move |s| s.margin_top(over(8.0))).into_any()
         }
-        Block::Table { .. } => empty().into_any(),
+        Block::Table { .. } => table(ui, now).style(move |s| s.margin_top(over(8.0))).into_any(),
         Block::Rule => empty()
             .style(move |s| {
                 s.height(1.0).width_full().margin_top(over(12.0)).margin_bottom(4.0).background(t.get().widget_border)
@@ -374,6 +374,235 @@ fn rects(layout: &TextLayout, marks: &[Range<usize>], width: f64) -> Vec<Rect> {
         }
     }
     out
+}
+
+/// A table's filter box is offered once it has more rows than this.
+const FILTER_FROM: usize = 8;
+
+/// The widest a table's column is drawn (its longer cells wrap within it).
+const MOST_COLUMN: f64 = 320.0;
+
+/// A number, when the whole cell reads as one (`1,204`, `35%`, `$4.20`, `-3`); else none, and the cell sorts as text.
+fn cell_number(text: &str) -> Option<f64> {
+    let t = text.trim();
+    let t = t.strip_prefix(['$', '€', '£', '¥']).unwrap_or(t);
+    let t = t.strip_suffix('%').unwrap_or(t).replace(',', "").replace('−', "-");
+    let body = t.strip_prefix(['-', '+']).unwrap_or(&t);
+    let (whole, power) = match body.find(['e', 'E']) {
+        Some(at) => (&body[..at], Some(&body[at + 1..])),
+        None => (body, None),
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let (int, frac) = whole.split_once('.').unwrap_or((whole, ""));
+    let whole_ok = (digits(int) || int.is_empty()) && (frac.is_empty() || digits(frac)) && whole != "." && !whole.is_empty();
+    let power_ok = power.is_none_or(|p| digits(p.strip_prefix(['-', '+']).unwrap_or(p)));
+    (whole_ok && power_ok).then(|| t.parse::<f64>().ok()).flatten().filter(|n| n.is_finite())
+}
+
+/// Text in the order people read it: letters without their case, and the numbers in it as numbers (2 before 10).
+fn natural(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        match (x.peek().copied(), y.peek().copied()) {
+            (None, None) => return a.cmp(b),
+            (None, _) => return std::cmp::Ordering::Less,
+            (_, None) => return std::cmp::Ordering::Greater,
+            (Some(c), Some(d)) if c.is_ascii_digit() && d.is_ascii_digit() => {
+                let take = |it: &mut std::iter::Peekable<std::str::Chars>| {
+                    let mut n = String::new();
+                    while let Some(c) = it.peek().copied().filter(char::is_ascii_digit) {
+                        n.push(c);
+                        it.next();
+                    }
+                    n
+                };
+                let (m, n) = (take(&mut x), take(&mut y));
+                let (m, n) = (m.trim_start_matches('0'), n.trim_start_matches('0'));
+                let order = m.len().cmp(&n.len()).then_with(|| m.cmp(n));
+                if order.is_ne() {
+                    return order;
+                }
+            }
+            (Some(c), Some(d)) => {
+                let order = c.to_lowercase().cmp(d.to_lowercase());
+                if order.is_ne() {
+                    return order;
+                }
+                x.next();
+                y.next();
+            }
+        }
+    }
+}
+
+/// The rows (by their place) in the order of one column: numbers as numbers when both cells are, else text as
+/// people read it; empty cells last whichever way it sorts.
+fn sort_rows(rows: &[Vec<Text>], column: usize, desc: bool) -> Vec<usize> {
+    let cell = |r: usize| rows[r].get(column).map(|c| c.text.trim()).unwrap_or("");
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by(|&a, &b| {
+        let (x, y) = (cell(a), cell(b));
+        match (x.is_empty(), y.is_empty()) {
+            (true, true) => return std::cmp::Ordering::Equal,
+            (true, false) => return std::cmp::Ordering::Greater,
+            (false, true) => return std::cmp::Ordering::Less,
+            _ => {}
+        }
+        let o = match (cell_number(x), cell_number(y)) {
+            (Some(m), Some(n)) => m.partial_cmp(&n).unwrap_or(std::cmp::Ordering::Equal),
+            _ => natural(x, y),
+        };
+        if desc { o.reverse() } else { o }
+    });
+    order
+}
+
+/// A header's click: sorted up by a new column, then down, then back to the order written.
+fn next_sort(now: Option<(usize, bool)>, column: usize) -> Option<(usize, bool)> {
+    match now {
+        Some((c, false)) if c == column => Some((column, true)),
+        Some((c, true)) if c == column => None,
+        _ => Some((column, false)),
+    }
+}
+
+/// The rows shown: those that hold the words typed (in any cell, case aside), in the order sorted.
+fn shown_rows(rows: &[Vec<Text>], sort: Option<(usize, bool)>, filter: &str) -> Vec<usize> {
+    let order = match sort {
+        Some((column, desc)) => sort_rows(rows, column, desc),
+        None => (0..rows.len()).collect(),
+    };
+    let words = filter.trim().to_lowercase();
+    if words.is_empty() {
+        return order;
+    }
+    order.into_iter().filter(|&r| rows[r].iter().any(|c| c.text.to_lowercase().contains(&words))).collect()
+}
+
+/// How wide a cell's text is on one line, at 13 px (bold for a header's).
+fn measure(text: &str, bold: bool) -> f64 {
+    let attrs = Attrs::new().family(&UI).font_size(13.0).weight(if bold { Weight::SEMIBOLD } else { Weight::NORMAL });
+    let mut layout = TextLayout::new();
+    layout.set_text(text, AttrsList::new(attrs));
+    layout.size().width
+}
+
+/// A table as VS Code's chat draws one: its cells in bordered columns as wide as their widest text (to a limit, past
+/// which they wrap), the header's text in bold. A header's click sorts by its column (up, down, then as written),
+/// and a long table has a box to filter its rows. It scrolls across when it is wider than the answer.
+fn table(ui: Ui, now: Memo<Option<Rc<Block>>>) -> impl IntoView {
+    let t = ui.colors;
+    let parts = create_memo(move |_| match now.get().as_deref() {
+        Some(Block::Table { head, rows, .. }) => (Rc::new(head.clone()), Rc::new(rows.clone())),
+        _ => (Rc::new(Vec::new()), Rc::new(Vec::new())),
+    });
+    let sort = create_rw_signal(None::<(usize, bool)>);
+    let filter = create_rw_signal(String::new());
+    // Each text measured once (the table is read again with each piece of an answer).
+    let measured = Rc::new(RefCell::new(std::collections::HashMap::<(String, bool), f64>::new()));
+    let widths = create_memo(move |_| {
+        let (head, rows) = parts.get();
+        let mut m = measured.borrow_mut();
+        let mut width = |text: &str, bold: bool| {
+            *m.entry((text.to_string(), bold)).or_insert_with(|| measure(text, bold))
+        };
+        (0..head.len())
+            .map(|c| {
+                let widest = rows.iter().filter_map(|r| r.get(c)).map(|x| width(&x.text, false)).fold(0.0, f64::max);
+                // A header has its sort mark beside it.
+                let header = width(&head[c].text, true) + 20.0;
+                (widest.max(header).min(MOST_COLUMN) + 17.0).ceil()
+            })
+            .collect::<Vec<f64>>()
+    });
+    let cell_style = move |s: floem::style::Style, column: usize| {
+        let w = widths.with(|w| w.get(column).copied().unwrap_or(60.0));
+        s.width(w)
+            .min_width(w)
+            .padding_horiz(8.0)
+            .padding_vert(4.0)
+            .border_right(1.0)
+            .border_bottom(1.0)
+            .border_color(t.get().widget_border)
+    };
+    let header = dyn_stack(
+        move || parts.with(|(head, _)| head.iter().map(|c| c.text.clone()).enumerate().collect::<Vec<_>>()),
+        |(n, text): &(usize, String)| (*n, text.clone()),
+        move |(n, text): (usize, String)| {
+            let mark = move || match sort.get() {
+                Some((c, false)) if c == n => "arrow-up",
+                Some((c, true)) if c == n => "arrow-down",
+                _ => "unfold",
+            };
+            h_stack((
+                label(move || text.clone()).style(|s| s.font_weight(Weight::SEMIBOLD).min_width(0.0)),
+                floem::views::dyn_container(mark, |m| crate::icons::icon(m, 14.0)).style(move |s| {
+                    let unsorted = sort.get().is_none_or(|(c, _)| c != n);
+                    s.color(t.get().icon).apply_if(unsorted, |s| s.color(t.get().icon.multiply_alpha(0.4)))
+                }),
+            ))
+            .on_click_stop(move |_| sort.update(|s| *s = next_sort(*s, n)))
+            .style(move |s| {
+                cell_style(s, n).gap(4.0).items_center().line_height(1.5).cursor(CursorStyle::Pointer).selectable(false)
+            })
+        },
+    )
+    .style(move |s| s.border_left(1.0).border_top(1.0).border_color(t.get().widget_border));
+    let shown = create_memo(move |_| {
+        let (_, rows) = parts.get();
+        let order = filter.with(|f| sort.with(|s| shown_rows(&rows, *s, f)));
+        order.into_iter().map(|r| (r, Rc::new(rows[r].clone()))).collect::<Vec<_>>()
+    });
+    let body = dyn_stack(
+        move || shown.get(),
+        |(r, cells): &(usize, Rc<Vec<Text>>)| {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            cells.hash(&mut h);
+            (*r, h.finish())
+        },
+        move |(_, cells): (usize, Rc<Vec<Text>>)| {
+            let row = (0..cells.len())
+                .map(|c| {
+                    let words = cells[c].clone();
+                    container(prose(ui, move || words.clone(), 13.0, false)).style(move |s| cell_style(s, c))
+                })
+                .collect::<Vec<_>>();
+            floem::views::h_stack_from_iter(row).style(move |s| s.border_left(1.0).border_color(t.get().widget_border))
+        },
+    )
+    .style(|s| s.flex_col());
+    let none = label(move || format!("No rows hold “{}”.", filter.get().trim())).style(move |s| {
+        let hidden = filter.with(|f| f.trim().is_empty()) || shown.with(|r| !r.is_empty());
+        s.padding(6.0).color(t.get().desc).apply_if(hidden, |s| s.hide())
+    });
+    let search = h_stack((
+        crate::icons::icon("search", 14.0).style(move |s| s.color(t.get().desc)),
+        text_input(filter).placeholder("Filter rows").style(move |s| {
+            let c = t.get();
+            s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).font_size(12.0).background(c.input_bg).color(c.input_fg)
+        }),
+    ))
+    .style(move |s| {
+        let c = t.get();
+        let few = parts.with(|(_, rows)| rows.len() <= FILTER_FROM);
+        s.width(224.0)
+            .height(26.0)
+            .gap(6.0)
+            .padding_horiz(6.0)
+            .margin_bottom(6.0)
+            .items_center()
+            .border(1.0)
+            .border_radius(2.0)
+            .border_color(c.widget_border)
+            .background(c.input_bg)
+            .apply_if(few, |s| s.hide())
+    });
+    v_stack((
+        search,
+        scroll(v_stack((header, body)).style(|s| s.flex_col())).style(|s| s.width_full().min_width(0.0)),
+        none,
+    ))
+    .style(|s| s.width_full().min_width(0.0))
 }
 
 /// The file name a block is saved as when its fence names none: `snippet` with its language's extension.
@@ -635,6 +864,73 @@ mod tests {
         assert_eq!(shape(&code("rust", "fn")), shape(&code("rust", "fn main() {}")));
         assert_ne!(shape(&code("rust", "fn")), shape(&code("sh", "fn")));
         assert_ne!(shape(&Block::Heading(1, inline("a"))), shape(&Block::Heading(2, inline("a"))));
+    }
+
+    fn rows(cells: &[&[&str]]) -> Vec<Vec<Text>> {
+        cells.iter().map(|r| r.iter().map(|c| inline(c)).collect()).collect()
+    }
+
+    #[test]
+    fn a_tables_numbers_sort_as_numbers_its_words_as_people_read_them_and_empty_cells_last() {
+        assert_eq!(cell_number("1,204"), Some(1204.0));
+        assert_eq!(cell_number("35%"), Some(35.0));
+        assert_eq!(cell_number("$4.20"), Some(4.2));
+        assert_eq!(cell_number("−3"), Some(-3.0));
+        assert_eq!(cell_number("1e3"), Some(1000.0));
+        for not in ["", "v2", "1.2.3", "-", ".", "12 ms", "inf", "NaN"] {
+            assert_eq!(cell_number(not), None, "{not}");
+        }
+        let r = rows(&[&["a10", "10"], &["a2", "9"], &["", "100"], &["B1", ""]]);
+        assert_eq!(sort_rows(&r, 0, false), [1, 0, 3, 2]);
+        assert_eq!(sort_rows(&r, 0, true), [3, 0, 1, 2], "reversed, the empty cell still last");
+        assert_eq!(sort_rows(&r, 1, false), [1, 0, 2, 3]);
+        assert_eq!(sort_rows(&r, 1, true), [2, 0, 1, 3]);
+    }
+
+    #[test]
+    fn a_header_sorts_up_then_down_then_as_written_and_the_filter_keeps_the_rows_that_hold_it() {
+        assert_eq!(next_sort(None, 1), Some((1, false)));
+        assert_eq!(next_sort(Some((1, false)), 1), Some((1, true)));
+        assert_eq!(next_sort(Some((1, true)), 1), None);
+        assert_eq!(next_sort(Some((1, true)), 0), Some((0, false)));
+        let r = rows(&[&["main.rs", "3"], &["Lib.rs", "1"], &["readme", "2"]]);
+        assert_eq!(shown_rows(&r, None, ""), [0, 1, 2]);
+        assert_eq!(shown_rows(&r, Some((1, false)), " "), [1, 2, 0]);
+        assert_eq!(shown_rows(&r, Some((1, true)), "RS"), [0, 1]);
+        assert!(shown_rows(&r, None, "nothing").is_empty());
+    }
+
+    #[test]
+    fn a_code_block_is_named_by_its_file_else_its_language_and_saved_by_its_extension() {
+        assert_eq!(code_label("ts", "src/app.ts"), "src/app.ts");
+        assert_eq!(code_label("rust", ""), "rust");
+        assert_eq!(code_label("", ""), "text");
+        assert_eq!(snippet_name("python"), "snippet.py");
+        assert_eq!(snippet_name("css"), "snippet.css");
+        assert_eq!(snippet_name("brainfuck"), "snippet.txt");
+    }
+
+    #[test]
+    fn an_answers_links_and_the_projects_files_it_cites_lead_where_they_say() {
+        let files: HashSet<String> = ["src/app.ts", "README.md"].map(String::from).into();
+        let words = inline("Open `src/app.ts:12`, see README.md and [docs](https://x.dev), not `other.ts` or [x](#top).");
+        let links: Vec<(&str, Target)> =
+            cited(&words, &files).into_iter().map(|(r, to)| (&words.text[r], to)).collect();
+        let file = |path: &str, line| Target::File(citations::Ref { path: path.into(), line, ..Default::default() });
+        assert_eq!(
+            links,
+            [
+                ("src/app.ts:12", file("src/app.ts", Some(12))),
+                ("README.md", file("README.md", None)),
+                ("docs", Target::Web("https://x.dev".into())),
+            ]
+        );
+        // Before the files are listed, only its own links lead anywhere.
+        assert_eq!(cited(&words, &HashSet::new()).len(), 1);
+        let to = links.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>();
+        let ranges: Vec<(Range<usize>, Target)> = cited(&words, &files);
+        assert_eq!(link_at(&ranges, ranges[0].0.start), Some(&to[0]));
+        assert_eq!(link_at(&ranges, ranges[0].0.end), None);
     }
 
     #[test]
