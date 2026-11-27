@@ -439,6 +439,9 @@ Sections used:
 - **Find in Files starts from your selection.** Ctrl+Shift+F and Ctrl+Shift+H put the text selected
   on one line into the search box. Replace in Files puts the cursor in the search box unless that
   box was just filled from a selection.
+- **Long lines scroll sideways.** A line wider than the editor now scrolls into view with the caret,
+  with a horizontal scrollbar, instead of being cut off at the editor's edge.
+- **Ctrl+PageUp and Ctrl+PageDown switch tabs in the editor.** They used to scroll a page there.
 
 
 ### :bug: Bugs fixed
@@ -503,6 +506,15 @@ Sections used:
   group draws one now, as in VS Code.
 - **Line numbers turned off are hidden.** With editor.lineNumbers set to off, the editor no longer
   draws the numbers in black when the window uses its software renderer.
+- **The current line's highlight reaches the editor's edge.** It no longer stops where the longest
+  line ends.
+- **Split editors fit the window.** Two editor groups with long lines or many tabs no longer push
+  the Agent view past the window's right edge. Each group's tabs scroll inside its own strip, so its
+  Split and "..." buttons stay in sight.
+- **The open tab stays in sight.** When a group has more tabs than fit, the tab shown is scrolled
+  into view, also when the window opens. The mouse wheel scrolls the tabs.
+- **Menu rows are no longer cut short.** The tab menu's longest row now reads "Copy Relative Path"
+  in full.
 
 ## v0.5.0 (2026-11-26)
 
