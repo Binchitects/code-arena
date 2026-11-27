@@ -16,15 +16,35 @@ const RESULT_CHARS: usize = 16_000;
 /// Times an answer cut at the output limit, or by a dropped stream, is carried on in one turn.
 const CARRY_ON: usize = 8;
 
+/// What the model is told of a call the person said no to (a session read back knows such a call by it).
+pub const SAID_NO: &str = "The person said no to this call";
+
+/// A call of a tool, as a turn's events say it: its number as the model gave it, its name, what it is about (a
+/// path, a command) and what it runs with (null: arguments that could not be read).
+#[derive(Debug, Clone, Copy)]
+pub struct Call<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub subject: &'a str,
+    pub arguments: &'a Value,
+}
+
 /// What a turn shows as it goes.
 pub trait Events: Send {
     fn text(&mut self, _delta: &str) {}
     fn reasoning(&mut self, _delta: &str) {}
     fn notice(&mut self, _text: &str) {}
+    /// A call that asks the person before it runs: the question follows, then `tool_start` or `tool_not_run`.
+    fn tool_waiting(&mut self, _call: &Call<'_>) {}
     /// A call about to run (after it was allowed).
-    fn tool_start(&mut self, _name: &str, _subject: &str) {}
-    /// A call ended: its name, its subject and what it gave (reading calls that ran at once end in order).
-    fn tool_end(&mut self, _name: &str, _subject: &str, _output: &Output) {}
+    fn tool_start(&mut self, _call: &Call<'_>) {}
+    /// A call ended: what it gave and how long it ran (reading calls that ran at once end in order).
+    fn tool_end(&mut self, _call: &Call<'_>, _output: &Output, _took: std::time::Duration) {}
+    /// A call that did not run, and what the model is told of it: `denied` when the person, the mode or a hook
+    /// said no; else it could not run as given (no tool of that name, arguments that cannot be read).
+    fn tool_not_run(&mut self, _call: &Call<'_>, _why: &str, _denied: bool) {}
+    /// How far a running call has got, where it says: so much done, of how much when it knows, and its words.
+    fn tool_progress(&mut self, _id: &str, _progress: f64, _total: Option<f64>, _message: &str) {}
     /// The model's answer for this step is complete (before its tool calls run).
     fn step_end(&mut self) {}
 }
@@ -940,31 +960,45 @@ impl Agent {
                 for (idx, mut m, t) in reads {
                     let pre = Self::pre_tool(&self.hooks.clone(), &m.name, &m.args, events).await;
                     if let Some(why) = pre.block {
-                        self.push_result(&calls[idx], Output::error(format!("A hook blocked this call: {why}")), None);
+                        let why = format!("A hook blocked this call: {why}");
+                        let said = Call { id: &calls[idx].id, name: &m.name, subject: "", arguments: &m.args };
+                        events.tool_not_run(&said, &why, true);
+                        self.push_result(&calls[idx], Output::error(why), None);
                         continue;
                     }
                     if let Some(u) = pre.updated_input {
                         m.args = u;
                     }
                     let subject = t.subject(&m.args);
+                    let said = Call { id: &calls[idx].id, name: &m.name, subject: &subject, arguments: &m.args };
                     match self.policy.decide(&m.name, Kind::Read, &subject) {
-                        Decision::Refuse(why) => self.push_result(&calls[idx], Output::error(why), None),
+                        Decision::Refuse(why) => {
+                            events.tool_not_run(&said, &why, true);
+                            self.push_result(&calls[idx], Output::error(why), None);
+                        }
                         _ => {
-                            events.tool_start(&m.name, &subject);
+                            events.tool_start(&said);
                             ready.push((idx, m, t));
                         }
                     }
                 }
                 let ctx = self.ctx.clone();
+                // Each read's own time: they run at once, and end together.
                 let runs = ready.iter().map(|(_, m, t)| {
                     let ctx = ctx.clone();
                     let t = t.clone();
                     let args = m.args.clone();
-                    async move { t.run(args, &ctx).await }
+                    async move {
+                        let began = std::time::Instant::now();
+                        let o = t.run(args, &ctx).await;
+                        (o, began.elapsed())
+                    }
                 });
                 let results = futures_util::future::join_all(runs).await;
-                for ((idx, m, t), o) in ready.into_iter().zip(results) {
-                    events.tool_end(&m.name, &t.subject(&m.args), &o);
+                for ((idx, m, t), (o, took)) in ready.into_iter().zip(results) {
+                    let subject = t.subject(&m.args);
+                    let said = Call { id: &calls[idx].id, name: &m.name, subject: &subject, arguments: &m.args };
+                    events.tool_end(&said, &o, took);
                     let o = Self::post_tool(&self.hooks.clone(), &m.name, &m.args, o, events).await;
                     self.push_result(&calls[idx], o, mend::note(&m));
                 }
@@ -974,12 +1008,19 @@ impl Agent {
             // One call that changes something, or that cannot run as given.
             let call = &calls[i];
             match mend::mend(&call.name, &call.arguments, &schemas) {
-                Err(why) => self.push_result(call, Output::error(why.0), None),
+                Err(why) => {
+                    let said = Call { id: &call.id, name: &call.name, subject: "", arguments: &Value::Null };
+                    events.tool_not_run(&said, &why.0, false);
+                    self.push_result(call, Output::error(why.0), None);
+                }
                 Ok(mut m) => {
                     self.load(&m.name);
                     let pre = Self::pre_tool(&self.hooks.clone(), &m.name, &m.args, events).await;
                     if let Some(why) = pre.block {
-                        self.push_result(call, Output::error(format!("A hook blocked this call: {why}")), None);
+                        let why = format!("A hook blocked this call: {why}");
+                        let said = Call { id: &call.id, name: &m.name, subject: "", arguments: &m.args };
+                        events.tool_not_run(&said, &why, true);
+                        self.push_result(call, Output::error(why), None);
                         i += 1;
                         continue;
                     }
@@ -987,12 +1028,16 @@ impl Agent {
                         m.args = u;
                     }
                     let Some(tool) = self.tool(&m.name) else {
-                        self.push_result(call, Output::error(format!("There is no tool named {}.", m.name)), None);
+                        let why = format!("There is no tool named {}.", m.name);
+                        let said = Call { id: &call.id, name: &m.name, subject: "", arguments: &m.args };
+                        events.tool_not_run(&said, &why, false);
+                        self.push_result(call, Output::error(why), None);
                         i += 1;
                         continue;
                     };
                     let kind = tool.kind();
                     let subject = tool.subject(&m.args);
+                    let said = Call { id: &call.id, name: &m.name, subject: &subject, arguments: &m.args };
                     // A hook's "allow" spares the question (not a mode's refusal); its "ask" asks whatever the mode.
                     let decision = match (self.policy.decide(&m.name, kind, &subject), pre.permission.as_deref()) {
                         (Decision::Ask, Some("allow")) => Decision::Run,
@@ -1002,26 +1047,35 @@ impl Agent {
                     let allowed = match decision {
                         Decision::Run => Ok(()),
                         Decision::Refuse(why) => Err(why),
-                        Decision::Ask => match Self::ask(self.hooks.clone(), self.approver.clone(), &m.name, &subject).await {
-                            Some(Answer::Yes) => Ok(()),
-                            Some(Answer::Always) => {
-                                self.policy.remember(&m.name, kind, &subject);
-                                Ok(())
+                        Decision::Ask => {
+                            events.tool_waiting(&said);
+                            match Self::ask(self.hooks.clone(), self.approver.clone(), &m.name, &subject).await {
+                                Some(Answer::Yes) => Ok(()),
+                                Some(Answer::Always) => {
+                                    self.policy.remember(&m.name, kind, &subject);
+                                    Ok(())
+                                }
+                                Some(Answer::No) => {
+                                    Err(format!("{SAID_NO}: ask what they would like instead, or find another way."))
+                                }
+                                None => Err(format!(
+                                    "This run cannot ask, and {} asks in {} mode: it was not run. Say what you would have done; the person can run again with --mode auto-edit (edits) or --mode yolo (commands too).",
+                                    m.name,
+                                    self.policy.mode.name()
+                                )),
                             }
-                            Some(Answer::No) => Err("The person said no to this call: ask what they would like instead, or find another way.".into()),
-                            None => Err(format!(
-                                "This run cannot ask, and {} asks in {} mode: it was not run. Say what you would have done; the person can run again with --mode auto-edit (edits) or --mode yolo (commands too).",
-                                m.name,
-                                self.policy.mode.name()
-                            )),
-                        },
+                        }
                     };
                     match allowed {
-                        Err(why) => self.push_result(call, Output::error(why), None),
+                        Err(why) => {
+                            events.tool_not_run(&said, &why, true);
+                            self.push_result(call, Output::error(why), None);
+                        }
                         Ok(()) => {
-                            events.tool_start(&m.name, &subject);
+                            events.tool_start(&said);
+                            let began = std::time::Instant::now();
                             let o = tool.run(m.args.clone(), &self.ctx).await;
-                            events.tool_end(&m.name, &subject, &o);
+                            events.tool_end(&said, &o, began.elapsed());
                             let o = Self::post_tool(&self.hooks.clone(), &m.name, &m.args, o, events).await;
                             for w in &o.wrote {
                                 if !out.wrote.contains(w) {

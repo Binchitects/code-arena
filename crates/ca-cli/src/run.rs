@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::bail;
-use ca_agent::{Events, NoAsking};
+use ca_agent::{Call, Events, NoAsking};
 use ca_tools::Output;
 use serde_json::json;
 
@@ -42,12 +42,15 @@ impl Events for Lines {
     fn notice(&mut self, t: &str) {
         line(json!({"type": "notice", "text": t}));
     }
-    fn tool_start(&mut self, name: &str, subject: &str) {
-        line(json!({"type": "tool_start", "name": name, "subject": subject}));
+    fn tool_start(&mut self, call: &Call<'_>) {
+        line(json!({"type": "tool_start", "id": call.id, "name": call.name, "subject": call.subject}));
     }
-    fn tool_end(&mut self, name: &str, subject: &str, o: &Output) {
+    fn tool_end(&mut self, call: &Call<'_>, o: &Output, took: std::time::Duration) {
         let shown: String = o.text.chars().take(2000).collect();
-        line(json!({"type": "tool_end", "name": name, "subject": subject, "is_error": o.is_error, "output": shown}));
+        line(json!({
+            "type": "tool_end", "id": call.id, "name": call.name, "subject": call.subject, "is_error": o.is_error,
+            "output": shown, "ms": took.as_millis() as u64,
+        }));
     }
     fn step_end(&mut self) {
         line(json!({"type": "step_end"}));
@@ -145,7 +148,8 @@ impl Events for Progress {
         self.spoke = false;
         self.thinking = false;
     }
-    fn tool_end(&mut self, name: &str, subject: &str, o: &Output) {
+    fn tool_end(&mut self, call: &Call<'_>, o: &Output, _took: std::time::Duration) {
+        let (name, subject) = (call.name, call.subject);
         // The plan, as it stands after the call.
         if name == "plan" && !o.is_error && !self.plan.is_empty() {
             self.ui.say(&crate::session::render_plan(&self.plan_now(), self.ui));

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ca_agent::{Answer, Approver, Events};
+use ca_agent::{Answer, Approver, Call, Events};
 use ca_tools::Output;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -105,6 +105,120 @@ struct PageEvents {
     tasks: Option<Shared>,
 }
 
+impl PageEvents {
+    /// How a call ended, kept for the thread a face asks for again in this run.
+    fn keep(&self, id: &str, fact: Fact) {
+        if let Some(sh) = &self.tasks {
+            sh.kept.of::<CallFacts>().keep(&sh.session, id, fact);
+        }
+    }
+}
+
+/// What one argument of a call shows in the page at most (a file written whole is long).
+const SHOWN_ARGUMENT: usize = 8000;
+
+/// A result as the page shows it: its start, and whether the rest was cut.
+fn shown_result(text: &str) -> (String, bool) {
+    (text.chars().take(SHOWN_RESULT).collect(), text.chars().count() > SHOWN_RESULT)
+}
+
+/// A call's arguments as the page shows them: each text's start, a longer one ending in "…".
+fn shown_arguments(v: &Value) -> Value {
+    match v {
+        Value::String(s) if s.chars().count() > SHOWN_ARGUMENT => {
+            Value::String(s.chars().take(SHOWN_ARGUMENT).chain(std::iter::once('…')).collect())
+        }
+        Value::Array(a) => Value::Array(a.iter().map(shown_arguments).collect()),
+        Value::Object(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), shown_arguments(v))).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A call as the page is told of it: its id, its name, what it is about and what it was asked with.
+fn said_call(kind: &str, call: &Call<'_>) -> Value {
+    json!({"type": kind, "id": call.id, "name": call.name, "subject": call.subject,
+           "arguments": shown_arguments(call.arguments)})
+}
+
+/// How a call ended: whether it gave a result, how long it ran, and the faces' word for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fact {
+    ok: bool,
+    ms: u64,
+    status: &'static str,
+}
+
+/// How the calls of this run ended, by session and call id. The session's store keeps a call's arguments and its
+/// result's text only, so a thread read back after a start says of a call only that it has a result.
+#[derive(Default)]
+struct CallFacts(Mutex<HashMap<(String, String), Fact>>);
+
+impl CallFacts {
+    /// The most calls remembered: past it the oldest run's are forgotten with the rest.
+    const MOST: usize = 4000;
+
+    fn keep(&self, session: &str, id: &str, fact: Fact) {
+        if let Ok(mut all) = self.0.lock() {
+            if all.len() >= Self::MOST {
+                all.clear();
+            }
+            all.insert((session.to_string(), id.to_string()), fact);
+        }
+    }
+
+    fn of(&self, session: &str, id: &str) -> Option<Fact> {
+        self.0.lock().ok().and_then(|all| all.get(&(session.to_string(), id.to_string())).copied())
+    }
+}
+
+/// A call as it ran: its tool's name, what it was asked with and what it is about (the model's own words for the
+/// first two are mended before a call runs).
+struct Read {
+    name: String,
+    arguments: Value,
+    subject: String,
+}
+
+/// The calls of a kept answer's step, as the faces show them: each with what it was asked with, its result's start
+/// (the message after it that answers its id) and, for a call of this run, how it ended.
+fn kept_calls(
+    step: &ca_llm::Message,
+    after: &[ca_session::Stored],
+    read: &dyn Fn(&ca_llm::ToolCall) -> Read,
+    fact: &dyn Fn(&str) -> Option<Fact>,
+) -> Vec<Value> {
+    step.tool_calls
+        .iter()
+        .map(|call| {
+            let Read { name, arguments, subject } = read(call);
+            let result = after
+                .iter()
+                .map(|m| &m.message)
+                .find(|m| m.role == ca_llm::Role::Tool && m.tool_call_id.as_deref() == Some(call.id.as_str()));
+            let mut v = json!({
+                "id": call.id,
+                "name": name,
+                "subject": subject,
+                "arguments": shown_arguments(&arguments),
+                "done": result.is_some(),
+            });
+            if let Some(r) = result {
+                let (text, cut) = shown_result(&r.content);
+                v["text"] = json!(text);
+                v["cut"] = json!(cut);
+                if let Some(f) = fact(&call.id) {
+                    v["ok"] = json!(f.ok);
+                    v["ms"] = json!(f.ms);
+                    v["status"] = json!(f.status);
+                } else if r.content.starts_with(ca_agent::SAID_NO) {
+                    v["ok"] = json!(false);
+                    v["status"] = json!("denied");
+                }
+            }
+            v
+        })
+        .collect()
+}
 impl Events for PageEvents {
     fn text(&mut self, delta: &str) {
         send(&self.out, json!({"type": "text", "delta": delta}));
@@ -115,22 +229,46 @@ impl Events for PageEvents {
     fn notice(&mut self, text: &str) {
         send(&self.out, json!({"type": "notice", "text": text}));
     }
-    fn tool_start(&mut self, name: &str, subject: &str) {
-        send(&self.out, json!({"type": "tool_start", "name": name, "subject": subject}));
+    fn tool_waiting(&mut self, call: &Call<'_>) {
+        send(&self.out, said_call("tool_waiting", call));
     }
-    fn tool_end(&mut self, name: &str, subject: &str, output: &Output) {
-        let text: String = output.text.chars().take(SHOWN_RESULT).collect();
-        let cut = output.text.chars().count() > SHOWN_RESULT;
+    fn tool_start(&mut self, call: &Call<'_>) {
+        send(&self.out, said_call("tool_start", call));
+    }
+    fn tool_end(&mut self, call: &Call<'_>, output: &Output, took: std::time::Duration) {
+        let (text, cut) = shown_result(&output.text);
+        let (ok, ms) = (!output.is_error, took.as_millis() as u64);
+        let status = if ok { "done" } else { "failed" };
+        self.keep(call.id, Fact { ok, ms, status });
         send(
             &self.out,
-            json!({"type": "tool_end", "name": name, "subject": subject, "ok": !output.is_error, "text": text, "cut": cut}),
+            json!({"type": "tool_end", "id": call.id, "name": call.name, "subject": call.subject, "ok": ok,
+                   "text": text, "cut": cut, "ms": ms, "status": status}),
         );
         // The plan, a goal's check or a job changed with it: the bars are told at once.
-        if matches!(name, "plan" | "goal_check" | "run_shell" | "command_output" | "stop_command")
+        if matches!(call.name, "plan" | "goal_check" | "run_shell" | "command_output" | "stop_command")
             && let Some(sh) = &self.tasks
         {
             send(&self.out, tasks(sh));
         }
+    }
+    fn tool_not_run(&mut self, call: &Call<'_>, why: &str, denied: bool) {
+        // A call that never began ends all the same: the faces show it with why it did not run.
+        let (text, cut) = shown_result(why);
+        let status = if denied { "denied" } else { "failed" };
+        self.keep(call.id, Fact { ok: false, ms: 0, status });
+        let mut m = said_call("tool_end", call);
+        for (key, value) in [("ok", json!(false)), ("text", json!(text)), ("cut", json!(cut)), ("ms", json!(0))] {
+            m[key] = value;
+        }
+        m["status"] = json!(status);
+        send(&self.out, m);
+    }
+    fn tool_progress(&mut self, id: &str, progress: f64, total: Option<f64>, message: &str) {
+        send(
+            &self.out,
+            json!({"type": "tool_progress", "id": id, "progress": progress, "total": total, "message": message}),
+        );
     }
     fn step_end(&mut self) {
         send(&self.out, json!({"type": "step_end"}));
@@ -155,6 +293,32 @@ fn locked(edition: ca_settings::Edition) -> Value {
 fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
     let numbers: HashMap<i64, usize> =
         session::questions(p).unwrap_or_default().into_iter().map(|(n, seq, _)| (seq, n)).collect();
+    // The session's tools, to say a kept call as it ran: its name and arguments mended, and what it is about.
+    let tools: Vec<(String, Value, Arc<dyn ca_tools::Tool>)> = p
+        .agent
+        .tools
+        .iter()
+        .chain(p.agent.deferred.iter())
+        .map(|t| {
+            let d = t.def();
+            (d.name, d.parameters, t.clone())
+        })
+        .collect();
+    let schemas: Vec<(String, Value)> = tools.iter().map(|(n, s, _)| (n.clone(), s.clone())).collect();
+    let read = |call: &ca_llm::ToolCall| match ca_agent::mend::mend(&call.name, &call.arguments, &schemas) {
+        Ok(m) => {
+            let subject =
+                tools.iter().find(|(n, _, _)| *n == m.name).map(|(_, _, t)| t.subject(&m.args)).unwrap_or_default();
+            Read { name: m.name, arguments: m.args, subject }
+        }
+        Err(_) => Read {
+            name: call.name.clone(),
+            arguments: ca_agent::mend::parse_args(&call.arguments, &mut vec![]).unwrap_or(Value::Null),
+            subject: String::new(),
+        },
+    };
+    let facts = sh.kept.of::<CallFacts>();
+    let fact = |id: &str| facts.of(&p.session, id);
     let messages: Vec<Value> = p
         .store
         .lock()
@@ -162,16 +326,22 @@ fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
         .and_then(|s| s.page(&p.session, 30, None).ok())
         .map(|page| {
             page.messages
-                .into_iter()
-                .filter(|m| !matches!(m.message.role, ca_llm::Role::System))
-                .map(|m| {
-                    json!({
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| !matches!(m.message.role, ca_llm::Role::System))
+                .map(|(at, m)| {
+                    let mut v = json!({
                         "role": m.message.role,
                         "text": m.message.content,
                         "tools": m.message.tool_calls.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
                         "turn": m.turn,
                         "q": numbers.get(&m.seq),
-                    })
+                    });
+                    // Each call with what the session kept of it, beside their names (which stay as they were).
+                    if !m.message.tool_calls.is_empty() {
+                        v["tool_calls"] = json!(kept_calls(&m.message, &page.messages[at + 1..], &read, &fact));
+                    }
+                    v
                 })
                 .collect()
         })
