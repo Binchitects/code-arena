@@ -36,6 +36,8 @@ const SHOWN: usize = 12;
 /// The list's heading and its padding above and below the rows.
 const HEADING: f64 = 24.0;
 const PADDING: f64 = 4.0;
+/// What the list takes besides its rows: the heading, the padding, the border.
+const AROUND: f64 = HEADING + 2.0 * PADDING + 2.0;
 /// How long what was listed is taken as it stands.
 const FRESH: Duration = Duration::from_secs(30);
 const TITLE: &str = "Skills and commands";
@@ -306,6 +308,13 @@ fn key(ui: Ui, send: &Send, key: &Key, mods: Modifiers) -> bool {
     false
 }
 
+/// The rows shown of `n`: no more than `SHOWN`, nor than there is room for over the box (`under`), the gap
+/// over it and the window's edge kept, and always one.
+fn shown(n: usize, under: Rect) -> usize {
+    let room = ((under.y0 - 8.0 - AROUND) / ROW).floor().max(1.0) as usize;
+    n.min(SHOWN).min(room)
+}
+
 /// The list, over the window with its foot against the box's top, as wide as the box within it.
 fn menu(ui: Ui) -> impl IntoView {
     let me = ui.state::<Slash>();
@@ -322,7 +331,7 @@ fn menu(ui: Ui) -> impl IntoView {
             Rect::new(0.0, y, 1.0, y + ROW)
         })
         .scroll_style(|s| s.hide_bars(true))
-        .style(move |s| s.width_full().height(me.items.with(|i| i.len().min(SHOWN)) as f64 * ROW));
+        .style(move |s| s.width_full().height(shown(me.items.with(|i| i.len()), me.under.get()) as f64 * ROW));
     let heading = label(|| TITLE).style(move |s| {
         s.height(HEADING).items_center().padding_horiz(8.0).font_size(11.0).color(t.get().desc).selectable(false)
     });
@@ -334,7 +343,7 @@ fn menu(ui: Ui) -> impl IntoView {
             let n = me.items.with(|i| i.len());
             let under = me.under.get();
             let (width, _) = ui.window.get();
-            let height = HEADING + n.min(SHOWN) as f64 * ROW + 2.0 * PADDING + 2.0;
+            let height = shown(n, under) as f64 * ROW + AROUND;
             let left = (under.x0 + 8.0).max(4.0);
             s.position(Position::Absolute)
                 .inset_left(left)
@@ -447,6 +456,16 @@ mod tests {
         let said = Rc::new(RefCell::new(Vec::new()));
         let to = said.clone();
         (Rc::new(move |v| to.borrow_mut().push(v)), said)
+    }
+
+    #[test]
+    fn the_list_shows_as_many_rows_as_there_is_room_for_over_the_box() {
+        let under = |top: f64| Rect::new(0.0, top, 300.0, top + 80.0);
+        assert_eq!(shown(30, under(700.0)), SHOWN);
+        assert_eq!(shown(3, under(700.0)), 3);
+        assert_eq!(shown(30, under(270.0)), ((270.0 - 8.0 - AROUND) / ROW) as usize);
+        assert_eq!(shown(30, under(20.0)), 1);
+        assert_eq!(shown(0, under(700.0)), 0);
     }
 
     #[test]
