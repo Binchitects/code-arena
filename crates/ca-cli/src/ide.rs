@@ -265,30 +265,48 @@ fn context_detail(p: &Prepared) -> Value {
 }
 
 /// A setting changed from the page: checked as the schema says (its kind, where it may be set, the edition's
-/// locks), kept in the person's settings.json or the project's, and read again. `null` takes it out (its default).
-pub fn keep_setting(app: &mut App, root: &Path, key: &str, value: &Value, project: bool) -> Result<PathBuf, String> {
+/// locks), kept in the person's settings.json or one of the project's two (`layer`), for every language or in one
+/// language's own block (`language`), and read again. `null` takes it out (its default).
+pub fn keep_setting(
+    app: &mut App,
+    root: &Path,
+    key: &str,
+    value: &Value,
+    layer: ca_settings::Layer,
+    language: Option<&str>,
+) -> Result<PathBuf, String> {
     let Some(setting) = ca_settings::schema::find(key) else {
         return Err(format!("there is no setting {key}"));
     };
     if let Some(why) = crate::edition::setting_locked(app.edition(), key) {
         return Err(why);
     }
-    if project && setting.scope != ca_settings::Scope::Project {
+    if layer != ca_settings::Layer::User && !setting.for_project() {
         return Err(format!("{key} is yours alone: a project's settings cannot set it"));
+    }
+    if let Some(id) = language {
+        if !setting.for_language() {
+            return Err(format!("{key} cannot be set for one language"));
+        }
+        if !crate::ide_settings::language_id(id) {
+            return Err(format!("{id} is no language's id"));
+        }
     }
     if !value.is_null() && !setting.accepts(value) {
         return Err(format!("{key} does not take {value}"));
     }
-    let project_file = root.join(".code-arena").join("settings.json");
-    let file = if project { project_file.clone() } else { app.paths.settings_file() };
+    let files = crate::ide_settings::Files::of(&app.paths, root);
+    let file = files.layer(layer).to_path_buf();
     let done = if value.is_null() {
-        ca_settings::settings::forget(&file, key)
+        ca_settings::settings::forget_for(&file, language, key)
     } else {
-        ca_settings::settings::keep(&file, key, value)
+        ca_settings::settings::keep_for(&file, language, key, value)
     };
-    done.map_err(|e| format!("{}: {e}", file.display()))?;
-    app.settings =
-        ca_settings::Settings::load(&app.paths.settings_file(), Some(&project_file), app.settings.env().clone());
+    done.map_err(|e| match e.to_string() {
+        said if said.contains(&file.display().to_string()) => said,
+        said => format!("{}: {said}", file.display()),
+    })?;
+    app.settings = files.read(&app.settings);
     Ok(file)
 }
 
@@ -496,12 +514,23 @@ async fn own_idle(m: &Value, p: &mut Prepared, app: &mut App, sh: &Shared) -> Ow
         "set_setting" => {
             let key = m["key"].as_str().unwrap_or("");
             let root = p.agent.ctx.workspace.root().to_path_buf();
-            match keep_setting(app, &root, key, &m["value"], m["where"] == "project") {
+            // Whose it is: the person's (the default), the project's own file, or VS Code's beside it.
+            let layer = match m["where"].as_str() {
+                Some("project") => ca_settings::Layer::Project,
+                Some("workspace") => ca_settings::Layer::Workspace,
+                _ => ca_settings::Layer::User,
+            };
+            match keep_setting(app, &root, key, &m["value"], layer, m["lang"].as_str()) {
                 Ok(file) => {
-                    send(
-                        out,
-                        json!({"type": "setting_kept", "key": key, "value": m["value"], "file": file.display().to_string()}),
-                    );
+                    let mut kept = json!({"type": "setting_kept", "key": key, "value": m["value"], "file": file.display().to_string()});
+                    for echoed in ["lang", "where"] {
+                        if m[echoed].is_string() {
+                            kept[echoed] = m[echoed].clone();
+                        }
+                    }
+                    send(out, kept);
+                    // Every setting as it is now, for the window's parts that read them.
+                    crate::ide_settings::kept(sh, &app.settings);
                     if key == ca_settings::schema::COLOR_THEME.key {
                         send(out, json!({"type": "theme", "theme": theme(app)}));
                     }
