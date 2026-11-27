@@ -168,6 +168,13 @@ Sections used:
   'src/a.ts:12-14', that opens the file at those lines.
 - **Tool cards in history.** A thread read back from the session shows each call's arguments and
   result, and a call that never ended shows as Not run.
+- **Editor decorations.** Other parts of the window can now mark a file's text the way VS Code does:
+  a glyph in the glyph margin that you can click; line backgrounds; colours, squiggles by severity,
+  underlines and lines through on ranges; inline hints, end-of-line messages and ghost text; and
+  marks in the overview ruler at the right edge.
+- **Hovers on marks.** Resting the pointer on a marked range shows its message under the line after
+  a short delay, and resting it on a glyph shows the glyph's title. The hover closes when the
+  pointer moves off it, the editor scrolls or the caret moves.
 
 
 ### :bug: Bugs fixed
