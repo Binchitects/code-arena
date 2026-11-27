@@ -46,7 +46,8 @@ fn shape(b: &Block) -> u64 {
     match b {
         Block::Heading(level, _) => level.hash(&mut h),
         Block::Item { depth, marker, .. } => (depth, marker).hash(&mut h),
-        Block::Code { lang, .. } => lang.hash(&mut h),
+        Block::Code { lang, name, .. } => (lang, name).hash(&mut h),
+        Block::Table { align, .. } => align.hash(&mut h),
         _ => {}
     }
     h.finish()
@@ -113,6 +114,7 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyVi
             };
             code(ui, lang, text).style(move |s| s.margin_top(over(8.0))).into_any()
         }
+        Block::Table { .. } => empty().into_any(),
         Block::Rule => empty()
             .style(move |s| {
                 s.height(1.0).width_full().margin_top(over(12.0)).margin_bottom(4.0).background(t.get().widget_border)
@@ -286,7 +288,7 @@ mod tests {
         let para = |s| Block::Paragraph(inline(s));
         assert_eq!(shape(&para("a")), shape(&para("a longer one")));
         assert_ne!(shape(&para("a")), shape(&Block::Quote(inline("a"))));
-        let code = |lang: &str, text: &str| Block::Code { lang: lang.into(), text: text.into() };
+        let code = |lang: &str, text: &str| Block::Code { lang: lang.into(), name: String::new(), text: text.into() };
         assert_eq!(shape(&code("rust", "fn")), shape(&code("rust", "fn main() {}")));
         assert_ne!(shape(&code("rust", "fn")), shape(&code("sh", "fn")));
         assert_ne!(shape(&Block::Heading(1, inline("a"))), shape(&Block::Heading(2, inline("a"))));
