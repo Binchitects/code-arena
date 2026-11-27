@@ -8,23 +8,21 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
-use floem::action::{add_overlay, exec_after, remove_overlay};
+use floem::action::exec_after;
 use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, NamedKey};
-use floem::kurbo::{Point, Rect, Size};
+use floem::kurbo::Rect;
 use floem::peniko::{Brush, Color};
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal};
 use floem::style::{CursorStyle, TextOverflow};
-use floem::views::{
-    Decorators, container, dyn_stack, empty, h_stack, label, scroll, stack, text_input, tooltip, v_stack,
-    v_stack_from_iter,
-};
+use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, scroll, text_input, tooltip, v_stack};
 use floem::{AnyView, IntoView, View};
 use serde_json::{Value, json};
 
 use crate::icons::icon;
+use crate::menus::Menu;
 use crate::state::{Entry, Send, Ui};
-use crate::widgets::{UI_FONT, action, bold, button, caps, line};
+use crate::widgets::{action, bold, caps, dialog, line, popup, toast};
 
 /// VS Code's row in a tree.
 const ROW: f64 = 22.0;
@@ -286,159 +284,43 @@ pub fn actions(ui: Ui, send: Send) -> impl IntoView {
     .style(|s| s.gap(2.0))
 }
 
-/// The window's size, from a view in it (the Explorer may float in a window of its own).
-fn window_size(ui: Ui) -> Size {
-    let mut top = ui.explorer_tree.get_untracked();
-    while let Some(p) = top.and_then(|t| t.parent()) {
-        top = Some(p);
-    }
-    top.and_then(|t| t.get_size()).filter(|s| s.width > 0.0 && s.height > 0.0).unwrap_or_else(|| {
-        let (w, h) = ui.window.get_untracked();
-        Size::new(w, h)
-    })
-}
-
-/// The menu or the question closed, and the keys back with the tree.
-fn close_popup(ui: Ui) {
-    if let Some(id) = ui.explorer_popup.get_untracked() {
-        ui.explorer_popup.set(None);
-        remove_overlay(id);
-        focus_tree(ui);
-    }
-}
-
-/// A layer over the whole window (an overlay of the window's, so it is drawn over every part and has the pointer
-/// first), with `body` in it: a press outside the body or Escape closes it, Enter runs `enter`. It is outside the
-/// workbench's own view, so it sets its font and colours itself.
-fn popup(ui: Ui, dim: bool, body: impl FnOnce(Size) -> AnyView + 'static, enter: Option<Rc<dyn Fn()>>) {
-    close_popup(ui);
-    let t = ui.colors;
-    let size = window_size(ui);
-    let id = add_overlay(Point::ZERO, move |_| {
-        let layer = stack((
-            empty()
-                .on_event_stop(EventListener::PointerDown, move |_| close_popup(ui))
-                .style(|s| s.absolute().inset(0.0).size_full()),
-            body(size),
-        ))
-        .keyboard_navigable()
-        // Every key stays here while it is open (none goes on to the workbench's own).
-        .on_event_stop(EventListener::KeyDown, move |e| {
-            if let Event::KeyDown(k) = e {
-                match (&k.key.logical_key, &enter) {
-                    (Key::Named(NamedKey::Escape), _) => close_popup(ui),
-                    (Key::Named(NamedKey::Enter), Some(run)) => run(),
-                    _ => {}
+/// VS Code's menu for a row (or for the tree's empty part: `path` empty), where the pointer is in the window: the
+/// Explorer's own rows, then the ones the window's parts registered for the place (`menus.rs`), which act on the
+/// row selected.
+fn open_menu(ui: Ui, send: &Send, path: String, dir: bool, at: (f64, f64)) {
+    let Some(tree) = ui.explorer_tree.get_untracked() else { return };
+    let folder = if dir { path.clone() } else { parent_of(&path).to_string() };
+    let new = |dir: bool| {
+        let (send, folder) = (send.clone(), folder.clone());
+        move || begin_new(ui, &send, &folder, dir)
+    };
+    let mut items: Vec<popup::Item> =
+        vec![popup::entry("New File...", new(false)).into(), popup::entry("New Folder...", new(true)).into()];
+    if !path.is_empty() {
+        let copy = |text: String| {
+            move || {
+                if floem::Clipboard::set_contents(text.clone()).is_err() {
+                    toast::error(ui, "The path could not be copied.");
                 }
             }
-        })
-        .style(move |s| {
-            let c = t.get();
-            // A little short of the window: an overlay that reaches the window's edge is drawn moved.
-            s.width(size.width - 6.0)
-                .height(size.height - 6.0)
-                .items_center()
-                .justify_center()
-                .font_family(UI_FONT.clone())
-                .font_size(13.0)
-                .color(c.fg)
-                .apply_if(dim, |s| s.background(Color::rgba8(0, 0, 0, 0x4D)))
-        });
-        layer.id().request_focus();
-        layer
-    });
-    ui.explorer_popup.set(Some(id));
-}
-
-/// A menu's item: its label, its keys, what it does ("-": a separator).
-type MenuItem = (&'static str, &'static str, Rc<dyn Fn()>);
-
-/// VS Code's menu for a row (or for the tree's empty part: `path` empty), where the pointer is in the window.
-fn open_menu(ui: Ui, send: &Send, path: String, dir: bool, at: (f64, f64)) {
-    let t = ui.colors;
-    let folder = if dir { path.clone() } else { parent_of(&path).to_string() };
-    let separator = || -> MenuItem { ("-", "", Rc::new(|| {})) };
-    let new = |dir: bool| -> Rc<dyn Fn()> {
-        let (send, folder) = (send.clone(), folder.clone());
-        Rc::new(move || begin_new(ui, &send, &folder, dir))
-    };
-    let mut items: Vec<MenuItem> = vec![("New File...", "", new(false)), ("New Folder...", "", new(true))];
-    if !path.is_empty() {
-        let copy = |text: String| -> Rc<dyn Fn()> {
-            Rc::new(move || {
-                if floem::Clipboard::set_contents(text.clone()).is_err() {
-                    ui.message.set("The path could not be copied.".into());
-                }
-            })
         };
-        let (renamed, deleted, send) = (path.clone(), path.clone(), send.clone());
-        let rename: Rc<dyn Fn()> = Rc::new(move || begin_rename(ui, &renamed));
-        let delete: Rc<dyn Fn()> = Rc::new(move || ask_delete(ui, &send, &deleted));
+        let (renamed, deleted, asked) = (path.clone(), path.clone(), send.clone());
         items.extend([
-            separator(),
-            ("Copy Path", "", copy(join(&ui.folder.get_untracked(), &path))),
-            ("Copy Relative Path", "", copy(path.clone())),
-            separator(),
-            ("Rename...", "F2", rename),
-            ("Delete", "Delete", delete),
+            popup::line(),
+            popup::entry("Copy Path", copy(join(&ui.folder.get_untracked(), &path))).into(),
+            popup::entry("Copy Relative Path", copy(path.clone())).into(),
+            popup::line(),
+            popup::entry("Rename...", move || begin_rename(ui, &renamed)).keys("F2").into(),
+            popup::entry("Delete", move || ask_delete(ui, &asked, &deleted)).keys("Delete").into(),
         ]);
     }
-    // Its place: where the pointer is, kept inside the window (above the pointer when there is no room under).
-    let (width, height) = (260.0, items.iter().map(|i| if i.0 == "-" { 9.0 } else { 26.0 }).sum::<f64>() + 10.0);
-    popup(
-        ui,
-        false,
-        move |size| {
-            let x = at.0.min(size.width - width - 8.0).max(0.0);
-            let y = if at.1 + height > size.height - 8.0 { (at.1 - height).max(0.0) } else { at.1 };
-            v_stack_from_iter(items.into_iter().map(move |(text, keys, run)| {
-                if text == "-" {
-                    return empty()
-                        .style(move |s| s.height(1.0).margin_vert(4.0).background(t.get().menu_separator))
-                        .into_any();
-                }
-                h_stack((
-                    label(move || text).style(|s| s.flex_grow(1.0_f32)),
-                    label(move || keys).style(|s| s.padding_left(30.0)),
-                ))
-                .on_click_stop(move |_| {
-                    close_popup(ui);
-                    run();
-                })
-                .style(move |s| {
-                    let c = t.get();
-                    s.height(26.0)
-                        .items_center()
-                        .padding_left(26.0)
-                        .padding_right(20.0)
-                        .border_radius(4.0)
-                        .margin_horiz(4.0)
-                        .color(c.menu_fg)
-                        .hover(|s| s.background(c.menu_selected).color(c.menu_selected_fg))
-                })
-                .into_any()
-            }))
-            .style(move |s| {
-                let c = t.get();
-                s.absolute()
-                    .inset_left(x)
-                    .inset_top(y)
-                    .min_width(220.0)
-                    .max_width(width)
-                    .padding_vert(4.0)
-                    .border(1.0)
-                    .border_color(c.menu_border)
-                    .border_radius(6.0)
-                    .background(c.menu_bg)
-                    .box_shadow_blur(8.0)
-                    .box_shadow_color(c.shadow)
-                    .font_size(13.0)
-                    .selectable(false)
-            })
-            .into_any()
-        },
-        None,
-    );
+    let place = if path.is_empty() { Menu::ExplorerEmpty } else { Menu::ExplorerRow };
+    let more = popup::of_rows(ui, send, crate::menus::rows(ui, place));
+    if !more.is_empty() {
+        items.push(popup::line());
+        items.extend(more);
+    }
+    popup::open(ui, popup::At::point(tree, at.0, at.1).back(tree), items);
 }
 
 /// VS Code's question before a delete, as its dialog: the question, what becomes of the file, the two buttons.
@@ -447,7 +329,6 @@ fn ask_delete(ui: Ui, send: &Send, path: &str) {
     if path.is_empty() {
         return;
     }
-    let t = ui.colors;
     let dir = is_dir(ui, path);
     let name = name_of(path);
     let question = if dir {
@@ -460,45 +341,16 @@ fn ask_delete(ui: Ui, send: &Send, path: &str) {
     } else {
         "You can restore this file from the backups."
     };
-    let yes: Rc<dyn Fn()> = {
-        let (send, path) = (send.clone(), path.to_string());
-        Rc::new(move || {
-            close_popup(ui);
+    let (send, path) = (send.clone(), path.to_string());
+    let mut asked = dialog::ask(&question).detail(detail).button("Move to Backups");
+    if let Some(tree) = ui.explorer_tree.get_untracked() {
+        asked = asked.back(tree);
+    }
+    asked.open(ui, move |answer| {
+        if answer.yes() {
             send(json!({"type": "delete", "path": path}));
-        })
-    };
-    let pressed = yes.clone();
-    popup(
-        ui,
-        true,
-        move |size| {
-            v_stack((
-                label(move || question.clone())
-                    .style(|s| s.font_size(18.0).line_height(1.25).text_overflow(TextOverflow::Wrap)),
-                label(move || detail).style(|s| s.margin_top(10.0).text_overflow(TextOverflow::Wrap)),
-                h_stack((
-                    button(t, "Move to Backups", true, move || pressed()),
-                    button(t, "Cancel", false, move || close_popup(ui)),
-                ))
-                .style(|s| s.margin_top(20.0).gap(8.0).justify_end()),
-            ))
-            .style(move |s| {
-                let c = t.get();
-                s.width(450.0_f64.min(size.width - 40.0))
-                    .padding(20.0)
-                    .border(1.0)
-                    .border_color(c.widget_border)
-                    .border_radius(6.0)
-                    .background(c.widget)
-                    .color(c.fg)
-                    .box_shadow_blur(16.0)
-                    .box_shadow_color(c.shadow)
-                    .selectable(false)
-            })
-            .into_any()
-        },
-        Some(yes),
-    );
+        }
+    });
 }
 
 type OpenMenu = Rc<dyn Fn(String, bool)>;
@@ -708,7 +560,13 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         // The tree's empty part: a click selects nothing (a new file then goes in the project's top), a right-click
         // opens the menu for the top.
         .on_click_stop(move |_| ui.selected.set(String::new()))
-        .on_secondary_click_stop(move |_| menu(String::new(), true))
+        .on_secondary_click_stop(move |_| {
+            // The menu's rows that the window's parts registered act on what is selected: here, the top.
+            if ui.selected.with_untracked(|s| !s.is_empty()) {
+                ui.selected.set(String::new());
+            }
+            menu(String::new(), true)
+        })
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).width_full());
     ui.explorer_tree.set(Some(tree.id()));
     let whole = v_stack((header, tree));
@@ -722,6 +580,13 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             }
         })
         .style(|s| s.size_full().min_height(0.0))
+}
+
+/// What the session could not do, said in the status bar as before, and as the old Code Arena says it: a
+/// notification in the corner, kept in the bell's list.
+fn said_wrong(ui: Ui, what: &str) {
+    ui.message.set(what.to_string());
+    toast::error_of(what).source("Explorer").show_in(ui);
 }
 
 /// What it adds to the window's registries, once at start.
@@ -754,7 +619,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             }
             ui.explorer_asked.set(None);
             match m["error"].as_str() {
-                Some(e) => ui.message.set(format!("Could not create {path}: {e}")),
+                Some(e) => said_wrong(ui, &format!("Could not create {path}: {e}")),
                 None => {
                     ui.message.set(String::new());
                     if m["dir"] == true {
@@ -768,7 +633,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         "renamed" => {
             let (path, to) = (s("path"), s("to"));
             match m["error"].as_str() {
-                Some(e) => ui.message.set(format!("Could not rename {path}: {e}")),
+                Some(e) => said_wrong(ui, &format!("Could not rename {path}: {e}")),
                 None => {
                     ui.message.set(String::new());
                     ui.moved(&path, &to);
@@ -778,7 +643,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         "deleted" => {
             let path = s("path");
             match m["error"].as_str() {
-                Some(e) => ui.message.set(format!("Could not delete {path}: {e}")),
+                Some(e) => said_wrong(ui, &format!("Could not delete {path}: {e}")),
                 None => {
                     ui.gone(&path);
                     ui.message.set(match m["kept"].as_str() {
@@ -825,6 +690,26 @@ mod tests {
 
     fn shown(ui: Ui) -> Vec<String> {
         rows(ui).into_iter().map(|r| if r.input { format!("[{}]", r.path) } else { r.path }).collect()
+    }
+
+    #[test]
+    fn what_the_session_could_not_do_is_a_notification_kept_in_the_bells_list() {
+        let ui = project();
+        let (send, _) = sender();
+        assert_eq!(toast::count(ui), 0);
+        ui.take(
+            &json!({"type": "renamed", "path": "src/a.rs", "to": "src/b.rs", "error": "it is there already"}),
+            &send,
+        );
+        assert_eq!(ui.message.get_untracked(), "Could not rename src/a.rs: it is there already");
+        assert_eq!(toast::count(ui), 1);
+        ui.take(&json!({"type": "deleted", "path": "z.txt", "error": "permission denied"}), &send);
+        assert_eq!(toast::count(ui), 2);
+        // What went well says nothing in the corner.
+        ui.take(&json!({"type": "renamed", "path": "src/a.rs", "to": "src/c.rs"}), &send);
+        ui.take(&json!({"type": "deleted", "path": "z.txt", "kept": ".code-arena/backups/1"}), &send);
+        assert_eq!(toast::count(ui), 2);
+        assert_eq!(ui.message.get_untracked(), "Deleted z.txt: it is kept in .code-arena/backups/1");
     }
 
     #[test]

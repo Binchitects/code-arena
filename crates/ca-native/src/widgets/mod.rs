@@ -1,16 +1,25 @@
 //! The workbench's small parts drawn as VS Code draws them: its action buttons (22 px, rounded, a hover background),
-//! its buttons, its section and view titles, and the sash a part is resized by.
+//! its buttons, its section and view titles, and the sash a part is resized by. Its larger shared parts are this
+//! file's children: the quick pick (`quick`), the dialogs (`dialog`), the toasts and the notifications' list
+//! (`toast`), the tree of many rows (`tree`) and the menu opened at a place (`popup`).
 
+use std::cell::Cell;
+use std::rc::Rc;
+
+use floem::action::add_overlay;
 use floem::event::{Event, EventListener};
+use floem::keyboard::{Key, Modifiers};
+use floem::kurbo::{Point, Size};
 use floem::peniko::Color;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate};
 use floem::style::{CursorStyle, Style};
-use floem::text::Weight;
+use floem::text::{Attrs, AttrsList, FamilyOwned, TextLayout, Weight};
 use floem::views::{Decorators, container, empty, label};
-use floem::{IntoView, View};
+use floem::{AnyView, IntoView, View, ViewId};
 
 use crate::colors::Colors;
 use crate::icons::icon;
+use crate::state::Ui;
 
 pub mod dialog;
 pub mod popup;
@@ -170,5 +179,109 @@ pub fn line(s: Style, colour: Color, side: char) -> Style {
         'r' => s.border_right(1.0),
         't' => s.border_top(1.0),
         _ => s.border_bottom(1.0),
+    }
+}
+
+/// A colour between two others: `a` at 0, `b` at 1. For a dimmed text on a known background (a text's own
+/// transparency is not drawn by every renderer).
+pub fn mix(a: Color, b: Color, t: f64) -> Color {
+    let of = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t.clamp(0.0, 1.0)).round() as u8;
+    Color::rgba8(of(a.r, b.r), of(a.g, b.g), of(a.b, b.b), of(a.a, b.a))
+}
+
+/// The size of the window a view is in (a view may float in a window of its own); the main window's when no view
+/// is given, or it is not laid out yet.
+pub fn window_size(ui: Ui, of: Option<ViewId>) -> Size {
+    let mut top = of;
+    while let Some(p) = top.and_then(|t| t.parent()) {
+        top = Some(p);
+    }
+    top.and_then(|t| t.get_size()).filter(|s| s.width > 0.0 && s.height > 0.0).unwrap_or_else(|| {
+        let (w, h) = ui.window.get_untracked();
+        Size::new(w, h)
+    })
+}
+
+/// How wide a text is drawn in the window's font at a size.
+pub fn text_width(text: &str, size: f32) -> f64 {
+    let family: Vec<FamilyOwned> = FamilyOwned::parse_list(&UI_FONT).collect();
+    let mut layout = TextLayout::new();
+    layout.set_text(text, AttrsList::new(Attrs::new().family(&family).font_size(size)));
+    layout.size().width
+}
+
+/// What gives a cover its keys back (a press takes them from whatever had them).
+pub type Keep = Rc<dyn Fn()>;
+
+/// A layer over the whole of the window an event is being taken in (an overlay of the window's, so it is over
+/// every part of it and has the pointer first), with `body` in it: for a menu opened at a place and for a dialog.
+/// The layer has the keys while it is there, each given to `key` and none going on to the workbench's own; a press
+/// that no part of the body takes is a press outside it, and calls `outside` (each solid part of the body is made
+/// with `solid`, which takes the press). `size` is the window's. It is outside the workbench's own view, so it
+/// sets its font and colours itself. Removed with Floem's `remove_overlay` and the id this gives.
+pub fn cover(
+    ui: Ui,
+    size: Size,
+    dim: bool,
+    key: impl Fn(&Key, Modifiers) + 'static,
+    outside: impl Fn() + 'static,
+    body: impl FnOnce(Keep) -> AnyView + 'static,
+) -> ViewId {
+    let t = ui.colors;
+    add_overlay(Point::ZERO, move |_| {
+        let me = Rc::new(Cell::new(None::<ViewId>));
+        let keep: Keep = {
+            let me = me.clone();
+            Rc::new(move || {
+                if let Some(id) = me.get() {
+                    id.request_focus();
+                }
+            })
+        };
+        let layer = container(body(keep)).keyboard_navigable();
+        let id = layer.id();
+        me.set(Some(id));
+        id.request_focus();
+        layer
+            .on_event_stop(EventListener::KeyDown, move |e| {
+                if let Event::KeyDown(k) = e {
+                    key(&k.key.logical_key, k.modifiers);
+                }
+            })
+            .on_event_stop(EventListener::PointerDown, move |_| outside())
+            // Nothing under it is pointed at or scrolled while it is there.
+            .on_event_stop(EventListener::PointerMove, |_| {})
+            .on_event_stop(EventListener::PointerWheel, |_| {})
+            .style(move |s| {
+                let c = t.get();
+                // A little short of the window: an overlay that reaches the window's edge is drawn moved.
+                s.width(size.width - 6.0)
+                    .height(size.height - 6.0)
+                    .font_family(UI_FONT.clone())
+                    .font_size(13.0)
+                    .color(c.fg)
+                    .apply_if(dim, |s| s.background(Color::rgba8(0, 0, 0, 0x4D)))
+            })
+    })
+}
+
+/// A solid part of a cover's body (a menu, a dialog's box): a press on it is not a press outside, and the cover
+/// keeps its keys.
+pub fn solid(part: impl IntoView + 'static, keep: Keep) -> impl IntoView {
+    part.into_view().on_event_stop(EventListener::PointerDown, move |_| keep())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_colour_between_two_is_nearer_the_one_it_is_mixed_towards() {
+        let (fg, bg) = (Color::rgb8(204, 204, 204), Color::rgb8(37, 37, 38));
+        assert_eq!(mix(fg, bg, 0.0), fg);
+        assert_eq!(mix(fg, bg, 1.0), bg);
+        assert_eq!(mix(fg, bg, 0.6), Color::rgb8(104, 104, 104));
+        assert_eq!(mix(fg, bg, 7.0), bg, "no further than the other colour");
+        assert_eq!(mix(Color::rgba8(0, 0, 0, 0), Color::rgba8(0, 0, 0, 255), 0.5).a, 128);
     }
 }

@@ -565,10 +565,6 @@ fn register_status() {
         .style(move |s| item(t, s))
         .into_any()
     });
-    add("status.bell", Side::Right, 299, |ui, _| {
-        let t = ui.colors;
-        container(icon("bell", 16.0)).style(move |s| item(t, s)).into_any()
-    });
 }
 
 /// The status bar: the left items, the room between, the right items, as their registry has them at start.

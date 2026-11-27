@@ -182,6 +182,25 @@ colors! {
     terminal_bg: ["terminal.background", "panel.background"], "#1E1E1E", "#FFFFFF";
     terminal_fg: ["terminal.foreground"], "#CCCCCC", "#333333";
     terminal_selection: ["terminal.selectionBackground", "editor.selectionBackground"], "#264F78", "#ADD6FF";
+
+    picker_group_fg: ["pickerGroup.foreground"], "#3794FF", "#0066BF";
+    picker_group_border: ["pickerGroup.border"], "#3F3F46", "#CCCEDB";
+    quick_title_bg: ["quickInputTitle.background"], "#FFFFFF1B", "#0000000F";
+    notify_bg: ["notifications.background", "editorWidget.background"], "#252526", "#F3F3F3";
+    notify_fg: ["notifications.foreground", "editorWidget.foreground", "foreground"], "#CCCCCC", "#616161";
+    notify_border: ["notifications.border", "notificationCenterHeader.background"], "#303031", "#E5E5E5";
+    notify_header_bg: ["notificationCenterHeader.background"], "#303031", "#E7E7E7";
+    notify_header_fg: ["notificationCenterHeader.foreground", "notifications.foreground", "foreground"], "#CCCCCC", "#616161";
+    notify_outline: ["notificationCenter.border", "notificationToast.border", "widget.border", "contrastBorder"], "#00000000", "#00000000";
+    notify_info: ["notificationsInfoIcon.foreground", "editorInfo.foreground"], "#3794FF", "#1A85FF";
+    notify_warning: ["notificationsWarningIcon.foreground", "editorWarning.foreground"], "#CCA700", "#BF8803";
+    notify_error: ["notificationsErrorIcon.foreground", "editorError.foreground"], "#F14C4C", "#E51400";
+    checkbox_bg: ["checkbox.background", "dropdown.background"], "#3C3C3C", "#FFFFFF";
+    checkbox_fg: ["checkbox.foreground", "dropdown.foreground"], "#F0F0F0", "#616161";
+    checkbox_border: ["checkbox.border", "dropdown.border"], "#6B6B6B", "#919191";
+    danger_bg: ["statusBarItem.errorBackground"], "#C72E0F", "#C72E0F";
+    danger_fg: ["statusBarItem.errorForeground"], "#FFFFFF", "#FFFFFF";
+    danger_hover: ["statusBarItem.errorHoverBackground"], "#DD3A1B", "#B02609";
 }
 
 #[cfg(test)]
