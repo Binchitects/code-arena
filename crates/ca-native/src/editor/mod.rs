@@ -88,7 +88,7 @@ fn go_to_line(editor: &Editor, path: &str, line: usize) {
 
 /// The file editor's colours and gutter, as Floem's `TextEditor::editor_style` sets them: the line numbers with
 /// their padding (the chevrons right of them), the current line, the selection, the caret, the guides.
-fn editor_look(s: floem::style::Style, c: &crate::colors::Colors) -> floem::style::Style {
+fn editor_look(s: floem::style::Style, c: &crate::colors::Colors, focused: bool) -> floem::style::Style {
     use floem::views::editor::gutter::{DimColor, GutterClass, LeftOfCenterPadding, RightOfCenterPadding};
     use floem::views::editor::view::EditorViewClass;
     use floem::views::editor::*;
@@ -106,7 +106,8 @@ fn editor_look(s: floem::style::Style, c: &crate::colors::Colors) -> floem::styl
         .class(EditorViewClass, |s| {
             s.set(CurrentLineColor, Some(c.line_highlight))
                 .set(SelectionColor, c.selection)
-                .set(floem::style::CursorColor, c.cursor)
+                // As VS Code: the caret only in the group that has the keys.
+                .set(floem::style::CursorColor, if focused { c.cursor } else { floem::peniko::Color::TRANSPARENT })
                 .set(IndentGuideColor, c.indent_guide)
                 .set(VisibleWhitespaceColor, c.whitespace)
                 .set(PhantomColor, c.desc)
@@ -213,6 +214,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 tab.colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
                 let caret = ui.caret;
                 let map = map.clone();
+                let focused = shown.focused;
                 let doc = crate::decor::doc(tab.doc.clone(), &tab.path);
                 let editor = Editor::new(floem::reactive::Scope::current(), doc, tab.colours.clone(), false);
                 // Floem's editor, drawn with the folds (`folding.rs`).
@@ -247,11 +249,10 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                     }
                 })
                 // No background of its own: the group's is under it, and the overview ruler between (`decor.rs`).
-                .style(move |s| editor_look(s, &c));
+                .style(move |s| editor_look(s, &c, focused.get()));
                 g.editors.update(|e| {
                     e.insert(id, (tab.path.clone(), editor.clone()));
                 });
-                let focused = shown.focused;
                 if focused.get_untracked() {
                     make_live(ui, id);
                 }

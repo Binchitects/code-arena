@@ -49,7 +49,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     // keys go back to when the menu closes.
     let anchor = create_rw_signal(Rect::ZERO);
     let (input, back) = composer::input(ui, send.clone(), anchor);
-    let mut parts = vec![header::view(ui, send.clone()).into_any(), thread::thread(ui, send.clone()).into_any()];
+    let mut parts = vec![thread::thread(ui, send.clone()).into_any()];
     parts.extend(bars(ui, &send));
     parts.push(input);
     parts.extend(slots::column(ui, &send, slots::Slot::BoxFoot));

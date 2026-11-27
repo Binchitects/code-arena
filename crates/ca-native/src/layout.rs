@@ -217,7 +217,8 @@ impl View {
         match self {
             View::Files => Some(crate::explorer::actions(ui, send).into_any()),
             View::Terminal => Some(crate::terminal::actions(ui, send).into_any()),
-            View::Search | View::Changes | View::Outline | View::Agent => None,
+            View::Agent => Some(crate::agent::header::view(ui, send).into_any()),
+            View::Search | View::Changes | View::Outline => None,
             View::Scm => crate::scm::actions(ui, send),
             View::Run => crate::run_debug::actions(ui, send),
             View::Extensions => crate::extensions_view::actions(ui, send),

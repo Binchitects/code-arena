@@ -15,7 +15,7 @@ use floem::event::EventListener;
 use floem::keyboard::{Key, NamedKey};
 use floem::kurbo::Rect;
 use floem::peniko::Color;
-use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect};
+use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::style::{CursorStyle, Position, TextOverflow};
 use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, scroll, stack, v_stack};
 use floem::{IntoView, View, ViewId};
@@ -473,6 +473,8 @@ pub(super) fn menu(ui: Ui, send: Send, anchor: RwSignal<Rect>, frame: ViewId, ba
             .apply_if(!none && !ui.running.get(), |s| s.hide())
     });
     let behind = empty().on_event_stop(EventListener::PointerDown, move |_| close()).style(|s| s.size_full());
+    // How wide the menu is drawn, so it moves left to show its rows whole rather than cut them at the view's edge.
+    let wide = create_rw_signal(0.0);
     let list = v_stack((scroll(items).style(|s| s.min_height(0.0).flex_shrink(1.0_f32)), foot))
         .keyboard_navigable()
         .on_key_down(Key::Named(NamedKey::Escape), |_| true, move |_| close())
@@ -490,15 +492,19 @@ pub(super) fn menu(ui: Ui, send: Send, anchor: RwSignal<Rect>, frame: ViewId, ba
             },
         )
         .on_event_cont(EventListener::FocusLost, move |_| ui.picker.set(None))
+        .on_resize(move |r| {
+            if wide.get_untracked() != r.width() {
+                wide.set(r.width());
+            }
+        })
         .style(move |s| {
             let c = t.get();
-            // Over the pill, its left at the pill's, and within the view on every side.
             let (pill, view) = (anchor.get(), frame.layout_rect());
-            let left = (pill.x0 - view.x0).min(view.width() - MENU_WIDTH - 12.0).max(4.0);
+            let (left, most) = placed(pill.x0 - view.x0, view.width(), wide.get());
             s.position(Position::Absolute)
                 .inset_left(left)
                 .inset_bottom(view.y1 - pill.y0 + 4.0)
-                .max_width((view.width() - left - 8.0).clamp(MENU_WIDTH, MENU_MOST))
+                .max_width(most)
                 .max_height((pill.y0 - view.y0 - 12.0).clamp(60.0, 360.0))
                 .border(1.0)
                 .border_color(c.menu_border)
@@ -518,6 +524,14 @@ pub(super) fn menu(ui: Ui, send: Send, anchor: RwSignal<Rect>, frame: ViewId, ba
     stack((behind, list)).style(move |s| {
         s.position(Position::Absolute).inset(0.0).z_index(100).apply_if(ui.picker.get().is_none(), |s| s.hide())
     })
+}
+
+/// Where a menu `wide` across stands in a view `view` across, from its pill's left: over the pill, its left at the
+/// pill's, moved left as far as it must to stay within the view, and the most it may be across (its rows cut short
+/// past that).
+fn placed(pill: f64, view: f64, wide: f64) -> (f64, f64) {
+    let most = (view - 8.0).clamp(MENU_WIDTH, MENU_MOST);
+    (pill.min(view - wide.min(most) - 4.0).max(4.0), most)
 }
 
 /// The row the arrows go to from `at`, over the rows that cannot be chosen (none when none can).
@@ -588,6 +602,18 @@ mod tests {
         assert_eq!(capital("auto-edit"), "Auto-edit");
         assert_eq!(capital("xhigh"), "Xhigh");
         assert_eq!(capital(""), "");
+    }
+
+    #[test]
+    fn a_menu_moves_left_to_show_its_rows_whole() {
+        // Room on the right: its left at the pill's.
+        assert_eq!(placed(10.0, 380.0, 200.0), (10.0, 372.0));
+        // A pill near the view's right: the menu ends 4 px before the view does.
+        assert_eq!(placed(160.0, 380.0, 300.0), (76.0, 372.0));
+        // Wider than the view: as wide as it may be, from 4 px in.
+        assert_eq!(placed(160.0, 380.0, 900.0), (4.0, 372.0));
+        // A view narrower than the least menu: the least width.
+        assert_eq!(placed(20.0, 100.0, 300.0).1, MENU_WIDTH);
     }
 
     #[test]

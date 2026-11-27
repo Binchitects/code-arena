@@ -530,9 +530,14 @@ fn open_window(ui: Ui, v: View) {
                 label(move || v.title().to_uppercase())
                     .style(move |s| caps(s).padding_left(20.0).color(t.get().side_title)),
                 empty().style(|s| s.flex_grow(1.0_f32)),
+                // The view's own actions, as in its title in the dock, then the button that docks it again.
+                match v.actions(ui, send.clone()) {
+                    Some(a) => a,
+                    None => empty().into_any(),
+                },
                 action(t, "layout-sidebar-right", move || ui.dock_view(v, EDITOR, Side::Right)),
             ))
-            .style(|s| s.height(35.0).width_full().items_center().padding_right(8.0).selectable(false));
+            .style(|s| s.height(35.0).width_full().items_center().gap(2.0).padding_right(8.0).selectable(false));
             v_stack((title, v.body(ui, send).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0))))
                 .on_event_cont(EventListener::WindowClosed, move |_| {
                     // Closed by its frame: back in the tree (unless docked already, which closed it).

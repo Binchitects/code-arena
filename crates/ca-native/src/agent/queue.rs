@@ -242,6 +242,8 @@ pub fn bubble(ui: Ui, send: Send, item: &Item) -> AnyView {
         }),
     ))
     .style(move |s| s.gap(8.0).items_center().width_full().apply_if(!first.get() || number.is_none(), |s| s.hide()));
+    // Drawn only while the pointer is over the bubble, but their room is kept, so the bubble keeps its width.
+    let shown = create_memo(move |_| hovered.get() || failed.get());
     let tool = move |name: &'static str, tip: &'static str, run: Box<dyn Fn()>| {
         let button = icon(name, 16.0).on_click_stop(move |_| run()).style(move |s| {
             let c = t.get();
@@ -249,7 +251,7 @@ pub fn bubble(ui: Ui, send: Send, item: &Item) -> AnyView {
                 .width(20.0)
                 .height(20.0)
                 .border_radius(4.0)
-                .color(c.fg)
+                .color(if shown.get() { c.fg } else { floem::peniko::Color::TRANSPARENT })
                 .cursor(CursorStyle::Pointer)
                 .hover(|s| s.background(c.toolbar_hover))
         });
@@ -277,9 +279,7 @@ pub fn bubble(ui: Ui, send: Send, item: &Item) -> AnyView {
             }),
         ),
     ))
-    .style(move |s| {
-        s.gap(2.0).apply_if(number.is_none() || editing.get() || !(hovered.get() || failed.get()), |s| s.hide())
-    });
+    .style(move |s| s.gap(2.0).apply_if(number.is_none() || editing.get(), |s| s.hide()));
     let top = h_stack((
         icon("watch", 12.0).style(move |s| s.color(t.get().desc)),
         icon("quote", 12.0).style(move |s| s.color(t.get().desc).apply_if(no_quote, |s| s.hide())),

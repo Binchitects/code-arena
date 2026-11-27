@@ -536,12 +536,15 @@ fn row(ui: Ui, state: Open, all: Rc<Vec<Item>>, level: usize, i: usize, item: It
         _ => empty().into_any(),
     };
     let (name, keys, enabled, opens) = (e.label.clone(), e.keys.clone(), e.enabled, !e.sub.is_empty());
+    // The room before the keys only when there are keys: `size_of` counts it only then, and a row without keys
+    // that kept it would cut its name short.
+    let keyed = !keys.is_empty();
     let arrow = if opens { icon("chevron-right", 16.0).into_any() } else { empty().into_any() };
     let pointed = all.clone();
     h_stack((
         container(mark).style(|s| s.width(BEFORE).flex_shrink(0.0_f32).items_center().justify_center()),
         label(move || name.clone()).style(|s| s.flex_grow(1.0_f32).min_width(0.0).text_ellipsis()),
-        label(move || keys.clone()).style(|s| s.padding_left(30.0).flex_shrink(0.0_f32)),
+        label(move || keys.clone()).style(move |s| s.apply_if(keyed, |s| s.padding_left(30.0)).flex_shrink(0.0_f32)),
         arrow,
     ))
     .on_event_cont(EventListener::PointerEnter, move |_| {
