@@ -28,7 +28,9 @@ pub(super) fn tabs(ui: Ui) -> impl IntoView {
                     tell(ui, |send| crate::media::preview(ui, &path, send));
                 }
             })
-            .style(move |s| s.apply_if(!ui.active.with(|a| a.as_deref().is_some_and(|p| svg_text(ui, p))), |s| s.hide())),
+            .style(move |s| {
+                s.apply_if(!ui.active.with(|a| a.as_deref().is_some_and(|p| svg_text(ui, p))), |s| s.hide())
+            }),
             action(t, "split-horizontal", || {}),
             action(t, "ellipsis", || {}),
         ))

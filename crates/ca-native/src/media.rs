@@ -143,7 +143,8 @@ pub fn decode(bytes: &[u8], path: &str, checker: [[u8; 3]; 2]) -> Result<Decoded
 }
 
 fn still(bytes: &[u8]) -> Result<image::DynamicImage, String> {
-    let reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
+    let reader =
+        image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
     let (w, h) = reader.into_dimensions().map_err(|e| e.to_string())?;
     if w.max(h) > MOST_SIDE {
         return Err(format!("{w} × {h} is too large to draw"));
@@ -181,8 +182,9 @@ fn first_frame(bytes: &[u8]) -> Result<image::DynamicImage, String> {
     let (w, h) = (u32::from(d.width()), u32::from(d.height()));
     let mut screen = image::RgbaImage::new(w, h);
     if let Some(f) = d.read_next_frame().map_err(|e| e.to_string())? {
-        for (i, px) in f.buffer.chunks_exact(4).enumerate() {
-            let (x, y) = (u32::from(f.left) + i as u32 % u32::from(f.width), u32::from(f.top) + i as u32 / u32::from(f.width));
+        for (i, px) in f.buffer.as_chunks::<4>().0.iter().enumerate() {
+            let (x, y) =
+                (u32::from(f.left) + i as u32 % u32::from(f.width), u32::from(f.top) + i as u32 / u32::from(f.width));
             if x < w && y < h {
                 screen.put_pixel(x, y, image::Rgba([px[0], px[1], px[2], px[3]]));
             }
@@ -358,7 +360,8 @@ pub fn register(_ui: Ui, _send: &Send) {
 
 /// The shown tab's file, when it is a media tab.
 fn shown_file(ui: Ui) -> Option<String> {
-    ui.active.with(|a| a.as_deref().and_then(|p| p.strip_prefix(KIND)).and_then(|r| r.strip_prefix(':')).map(String::from))
+    ui.active
+        .with(|a| a.as_deref().and_then(|p| p.strip_prefix(KIND)).and_then(|r| r.strip_prefix(':')).map(String::from))
 }
 
 fn shown_item(ui: Ui) -> Option<Item> {
@@ -449,11 +452,8 @@ fn player(ui: Ui, send: Send, path: &str, glyph: &'static str, size: u64) -> Any
 fn message(ui: Ui, glyph: &'static str, line: AnyView, act: AnyView) -> AnyView {
     let t = ui.colors;
     container(
-        v_stack((
-            h_stack((icon(glyph, 16.0), line)).style(|s| s.gap(8.0).items_center()),
-            act,
-        ))
-        .style(|s| s.gap(12.0).items_center()),
+        v_stack((h_stack((icon(glyph, 16.0), line)).style(|s| s.gap(8.0).items_center()), act))
+            .style(|s| s.gap(12.0).items_center()),
     )
     .style(move |s| s.size_full().items_center().justify_center().font_size(13.0).color(t.get().fg))
     .into_any()
@@ -523,9 +523,9 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 if !matches!(media, Some(Media::Picture | Media::Svg)) || ui.tab(&tab_of(file)).is_none() {
                     continue;
                 }
-                let changed = it["modified"].as_u64().is_some_and(|now| {
-                    st.modified.with_untracked(|k| k.get(file).is_some_and(|known| *known != now))
-                });
+                let changed = it["modified"]
+                    .as_u64()
+                    .is_some_and(|now| st.modified.with_untracked(|k| k.get(file).is_some_and(|known| *known != now)));
                 if changed {
                     ask(send, file, media);
                 }
@@ -600,7 +600,10 @@ mod tests {
         );
         assert!(ui.tab("media:img/a.png").is_some_and(|t| !t.is_file()) && ui.tab("img/a.png").is_none());
         assert_eq!(kinds::title(ui, &ui.tab("media:song.mp3").expect("tab")), "song.mp3");
-        ui.take(&json!({"type": "media", "path": "song.mp3", "mime": "audio/mpeg", "size": 2048, "modified": 1}), &send);
+        ui.take(
+            &json!({"type": "media", "path": "song.mp3", "mime": "audio/mpeg", "size": 2048, "modified": 1}),
+            &send,
+        );
         assert!(matches!(shown(ui, "song.mp3"), Some(Item::Sound(2048))));
         // Not text: a tab that says so, in place of a word in the status bar only.
         ui.take(&json!({"type": "file", "path": "bin/tool", "error": "a binary file", "kind": "binary"}), &send);
@@ -648,7 +651,10 @@ mod tests {
         assert_eq!(fitted(100.0, 400.0, 500.0, 200.0), (50.0, 200.0));
         assert_eq!(fitted(16.0, 16.0, 500.0, 500.0), (16.0, 16.0));
         assert_eq!(fitted(0.0, 10.0, 5.0, 5.0), (0.0, 0.0));
-        assert_eq!((bytes(512), bytes(1536), bytes(3 * 1024 * 1024)), ("512B".into(), "1.50KB".into(), "3.00MB".into()));
+        assert_eq!(
+            (bytes(512), bytes(1536), bytes(3 * 1024 * 1024)),
+            ("512B".into(), "1.50KB".into(), "3.00MB".into())
+        );
     }
 
     #[test]
@@ -677,7 +683,12 @@ mod tests {
         let mut out = Vec::new();
         {
             let mut e = gif::Encoder::new(&mut out, 2, 2, &[0, 0, 0, 0, 255, 0]).expect("encoder");
-            let frame = gif::Frame { width: 2, height: 2, buffer: std::borrow::Cow::Borrowed(&[1, 1, 1, 0]), ..Default::default() };
+            let frame = gif::Frame {
+                width: 2,
+                height: 2,
+                buffer: std::borrow::Cow::Borrowed(&[1, 1, 1, 0]),
+                ..Default::default()
+            };
             e.write_frame(&frame).expect("frame");
         }
         let d = decode(&out, "a.GIF", [[9, 9, 9], [9, 9, 9]]).expect("decoded");

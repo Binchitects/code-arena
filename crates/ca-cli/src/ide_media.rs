@@ -136,7 +136,10 @@ mod tests {
             serde_json::from_str(&rx.try_recv().expect("a reply")).expect("json")
         };
         let got = ask(json!({"type": "media", "path": "img/a.PNG"}));
-        assert_eq!((got["path"].as_str(), got["mime"].as_str(), got["size"].as_u64()), (Some("img/a.PNG"), Some("image/png"), Some(6)));
+        assert_eq!(
+            (got["path"].as_str(), got["mime"].as_str(), got["size"].as_u64()),
+            (Some("img/a.PNG"), Some("image/png"), Some(6))
+        );
         assert_eq!(got["data"], "iVBORwAB");
         assert!(got["modified"].as_u64().is_some_and(|m| m > 0));
         // A sound by its size only, when its bytes are not asked for.
