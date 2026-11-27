@@ -47,10 +47,10 @@ use floem::keyboard::{Key, Modifiers};
 use floem::peniko::Color;
 use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo};
 use floem::text::{Attrs, AttrsList, FamilyOwned, TextLayout, Weight};
+use floem::views::Decorators;
 use floem::views::editor::Editor;
 use floem::views::editor::core::cursor::CursorMode;
 use floem::views::editor::text::{RenderWhitespace, WrapMethod};
-use floem::views::Decorators;
 use floem::views::text_editor::EditorCustomStyle;
 use floem::{AnyView, IntoView, View, ViewId};
 use serde_json::{Value, json};
@@ -307,7 +307,9 @@ pub fn read(ui: Ui, path: Option<&str>) -> Options {
     let size = font_size(&settings::setting(ui, "editor.fontSize", lang));
     let font = Font {
         family: font_family(&settings::setting(ui, "editor.fontFamily", lang)),
-        size: zoomed(size, level),
+        // Whole pixels, as the editor lays its text out with: the columns of the rulers and of a bounded wrap are
+        // found at the very size drawn.
+        size: zoomed(size, level).round(),
         weight: font_weight(&settings::setting(ui, "editor.fontWeight", lang)),
         line_height: zoomed(line_height(&settings::setting(ui, "editor.lineHeight", lang), size), level).round(),
     };
@@ -351,7 +353,8 @@ pub fn style(s: EditorCustomStyle, o: &Options, c: &Colors, width: f64) -> Edito
             if width > 0.0 && width < at { WrapMethod::EditorWidth } else { WrapMethod::WrapColumn { col } }
         }
     };
-    let (dim, accent) = if o.line_numbers { (c.line_number, c.line_number_active) } else { (Color::TRANSPARENT, Color::TRANSPARENT) };
+    let (dim, accent) =
+        if o.line_numbers { (c.line_number, c.line_number_active) } else { (Color::TRANSPARENT, Color::TRANSPARENT) };
     s.gutter_dim_color(dim)
         .gutter_accent_color(accent)
         .gutter_current_color(if o.highlight_gutter { c.line_highlight } else { c.editor_bg })
@@ -365,7 +368,13 @@ pub fn style(s: EditorCustomStyle, o: &Options, c: &Colors, width: f64) -> Edito
 /// An editor made to follow its options: its font and rulers laid out again when they change (the style is
 /// `style`'s), its caret kept on when it does not blink, and Ctrl and the wheel zooming its font. The view given
 /// is returned inside the one that takes the wheel.
-pub fn follow(ui: Ui, view: impl IntoView + 'static, editor: &Editor, colours: Rc<Colours>, o: Memo<Options>) -> AnyView {
+pub fn follow(
+    ui: Ui,
+    view: impl IntoView + 'static,
+    editor: &Editor,
+    colours: Rc<Colours>,
+    o: Memo<Options>,
+) -> AnyView {
     let (here, c) = (editor.clone(), ui.colors);
     let first = o.get_untracked();
     colours.set_look(&first.font, &first.rulers, c.get_untracked().editor_ruler);
@@ -419,7 +428,9 @@ impl View for Wheel {
 pub fn key(editor: &Editor, o: &Options, key: &Key, mods: Modifiers) -> bool {
     let ctrl = mods.contains(Modifiers::CONTROL) && !mods.intersects(Modifiers::ALT | Modifiers::SHIFT);
     let copy = matches!(key, Key::Character(c) if c.eq_ignore_ascii_case("c") || c.eq_ignore_ascii_case("x"));
-    ctrl && copy && !o.empty_selection_copies && editor.cursor.with_untracked(|c| matches!(&c.mode, CursorMode::Insert(s) if s.is_caret()))
+    ctrl && copy
+        && !o.empty_selection_copies
+        && editor.cursor.with_untracked(|c| matches!(&c.mode, CursorMode::Insert(s) if s.is_caret()))
 }
 
 /// A boolean setting of the person's turned over, written to their settings.json.
@@ -443,7 +454,9 @@ pub fn register(_ui: Ui, _send: &Send) {
     .when(file));
     add(command("editor.action.toggleRenderWhitespace", "View", "Toggle Render Whitespace", |ui, send| {
         let shown = settings::now(ui, "editor.renderWhitespace", None).as_str() != Some("none");
-        send(json!({"type": "set_setting", "key": "editor.renderWhitespace", "value": if shown { "none" } else { "all" }}));
+        send(
+            json!({"type": "set_setting", "key": "editor.renderWhitespace", "value": if shown { "none" } else { "all" }}),
+        );
     }));
     add(command("editor.action.toggleMinimap", "View", "Toggle Minimap", |ui, send| {
         toggle(send, "editor.minimap.enabled", settings::now(ui, "editor.minimap.enabled", None) == Value::Bool(true));
@@ -525,6 +538,15 @@ mod tests {
         assert_eq!(line_highlight(&json!("none")), (false, false));
         assert_eq!(zoomed(10.0, 2), 12.0);
         assert_eq!(zoomed(10.0, -9), 5.0);
+    }
+
+    #[test]
+    fn a_font_size_between_pixels_is_drawn_at_the_nearest() {
+        let (ui, send, _) = window();
+        say(ui, &send, json!({"editor.fontSize": 15.5}), json!({}));
+        assert_eq!(read(ui, None).font.size, 16.0);
+        zoom(ui, -1);
+        assert_eq!(read(ui, None).font.size, 14.0);
     }
 
     #[test]

@@ -149,8 +149,6 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
         }
     };
     let active = shown.active;
-    // The options of the file it shows, read for its language: the editor follows them as they change.
-    let o = options::memo(ui, move || active.get());
     dyn_container(
         move || (active.get(), t.get()),
         move |(path, c)| match path.and_then(|p| ui.tab(&p)) {
@@ -184,6 +182,9 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 tab.colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
                 let caret = ui.caret;
                 let map = map.clone();
+                // The options of the file, read for its language: the editor follows them as they change.
+                let file = tab.path.clone();
+                let o = options::memo(ui, move || Some(file.clone()));
                 // The editor's width, by which a bounded wrap is found.
                 let width = create_rw_signal(0.0);
                 let ed = text_editor_keys("", move |editor, press, mods| {

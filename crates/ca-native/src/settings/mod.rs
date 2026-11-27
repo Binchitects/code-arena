@@ -30,6 +30,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use floem::AnyView;
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal};
 use floem::views::editor::command::CommandExecuted;
@@ -41,7 +42,6 @@ use floem::views::editor::keypress::press::KeyPress;
 use floem::views::editor::text::Document;
 use floem::views::editor::text_document::TextDocument;
 use floem::views::{Decorators, text_editor_keys};
-use floem::AnyView;
 use serde_json::{Map, Value, json};
 
 use crate::commands;
