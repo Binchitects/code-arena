@@ -95,8 +95,24 @@ pub fn marker(line: &str) -> Option<bool> {
 /// a region are not in it.
 pub fn off_side(path: &str) -> bool {
     let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-    matches!(ext.as_str(), "py" | "pyi" | "pyw" | "yaml" | "yml" | "coffee" | "pug" | "jade" | "haml" | "nim" | "fs"
-        | "fsx" | "fsi" | "sass" | "styl" | "slim")
+    matches!(
+        ext.as_str(),
+        "py" | "pyi"
+            | "pyw"
+            | "yaml"
+            | "yml"
+            | "coffee"
+            | "pug"
+            | "jade"
+            | "haml"
+            | "nim"
+            | "fs"
+            | "fsx"
+            | "fsi"
+            | "sass"
+            | "styl"
+            | "slim"
+    )
 }
 
 /// A text's regions, (first line, last line) from 0, sorted by first line, an outer one before those in it: VS
@@ -407,7 +423,8 @@ fn edited<'a>(
 
 /// A file's folds changed: its editors draw them, and its folded regions' first lines are marked.
 fn told(ui: Ui, path: &str) {
-    let Some((rev, folds, text)) = FILES.with(|f| f.borrow().get(path).map(|f| (f.rev, f.folds.clone(), f.text.clone())))
+    let Some((rev, folds, text)) =
+        FILES.with(|f| f.borrow().get(path).map(|f| (f.rev, f.folds.clone(), f.text.clone())))
     else {
         return;
     };
@@ -426,7 +443,11 @@ fn told(ui: Ui, path: &str) {
             ]
         })
         .collect::<Vec<_>>();
-    if marks.is_empty() { crate::decor::clear(ui, "folding", path) } else { crate::decor::set(ui, "folding", path, marks) }
+    if marks.is_empty() {
+        crate::decor::clear(ui, "folding", path)
+    } else {
+        crate::decor::set(ui, "folding", path, marks)
+    }
 }
 
 /// A file's folds changed by a command.
@@ -679,11 +700,8 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
             None => e.last_vline().get() + 1,
         } as f64
             * height;
-        let beyond = if e.es.with_untracked(|s| s.scroll_beyond_last_line()) {
-            vp.height().min(rows) - height
-        } else {
-            0.0
-        };
+        let beyond =
+            if e.es.with_untracked(|s| s.scroll_beyond_last_line()) { vp.height().min(rows) - height } else { 0.0 };
         (e.max_line_width().max(vp.width()), rows.max(vp.height()) + beyond.max(0.0))
     });
     let caret_path = path.to_string();
@@ -774,8 +792,11 @@ impl View for Chevrons {
         let top = self.editor.viewport.get_untracked().y0;
         let height = f64::from(self.editor.line_height(0));
         let family: Vec<FamilyOwned> = FamilyOwned::parse_list("codicon").collect();
-        let attrs =
-            Attrs::new().family(&family).font_size(16.0).line_height(LineHeightValue::Px(16.0)).color(c.folding_control);
+        let attrs = Attrs::new()
+            .family(&family)
+            .font_size(16.0)
+            .line_height(LineHeightValue::Px(16.0))
+            .color(c.folding_control);
         self.editor.screen_lines.with_untracked(|s| {
             for (line, y) in s.iter_lines_y() {
                 let icon = if folded.contains(&line) {
@@ -853,8 +874,8 @@ pub fn register(ui: Ui, _send: &Send) {
     }
     ui.scope.create_effect(move |_| {
         if !crate::settings::flag(ui, "editor.folding", None) {
-            let paths: Vec<String> =
-                FILES.with(|f| f.borrow().iter().filter(|(_, f)| !f.folds.is_empty()).map(|(p, _)| p.clone()).collect());
+            let paths: Vec<String> = FILES
+                .with(|f| f.borrow().iter().filter(|(_, f)| !f.folds.is_empty()).map(|(p, _)| p.clone()).collect());
             for p in paths {
                 floem::reactive::untrack(|| change(ui, &p, |f| f.clear()));
             }
