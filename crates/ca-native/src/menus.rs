@@ -184,7 +184,18 @@ fn group_order(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// A menu's rows now: the items that are there, group after group with a line between.
 pub fn rows(ui: Ui, menu: Menu) -> Vec<Row> {
+    rows_where(ui, menu, |_| true)
+}
+
+/// A menu's rows in two parts: its `navigation` group, which a menu with rows of its own puts above them (as VS
+/// Code's Explorer puts Open to the Side first), and the other groups, which come below them.
+pub fn rows_around(ui: Ui, menu: Menu) -> (Vec<Row>, Vec<Row>) {
+    (rows_where(ui, menu, |g| g == "navigation"), rows_where(ui, menu, |g| g != "navigation"))
+}
+
+fn rows_where(ui: Ui, menu: Menu, keep: impl Fn(&str) -> bool) -> Vec<Row> {
     let mut items: Vec<Item> = MENUS.with(|m| m.borrow().get(&menu).cloned().unwrap_or_default());
+    items.retain(|i| keep(&i.group));
     // A stable sort: as added, within a group and an order.
     items.sort_by(|a, b| group_order(&a.group, &b.group).then(a.order.cmp(&b.order)));
     let mut out = Vec::new();

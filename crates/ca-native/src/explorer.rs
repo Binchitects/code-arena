@@ -723,8 +723,16 @@ fn open_menu(ui: Ui, send: &Send, path: String, dir: bool, at: (f64, f64)) {
         let (send, folder) = (send.clone(), folder.clone());
         move || begin_new(ui, &send, &folder, dir)
     };
-    let mut items: Vec<popup::Item> =
-        vec![popup::entry("New File...", new(false)).into(), popup::entry("New Folder...", new(true)).into()];
+    let place = if path.is_empty() { Menu::ExplorerEmpty } else { Menu::ExplorerRow };
+    let (first, more) = crate::menus::rows_around(ui, place);
+    let mut items = popup::of_rows(ui, send, first);
+    if !items.is_empty() {
+        items.push(popup::line());
+    }
+    // As VS Code's, New File and New Folder are offered on a folder and on the empty part, not on a file.
+    if dir || path.is_empty() {
+        items.extend([popup::entry("New File...", new(false)).into(), popup::entry("New Folder...", new(true)).into()]);
+    }
     let terminal = {
         let (send, folder) = (send.clone(), folder.clone());
         move || open_terminal(ui, &send, &folder)
@@ -759,8 +767,7 @@ fn open_menu(ui: Ui, send: &Send, path: String, dir: bool, at: (f64, f64)) {
             popup::entry("Delete", move || ask_delete(ui, &asked, selection(ui))).keys("Delete").into(),
         ]);
     }
-    let place = if path.is_empty() { Menu::ExplorerEmpty } else { Menu::ExplorerRow };
-    let more = popup::of_rows(ui, send, crate::menus::rows(ui, place));
+    let more = popup::of_rows(ui, send, more);
     if !more.is_empty() {
         items.push(popup::line());
         items.extend(more);

@@ -295,6 +295,14 @@ fn active(ui: Ui) -> Option<Editor> {
     ui.active.get_untracked().and_then(|p| live(ui, &p))
 }
 
+/// The text selected in the editor shown, when it is on one line (what VS Code's Find in Files starts from).
+pub fn selected_line(ui: Ui) -> Option<String> {
+    let editor = active(ui)?;
+    let (from, to) = selection(&editor);
+    let text = editor.rope_text().slice_to_cow(from..to).to_string();
+    (!text.is_empty() && !text.contains('\n')).then_some(text)
+}
+
 /// How the find widget looks for what it looks for now.
 fn how(ui: Ui) -> How {
     How { case: ui.find_case.get_untracked(), word: ui.find_word.get_untracked(), regex: ui.find_regex.get_untracked() }

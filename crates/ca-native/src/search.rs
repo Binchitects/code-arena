@@ -619,14 +619,21 @@ fn match_row(ui: Ui, send: Send, h: Hit, numbers: bool) -> impl IntoView {
 }
 
 /// The view shown with the keys in its query box (all of it selected), or in its replace box.
+/// As VS Code's: the editor's selection (on one line) becomes the query, and Replace in Files gives the keys to the
+/// replace box only then, else to the search box.
 fn focus(ui: Ui, replace: bool) {
+    let seeded = crate::editor::find::selected_line(ui);
+    let to_replace = replace && seeded.is_some();
+    if let Some(query) = seeded.filter(|q| *q != ui.search_query.get_untracked()) {
+        ui.search_query.set(query);
+    }
     ui.reveal(View::Search);
     let st = state(ui);
-    if replace {
+    if replace && !st.replacing.get_untracked() {
         st.replacing.set(true);
     }
     floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
-        let id = if replace { st.replace_box.get_untracked() } else { st.query_box.get_untracked() };
+        let id = if to_replace { st.replace_box.get_untracked() } else { st.query_box.get_untracked() };
         if let Some(id) = id {
             id.request_focus();
         }
