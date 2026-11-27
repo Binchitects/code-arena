@@ -434,6 +434,11 @@ Sections used:
   the view. The view's activity bar icon has the count as its badge. The list is asked for again
   when the view is shown and after each write by the agent, and an open diff tab closes once its
   file is accepted or reverted.
+- **The Explorer's file menu matches VS Code's.** Right-clicking a file puts Open to the Side first.
+  New File and New Folder now appear only on folders and on the empty part of the tree.
+- **Find in Files starts from your selection.** Ctrl+Shift+F and Ctrl+Shift+H put the text selected
+  on one line into the search box. Replace in Files puts the cursor in the search box unless that box
+  was just filled from a selection.
 
 
 ### :bug: Bugs fixed
@@ -496,6 +501,8 @@ Sections used:
   inside the view.
 - **Split editors show one caret.** Every editor group used to draw its caret. Only the focused
   group draws one now, as in VS Code.
+- **Line numbers turned off are hidden.** With editor.lineNumbers set to off, the editor no longer
+  draws the numbers in black when the window uses its software renderer.
 
 ## v0.5.0 (2026-11-26)
 
