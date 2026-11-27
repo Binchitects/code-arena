@@ -532,7 +532,56 @@ fn decode_off_thread(ui: Ui, st: State, path: String, m: &Value, size: u64) {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
+
+    fn sender() -> (Send, Rc<RefCell<Vec<Value>>>) {
+        let said = Rc::new(RefCell::new(Vec::new()));
+        let to = said.clone();
+        (Rc::new(move |v: Value| to.borrow_mut().push(v)), said)
+    }
+
+    fn shown(ui: Ui, path: &str) -> Option<Item> {
+        ui.state::<State>().items.with_untracked(|m| m.get(path).map(|(_, i)| i.clone()))
+    }
+
+    #[test]
+    fn media_opens_in_a_tab_of_its_own_and_what_cannot_open_says_why() {
+        let ui = Ui::new();
+        let (send, said) = sender();
+        register(ui, &send);
+        ui.open("img/a.png", &send);
+        ui.open("song.mp3", &send);
+        assert_eq!(
+            *said.borrow(),
+            [
+                json!({"type": "media", "path": "img/a.png", "data": true}),
+                json!({"type": "media", "path": "song.mp3", "data": false}),
+            ],
+            "asked as media, not as text; a sound's bytes are not asked for"
+        );
+        assert!(ui.tab("media:img/a.png").is_some_and(|t| !t.is_file()) && ui.tab("img/a.png").is_none());
+        assert_eq!(kinds::title(ui, &ui.tab("media:song.mp3").expect("tab")), "song.mp3");
+        ui.take(&json!({"type": "media", "path": "song.mp3", "mime": "audio/mpeg", "size": 2048, "modified": 1}), &send);
+        assert!(matches!(shown(ui, "song.mp3"), Some(Item::Sound(2048))));
+        // Not text: a tab that says so, in place of a word in the status bar only.
+        ui.take(&json!({"type": "file", "path": "bin/tool", "error": "a binary file", "kind": "binary"}), &send);
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("media:bin/tool"));
+        assert!(matches!(shown(ui, "bin/tool"), Some(Item::Cannot(t)) if t == "tool is not text (or not UTF-8)"));
+        assert!(ui.message.get_untracked().is_empty());
+        // An SVG's preview, drawn again when its file changes on disk.
+        said.borrow_mut().clear();
+        preview(ui, "logo.svg", &send);
+        assert_eq!(kinds::title(ui, &ui.tab("media:logo.svg").expect("tab")), "Preview logo.svg");
+        let data = base64::engine::general_purpose::STANDARD.encode("<svg/>");
+        ui.take(&json!({"type": "media", "path": "logo.svg", "size": 6, "modified": 1, "data": data}), &send);
+        assert!(matches!(shown(ui, "logo.svg"), Some(Item::Svg(t, 6)) if &*t == "<svg/>"));
+        ui.take(&json!({"type": "stats", "items": [{"path": "logo.svg", "modified": 1}]}), &send);
+        ui.take(&json!({"type": "stats", "items": [{"path": "logo.svg", "modified": 2}]}), &send);
+        let asked: Vec<Value> = said.borrow().iter().filter(|m| m["type"] == "media").cloned().collect();
+        assert_eq!(asked.len(), 2, "asked once to open, once more when it changed: {asked:?}");
+    }
 
     #[test]
     fn a_file_is_shown_by_its_ending() {
