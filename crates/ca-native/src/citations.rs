@@ -25,17 +25,6 @@ pub struct Ref {
     pub column: Option<usize>,
 }
 
-impl Ref {
-    /// How it reads: its path and lines.
-    pub fn label(&self) -> String {
-        match (self.line, self.end) {
-            (Some(l), Some(e)) if e != l => format!("{}:{l}-{e}", self.path),
-            (Some(l), _) => format!("{}:{l}", self.path),
-            _ => self.path.clone(),
-        }
-    }
-}
-
 /// Where a link leads.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Target {
@@ -206,6 +195,14 @@ pub fn open(ui: Ui, to: &Target) {
     }
 }
 
+/// A code block saved as a file of the project (the session says it was, as for any save).
+pub fn save(path: &str, text: &str) {
+    if let Some(send) = SEND.with(|s| s.borrow().clone()) {
+        let path = path.trim().replace('\\', "/");
+        send(json!({"type": "save", "path": path.trim_start_matches("./"), "text": text}));
+    }
+}
+
 /// An address given to the system to open (off the window's thread: the program it starts is waited for there).
 fn browse(address: &str) {
     if cfg!(test) {
@@ -276,7 +273,6 @@ mod tests {
         assert_eq!(parse_ref("a.rs:30-12"), Some(r("a.rs", Some(30), None, None)));
         assert_eq!(parse_ref("https://x.dev/a.ts"), None);
         assert_eq!(parse_ref("let x = 1;"), None);
-        assert_eq!(r("a.rs", Some(3), Some(9), None).label(), "a.rs:3-9");
     }
 
     #[test]
