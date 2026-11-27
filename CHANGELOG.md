@@ -255,6 +255,15 @@ Sections used:
   Esc drops the chosen /name and keeps your words.
 - **Several skills in one message.** '/review /tests cart.rs' sends each named command or skill for
   the same words, one after the other.
+- **@ mentions in the chat box.** Typing `@` lists the project's files and the folders they are in,
+  ranked as Ctrl+P ranks them. You get 50 at a time ('Show N more', or Down past the last row), 'N of M
+  matches', and a note when the project has more files than were listed. Up/Down choose, Enter or Tab
+  puts `@path ` in the box (`@"a b.txt" ` for names with spaces), and Esc closes the list. A line range
+  you type (`@cart.rs:12-30`) is kept and sends only those lines. Only typing opens the list.
+- **Browse any folder with @.** A whole path after `@` (`/`, `~/`, `C:/`) lists that folder on this
+  machine. Choosing a folder goes into it; choosing a file puts its whole path in the box.
+- **Chips for what mentions sent.** Under a question, a chip names each file, folder or line range its
+  mentions sent. Clicking a file's chip opens it at the first of its lines.
 
 
 ### :bug: Bugs fixed
