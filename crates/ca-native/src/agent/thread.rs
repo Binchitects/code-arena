@@ -315,7 +315,8 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
         }
         Kind::User(question) => {
             let own = super::question::bubble(ui, question);
-            around_item(ui, &send, ItemSlot::QuestionTop, own, ItemSlot::QuestionFoot, &i)
+            let around = around_item(ui, &send, ItemSlot::QuestionTop, own, ItemSlot::QuestionFoot, &i);
+            super::actions::hovering(ui, i.id, around)
         }
         Kind::Assistant(answer) => {
             let own = super::question::flashable(ui, i.id, super::answer::view(ui, answer, send.clone()).into_any());

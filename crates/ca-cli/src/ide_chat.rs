@@ -17,6 +17,7 @@
 //!   thinking, the modes).
 //! - `queue.rs`: the messages sent while a turn runs, numbered, changed or taken back until read (`queue_edit`,
 //!   `queue_cancel`, `queue_clear`), and said to be read (`took_in`).
+//! - `rewind.rs`: what going back to a question would do (`rewind_preview`), and a question asked again.
 
 use serde_json::Value;
 
@@ -29,6 +30,7 @@ mod mentions;
 pub mod pickers;
 pub mod queue;
 pub mod replay;
+pub mod rewind;
 
 /// This area in the driver.
 pub struct Here;
@@ -41,6 +43,7 @@ impl Area for Here {
         ("queue_edit", Rule::Turn),
         ("queue_cancel", Rule::Turn),
         ("queue_clear", Rule::Turn),
+        ("rewind_preview", Rule::Turn),
     ];
 
     fn shared(sh: &Shared, m: &Value) -> bool {
@@ -49,6 +52,7 @@ impl Area for Here {
             "library" => library::asked(sh, m),
             "folders" => mentions::asked(sh, m),
             "queue_edit" | "queue_cancel" | "queue_clear" => queue::asked(sh, m),
+            "rewind_preview" => rewind::asked(sh, m),
             _ => false,
         }
     }

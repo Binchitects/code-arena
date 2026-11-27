@@ -36,7 +36,7 @@ const MODES: &[(&str, &str)] = &[
     ("plan", "Read-only: no edits, no commands"),
     ("yolo", "Nothing asks: edits and commands run at once"),
 ];
-const THINKING: &[&str] = &["default", "off", "low", "medium", "high", "xhigh"];
+pub(super) const THINKING: &[&str] = &["default", "off", "low", "medium", "high", "xhigh"];
 
 /// What the menus say while a turn runs.
 const NEXT_TURN: &str = "Applies to the next turn";
@@ -179,7 +179,7 @@ struct Opt {
 }
 
 /// A name with its first letter a capital, as a menu shows it.
-fn capital(s: &str) -> String {
+pub(super) fn capital(s: &str) -> String {
     let mut rest = s.chars();
     rest.next().map(|c| c.to_uppercase().chain(rest).collect()).unwrap_or_default()
 }

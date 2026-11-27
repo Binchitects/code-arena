@@ -875,15 +875,19 @@ async fn own_idle(m: &Value, p: &mut Prepared, app: &mut App, sh: &Shared) -> Ow
             send(out, context_detail(p));
             send(out, status(p, sh));
         }
-        // Back to before question q: the conversation, the files, or both; again: then that question once more.
+        // Back to before question q: the conversation, the files, or both; again: then that question once more (in
+        // new words when it has `text`), the files put back only when `files` is not false.
         "rewind" | "again" => {
             let again = m["type"] == "again";
             let q = m["q"].as_u64().unwrap_or(0) as usize;
             let what = m["what"].as_str().unwrap_or("both");
-            let (code, chat) = if again { (true, true) } else { (what != "chat", what != "code") };
+            let (code, chat) = if again { (m["files"] != false, true) } else { (what != "chat", what != "code") };
+            // The question as it was asked, read before the conversation is cut there.
+            let asked = if again { crate::ide_chat::rewind::asked_as(p, q) } else { None };
             match session::rewind_to(p, q, code, chat) {
                 Ok(r) => {
                     send(out, state(p, app, sh, false));
+                    send(out, crate::ide_chat::rewind::rewound(m, code, chat));
                     let mut said = vec![format!("Back to before: {}", r.text)];
                     if !r.put_back.is_empty() {
                         said.push(format!("Put back {}.", r.put_back.join(", ")));
@@ -895,9 +899,8 @@ async fn own_idle(m: &Value, p: &mut Prepared, app: &mut App, sh: &Shared) -> Ow
                         said.push(format!("Could not put back: {}.", r.failed.join("; ")));
                     }
                     ide_ext::say(out, &said.join(" "));
-                    let text = m["text"].as_str().unwrap_or("").trim().to_string();
-                    if again && !text.is_empty() {
-                        return Own::Turn(Sent::new(m, text, false));
+                    if again && let Some(sent) = crate::ide_chat::rewind::again(m, asked) {
+                        return Own::Turn(sent);
                     }
                 }
                 Err(e) => ide_ext::say(out, &e.to_string()),
@@ -1068,7 +1071,21 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                 if let Own::Turn(mut sent) = own {
                     ide_ext::shape(&sh, &mut sent);
                     if !sent.done {
+                        // Another model or thinking for this answer only: what was in force comes back after it.
+                        let was = (p.agent.model.clone(), p.agent.thinking.clone());
+                        let (model, thinking) = crate::ide_chat::rewind::for_once(&sent.msg);
+                        if let Some(m) = model {
+                            p.agent.model = m;
+                        }
+                        if let Some(t) = thinking {
+                            p.agent.thinking = t;
+                        }
                         turn(&mut w, &mut p, app, &mut drv, &mut side, &mut sh, sent, How::Typed).await;
+                        if (&p.agent.model, &p.agent.thinking) != (&was.0, &was.1) {
+                            (p.agent.model, p.agent.thinking) = was;
+                            sh = Shared::of(&p, app, &drv, &side);
+                            send(&drv.out, status(&p, &sh));
+                        }
                     }
                 }
             }
