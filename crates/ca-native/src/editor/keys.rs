@@ -1,7 +1,7 @@
 //! The editor's keys: its own keymap's, and the workbench's that are about the editor.
 
-use floem::keyboard::{Key, Modifiers, NamedKey};
-use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith};
+use floem::keyboard::{Key, Modifiers};
+use floem::reactive::{RwSignal, SignalGet, SignalWith};
 use floem::views::editor::Editor;
 use floem::views::editor::command::CommandExecuted;
 use floem::views::editor::core::mode::Mode;
@@ -9,7 +9,7 @@ use floem::views::editor::keypress::KeypressMap;
 use floem::views::editor::keypress::key::KeyInput;
 use floem::views::editor::keypress::press::KeyPress;
 
-use super::find::{find_show, find_step};
+use super::find::find_show;
 use super::tell;
 use crate::state::Ui;
 
@@ -33,10 +33,13 @@ pub(super) fn default_key(
 }
 
 /// The workbench's keys that are about the editor, taken by the editor itself (a key it is given goes no further):
-/// Ctrl+F finds, F3 and Shift+F3 go to the next and the previous match, Ctrl+S saves, Ctrl+W closes the tab, Escape
-/// closes the find widget.
+/// the find widget's (`find::find_key`: Ctrl+H, F3 and Shift+F3, its toggles, Escape), Ctrl+F finds, Ctrl+S saves,
+/// Ctrl+W closes the tab.
 pub(super) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
     let KeyInput::Keyboard(key, _) = &press.key else { return false };
+    if super::find::find_key(ui, key, mods) {
+        return true;
+    }
     let shift = mods.contains(Modifiers::SHIFT);
     let ctrl = mods.contains(Modifiers::CONTROL) && !mods.contains(Modifiers::ALT);
     match key {
@@ -50,8 +53,6 @@ pub(super) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
             }
             _ => return false,
         },
-        Key::Named(NamedKey::F3) => find_step(ui, !shift),
-        Key::Named(NamedKey::Escape) if ui.find.get_untracked() => ui.find.set(false),
         _ => return false,
     }
     true
