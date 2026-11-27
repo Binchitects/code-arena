@@ -242,6 +242,9 @@ pub fn cover(
                 }
             })
             .on_event_stop(EventListener::PointerDown, move |_| outside())
+            // Nothing under it is pointed at or scrolled while it is there.
+            .on_event_stop(EventListener::PointerMove, |_| {})
+            .on_event_stop(EventListener::PointerWheel, |_| {})
             .style(move |s| {
                 let c = t.get();
                 // A little short of the window: an overlay that reaches the window's edge is drawn moved.

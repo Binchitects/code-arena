@@ -185,8 +185,7 @@ pub struct Ui {
     pub explorer_text: RwSignal<String>,
     /// The file this window asked the session to make: opened once it is there.
     pub explorer_asked: RwSignal<Option<String>>,
-    /// The Explorer's menu or its question, open over the window; and the tree, which has the keys again after.
-    pub explorer_popup: RwSignal<Option<floem::ViewId>>,
+    /// The Explorer's tree, which has the keys again after its menu or its question.
     pub explorer_tree: RwSignal<Option<floem::ViewId>>,
     pub tabs: RwSignal<Vec<Tab>>,
     pub active: RwSignal<Option<String>>,
@@ -291,7 +290,6 @@ impl Ui {
             explorer_edit: create_rw_signal(None),
             explorer_text: create_rw_signal(String::new()),
             explorer_asked: create_rw_signal(None),
-            explorer_popup: create_rw_signal(None),
             explorer_tree: create_rw_signal(None),
             tabs: create_rw_signal(Vec::new()),
             active: create_rw_signal(None),
