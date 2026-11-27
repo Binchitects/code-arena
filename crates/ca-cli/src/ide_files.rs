@@ -804,7 +804,10 @@ impl Side {
         }
         if let Some(e) = &error {
             let what = if kind == "changes_revert" { "reverted" } else { "accepted" };
-            send(&self.out, json!({"type": "notice", "text": format!("The agent's changes to {path} could not be {what}: {e}")}));
+            send(
+                &self.out,
+                json!({"type": "notice", "text": format!("The agent's changes to {path} could not be {what}: {e}")}),
+            );
         }
         let mut v = self.changes();
         v["path"] = json!(path);

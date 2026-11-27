@@ -183,8 +183,7 @@ fn open_menu(ui: Ui, send: &Send, c: Change, at: popup::At) {
         }
     };
     let folder = ui.folder.get_untracked();
-    let full =
-        if folder.is_empty() { c.path.clone() } else { format!("{}/{}", folder.trim_end_matches('/'), c.path) };
+    let full = if folder.is_empty() { c.path.clone() } else { format!("{}/{}", folder.trim_end_matches('/'), c.path) };
     let named = mention(&c.path);
     let (shown, opened, opener) = (c.clone(), c.path.clone(), send.clone());
     let (said, explained, explainer) = (named.clone(), named.clone(), send.clone());
@@ -425,14 +424,14 @@ pub fn register(_ui: Ui, _send: &Send) {
         let t = ui.colors;
         let n = create_memo(move |_| ui.changes.with(Vec::len));
         tooltip(
-            h_stack((icon("git-compare", 16.0), label(move || count_text(n.get())))).on_click_stop(move |_| {
-                crate::commands::run(ui, &send, crate::workbench::SHOW_CHANGES);
-            }),
+            h_stack((icon("git-compare", 16.0), label(move || count_text(n.get()))))
+                .style(|s| s.gap(4.0))
+                .on_click_stop(move |_| {
+                    crate::commands::run(ui, &send, crate::workbench::SHOW_CHANGES);
+                }),
             || label(|| "Show the Agent's Changes"),
         )
-        .style(move |s| {
-            crate::statusbar::item(t, s).cursor(CursorStyle::Pointer).apply_if(n.get() == 0, |s| s.hide())
-        })
+        .style(move |s| crate::statusbar::item(t, s).cursor(CursorStyle::Pointer).apply_if(n.get() == 0, |s| s.hide()))
         .into_any()
     });
 }
