@@ -15,7 +15,13 @@
 //!   `order`, then as added.
 //! - `menus::soon(title, keys)` is an item whose command is not there yet: drawn dimmed. A part that brings the
 //!   command adds the item again under the same title, with the command, and it takes the first's place.
-//! - In `Menu::ViewTitle(view)` an item with an `icon` is drawn as an action in the view's title.
+//! - In `Menu::ViewTitle(view)` an item with an `icon` is drawn as an action in the view's title, after the view's
+//!   own actions; one without is for the title's "…" menu. The title's actions are read when the view comes to be
+//!   the one its group shows: an item's `when` is asked then, and not followed after.
+//! - The title bar's menus are drawn from here. The right-click menus are their parts' to draw (with the menu of
+//!   `widgets::popup`): each asks for its rows when it opens. A command run from a row knows what it is about
+//!   from the window's state (the Explorer's selected row, the tab shown), which the part sets before it opens
+//!   its menu.
 //!
 //! An item added again (the same menu, the same command and title) takes the place of the first.
 

@@ -17,6 +17,9 @@
 #   scripts/ui-test.sh log                 the window's output
 #   scripts/ui-test.sh stop                the container gone
 #
+# To see that a change left the window as it was: scripts/ui/tour.sh takes a picture at each step of a fixed tour
+# (run it on the build before the change and on the one after), and scripts/ui/compare.py compares two tours.
+#
 # The window sits at the screen's top left, 1280 x 800, so window and screen coordinates are the same.
 set -eu
 name=code-arena-ui-$(basename "$(pwd)" | tr -c 'a-zA-Z0-9_.\n-' '-')
@@ -80,5 +83,5 @@ case $cmd in
   sh) inside "$1" ;;
   log) inside 'cat /tmp/app.log' ;;
   stop) docker rm -f "$name" >/dev/null ;;
-  *) sed -n '2,25p' "$0"; exit 2 ;;
+  *) sed -n '2,28p' "$0"; exit 2 ;;
 esac

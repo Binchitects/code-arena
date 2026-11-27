@@ -14,16 +14,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::state::{Send, Ui};
-
 /// Lines of a file sent with the next message: the file, its first and last line (from 1), and their text.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Piece {
-    pub path: String,
-    pub start: usize,
-    pub end: usize,
-    pub text: String,
-}
+pub use crate::model::Piece;
+use crate::state::{Send, Ui};
 
 /// What the box does with a text.
 pub type Text = Rc<dyn Fn(Ui, &str)>;
