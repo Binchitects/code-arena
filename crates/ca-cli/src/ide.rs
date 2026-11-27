@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::app::App;
+use crate::ide_chat::replay::Replay;
 use crate::ide_ext::{self, Ctx, Driver, Kept, Later, Rule, Sent, Shared, TurnEnd, send};
 use crate::ide_files::Side;
 use crate::session::{self, Opts, Prepared, Resume};
@@ -34,6 +35,7 @@ pub const MESSAGES: &[(&str, Rule)] = &[
     ("stop_job", Rule::Turn),
     ("themes", Rule::Turn),
     ("keep_view_state", Rule::Turn),
+    ("older", Rule::Turn),
     ("context", Rule::Latest),
     ("model", Rule::Queue),
     ("thinking", Rule::Queue),
@@ -349,21 +351,51 @@ fn skill_of(typed: &str, message: &str) -> Option<String> {
     message.starts_with(&format!("Use the skill {name}:")).then(|| name.to_string())
 }
 
-/// The session as a page that just connected needs it: who and where, and its last turns.
-fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
+/// The session's tools, as a kept call is read with them (its name and arguments mended, what it is about): taken
+/// at each `state` and at each turn's start, so a page of the thread asked for while a turn holds the session is
+/// read the same.
+#[derive(Default)]
+struct Tools(Mutex<Vec<ToolOf>>);
+
+/// A tool by its name, with its parameters' schema.
+type ToolOf = (String, Value, Arc<dyn ca_tools::Tool>);
+
+impl Tools {
+    fn take_from(&self, p: &Prepared) {
+        let all = p
+            .agent
+            .tools
+            .iter()
+            .chain(p.agent.deferred.iter())
+            .map(|t| {
+                let d = t.def();
+                (d.name, d.parameters, t.clone())
+            })
+            .collect();
+        if let Ok(mut g) = self.0.lock() {
+            *g = all;
+        }
+    }
+
+    fn all(&self) -> Vec<ToolOf> {
+        self.0.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+}
+
+/// The turns a page of the thread holds at most (the last ones in `state`, those before in `older`).
+const PAGE_TURNS: i64 = 30;
+
+/// A page of the session's thread as the faces draw it: the messages of the turns before `before_turn` (the last
+/// ones when none), with how many turns come before them and the first turn they hold.
+fn thread_page(
+    store: &ca_session::Store,
+    session: &str,
+    before_turn: Option<i64>,
+    tools: &[ToolOf],
+    facts: &CallFacts,
+) -> (Vec<Value>, i64, i64) {
     let numbers: HashMap<i64, usize> =
-        session::questions(p).unwrap_or_default().into_iter().map(|(n, seq, _)| (seq, n)).collect();
-    // The session's tools, to say a kept call as it ran: its name and arguments mended, and what it is about.
-    let tools: Vec<(String, Value, Arc<dyn ca_tools::Tool>)> = p
-        .agent
-        .tools
-        .iter()
-        .chain(p.agent.deferred.iter())
-        .map(|t| {
-            let d = t.def();
-            (d.name, d.parameters, t.clone())
-        })
-        .collect();
+        session::questions_in(store, session).unwrap_or_default().into_iter().map(|(n, seq, _)| (seq, n)).collect();
     let schemas: Vec<(String, Value)> = tools.iter().map(|(n, s, _)| (n.clone(), s.clone())).collect();
     let read = |call: &ca_llm::ToolCall| match ca_agent::mend::mend(&call.name, &call.arguments, &schemas) {
         Ok(m) => {
@@ -377,50 +409,81 @@ fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
             subject: String::new(),
         },
     };
+    let fact = |id: &str| facts.of(session, id);
+    let Ok(page) = store.page(session, PAGE_TURNS, before_turn) else { return (Vec::new(), 0, 1) };
+    let from = page.messages.first().map_or(0, |m| m.seq);
+    let used = store.usages(session, from).unwrap_or_default();
+    let details = page.messages.first().and_then(|m| store.details(session, m.seq).ok()).unwrap_or_default();
+    let messages = page
+        .messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| !matches!(m.message.role, ca_llm::Role::System))
+        .map(|(at, m)| {
+            let mut v = json!({
+                "role": m.message.role,
+                "text": m.message.content,
+                "tools": m.message.tool_calls.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
+                "turn": m.turn,
+                "q": numbers.get(&m.seq),
+            });
+            if let Some(r) = m.message.reasoning.as_deref().filter(|r| !r.is_empty()) {
+                v["reasoning"] = json!(r);
+            }
+            if let Some(u) = used.get(&m.seq) {
+                v["usage"] = u.clone();
+            }
+            // Each call with what the session kept of it, beside their names (which stay as they were).
+            if !m.message.tool_calls.is_empty() {
+                v["tool_calls"] = json!(kept_calls(&m.message, &page.messages[at + 1..], &read, &fact));
+            }
+            if m.message.role == ca_llm::Role::User {
+                let first = at == 0 || page.messages[at - 1].turn != m.turn;
+                question_details(&mut v, first, details.get(&m.seq));
+            }
+            v
+        })
+        .collect();
+    (messages, page.turns_before, page.first_turn)
+}
+
+/// An earlier page of the thread (`older{before_turn}`), read off the loop: `older{messages, earlier, first_turn,
+/// before_turn}`.
+fn older(sh: &Shared, m: &Value) {
+    let (sh, before) = (sh.clone(), m["before_turn"].as_i64());
+    tokio::task::spawn_blocking(move || {
+        let tools = sh.kept.of::<Tools>().all();
+        let facts = sh.kept.of::<CallFacts>();
+        let Ok(store) = sh.store.lock() else { return };
+        let (messages, earlier, first) = thread_page(&store, &sh.session, before, &tools, &facts);
+        drop(store);
+        send(
+            &sh.out,
+            json!({"type": "older", "messages": messages, "earlier": earlier, "first_turn": first,
+                   "before_turn": before}),
+        );
+    });
+}
+
+/// The workbench's look kept for a folder, as `state` gives it.
+fn view_state(data: &Path, root: &Path) -> Value {
+    std::fs::read_to_string(view_state_at(data, root))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// The session as a page that just connected needs it: who and where, and its last turns.
+fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
+    let tools = sh.kept.of::<Tools>();
+    tools.take_from(p);
     let facts = sh.kept.of::<CallFacts>();
-    let fact = |id: &str| facts.of(&p.session, id);
-    let messages: Vec<Value> = p
+    let (messages, earlier, first_turn) = p
         .store
         .lock()
         .ok()
-        .and_then(|s| {
-            let page = s.page(&p.session, 30, None).ok()?;
-            let from = page.messages.first().map_or(0, |m| m.seq);
-            let details = page.messages.first().and_then(|m| s.details(&p.session, m.seq).ok()).unwrap_or_default();
-            Some((s.usages(&p.session, from).unwrap_or_default(), page, details))
-        })
-        .map(|(used, page, details)| {
-            page.messages
-                .iter()
-                .enumerate()
-                .filter(|(_, m)| !matches!(m.message.role, ca_llm::Role::System))
-                .map(|(at, m)| {
-                    let mut v = json!({
-                        "role": m.message.role,
-                        "text": m.message.content,
-                        "tools": m.message.tool_calls.iter().map(|t| t.name.clone()).collect::<Vec<_>>(),
-                        "turn": m.turn,
-                        "q": numbers.get(&m.seq),
-                    });
-                    if let Some(r) = m.message.reasoning.as_deref().filter(|r| !r.is_empty()) {
-                        v["reasoning"] = json!(r);
-                    }
-                    if let Some(u) = used.get(&m.seq) {
-                        v["usage"] = u.clone();
-                    }
-                    // Each call with what the session kept of it, beside their names (which stay as they were).
-                    if !m.message.tool_calls.is_empty() {
-                        v["tool_calls"] = json!(kept_calls(&m.message, &page.messages[at + 1..], &read, &fact));
-                    }
-                    if m.message.role == ca_llm::Role::User {
-                        let first = at == 0 || page.messages[at - 1].turn != m.turn;
-                        question_details(&mut v, first, details.get(&m.seq));
-                    }
-                    v
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+        .map(|s| thread_page(&s, &p.session, None, &tools.all(), &facts))
+        .unwrap_or((Vec::new(), 0, 1));
     let mut v = json!({
         "type": "state",
         "session": p.session,
@@ -447,10 +510,10 @@ fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
         "locked": locked(app.edition()),
         "running": running,
         "messages": messages,
-        "view_state": std::fs::read_to_string(view_state_at(&app.paths.data, p.agent.ctx.workspace.root()))
-            .ok()
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-            .unwrap_or(Value::Null),
+        // How many turns come before those, for 'Show earlier' (`older{before_turn: first_turn}`).
+        "earlier": earlier,
+        "first_turn": first_turn,
+        "view_state": view_state(&app.paths.data, p.agent.ctx.workspace.root()),
     });
     ide_ext::state(sh, Some(p), &mut v);
     v
@@ -717,6 +780,7 @@ fn own_shared(sh: &Shared, m: &Value) -> bool {
                 send(&out, json!({"type": "themes", "items": crate::ide_themes::all(&dirs)}));
             });
         }
+        "older" => older(sh, m),
         _ => return false,
     }
     true
@@ -1028,10 +1092,6 @@ fn during(m: &Value, sh: &Shared, drv: &mut Driver, pending: &Pending) -> bool {
                 }
             }
         }
-        "hello" | "state" => {
-            send(out, json!({"type": "busy"}));
-            send(out, tasks(sh));
-        }
         _ => {
             if !own_shared(sh, m) {
                 ide_ext::shared(sh, m);
@@ -1077,6 +1137,10 @@ async fn turn(
     if is_note(&sent.shown) {
         sent.fields.insert("note".into(), json!(true));
     }
+    // A face that comes while the turn runs is shown the thread before it, then the turn so far said again: both
+    // made from what is taken now and kept from here on (the session itself is the turn's until it ends).
+    let mut replay = Replay::new(&out);
+    let mut cut_shown = false;
     let mut user = match how {
         How::Typed => sent.with_fields(json!({"type": "user", "text": sent.shown, "q": q})),
         How::Carried => json!({"type": "user", "text": sent.shown, "q": q, "carried": true}),
@@ -1091,6 +1155,7 @@ async fn turn(
     // Where the request will be kept, to keep its details beside it once the turn has written it.
     let at = p.store.lock().ok().and_then(|s| s.summary(&p.session).ok()).map(|s| s.messages);
     send(&out, json!({"type": "turn_start"}));
+    let before = state(p, app, sh, true);
     ide_ext::before_turn(&mut Ctx { app: &mut *app, p: &mut *p, side: &mut *side, drv: &mut *drv, sh: &*sh }, &message)
         .await;
     session::begin_turn(p, ui, &message).await;
@@ -1118,7 +1183,22 @@ async fn turn(
                     m
                 }
                 Some(m) = w.own.recv() => m,
+                () = replay.next(), if !replay.closed => continue,
             };
+            // `state{running: true}` with the thread before the turn, then the turn so far, in one go: every face
+            // draws its thread again from them (those that saw the turn as well, so none shows it twice).
+            if matches!(ide_ext::kind(&m), "hello" | "state") {
+                replay.drain();
+                let mut v = before.clone();
+                v["view_state"] = view_state(&sh.paths.data, sh.workspace.root());
+                send(&out, v);
+                for said in replay.kept.said() {
+                    send(&out, said);
+                }
+                send(&out, tasks(sh));
+                cut_shown |= replay.kept.cut();
+                continue;
+            }
             if during(&m, sh, drv, &w.pending) {
                 break None;
             }
@@ -1169,6 +1249,10 @@ async fn turn(
     session::keep_window(app, p);
     settled(sh, p, app, drv, side);
     send(&out, status(p, sh));
+    // A face was shown the turn without its start (too long to keep): the whole thread now that it is kept.
+    if cut_shown {
+        send(&out, state(p, app, sh, false));
+    }
 }
 
 /// Keeps with the request the turn wrote at `at` what it was sent with (the areas' fields) and the words as typed,

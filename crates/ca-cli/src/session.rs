@@ -1089,8 +1089,13 @@ fn start_sync(
 /// The person's questions in this session: (number, its place in the session, its first line).
 pub fn questions(p: &Prepared) -> anyhow::Result<Vec<(usize, i64, String)>> {
     let store = p.store.lock().map_err(|_| anyhow::anyhow!("the session's store"))?;
-    let turns = store.summary(&p.session)?.turns;
-    let page = store.page(&p.session, turns.max(1), None)?;
+    questions_in(&store, &p.session)
+}
+
+/// The questions of a session in a store already held: see [`questions`].
+pub fn questions_in(store: &Store, session: &str) -> anyhow::Result<Vec<(usize, i64, String)>> {
+    let turns = store.summary(session)?.turns;
+    let page = store.page(session, turns.max(1), None)?;
     let mut out = Vec::new();
     let mut last_turn = 0;
     for m in page.messages {

@@ -1935,6 +1935,17 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
 
     ask(&mut page, json!({"type": "send", "text": "say hello"})).await;
     until(&mut page, &|v| v["type"] == "turn_start").await;
+    // A face that comes now (a page reloaded): the thread before the turn, then the turn so far said again.
+    ask(&mut page, json!({"type": "hello"})).await;
+    let st = until(&mut page, &|v| v["type"] == "state").await.pop().expect("state");
+    assert_eq!(
+        (&st["running"], &st["messages"], &st["earlier"], &st["first_turn"]),
+        (&json!(true), &json!([]), &json!(0), &json!(1))
+    );
+    let again = until(&mut page, &|v| v["type"] == "tasks").await;
+    let kinds: Vec<&str> = again.iter().filter(|v| v["replay"] == true).filter_map(|v| v["type"].as_str()).collect();
+    assert_eq!(kinds, ["user", "turn_start"], "{again:?}");
+    assert_eq!(again[0]["text"], "say hello");
     // While the model writes its answer: a change of model, a step back, a setting, the themes, a command,
     // another message.
     ask(&mut page, json!({"type": "model", "model": "qwen-large"})).await;
@@ -2033,6 +2044,11 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     let back = until(&mut page, &|v| v["type"] == "state").await;
     assert!(at(&back, &|v| v["type"] == "refused" || v["type"] == "deferred").is_none(), "{back:?}");
     assert_eq!(back.last().expect("state")["messages"].as_array().map(Vec::len), Some(2), "{back:?}");
+    // The page of turns before one, its key echoed.
+    ask(&mut page, json!({"type": "older", "before_turn": 2})).await;
+    let older = until(&mut page, &|v| v["type"] == "older").await.pop().expect("older");
+    assert_eq!((&older["before_turn"], &older["earlier"], &older["first_turn"]), (&json!(2), &json!(0), &json!(1)));
+    assert_eq!(older["messages"][0]["text"], "say hello", "{older}");
 }
 
 #[tokio::test]
