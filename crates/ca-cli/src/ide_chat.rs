@@ -9,27 +9,35 @@
 //! share in a message sent. So two parts written at once touch one line each here.
 //!
 //! - `history.rs`: what was sent in this folder, for the box's ↑ (`history`), and each line sent kept in it.
+//! - `mentions.rs`: any folder listed for a whole path typed after @ (`folders`), and what a message's mentions
+//!   sent with it named for its chips (`attached`).
 
 use serde_json::Value;
 
-use crate::ide_ext::{Area, Rule, Sent, Shared, kind};
+use crate::ide_ext::{Area, Ctx, Rule, Sent, Shared, kind};
 
 mod history;
+mod mentions;
 
 /// This area in the driver.
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] = &[("history", Rule::Turn)];
+    const MESSAGES: &'static [(&'static str, Rule)] = &[("history", Rule::Turn), ("folders", Rule::Turn)];
 
     fn shared(sh: &Shared, m: &Value) -> bool {
         match kind(m) {
             "history" => history::asked(sh, m),
+            "folders" => mentions::asked(sh, m),
             _ => false,
         }
     }
 
     fn shape(sh: &Shared, sent: &mut Sent) {
         history::sent(sh, sent);
+    }
+
+    async fn before_turn(ctx: &mut Ctx<'_>, message: &str) {
+        mentions::before_turn(ctx, message).await;
     }
 }
