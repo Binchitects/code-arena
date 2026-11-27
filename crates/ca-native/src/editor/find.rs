@@ -86,6 +86,10 @@ fn search(
     while !text.is_char_boundary(end) {
         end -= 1;
     }
+    at = at.min(end);
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
     let mut region = syntect::parsing::Region::new();
     let mut found = 0;
     while at <= end && found < most && re.search(text, at, end, Some(&mut region)) {
@@ -508,9 +512,10 @@ fn follow_find(ui: Ui) {
                     });
                 }
             }
-            // Another file shown: its matches, its caret left where it is; a range of the file before let go.
-            Some(last) if last.0 == asked.0 => {
-                if ui.find_in_selection.get_untracked() {
+            // Another file shown, or the widget shown again for what it looked for before: its matches, the caret
+            // left where it is (a selection to find in stays); a range of the file before let go.
+            Some(last) if (&last.0.1, last.0.2, last.0.3) == (&asked.0.1, asked.0.2, asked.0.3) => {
+                if last.1 != asked.1 && ui.find_in_selection.get_untracked() {
                     ui.find_in_selection.set(false);
                 }
                 look(false)
@@ -543,6 +548,10 @@ fn find_box(
     let input = text_editor_keys("", move |editor, press, mods| {
         let KeyInput::Keyboard(key, _) = &press.key else { return default_key(&map, editor, press, mods) };
         if more(editor, key, mods) || find_key(ui, key, mods) {
+            return CommandExecuted::Yes;
+        }
+        // One line each: Enter and Tab never go into a box.
+        if matches!(key, Key::Named(NamedKey::Enter | NamedKey::Tab)) {
             return CommandExecuted::Yes;
         }
         let up = match key {
