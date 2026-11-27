@@ -1211,11 +1211,13 @@ pub fn context_menu(ui: Ui, view: floem::ViewId, e: &Event) {
     if !matches!(e, Event::PointerDown(p) if p.button.is_secondary()) {
         return;
     }
+    // The keys go back to the editor's text once the menu is closed.
+    let back = editor_of(ui).and_then(|(_, ed)| ed.editor_view_id.get_untracked()).unwrap_or(view);
     super::tell(ui, |send| {
         crate::widgets::popup::open_menu(
             ui,
             send,
-            crate::widgets::popup::At::pointer(view, e).back(view),
+            crate::widgets::popup::At::pointer(view, e).back(back),
             Menu::EditorContext,
         )
     });
