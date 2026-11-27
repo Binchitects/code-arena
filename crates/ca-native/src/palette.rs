@@ -211,6 +211,19 @@ impl Files {
         self.paths.len()
     }
 
+    /// The text at a place, as listed.
+    pub fn path(&self, i: usize) -> &str {
+        &self.paths[i]
+    }
+
+    /// How many of the texts match the query (all of them, for none typed): counted without ranking them.
+    pub fn count(&self, q: &Query) -> usize {
+        if q.is_empty() {
+            return self.len();
+        }
+        self.each.iter().filter(|l| l.score(&self.lower, q).is_some()).count()
+    }
+
     /// These very files are the ones held (listed again and nothing changed: the rows and the row chosen stay).
     pub fn holds<'a>(&self, paths: impl Iterator<Item = &'a str>, more: bool) -> bool {
         self.listed && self.more == more && self.paths.iter().map(String::as_str).eq(paths)
@@ -266,14 +279,14 @@ pub struct Row {
     pub keys: String,
     pub pick: Pick,
     /// What tells it from another row drawn in its place.
-    key: u64,
+    pub(crate) key: u64,
 }
 
 /// What separates the name from the folder in the row's text.
 const BETWEEN: &str = "  ";
 
 impl Row {
-    fn new(name: &str, detail: &str, lit: Vec<Range<usize>>, keys: &str, pick: Pick) -> Row {
+    pub(crate) fn new(name: &str, detail: &str, lit: Vec<Range<usize>>, keys: &str, pick: Pick) -> Row {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (name, detail, &lit, keys).hash(&mut h);
         Row { name: name.into(), detail: detail.into(), lit, keys: keys.into(), pick, key: h.finish() }
@@ -288,33 +301,31 @@ impl Row {
 /// The files' rows for what was typed: the best fifty, the file's name then its folder.
 pub fn file_rows(files: &Files, text: &str) -> Vec<Row> {
     let q = Query::of(text);
-    files
-        .rank(&q, MOST)
+    files.rank(&q, MOST).into_iter().map(|i| path_row(&files.paths[i], &q)).collect()
+}
+
+/// A path's row: its last name, then the folder it is in, the query's letters lit in each.
+pub fn path_row(path: &str, q: &Query) -> Row {
+    let (dir, name_at) = match path.rfind('/') {
+        Some(i) => (&path[..i], i + 1),
+        None => ("", 0),
+    };
+    let name = &path[name_at..];
+    // A letter found in the name is lit there, one found in the folder there (after the name).
+    let lit = positions(path, q)
         .into_iter()
-        .map(|i| {
-            let path = &files.paths[i];
-            let (dir, name_at) = match path.rfind('/') {
-                Some(i) => (&path[..i], i + 1),
-                None => ("", 0),
-            };
-            let name = &path[name_at..];
-            // A letter found in the name is lit there, one found in the folder there (after the name).
-            let lit = positions(path, &q)
-                .into_iter()
-                .filter_map(|r| {
-                    if r.start >= name_at {
-                        Some(r.start - name_at..r.end - name_at)
-                    } else if r.end <= dir.len() {
-                        let by = name.len() + BETWEEN.len();
-                        Some(r.start + by..r.end + by)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            Row::new(name, dir, lit, "", Pick::File(path.clone()))
+        .filter_map(|r| {
+            if r.start >= name_at {
+                Some(r.start - name_at..r.end - name_at)
+            } else if r.end <= dir.len() {
+                let by = name.len() + BETWEEN.len();
+                Some(r.start + by..r.end + by)
+            } else {
+                None
+            }
         })
-        .collect()
+        .collect();
+    Row::new(name, dir, lit, "", Pick::File(path.to_string()))
 }
 
 /// The commands' rows for what was typed after the ">": all of them in their order, or the ones that match.
@@ -450,7 +461,7 @@ pub fn accept(ui: Ui, send: &Send, at: usize) {
 }
 
 /// A row's text laid out: the name, the folder smaller and dimmed, the letters that matched lit and bold.
-fn layout_of(row: &Row, c: &Colors, selected: bool) -> TextLayout {
+pub(crate) fn layout_of(row: &Row, c: &Colors, selected: bool) -> TextLayout {
     let family: Vec<FamilyOwned> = FamilyOwned::parse_list(&UI_FONT).collect();
     let (fg, lit) = if selected { (c.quick_focus_fg, c.highlight_focus) } else { (c.quick_fg, c.highlight) };
     let dim = if selected { fg.multiply_alpha(0.7) } else { c.desc };

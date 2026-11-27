@@ -11,30 +11,39 @@
 //! - `history.rs`: what was sent in this folder, for the box's ↑ (`history`), and each line sent kept in it.
 //! - `library.rs`: the commands and skills the box's `/` offers (`library`), and a line of several `/names` sent.
 //! - `replay.rs`: the running turn kept for a face that comes in late (the driver's turn loop keeps it).
+//! - `mentions.rs`: any folder listed for a whole path typed after @ (`folders`), and what a message's mentions
+//!   sent with it named for its chips (`attached`).
 
 use serde_json::Value;
 
-use crate::ide_ext::{Area, Rule, Sent, Shared, kind};
+use crate::ide_ext::{Area, Ctx, Rule, Sent, Shared, kind};
 
 mod history;
 pub(crate) mod library;
+mod mentions;
 pub mod replay;
 
 /// This area in the driver.
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] = &[("history", Rule::Turn), ("library", Rule::Turn)];
+    const MESSAGES: &'static [(&'static str, Rule)] =
+        &[("history", Rule::Turn), ("library", Rule::Turn), ("folders", Rule::Turn)];
 
     fn shared(sh: &Shared, m: &Value) -> bool {
         match kind(m) {
             "history" => history::asked(sh, m),
             "library" => library::asked(sh, m),
+            "folders" => mentions::asked(sh, m),
             _ => false,
         }
     }
 
     fn shape(sh: &Shared, sent: &mut Sent) {
         history::sent(sh, sent);
+    }
+
+    async fn before_turn(ctx: &mut Ctx<'_>, message: &str) {
+        mentions::before_turn(ctx, message).await;
     }
 }

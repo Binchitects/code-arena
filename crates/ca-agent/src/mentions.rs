@@ -84,11 +84,33 @@ fn parse(raw: &str) -> Mention {
 
 /// What goes with the message: each mentioned file or folder the tools may read, after the words typed.
 pub fn attach(text: &str, ws: &Workspace) -> String {
+    expand(text, ws).0
+}
+
+/// What `attach` sends with the message, each as a chip names it: the path as people read it, a folder's with `/`
+/// after it, a range of lines as `:40-60` (`:40` for one). What is not sent (not a file the tools may read, past
+/// the message's budget) is not named.
+pub fn attached(text: &str, ws: &Workspace) -> Vec<String> {
+    expand(text, ws).1
+}
+
+/// The message with what goes with it, and the names of what went.
+fn expand(text: &str, ws: &Workspace) -> (String, Vec<String>) {
+    let mut names = Vec::new();
     let mut out = String::new();
     let mut budget = MESSAGE_CHARS;
     for m in find(text) {
         let Ok(real) = ws.resolve(&m.path) else { continue };
         let shown = ws.display(&real);
+        let name = if real.is_dir() {
+            format!("{}/", shown.trim_end_matches('/'))
+        } else {
+            match m.lines {
+                Some((a, b)) if a == b => format!("{shown}:{a}"),
+                Some((a, b)) => format!("{shown}:{a}-{b}"),
+                None => shown.clone(),
+            }
+        };
         let piece = if real.is_dir() {
             let Ok(rd) = std::fs::read_dir(&real) else { continue };
             let mut names: Vec<String> = rd
@@ -135,8 +157,10 @@ pub fn attach(text: &str, ws: &Workspace) -> String {
         budget -= piece.len();
         out.push_str("\n\n");
         out.push_str(&piece);
+        names.push(name);
     }
-    if out.is_empty() { text.to_string() } else { format!("{text}{out}") }
+    let text = if out.is_empty() { text.to_string() } else { format!("{text}{out}") };
+    (text, names)
 }
 
 #[cfg(test)]
@@ -169,5 +193,21 @@ mod tests {
         assert!(t.contains("<folder path=\"src\">\na.rs\n</folder>"));
         assert_eq!(attach("nothing here", &ws), "nothing here");
         assert_eq!(attach("not @../../etc/passwd", &ws), "not @../../etc/passwd");
+    }
+
+    #[test]
+    fn what_went_is_named_as_a_chip_names_it() {
+        let d = tempfile::tempdir().expect("temp");
+        std::fs::create_dir_all(d.path().join("src")).expect("mkdir");
+        std::fs::write(d.path().join("src/a.rs"), "one\ntwo\n").expect("write");
+        let ws = Workspace::open(d.path(), &[]).expect("ws");
+        let names = attached("see @src/a.rs:2 @src/a.rs:1-2 @src @src/a.rs @gone.rs @Override @../../etc/passwd", &ws);
+        assert_eq!(names, ["src/a.rs:2", "src/a.rs:1-2", "src/", "src/a.rs"]);
+        // A file outside the folders the tools may read stays as typed, and is not named.
+        let out = tempfile::tempdir().expect("temp");
+        std::fs::write(out.path().join("b.txt"), "x").expect("write");
+        let whole = format!("@{}", out.path().join("b.txt").display());
+        assert!(attached(&whole, &ws).is_empty());
+        assert!(attached("nothing", &ws).is_empty());
     }
 }
