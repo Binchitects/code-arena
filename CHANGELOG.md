@@ -265,6 +265,19 @@ Sections used:
   machine. Choosing a folder goes into it; choosing a file puts its whole path in the box.
 - **Chips for what mentions sent.** Under a question, a chip names each file, folder or line range
   its mentions sent. Clicking a file's chip opens it at the first of its lines.
+- **Model picker that describes each model.** The chat's model menu shows each model's window,
+  longest answer and whether it uses tools, thinks or sees images (for example '128K context ·
+  answers up to 16K · Tools · Thinks'). Models that cannot be loaded are dimmed. The thinking picker
+  shows only while the model thinks.
+- **Pickers work during a turn.** You can change the mode, the model or the thinking while an answer
+  is being written. The pill shows your choice with a watch icon, the menu says 'Applies to the next
+  turn', and the choice takes effect when the turn ends. Mode menu rows say what each mode lets run;
+  Yolo is drawn in red and warns when chosen, Plan in the accent colour.
+- **Agent header and More menu.** A '…' button over the chat opens its More menu (Open in a New
+  Window, Hide the Chat, and what other parts add). Goal, Tasks (with a count of running jobs) and
+  History buttons appear once their commands and views exist. The palette has Chat: Compact the
+  Conversation, Chat: Hide the Chat, Chat: Show Tasks and Sub-agents, and Chat: Show This Folder's
+  Sessions.
 
 
 ### :bug: Bugs fixed
