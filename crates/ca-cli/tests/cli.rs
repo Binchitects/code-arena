@@ -1920,6 +1920,7 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     ask(&mut page, json!({"type": "model", "model": "qwen-large"})).await;
     ask(&mut page, json!({"type": "rewind", "q": 1, "what": "chat"})).await;
     ask(&mut page, json!({"type": "thinking", "level": "high"})).await;
+    ask(&mut page, json!({"type": "mode", "mode": "auto-edit"})).await;
     ask(&mut page, json!({"type": "set_setting", "key": "workbench.colorTheme", "value": "Light Modern"})).await;
     ask(&mut page, json!({"type": "themes"})).await;
     ask(&mut page, json!({"type": "send", "text": "/explain the parser"})).await;
@@ -1932,8 +1933,12 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     let at = |all: &[Value], want: &dyn Fn(&Value) -> bool| all.iter().position(want);
     assert_eq!(meanwhile.last().expect("end")["ok"], true, "{meanwhile:?}");
     // Kept for the turn's end, each said so at once; the step back refused, with why.
-    for (of, key) in [("model", Value::Null), ("thinking", Value::Null), ("set_setting", json!("workbench.colorTheme"))]
-    {
+    for (of, key) in [
+        ("model", Value::Null),
+        ("thinking", Value::Null),
+        ("mode", Value::Null),
+        ("set_setting", json!("workbench.colorTheme")),
+    ] {
         assert!(
             at(&meanwhile, &|v| v["type"] == "deferred" && v["of"] == of && v["key"] == key).is_some(),
             "{of}: {meanwhile:?}"
@@ -1959,14 +1964,19 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     let after = until(&mut page, &|v| v["type"] == "turn_end").await;
     let model = at(&after, &|v| v["type"] == "status" && v["model"] == "qwen-large" && v["thinking"] == "default")
         .expect("the model, first");
-    let thinking =
-        at(&after, &|v| v["type"] == "status" && v["model"] == "qwen-large" && v["thinking"] == "high").expect("then");
+    let thinking = at(&after, &|v| v["type"] == "status" && v["thinking"] == "high" && v["mode"] == "ask")
+        .expect("then how much it thinks");
+    let mode = at(&after, &|v| v["type"] == "status" && v["thinking"] == "high" && v["mode"] == "auto-edit")
+        .expect("then the mode");
     let kept = at(&after, &|v| v["type"] == "setting_kept" && v["key"] == "workbench.colorTheme").expect("kept");
     let theme = at(&after, &|v| v["type"] == "theme" && v["theme"] == "Light Modern").expect("theme");
     let started = at(&after, &|v| v["type"] == "turn_start").expect("the command's turn");
     let asked = at(&after, &|v| v["type"] == "user").expect("the command as a question");
     assert_eq!(after[asked], json!({"type": "user", "text": "/explain the parser", "q": 2, "late": true}));
-    assert!(model < thinking && thinking < kept && kept < theme && theme < asked && asked < started, "{after:?}");
+    assert!(
+        model < thinking && thinking < mode && mode < kept && kept < theme && theme < asked && asked < started,
+        "{after:?}"
+    );
     let text: String = after.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
     assert_eq!(text, "The second answer.");
     assert_eq!(after.last().expect("end")["ok"], true, "{after:?}");
