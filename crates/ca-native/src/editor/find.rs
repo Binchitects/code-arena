@@ -335,7 +335,9 @@ fn keep(ui: Ui) {
     if ui.find_history.with_untracked(|h| !query.is_empty() && h.last() != Some(&query)) {
         ui.find_history.update(|h| remember(h, &query));
     }
-    if ui.find_replacing.get_untracked() && ui.replace_history.with_untracked(|h| !with.is_empty() && h.last() != Some(&with)) {
+    if ui.find_replacing.get_untracked()
+        && ui.replace_history.with_untracked(|h| !with.is_empty() && h.last() != Some(&with))
+    {
         ui.replace_history.update(|h| remember(h, &with));
     }
 }
@@ -682,18 +684,19 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
         true
     });
     let back = create_rw_signal(None::<Editor>);
-    let (replace_input, replacer) = find_box(ui, "Replace", ui.find_replace, ui.replace_history, move |_, key, mods| {
-        match key {
-            Key::Named(NamedKey::Enter) if mods.is_empty() => replace(ui, false),
-            Key::Named(NamedKey::Tab) if mods == Modifiers::SHIFT => {
-                if let Some(e) = back.get_untracked() {
-                    focus(&e);
+    let (replace_input, replacer) =
+        find_box(ui, "Replace", ui.find_replace, ui.replace_history, move |_, key, mods| {
+            match key {
+                Key::Named(NamedKey::Enter) if mods.is_empty() => replace(ui, false),
+                Key::Named(NamedKey::Tab) if mods == Modifiers::SHIFT => {
+                    if let Some(e) = back.get_untracked() {
+                        focus(&e);
+                    }
                 }
+                _ => return false,
             }
-            _ => return false,
-        }
-        true
-    });
+            true
+        });
     other.set(Some(replacer.clone()));
     back.set(Some(editor.clone()));
     // Asked for (Ctrl+F, Ctrl+H): the box takes the keys, with the editor's selection in it when it is within a line
@@ -834,27 +837,26 @@ pub(super) fn find_widget(ui: Ui) -> impl IntoView {
     )
     .style(|s| s.width(16.0).height_full().border_radius(0.0));
     let chevron = tooltip(chevron, || label(|| "Toggle Replace")).style(|s| s.height_full());
-    h_stack((chevron, v_stack((find_row, replace_row)).style(|s| s.gap(5.0))))
-        .style(move |s| {
-            let c = t.get();
-            // Over an editor only (not a file's changes, nor the watermark).
-            let over = ui.find.get() && ui.live.with(|l| l.is_some());
-            line(s, c.focus, 'l')
-                .absolute()
-                .inset_top(0.0)
-                .inset_right(28.0)
-                .padding_vert(4.0)
-                .padding_left(2.0)
-                .padding_right(6.0)
-                .gap(4.0)
-                .z_index(20)
-                .background(c.widget)
-                .color(c.fg)
-                .box_shadow_blur(8.0)
-                .box_shadow_v_offset(2.0)
-                .box_shadow_color(c.shadow)
-                .apply_if(!over, |s| s.hide())
-        })
+    h_stack((chevron, v_stack((find_row, replace_row)).style(|s| s.gap(5.0)))).style(move |s| {
+        let c = t.get();
+        // Over an editor only (not a file's changes, nor the watermark).
+        let over = ui.find.get() && ui.live.with(|l| l.is_some());
+        line(s, c.focus, 'l')
+            .absolute()
+            .inset_top(0.0)
+            .inset_right(28.0)
+            .padding_vert(4.0)
+            .padding_left(2.0)
+            .padding_right(6.0)
+            .gap(4.0)
+            .z_index(20)
+            .background(c.widget)
+            .color(c.fg)
+            .box_shadow_blur(8.0)
+            .box_shadow_v_offset(2.0)
+            .box_shadow_color(c.shadow)
+            .apply_if(!over, |s| s.hide())
+    })
 }
 
 /// A box's own text, filling what its toggles leave.
@@ -869,20 +871,33 @@ fn input_style(ui: Ui, s: floem::style::Style) -> floem::style::Style {
         .color(c.input_fg)
 }
 
+/// One of the widget's toggles, as a command takes it.
+type Toggle = fn(Ui) -> RwSignal<bool>;
+
 /// Its commands, with VS Code's ids and keys: Replace (Ctrl+H) opens the widget with its replace row; while it is
 /// shown over an editor, Replace, Replace All, Find Next and Find Previous, and its toggles.
 pub fn register(_ui: Ui, _send: &crate::state::Send) {
     use crate::commands::{add, command};
     let over = |ui: Ui| ui.live.with_untracked(|l| l.is_some());
     let shown = move |ui: Ui| ui.find.get_untracked() && over(ui);
-    add(command("editor.action.startFindReplaceAction", "", "Replace", |ui, _| replace_show(ui)).keys("Ctrl+H").when(over));
-    add(command("editor.action.nextMatchFindAction", "", "Find Next", |ui, _| find_step(ui, true)).keys("F3").when(over));
+    add(command("editor.action.startFindReplaceAction", "", "Replace", |ui, _| replace_show(ui))
+        .keys("Ctrl+H")
+        .when(over));
+    add(command("editor.action.nextMatchFindAction", "", "Find Next", |ui, _| find_step(ui, true))
+        .keys("F3")
+        .when(over));
     add(command("editor.action.previousMatchFindAction", "", "Find Previous", |ui, _| find_step(ui, false))
         .keys("Shift+F3")
         .when(over));
-    add(command("editor.action.replaceOne", "", "Replace", |ui, _| replace(ui, false)).keys("Ctrl+Shift+1").when(shown).hidden());
-    add(command("editor.action.replaceAll", "", "Replace All", |ui, _| replace(ui, true)).keys("Ctrl+Alt+Enter").when(shown).hidden());
-    let toggles: [(&str, &str, &str, fn(Ui) -> RwSignal<bool>); 5] = [
+    add(command("editor.action.replaceOne", "", "Replace", |ui, _| replace(ui, false))
+        .keys("Ctrl+Shift+1")
+        .when(shown)
+        .hidden());
+    add(command("editor.action.replaceAll", "", "Replace All", |ui, _| replace(ui, true))
+        .keys("Ctrl+Alt+Enter")
+        .when(shown)
+        .hidden());
+    let toggles: [(&str, &str, &str, Toggle); 5] = [
         ("toggleFindCaseSensitive", "Toggle Match Case", "Alt+C", |ui| ui.find_case),
         ("toggleFindWholeWord", "Toggle Match Whole Word", "Alt+W", |ui| ui.find_word),
         ("toggleFindRegex", "Toggle Use Regular Expression", "Alt+R", |ui| ui.find_regex),
@@ -950,9 +965,13 @@ mod tests {
         assert_eq!(expand("$3$1", &[Some("ab"), Some("a")]), "$3a");
         assert_eq!(expand("$10", &[Some("ab"), Some("a")]), "a0");
         // As written, without a regular expression.
-        assert_eq!(replacements("a.b a.b", "a.b", ALL, None, "$1", false), Ok(vec![(0, 3, "$1".into()), (4, 7, "$1".into())]));
         assert_eq!(
-            replacements("Cart CART cart", "cart", ALL, None, "basket", true).map(|r| r.into_iter().map(|e| e.2).collect::<Vec<_>>()),
+            replacements("a.b a.b", "a.b", ALL, None, "$1", false),
+            Ok(vec![(0, 3, "$1".into()), (4, 7, "$1".into())])
+        );
+        assert_eq!(
+            replacements("Cart CART cart", "cart", ALL, None, "basket", true)
+                .map(|r| r.into_iter().map(|e| e.2).collect::<Vec<_>>()),
             Ok(vec!["Basket".to_string(), "BASKET".into(), "basket".into()])
         );
         assert_eq!(preserve_case("cArt", "Basket"), "basket");
