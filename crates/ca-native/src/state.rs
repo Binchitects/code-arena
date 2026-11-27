@@ -35,7 +35,13 @@ pub struct Entry {
 pub struct Hit {
     pub path: String,
     pub line: usize,
+    /// The part of the line shown (a long line's part around the match).
     pub text: String,
+    /// Where the match is in its line, and how long it is (bytes, as the editor counts).
+    pub col: usize,
+    pub len: usize,
+    /// Where the match is in `text`.
+    pub at: usize,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -554,6 +560,7 @@ impl Ui {
                 m.iter().map(|(id, s)| (id.to_string(), json!(s.get_untracked()))).collect::<serde_json::Map<_, _>>()
             }),
             "draft": self.draft.get_untracked(),
+            "search": crate::search::kept(*self),
         })
     }
 
