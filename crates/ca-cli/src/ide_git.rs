@@ -1,13 +1,788 @@
-//! Source control: the repository's state, staging, commits, branches, remotes, history and merges.
+//! Source control: the repository's state, staging, commits, and a file as a revision has it.
 //!
-//! One of the IDE's areas: `ide_ext` says how an area joins the driver (its messages and their turn rules, its
-//! fields in `state` and `tasks`, its part around a turn). Nothing of this one is written yet.
+//! One of the IDE's areas: `ide_ext` says how an area joins the driver. Every message here needs only the project
+//! (`Rule::Side`), so it is answered at once, a turn running or not; git itself runs on a thread of its own and the
+//! reply is sent from there.
+//!
+//! - `git_status{repo?}` → `git_status{repo, root, branch, detached, upstream, ahead, behind, files, total, error}`.
+//!   `repo` is the repository's folder as the project names it (empty or left out: the project's top) and every
+//!   reply carries it back. `root` is where git's top is (null: no repository there). Each of `files` (at most
+//!   2000 of `total`) is `{path, from, x, y, staged, changed, untracked, conflict}`, its paths from the project's
+//!   top as the faces name files.
+//! - `git_stage{repo, paths}`, `git_unstage{repo, paths}`, `git_discard{repo, paths}`: files or folders; each is
+//!   followed by `git_status`, and a failure by `git_failed{repo, of, error}`. What is discarded of a file git does
+//!   not track is deleted as the Explorer deletes, kept aside where it can be got back.
+//! - `git_commit{repo, message, all, amend}` → `git_committed{repo, hash, error}` (`all`: every change is staged
+//!   first, as VS Code's smart commit), then `git_status`.
+//! - `git_show{repo, path, rev, working}` → `git_shown{repo, path, rev, working, exists, text, binary, too_large}`:
+//!   `rev` empty is the index, else a revision (`HEAD`); `working` reads the file in the working tree instead.
+//! - `git_init{repo}` → a repository made there, then `git_status`.
+//!
+//! Once a face has asked a repository's status it is told again by itself whenever git's own files change (the
+//! index, HEAD, its log): a commit, a checkout or staging made in a terminal. The faces ask again after a file is
+//! saved, made, moved or deleted, and after a turn.
+//!
+//! For the areas after this one (branches, history, several repositories): [`git`] runs git as every request here
+//! does (no prompt, no pager, ssh in batch mode, no Arena key, what it says scrubbed of credentials), [`dir_of`]
+//! resolves a message's `repo`, and [`push_status`] tells every face the repository's state.
 
-use crate::ide_ext::{Area, Rule};
+use std::collections::HashMap;
+use std::io::Write as _;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Weak};
+
+use serde_json::{Value, json};
+use tokio::sync::broadcast;
+
+use crate::ide_ext::{Area, Rule, Shared, send};
+use crate::ide_files::Side;
+
+/// The most files a status lists.
+pub(crate) const MOST_FILES: usize = 2000;
+
+/// The biggest file `git_show` sends.
+const MOST_SHOWN: u64 = 5 * 1024 * 1024;
+
+/// How often git's own files are looked at, for a change made outside the window.
+const LOOK_EVERY: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// This area in the driver.
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] = &[];
+    const MESSAGES: &'static [(&'static str, Rule)] = &[
+        ("git_status", Rule::Side),
+        ("git_stage", Rule::Side),
+        ("git_unstage", Rule::Side),
+        ("git_discard", Rule::Side),
+        ("git_commit", Rule::Side),
+        ("git_show", Rule::Side),
+        ("git_init", Rule::Side),
+    ];
+
+    fn start(sh: &Shared) {
+        let kept = sh.side.kept.of::<Git>();
+        if let Ok(mut me) = kept.me.lock() {
+            *me = Arc::downgrade(&sh.side);
+        }
+        if kept.watching.swap(true, Ordering::SeqCst) || tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        let side = Arc::downgrade(&sh.side);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(LOOK_EVERY).await;
+                let Some(side) = side.upgrade() else { break };
+                let kept = side.kept.of::<Git>();
+                let out = side.out().clone();
+                drop(side);
+                let _ = tokio::task::spawn_blocking(move || look(&kept, &out)).await;
+            }
+        });
+    }
+
+    fn side(side: &Side, m: &Value) -> bool {
+        let of = m["type"].as_str().unwrap_or("");
+        let repo = m["repo"].as_str().unwrap_or("").to_string();
+        let out = side.out().clone();
+        let dir = match dir_of(side, &repo) {
+            Ok(d) => d,
+            Err(e) => {
+                send(&out, json!({"type": if of == "git_status" { "git_status" } else { "git_failed" }, "repo": repo, "of": of, "error": e}));
+                return true;
+            }
+        };
+        let kept = side.kept.of::<Git>();
+        let me = kept.me.lock().ok().and_then(|w| w.upgrade());
+        let (m, of) = (m.clone(), of.to_string());
+        later(move || {
+            let _one = kept.lock.lock();
+            answer(&of, &m, &repo, &dir, &out, &kept, me.as_deref());
+        });
+        true
+    }
+}
+
+/// Runs work on a thread that may wait (inside the driver), or at once (in a test, with no runtime).
+fn later(work: impl FnOnce() + Send + 'static) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) => {
+            h.spawn_blocking(work);
+        }
+        Err(_) => work(),
+    }
+}
+
+/// What this area keeps for a folder: one git request at a time (no two take the index's lock), the folder's side,
+/// and each repository asked about with what was last said of it.
+#[derive(Default)]
+pub(crate) struct Git {
+    lock: Mutex<()>,
+    me: Mutex<Weak<Side>>,
+    watching: AtomicBool,
+    asked: Mutex<HashMap<String, Asked>>,
+}
+
+/// A repository a face asked about: where it is, git's own folder, the stamps of git's files when it was last
+/// looked at, and the status last said.
+#[derive(Clone, Default)]
+struct Asked {
+    dir: PathBuf,
+    git_dir: Option<PathBuf>,
+    stamps: Vec<Option<u64>>,
+    said: String,
+}
+
+/// The stamps of the files git changes when its state does: the index, HEAD, HEAD's log.
+fn stamps(git_dir: &Path) -> Vec<Option<u64>> {
+    ["index", "HEAD", "logs/HEAD"]
+        .iter()
+        .map(|f| std::fs::metadata(git_dir.join(f)).ok().map(|m| crate::ide_files::modified(&m)))
+        .collect()
+}
+
+/// One look at each repository asked about: told again when git's files changed and its status with them.
+fn look(kept: &Git, out: &broadcast::Sender<String>) {
+    let asked: Vec<(String, Asked)> = match kept.asked.lock() {
+        Ok(a) => a.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        Err(_) => return,
+    };
+    for (repo, a) in asked {
+        let Some(git_dir) = &a.git_dir else { continue };
+        if stamps(git_dir) == a.stamps {
+            continue;
+        }
+        let _one = kept.lock.lock();
+        push_status_if_new(kept, out, &repo, &a.dir);
+    }
+}
+
+/// The folder a message's `repo` names: the project's top when it is empty.
+pub(crate) fn dir_of(side: &Side, repo: &str) -> Result<PathBuf, String> {
+    if repo.is_empty() { Ok(side.workspace().root().to_path_buf()) } else { side.real(repo) }
+}
+
+/// A path a face gave, safe to hand git: from the project's top, never out of it.
+fn path_ok(p: &str) -> bool {
+    let p = p.trim_start_matches("./");
+    !p.is_empty()
+        && !p.starts_with(['/', '\\'])
+        && !p.contains(['\0', ':'])
+        && !Path::new(p).components().any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+/// The paths of a message, each checked.
+fn paths_of(m: &Value) -> Result<Vec<String>, String> {
+    let paths: Vec<String> =
+        m["paths"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+    if paths.is_empty() {
+        return Err("no file was given".into());
+    }
+    match paths.iter().find(|p| !path_ok(p)) {
+        Some(p) => Err(format!("{p} is not a path inside the project")),
+        None => Ok(paths),
+    }
+}
+
+/// What git says, with any credentials in a remote's address taken out.
+pub(crate) fn scrub(text: &str) -> String {
+    static AT: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@").expect("regex"));
+    AT.replace_all(text.trim(), "${1}***@").into_owned()
+}
+
+/// Git run in a folder as every request here runs it: never asking for a password, never paging, ssh in batch
+/// mode, without the Arena key; `input` is given on its standard input. Ok: what it wrote; Err: what it said, scrubbed.
+pub(crate) fn git(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let mut c = Command::new("git");
+    c.arg("-C")
+        .arg(dir)
+        .args(["-c", "color.ui=false", "-c", "core.quotepath=false"])
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_PAGER", "cat")
+        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
+        .env_remove("ARENA_API_KEY")
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = c.spawn().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => "git was not found: install it to use source control".to_string(),
+        _ => format!("git could not be run: {e}"),
+    })?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        let _ = stdin.write_all(input);
+    }
+    let o = child.wait_with_output().map_err(|e| format!("git could not be run: {e}"))?;
+    if o.status.success() {
+        return Ok(o.stdout);
+    }
+    let said = String::from_utf8_lossy(&o.stderr);
+    let said = if said.trim().is_empty() { String::from_utf8_lossy(&o.stdout) } else { said };
+    // What it says first, not the usage it may print after.
+    let first: Vec<&str> = said.trim().lines().take(6).collect();
+    Err(scrub(&first.join("\n")))
+}
+
+/// Where a folder's repository is: its top, the folder's place under it (`sub/`, or empty), git's own folder.
+/// None: no repository there.
+fn where_is(dir: &Path) -> Result<Option<(PathBuf, String, PathBuf)>, String> {
+    match git(dir, &["rev-parse", "--show-toplevel", "--show-prefix", "--absolute-git-dir"], None) {
+        Ok(o) => {
+            let text = String::from_utf8_lossy(&o).into_owned();
+            let lines: Vec<&str> = text.lines().collect();
+            let (top, git_dir) = (lines.first().copied().unwrap_or(""), lines.last().copied().unwrap_or(""));
+            let prefix = if lines.len() >= 3 { lines[1] } else { "" };
+            Ok(Some((PathBuf::from(top), prefix.to_string(), PathBuf::from(git_dir))))
+        }
+        Err(e) if e.contains("not a git repository") => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// The branch line of `git status --branch`: the branch (none: detached), its upstream, ahead and behind.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct Branch {
+    pub name: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: u64,
+    pub behind: u64,
+}
+
+pub(crate) fn branch_of(header: &str) -> Branch {
+    let h = header.trim_start_matches("## ");
+    let mut b = Branch::default();
+    if let Some(name) = h.strip_prefix("No commits yet on ").or_else(|| h.strip_prefix("Initial commit on ")) {
+        b.name = Some(name.to_string());
+        return b;
+    }
+    if h.starts_with("HEAD (no branch)") {
+        return b;
+    }
+    let (names, counts) = match h.split_once(" [") {
+        Some((n, c)) => (n, c.trim_end_matches(']')),
+        None => (h, ""),
+    };
+    match names.split_once("...") {
+        Some((n, u)) => {
+            b.name = Some(n.to_string());
+            b.upstream = Some(u.to_string());
+        }
+        None => b.name = Some(names.to_string()),
+    }
+    for part in counts.split(", ") {
+        if let Some(n) = part.strip_prefix("ahead ") {
+            b.ahead = n.parse().unwrap_or(0);
+        } else if let Some(n) = part.strip_prefix("behind ") {
+            b.behind = n.parse().unwrap_or(0);
+        }
+    }
+    b
+}
+
+/// One file of a status: its path, where it was before a rename, its index (`x`) and working tree (`y`) letters.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Entry {
+    pub path: String,
+    pub from: Option<String>,
+    pub x: char,
+    pub y: char,
+}
+
+impl Entry {
+    pub fn conflict(&self) -> bool {
+        matches!((self.x, self.y), ('D', 'D') | ('A', 'U') | ('U', 'D') | ('U', 'A') | ('D', 'U') | ('A', 'A') | ('U', 'U'))
+    }
+
+    pub fn untracked(&self) -> bool {
+        self.x == '?'
+    }
+
+    pub fn staged(&self) -> bool {
+        !self.conflict() && !self.untracked() && self.x != ' ' && self.x != '!'
+    }
+
+    pub fn changed(&self) -> bool {
+        !self.conflict() && !self.untracked() && self.y != ' ' && self.y != '!'
+    }
+}
+
+/// `git status -z --porcelain=v1 --branch`: the branch line and the files (a rename's path first, then where it
+/// was). Ignored files are left out.
+pub(crate) fn parse_status(out: &[u8]) -> (Branch, Vec<Entry>) {
+    let text = String::from_utf8_lossy(out);
+    let mut parts = text.split('\0').filter(|p| !p.is_empty());
+    let mut branch = Branch::default();
+    let mut files = Vec::new();
+    while let Some(p) = parts.next() {
+        if p.starts_with("## ") {
+            branch = branch_of(p);
+            continue;
+        }
+        let mut chars = p.chars();
+        let (Some(x), Some(y)) = (chars.next(), chars.next()) else { continue };
+        let path = p.get(3..).unwrap_or("").to_string();
+        let from = if matches!(x, 'R' | 'C') || matches!(y, 'R' | 'C') { parts.next().map(str::to_string) } else { None };
+        if x == '!' {
+            continue;
+        }
+        files.push(Entry { path, from, x, y });
+    }
+    (branch, files)
+}
+
+/// A path git gave (from its top) as the project names it: from the project's top.
+fn from_project(prefix: &str, p: &str) -> String {
+    match p.strip_prefix(prefix) {
+        Some(rest) if !prefix.is_empty() => rest.to_string(),
+        _ if prefix.is_empty() => p.to_string(),
+        _ => format!("{}{p}", "../".repeat(prefix.matches('/').count())),
+    }
+}
+
+/// The status of the repository a folder is in, as `git_status` says it (without its type and repo), with git's
+/// own folder.
+fn status(dir: &Path) -> (Value, Option<PathBuf>) {
+    let (top, prefix, git_dir) = match where_is(dir) {
+        Ok(Some(w)) => w,
+        Ok(None) => return (json!({"root": null, "files": [], "total": 0}), None),
+        Err(e) => return (json!({"root": null, "files": [], "total": 0, "error": e}), None),
+    };
+    let out = match git(
+        dir,
+        &["--no-optional-locks", "status", "-z", "--porcelain=v1", "--branch", "--untracked-files=all", "--", "."],
+        None,
+    ) {
+        Ok(o) => o,
+        Err(e) => return (json!({"root": top.to_string_lossy(), "files": [], "total": 0, "error": e}), Some(git_dir)),
+    };
+    let (branch, files) = parse_status(&out);
+    let total = files.len();
+    let files: Vec<Value> = files
+        .iter()
+        .take(MOST_FILES)
+        .map(|e| {
+            json!({
+                "path": from_project(&prefix, &e.path),
+                "from": e.from.as_deref().map(|f| from_project(&prefix, f)),
+                "x": e.x.to_string(),
+                "y": e.y.to_string(),
+                "staged": e.staged(),
+                "changed": e.changed(),
+                "untracked": e.untracked(),
+                "conflict": e.conflict(),
+            })
+        })
+        .collect();
+    (
+        json!({
+            "root": top.to_string_lossy(),
+            "branch": branch.name,
+            "detached": branch.name.is_none(),
+            "upstream": branch.upstream,
+            "ahead": branch.ahead,
+            "behind": branch.behind,
+            "files": files,
+            "total": total,
+        }),
+        Some(git_dir),
+    )
+}
+
+/// The repository's status said to every face, and kept as what was last said of it.
+pub(crate) fn push_status(kept: &Git, out: &broadcast::Sender<String>, repo: &str, dir: &Path) {
+    let said = status_message(kept, repo, dir);
+    let _ = out.send(said);
+}
+
+/// As `push_status`, but only when it is not what was last said.
+fn push_status_if_new(kept: &Git, out: &broadcast::Sender<String>, repo: &str, dir: &Path) {
+    let before = kept.asked.lock().ok().and_then(|a| a.get(repo).map(|a| a.said.clone()));
+    let said = status_message(kept, repo, dir);
+    if before.as_deref() != Some(said.as_str()) {
+        let _ = out.send(said);
+    }
+}
+
+/// The status message of a repository, kept with the stamps git's files had before it was read (so a change made
+/// while it was read is seen at the next look).
+fn status_message(kept: &Git, repo: &str, dir: &Path) -> String {
+    let known = kept.asked.lock().ok().and_then(|a| a.get(repo).and_then(|a| a.git_dir.clone()));
+    let before = known.as_deref().map(stamps);
+    let (mut v, git_dir) = status(dir);
+    v["type"] = json!("git_status");
+    v["repo"] = json!(repo);
+    let said = v.to_string();
+    let stamps = match (&git_dir, before) {
+        (Some(g), Some(b)) if known.as_ref() == Some(g) => b,
+        (Some(g), _) => stamps(g),
+        _ => Vec::new(),
+    };
+    if let Ok(mut a) = kept.asked.lock() {
+        a.insert(repo.to_string(), Asked { dir: dir.to_path_buf(), git_dir, stamps, said: said.clone() });
+    }
+    said
+}
+
+/// Paths given to git on its standard input, each ended by a NUL.
+fn nul_list(paths: &[String]) -> Vec<u8> {
+    let mut b = Vec::new();
+    for p in paths {
+        b.extend_from_slice(p.trim_start_matches("./").as_bytes());
+        b.push(0);
+    }
+    b
+}
+
+const FROM_INPUT: [&str; 2] = ["--pathspec-from-file=-", "--pathspec-file-nul"];
+
+/// Whether the repository has a commit yet.
+fn has_head(dir: &Path) -> bool {
+    git(dir, &["rev-parse", "--verify", "-q", "HEAD"], None).is_ok()
+}
+
+pub(crate) fn stage(dir: &Path, paths: &[String]) -> Result<(), String> {
+    git(dir, &["--literal-pathspecs", "add", "-A", FROM_INPUT[0], FROM_INPUT[1]], Some(&nul_list(paths))).map(|_| ())
+}
+
+pub(crate) fn unstage(dir: &Path, paths: &[String]) -> Result<(), String> {
+    let args: &[&str] = if has_head(dir) {
+        &["--literal-pathspecs", "restore", "--staged", FROM_INPUT[0], FROM_INPUT[1]]
+    } else {
+        &["--literal-pathspecs", "rm", "--cached", "-r", "-q", "--ignore-unmatch", FROM_INPUT[0], FROM_INPUT[1]]
+    };
+    git(dir, args, Some(&nul_list(paths))).map(|_| ())
+}
+
+/// The files `git ls-files` lists under the paths (`ls-files` reads no paths from its input, so they are given
+/// a few hundred at a time), from the project's top.
+fn listed_under(dir: &Path, how: &[&str], paths: &[String]) -> Result<Vec<String>, String> {
+    let mut all = Vec::new();
+    for some in paths.chunks(200) {
+        let mut args = vec!["--literal-pathspecs", "ls-files", "-z"];
+        args.extend_from_slice(how);
+        args.push("--");
+        args.extend(some.iter().map(|p| p.trim_start_matches("./")));
+        let o = git(dir, &args, None)?;
+        all.extend(String::from_utf8_lossy(&o).split('\0').filter(|p| !p.is_empty()).map(str::to_string));
+    }
+    Ok(all)
+}
+
+/// The changes to the paths that git tracks taken back to what the index has; the files it does not track are
+/// handed to `delete` (the Explorer's delete, which keeps them aside). Says the files that could not be deleted.
+pub(crate) fn discard(dir: &Path, paths: &[String], delete: &dyn Fn(&str) -> bool) -> Result<(), String> {
+    let untracked = listed_under(dir, &["--others", "--exclude-standard"], paths)?;
+    let tracked = listed_under(dir, &[], paths)?;
+    let under = |t: &str, p: &str| {
+        let p = p.trim_start_matches("./").trim_end_matches('/');
+        p == "." || t == p || t.starts_with(&format!("{p}/"))
+    };
+    let some_tracked: Vec<String> = paths.iter().filter(|p| tracked.iter().any(|t| under(t, p))).cloned().collect();
+    if !some_tracked.is_empty() {
+        let input = nul_list(&some_tracked);
+        git(dir, &["--literal-pathspecs", "restore", "--worktree", FROM_INPUT[0], FROM_INPUT[1]], Some(&input))?;
+    }
+    let failed: Vec<&String> = untracked.iter().filter(|u| !delete(u)).collect();
+    match failed.as_slice() {
+        [] => Ok(()),
+        [one] => Err(format!("{one} could not be deleted")),
+        many => Err(format!("{} files could not be deleted", many.len())),
+    }
+}
+
+/// A commit made of what is staged (`all`: of every change, staged first); its short hash.
+pub(crate) fn commit(dir: &Path, message: &str, all: bool, amend: bool) -> Result<String, String> {
+    let message = message.trim();
+    if message.is_empty() && !amend {
+        return Err("Type a message to commit.".into());
+    }
+    if all {
+        git(dir, &["add", "-A", "--", "."], None)?;
+    }
+    let mut args = vec!["commit", "--quiet"];
+    if amend {
+        args.push("--amend");
+    }
+    if message.is_empty() {
+        args.push("--no-edit");
+        git(dir, &args, None)?;
+    } else {
+        args.extend(["-F", "-"]);
+        git(dir, &args, Some(message.as_bytes()))?;
+    }
+    let hash = git(dir, &["rev-parse", "--short", "HEAD"], None)?;
+    Ok(String::from_utf8_lossy(&hash).trim().to_string())
+}
+
+/// A file as a revision has it (`rev` empty: the index), as `git_shown` says it (without its type and keys).
+pub(crate) fn show(dir: &Path, path: &str, rev: &str) -> Value {
+    if rev.starts_with('-') || rev.contains([':', ' ', '\0']) || !path_ok(path) {
+        return json!({"exists": false, "error": "not a revision or a path git takes"});
+    }
+    let object = format!("{rev}:./{}", path.trim_start_matches("./"));
+    let size = match git(dir, &["cat-file", "-s", &object], None) {
+        Ok(o) => String::from_utf8_lossy(&o).trim().parse::<u64>().unwrap_or(0),
+        Err(_) => return json!({"exists": false}),
+    };
+    if size > MOST_SHOWN {
+        return json!({"exists": true, "too_large": true});
+    }
+    match git(dir, &["cat-file", "blob", &object], None) {
+        Ok(bytes) => text_of(&bytes),
+        Err(e) => json!({"exists": false, "error": e}),
+    }
+}
+
+/// A file's bytes as `git_shown` says them: text, or that it is binary.
+fn text_of(bytes: &[u8]) -> Value {
+    if bytes[..bytes.len().min(8000)].contains(&0) {
+        return json!({"exists": true, "binary": true});
+    }
+    json!({"exists": true, "text": String::from_utf8_lossy(bytes)})
+}
+
+/// A file in the working tree, as `git_shown` says it.
+fn show_working(dir: &Path, path: &str) -> Value {
+    if !path_ok(path) {
+        return json!({"exists": false, "error": "not a path inside the project"});
+    }
+    let file = dir.join(path.trim_start_matches("./"));
+    match std::fs::metadata(&file) {
+        Ok(m) if m.len() > MOST_SHOWN => json!({"exists": true, "too_large": true}),
+        Ok(m) if m.is_file() => match std::fs::read(&file) {
+            Ok(b) => text_of(&b),
+            Err(e) => json!({"exists": false, "error": e.to_string()}),
+        },
+        _ => json!({"exists": false}),
+    }
+}
+
+/// A request answered, on git's thread.
+fn answer(of: &str, m: &Value, repo: &str, dir: &Path, out: &broadcast::Sender<String>, kept: &Git, side: Option<&Side>) {
+    let failed = |e: String| send(out, json!({"type": "git_failed", "repo": repo, "of": of, "error": e}));
+    match of {
+        "git_status" => push_status(kept, out, repo, dir),
+        "git_stage" | "git_unstage" | "git_discard" => {
+            let done = paths_of(m).and_then(|paths| match of {
+                "git_stage" => stage(dir, &paths),
+                "git_unstage" => unstage(dir, &paths),
+                _ => {
+                    let root = side.map(|s| s.workspace().root().to_path_buf());
+                    discard(dir, &paths, &|p: &str| {
+                        let (Some(side), Some(root)) = (side, &root) else { return false };
+                        let Ok(shown) = dir.join(p).strip_prefix(root).map(|r| r.to_string_lossy().into_owned()) else {
+                            return false;
+                        };
+                        side.handle(&json!({"type": "delete", "path": shown}));
+                        !dir.join(p).exists()
+                    })
+                }
+            });
+            if let Err(e) = done {
+                failed(e);
+            }
+            push_status(kept, out, repo, dir);
+        }
+        "git_commit" => {
+            let done = commit(
+                dir,
+                m["message"].as_str().unwrap_or(""),
+                m["all"].as_bool().unwrap_or(false),
+                m["amend"].as_bool().unwrap_or(false),
+            );
+            let reply = match done {
+                Ok(hash) => json!({"type": "git_committed", "repo": repo, "hash": hash}),
+                Err(e) => json!({"type": "git_committed", "repo": repo, "error": e}),
+            };
+            send(out, reply);
+            push_status(kept, out, repo, dir);
+        }
+        "git_show" => {
+            let path = m["path"].as_str().unwrap_or("");
+            let rev = m["rev"].as_str().unwrap_or("");
+            let working = m["working"].as_bool().unwrap_or(false);
+            let mut v = if working { show_working(dir, path) } else { show(dir, path, rev) };
+            v["type"] = json!("git_shown");
+            v["repo"] = json!(repo);
+            v["path"] = json!(path);
+            v["rev"] = json!(rev);
+            v["working"] = json!(working);
+            send(out, v);
+        }
+        "git_init" => {
+            if let Err(e) = git(dir, &["init", "--quiet"], None) {
+                failed(e);
+            }
+            push_status(kept, out, repo, dir);
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_branch_line_says_the_branch_its_upstream_and_how_far_apart_they_are() {
+        assert_eq!(
+            branch_of("## main...origin/main [ahead 2, behind 1]"),
+            Branch { name: Some("main".into()), upstream: Some("origin/main".into()), ahead: 2, behind: 1 }
+        );
+        assert_eq!(branch_of("## dev...origin/dev [gone]").upstream.as_deref(), Some("origin/dev"));
+        assert_eq!(branch_of("## main"), Branch { name: Some("main".into()), ..Branch::default() });
+        assert_eq!(branch_of("## No commits yet on trunk").name.as_deref(), Some("trunk"));
+        assert_eq!(branch_of("## HEAD (no branch)"), Branch::default());
+    }
+
+    #[test]
+    fn a_status_lists_each_file_once_with_where_a_renamed_one_was() {
+        let out = b"## main\0M  a.rs\0 M b.rs\0MM c.rs\0R  new.rs\0old.rs\0?? notes.txt\0UU both.rs\0!! target/\0 D gone.rs\0";
+        let (b, files) = parse_status(out);
+        assert_eq!(b.name.as_deref(), Some("main"));
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(names, ["a.rs", "b.rs", "c.rs", "new.rs", "notes.txt", "both.rs", "gone.rs"]);
+        let of = |p: &str| files.iter().find(|f| f.path == p).expect("listed").clone();
+        assert_eq!(of("new.rs").from.as_deref(), Some("old.rs"));
+        assert!(of("a.rs").staged() && !of("a.rs").changed());
+        assert!(!of("b.rs").staged() && of("b.rs").changed());
+        assert!(of("c.rs").staged() && of("c.rs").changed(), "a file changed again after staging is in both groups");
+        assert!(of("notes.txt").untracked() && !of("notes.txt").staged() && !of("notes.txt").changed());
+        assert!(of("both.rs").conflict() && !of("both.rs").staged() && !of("both.rs").changed());
+        assert!(of("gone.rs").changed());
+    }
+
+    #[test]
+    fn what_git_says_is_told_without_a_remotes_credentials() {
+        assert_eq!(
+            scrub("fatal: could not read from https://me:s3cret@example.com/r.git\n"),
+            "fatal: could not read from https://***@example.com/r.git"
+        );
+        assert_eq!(scrub("ssh://git@host/r"), "ssh://***@host/r");
+        assert_eq!(scrub("nothing here"), "nothing here");
+    }
+
+    #[test]
+    fn only_paths_inside_the_project_are_handed_to_git() {
+        assert!(path_ok("src/a.rs") && path_ok("./src") && path_ok("."));
+        assert!(!path_ok("../x") && !path_ok("/etc/passwd") && !path_ok("a/../../b") && !path_ok("") && !path_ok(":(glob)*"));
+        assert_eq!(from_project("sub/", "sub/a.rs"), "a.rs");
+        assert_eq!(from_project("", "a.rs"), "a.rs");
+        assert_eq!(from_project("sub/", "other/a.rs"), "../other/a.rs");
+    }
+
+    /// A repository made for a test, with a name and an address of its own; none when git is not there.
+    fn repo() -> Option<tempfile::TempDir> {
+        if Command::new("git").arg("--version").output().is_err() {
+            eprintln!("git is not installed: skipped");
+            return None;
+        }
+        let d = tempfile::tempdir().expect("temp");
+        for args in [
+            &["init", "--quiet", "-b", "main"][..],
+            &["config", "user.name", "Test"],
+            &["config", "user.email", "test@example.com"],
+            &["config", "commit.gpgsign", "false"],
+        ] {
+            git(d.path(), args, None).expect("git");
+        }
+        Some(d)
+    }
+
+    #[test]
+    fn files_are_staged_unstaged_discarded_and_committed() {
+        let Some(d) = repo() else { return };
+        let dir = d.path();
+        let (v, _) = status(dir);
+        assert_eq!((v["branch"].as_str(), v["files"].as_array().map(Vec::len)), (Some("main"), Some(0)));
+        std::fs::write(dir.join("a.txt"), "one\n").expect("w");
+        std::fs::create_dir(dir.join("src")).expect("dir");
+        std::fs::write(dir.join("src/b.txt"), "two\n").expect("w");
+        // Unstaging before the first commit.
+        stage(dir, &["a.txt".into(), "src".into()]).expect("stage");
+        unstage(dir, &["src".into()]).expect("unstage");
+        let (v, _) = status(dir);
+        let x_of = |v: &Value, p: &str| {
+            v["files"].as_array().into_iter().flatten().find(|f| f["path"] == p).map(|f| f["x"].as_str().unwrap_or("").to_string())
+        };
+        assert_eq!((x_of(&v, "a.txt").as_deref(), x_of(&v, "src/b.txt").as_deref()), (Some("A"), Some("?")));
+        assert_eq!(commit(dir, "  ", false, false), Err("Type a message to commit.".into()));
+        let hash = commit(dir, "First", false, false).expect("commit");
+        assert!(hash.len() >= 7, "{hash}");
+        // Changed, then discarded: the tracked file is as it was, the untracked one handed to delete.
+        std::fs::write(dir.join("a.txt"), "changed\n").expect("w");
+        let asked = std::cell::RefCell::new(Vec::new());
+        discard(dir, &[".".into()], &|p| {
+            asked.borrow_mut().push(p.to_string());
+            true
+        })
+        .expect("discard");
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).expect("r"), "one\n");
+        assert_eq!(*asked.borrow(), ["src/b.txt"]);
+        // The index and HEAD as the diff's sides have them; amending keeps one commit.
+        std::fs::write(dir.join("a.txt"), "staged\n").expect("w");
+        stage(dir, &["a.txt".into()]).expect("stage");
+        assert_eq!(show(dir, "a.txt", "")["text"], "staged\n");
+        assert_eq!(show(dir, "a.txt", "HEAD")["text"], "one\n");
+        assert_eq!(show(dir, "nothing.txt", "HEAD")["exists"], false);
+        assert_eq!(show(dir, "a.txt", "--output=x")["exists"], false);
+        commit(dir, "First, amended", false, true).expect("amend");
+        let log = git(dir, &["log", "--format=%s"], None).expect("log");
+        assert_eq!(String::from_utf8_lossy(&log).trim(), "First, amended");
+        // Commit all stages every change first.
+        std::fs::write(dir.join("c.txt"), "new\n").expect("w");
+        commit(dir, "Second", true, false).expect("all");
+        let (v, _) = status(dir);
+        assert_eq!(v["files"].as_array().map(Vec::len), Some(0), "{v}");
+    }
+
+    #[test]
+    fn the_projects_side_answers_and_a_discarded_untracked_file_is_kept_aside() {
+        let Some(d) = repo() else { return };
+        let data = tempfile::tempdir().expect("temp");
+        std::fs::write(d.path().join("notes.txt"), "mine\n").expect("w");
+        let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
+        let (out, mut rx) = broadcast::channel(64);
+        let side = Arc::new(Side::new(ws, Arc::default(), out, None, data.path()));
+        *side.kept.of::<Git>().me.lock().expect("me") = Arc::downgrade(&side);
+        let mut said = || -> Vec<Value> {
+            std::iter::from_fn(|| rx.try_recv().ok()).map(|t| serde_json::from_str(&t).expect("json")).collect()
+        };
+        assert!(side.handle(&json!({"type": "git_status"})));
+        let s = said();
+        assert_eq!((s[0]["type"].as_str(), s[0]["repo"].as_str()), (Some("git_status"), Some("")));
+        assert_eq!(s[0]["files"][0]["path"], "notes.txt");
+        assert!(side.handle(&json!({"type": "git_discard", "repo": "", "paths": ["notes.txt"]})));
+        let s = said();
+        assert!(!d.path().join("notes.txt").exists());
+        assert!(s.iter().any(|m| m["type"] == "deleted" && m["kept"].is_string()), "{s:?}");
+        let last = s.iter().rfind(|m| m["type"] == "git_status").expect("status");
+        assert_eq!(last["files"].as_array().map(Vec::len), Some(0));
+        assert!(side.handle(&json!({"type": "git_stage", "paths": ["../out"]})));
+        assert_eq!(said()[0]["type"], "git_failed");
+        assert!(side.handle(&json!({"type": "git_status", "repo": "/etc"})));
+        assert!(said()[0]["error"].is_string());
+    }
+
+    #[test]
+    fn a_folder_without_a_repository_says_so_and_a_status_is_told_again_only_when_it_changed() {
+        let Some(d) = repo() else { return };
+        let plain = tempfile::tempdir().expect("temp");
+        let (v, git_dir) = status(plain.path());
+        assert!(v["root"].is_null() && git_dir.is_none() && v.get("error").is_none(), "{v}");
+        let kept = Git::default();
+        let (out, mut rx) = broadcast::channel(16);
+        push_status(&kept, &out, "", d.path());
+        assert_eq!(rx.try_recv().map(|t| t.contains("\"git_status\"")), Ok(true));
+        push_status_if_new(&kept, &out, "", d.path());
+        assert!(rx.try_recv().is_err(), "the same status is not told twice");
+        std::fs::write(d.path().join("x.txt"), "x").expect("w");
+        stage(d.path(), &["x.txt".into()]).expect("stage");
+        look(&kept, &out);
+        let told: Value = serde_json::from_str(&rx.try_recv().expect("told")).expect("json");
+        assert_eq!(told["files"][0]["path"], "x.txt");
+    }
 }
