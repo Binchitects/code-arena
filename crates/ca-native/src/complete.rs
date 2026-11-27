@@ -271,6 +271,9 @@ pub struct Ask<'a> {
 
 type Items = Rc<dyn Fn(Ui, &Ask) -> Vec<Item>>;
 
+/// A document's words, as of its text's revision.
+type Words = (u64, Rc<Vec<String>>);
+
 struct Provider {
     id: &'static str,
     triggers: Vec<char>,
@@ -314,7 +317,7 @@ thread_local! {
     static TYPED: Cell<Option<(char, usize)>> = const { Cell::new(None) };
     static SEQ: Cell<u64> = const { Cell::new(0) };
     /// Each document's words, by path, as of its text's revision.
-    static WORDS: RefCell<HashMap<String, (u64, Rc<Vec<String>>)>> = RefCell::new(HashMap::new());
+    static WORDS: RefCell<HashMap<String, Words>> = RefCell::new(HashMap::new());
 }
 
 /// Adds a provider of suggestions; the same id again takes the first's place. `triggers` are the characters that
@@ -395,7 +398,10 @@ fn words_of(text: &str, skip: Option<Range<usize>>, most: usize) -> Vec<String> 
 /// Whether a character starts a part of a word: its first, one after a separator, an upper-case one after a
 /// lower-case one.
 fn boundary(chars: &[(usize, char)], i: usize) -> bool {
-    i == 0 || !is_word(chars[i - 1].1) || chars[i - 1].1 == '_' || (chars[i].1.is_uppercase() && chars[i - 1].1.is_lowercase())
+    i == 0
+        || !is_word(chars[i - 1].1)
+        || chars[i - 1].1 == '_'
+        || (chars[i].1.is_uppercase() && chars[i - 1].1.is_lowercase())
 }
 
 /// How well the letters typed match a word, as VS Code's fuzzy score does it: each letter in order, ignoring case,
@@ -458,7 +464,10 @@ fn filtered<'a>(lists: impl IntoIterator<Item = &'a Rc<Item>>, prefix: &str) -> 
         })
         .collect();
     rows.sort_by(|a, b| {
-        b.score.cmp(&a.score).then_with(|| a.item.sorted().cmp(b.item.sorted())).then_with(|| a.item.label.cmp(&b.item.label))
+        b.score
+            .cmp(&a.score)
+            .then_with(|| a.item.sorted().cmp(b.item.sorted()))
+            .then_with(|| a.item.label.cmp(&b.item.label))
     });
     rows
 }
@@ -577,7 +586,10 @@ fn word_items(ui: Ui, path: &str, lang: Option<&str>, editor: &Editor, offset: u
     }
     if how != "currentDocument" {
         let tabs = ui.tabs.with_untracked(|t| {
-            t.iter().filter(|t| t.is_file() && t.path != path).map(|t| (t.path.clone(), t.doc.clone())).collect::<Vec<_>>()
+            t.iter()
+                .filter(|t| t.is_file() && t.path != path)
+                .map(|t| (t.path.clone(), t.doc.clone()))
+                .collect::<Vec<_>>()
         });
         let mut seen: HashSet<String> = words.iter().cloned().collect();
         for (p, doc) in tabs {
@@ -588,8 +600,11 @@ fn word_items(ui: Ui, path: &str, lang: Option<&str>, editor: &Editor, offset: u
             let cached = WORDS.with(|w| w.borrow().get(&p).filter(|(r, _)| *r == rev).map(|(_, l)| l.clone()));
             let list = cached.unwrap_or_else(|| {
                 let text = doc.text();
-                let list =
-                    Rc::new(if text.len() <= WORDS_MOST_BYTES { words_of(&text.to_string(), None, WORDS_MOST) } else { Vec::new() });
+                let list = Rc::new(if text.len() <= WORDS_MOST_BYTES {
+                    words_of(&text.to_string(), None, WORDS_MOST)
+                } else {
+                    Vec::new()
+                });
                 WORDS.with(|w| w.borrow_mut().insert(p.clone(), (rev, list.clone())));
                 list
             });
@@ -700,7 +715,8 @@ fn refresh(ui: Ui) {
     if GHOST.with(|g| g.borrow().as_ref().is_some_and(|g| g.path != path || g.offset != offset)) {
         drop_ghost(ui);
     }
-    let open_now = SESSION.with(|s| s.borrow().as_ref().map(|s| (s.path == path && s.editor.id() == editor.id(), s.start, s.line)));
+    let open_now = SESSION
+        .with(|s| s.borrow().as_ref().map(|s| (s.path == path && s.editor.id() == editor.id(), s.start, s.line)));
     match open_now {
         Some((true, start, line)) => {
             let (l, col) = editor.offset_to_line_col(offset);
@@ -805,7 +821,8 @@ fn tab_complete(ui: Ui) -> bool {
 /// Shows an inline suggestion at a place of a file (line and column from 0, the column a byte in the line), in place
 /// of the one shown; only its first line is drawn, Tab takes it whole.
 pub fn ghost(ui: Ui, path: &str, line: usize, col: usize, text: &str) {
-    if crate::settings::now(ui, "editor.inlineSuggest.enabled", lang_of(path)).as_bool() == Some(false) || text.is_empty()
+    if crate::settings::now(ui, "editor.inlineSuggest.enabled", lang_of(path)).as_bool() == Some(false)
+        || text.is_empty()
     {
         return ghost_clear(ui, path);
     }
@@ -841,7 +858,8 @@ fn drop_ghost(ui: Ui) {
 fn take_ghost(ui: Ui) -> bool {
     let Some((path, editor)) = live(ui) else { return false };
     let offset = caret_of(&editor);
-    let Some(text) = GHOST.with(|g| g.borrow().as_ref().filter(|g| g.path == path && g.offset == offset).map(|g| g.text.clone()))
+    let Some(text) =
+        GHOST.with(|g| g.borrow().as_ref().filter(|g| g.path == path && g.offset == offset).map(|g| g.text.clone()))
     else {
         return false;
     };
@@ -888,7 +906,8 @@ pub fn key(ui: Ui, key: &Key, mods: Modifiers) -> bool {
         Key::Named(NamedKey::PageUp) if open && bare => move_by(ui, -(MOST_ROWS as isize - 1)),
         Key::Named(NamedKey::Enter) if open && bare && n > 0 => {
             let row = s.rows.with_untracked(|r| r.get(s.at.get_untracked()).cloned());
-            let (path, typed) = SESSION.with(|s| s.borrow().as_ref().map(|s| (s.path.clone(), s.prefix.clone()))).unwrap_or_default();
+            let (path, typed) =
+                SESSION.with(|s| s.borrow().as_ref().map(|s| (s.path.clone(), s.prefix.clone()))).unwrap_or_default();
             let how = crate::settings::now(ui, "editor.acceptSuggestionOnEnter", lang_of(&path));
             if row.is_some_and(|r| enter_takes(how.as_str().unwrap_or("on"), &typed, r.item.inserted())) {
                 accept(ui, None);
@@ -956,11 +975,16 @@ fn row_view(ui: Ui, i: usize, row: Row, height: f64) -> impl IntoView {
     let kind = row.item.kind;
     let (detail, has_docs) = (row.item.detail.clone(), !row.item.docs.is_empty() || !row.item.detail.is_empty());
     let has_detail = !detail.is_empty();
-    let text = rich_text(move || label_layout(&row, &t.get(), focused.get(), size, height)).style(|s| s.flex_shrink(0.0_f32));
+    let text =
+        rich_text(move || label_layout(&row, &t.get(), focused.get(), size, height)).style(|s| s.flex_shrink(0.0_f32));
     h_stack((
         icon(kind.icon(), 16.0).style(move |s| {
             let c = t.get();
-            s.margin_horiz(4.0).flex_shrink(0.0_f32).color(if focused.get() { c.suggest_selected_icon } else { kind.tint(&c) })
+            s.margin_horiz(4.0).flex_shrink(0.0_f32).color(if focused.get() {
+                c.suggest_selected_icon
+            } else {
+                kind.tint(&c)
+            })
         }),
         clip(text).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),
         label(move || detail.clone()).style(move |s| {
@@ -972,15 +996,13 @@ fn row_view(ui: Ui, i: usize, row: Row, height: f64) -> impl IntoView {
                 .color(c.suggest_selected_fg.multiply_alpha(0.7))
                 .apply_if(!has_detail || !focused.get() || s_details(ui), |s| s.hide())
         }),
-        icon("chevron-right", 16.0)
-            .on_click_stop(move |_| s.details.update(|d| *d = !*d))
-            .style(move |s| {
-                s.margin_horiz(4.0)
-                    .flex_shrink(0.0_f32)
-                    .color(t.get().suggest_selected_fg)
-                    .cursor(floem::style::CursorStyle::Pointer)
-                    .apply_if(!has_docs || !focused.get() || s_details(ui), |s| s.hide())
-            }),
+        icon("chevron-right", 16.0).on_click_stop(move |_| s.details.update(|d| *d = !*d)).style(move |s| {
+            s.margin_horiz(4.0)
+                .flex_shrink(0.0_f32)
+                .color(t.get().suggest_selected_fg)
+                .cursor(floem::style::CursorStyle::Pointer)
+                .apply_if(!has_docs || !focused.get() || s_details(ui), |s| s.hide())
+        }),
     ))
     .on_click_stop(move |_| accept(ui, Some(i)))
     .style(move |s| {
@@ -1009,7 +1031,8 @@ fn details_view(ui: Ui) -> impl IntoView {
         }
         s.rev.track();
         let at = s.at.get();
-        s.rows.with(|r| r.get(at).map(|r| (r.item.label.clone(), r.item.detail.clone(), r.item.docs.clone())))
+        s.rows
+            .with(|r| r.get(at).map(|r| (r.item.label.clone(), r.item.detail.clone(), r.item.docs.clone())))
             .filter(|(_, d, m)| !d.is_empty() || !m.is_empty())
     });
     dyn_container(
@@ -1024,7 +1047,10 @@ fn details_view(ui: Ui) -> impl IntoView {
             };
             v_stack((
                 label(move || detail.clone()).style(move |s| {
-                    s.font_family(MONO_FONT.to_string()).font_size(13.0).color(t.get().suggest_fg).apply_if(!has_detail, |s| s.hide())
+                    s.font_family(MONO_FONT.to_string())
+                        .font_size(13.0)
+                        .color(t.get().suggest_fg)
+                        .apply_if(!has_detail, |s| s.hide())
                 }),
                 docs_view,
             ))
@@ -1054,9 +1080,7 @@ fn widget(ui: Ui) -> AnyView {
     let rows = virtual_stack(
         VirtualDirection::Vertical,
         VirtualItemSize::Fixed(Box::new(move || s.place.with_untracked(|p| p.map_or(19.0, |p| p.row)))),
-        move || {
-            s.rows.get().into_iter().enumerate().map(|(i, r)| (i, r.list, r)).collect::<im::Vector<_>>()
-        },
+        move || s.rows.get().into_iter().enumerate().map(|(i, r)| (i, r.list, r)).collect::<im::Vector<_>>(),
         |(i, list, _): &(usize, u64, Row)| (*i, *list),
         move |(i, _, r): (usize, u64, Row)| {
             let h = s.place.with_untracked(|p| p.map_or(19.0, |p| p.row));
@@ -1075,7 +1099,11 @@ fn widget(ui: Ui) -> AnyView {
             st.width_full().height(n * height()).apply_if(n == 0.0, |s| s.hide())
         });
     let none = label(|| "No suggestions.".to_string()).style(move |st| {
-        st.padding_horiz(8.0).height(height()).items_center().color(t.get().suggest_fg).apply_if(!s.none.get(), |s| s.hide())
+        st.padding_horiz(8.0)
+            .height(height())
+            .items_center()
+            .color(t.get().suggest_fg)
+            .apply_if(!s.none.get(), |s| s.hide())
     });
     let box_ = v_stack((list, none)).style(move |st| {
         let c = t.get();
@@ -1089,7 +1117,9 @@ fn widget(ui: Ui) -> AnyView {
     });
     h_stack((box_, details_view(ui)))
         .style(move |st| match s.place.get() {
-            Some(p) if s.rows.with(|r| !r.is_empty()) || s.none.get() => st.absolute().inset_left(p.x).inset_top(p.y).items_start(),
+            Some(p) if s.rows.with(|r| !r.is_empty()) || s.none.get() => {
+                st.absolute().inset_left(p.x).inset_top(p.y).items_start()
+            }
             _ => st.hide(),
         })
         .into_any()
@@ -1135,7 +1165,7 @@ mod tests {
         let text = "fn alpha(beta: u8) { alpha + 12 + x; gamma }";
         assert_eq!(words_of(text, None, 100), ["fn", "alpha", "beta", "u8", "gamma"]);
         // The word at the caret (in "gam|ma") is left out, and so many at most.
-        let at = text.find("gamma").unwrap() + 3;
+        let at = text.find("gamma").expect("there") + 3;
         assert!(!words_of(text, Some(at..at), 100).contains(&"gamma".to_string()));
         assert_eq!(words_of(text, None, 2), ["fn", "alpha"]);
     }
@@ -1144,13 +1174,14 @@ mod tests {
     fn letters_match_in_order_from_a_words_start_or_part_and_are_lit() {
         assert_eq!(fuzzy("fb", "fooBar").map(|f| f.1), Some(vec![0..1, 3..4]));
         assert_eq!(fuzzy("gt", "get_thing").map(|f| f.1), Some(vec![0..1, 4..5]));
-        assert_eq!(fuzzy("FOO", "foobar").map(|f| f.1), Some(vec![0..3]));
+        assert_eq!(fuzzy("FOO", "foobar").map(|f| f.1), Some(vec![Range { start: 0, end: 3 }]));
         assert!(fuzzy("bar", "foobar").is_none(), "the first letter not at a part's start");
         assert!(fuzzy("bar", "fooBar").is_some());
         assert!(fuzzy("xz", "xyz").is_some() && fuzzy("zx", "xyz").is_none());
         assert_eq!(fuzzy("", "any"), Some((0, Vec::new())));
         // The word typed exactly scores above one matched in parts.
-        assert!(fuzzy("form", "format").unwrap().0 > fuzzy("form", "fooOrMap").unwrap().0);
+        let score = |w| fuzzy("form", w).map_or(i32::MIN, |f| f.0);
+        assert!(score("format") > score("fooOrMap"));
     }
 
     #[test]
