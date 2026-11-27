@@ -1190,6 +1190,51 @@ mod tests {
     }
 
     #[test]
+    fn the_window_s_tabs_and_its_groups_follow_each_other_and_come_back_after_a_restart() {
+        use std::rc::Rc;
+        let send: Send = Rc::new(|_| {});
+        let file = |ui: Ui, path: &str| ui.take(&json!({"type": "file", "path": path, "text": "x\n", "modified": 1}), &send);
+        let ui = Ui::new();
+        register(ui, &send);
+        let model = |ui: Ui| groups(ui).model.get_untracked();
+        file(ui, "a.rs");
+        file(ui, "b.rs");
+        split(ui, None, true);
+        assert_eq!(model(ui).groups.len(), 2);
+        assert_eq!((model(ui).focused, ui.active.get_untracked().as_deref()), (model(ui).groups[1].id, Some("b.rs")));
+        // A file opened goes to the focused group; one shown from the first group's strip focuses it.
+        file(ui, "c.rs");
+        assert_eq!(model(ui).groups[1].tabs, paths(&["b.rs", "c.rs"]));
+        let first = model(ui).groups[0].id;
+        show(ui, first, "a.rs");
+        assert_eq!((model(ui).focused, ui.active.get_untracked().as_deref()), (first, Some("a.rs")));
+        // b.rs is in both: closed in the first group it stays open in the second.
+        ui.close("b.rs");
+        assert!(ui.tab("b.rs").is_some());
+        assert_eq!(model(ui).groups[0].tabs, paths(&["a.rs"]));
+        // Renamed, it stays where it is.
+        ui.moved("c.rs", "d.rs");
+        assert_eq!(model(ui).groups[1].tabs, paths(&["b.rs", "d.rs"]));
+        // Kept, and made again at the next start as the files come.
+        let state = ui.view_state();
+        assert_eq!(state["groups"]["list"][1]["tabs"], json!(["b.rs", "d.rs"]));
+        let again = Ui::new();
+        again.take(&json!({"type": "state", "view_state": state}), &send);
+        file(again, "d.rs");
+        file(again, "a.rs");
+        file(again, "b.rs");
+        file(again, "a.rs");
+        let m = model(again);
+        assert_eq!(m.groups.len(), 2);
+        assert_eq!((m.groups[0].tabs.clone(), m.groups[1].tabs.clone()), (paths(&["a.rs"]), paths(&["d.rs", "b.rs"])));
+        assert_eq!(m.groups[1].active.as_deref(), Some("d.rs"));
+        assert_eq!((m.at(), again.active.get_untracked().as_deref()), (0, Some("a.rs")));
+        // Closing the first group's only tab: that group goes.
+        again.close("a.rs");
+        assert_eq!((model(again).groups.len(), again.active.get_untracked().as_deref()), (1, Some("d.rs")));
+    }
+
+    #[test]
     fn a_renamed_tab_stays_in_its_groups() {
         let mut m = Model::default();
         m.reconcile(&paths(&["src/a.rs"]), Some("src/a.rs"));
