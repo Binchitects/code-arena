@@ -850,7 +850,7 @@ impl Side {
         // In the folder asked for (the Explorer's Open in Integrated Terminal), when it is one of the project's.
         let asked = m["cwd"].as_str().and_then(|c| self.real(c).ok()).filter(|p| p.is_dir());
         let cwd = asked.as_deref().unwrap_or(self.ws.cwd()).to_path_buf();
-        let path = std::env::var("PATH").ok();
+        let path = std::env::var_os("PATH").map(|p| p.to_string_lossy().into_owned());
         let shell = shell_for(m["shell"].as_str(), self.shell.as_deref(), path.as_deref());
         self.term_spawn(id, &shell, &[], &cwd, (cols, rows), None);
     }
