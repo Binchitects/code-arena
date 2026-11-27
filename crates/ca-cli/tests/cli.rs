@@ -1836,7 +1836,7 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     let hold = Hold::default();
     Mock::given(path("/v1/chat/completions"))
         .respond_with(HeldFirst(
-            vec![said("The first answer."), said("The second answer.")],
+            vec![said("The first answer."), said("The second answer."), said("The third answer.")],
             AtomicUsize::new(0),
             hold.clone(),
         ))
@@ -1850,6 +1850,8 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     )
     .expect("settings");
     let folder = tempfile::tempdir().expect("folder");
+    // A repository, so that it gets the project's default commands (`/explain`).
+    std::fs::create_dir(folder.path().join(".git")).expect("a repository");
     let mut child = code_arena(home.path())
         .args(["ide", "--no-open", "-C"])
         .arg(folder.path())
@@ -1913,15 +1915,17 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
 
     ask(&mut page, json!({"type": "send", "text": "say hello"})).await;
     until(&mut page, &|v| v["type"] == "turn_start").await;
-    // While the model writes its answer: a change of model, a step back, a setting, the themes, another message.
+    // While the model writes its answer: a change of model, a step back, a setting, the themes, a command,
+    // another message.
     ask(&mut page, json!({"type": "model", "model": "qwen-large"})).await;
     ask(&mut page, json!({"type": "rewind", "q": 1, "what": "chat"})).await;
     ask(&mut page, json!({"type": "thinking", "level": "high"})).await;
     ask(&mut page, json!({"type": "set_setting", "key": "workbench.colorTheme", "value": "Light Modern"})).await;
     ask(&mut page, json!({"type": "themes"})).await;
+    ask(&mut page, json!({"type": "send", "text": "/explain the parser"})).await;
     ask(&mut page, json!({"type": "send", "text": "and then?"})).await;
     // All of it was taken while the model had not answered yet; only then does its answer come.
-    let mut meanwhile = until(&mut page, &|v| v["type"] == "queued").await;
+    let mut meanwhile = until(&mut page, &|v| v["type"] == "queued" && v["text"] == "and then?").await;
     *hold.0.lock().expect("lock") = true;
     hold.1.notify_all();
     meanwhile.extend(until(&mut page, &|v| v["type"] == "turn_end").await);
@@ -1941,12 +1945,17 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     assert_eq!(refused, &json!({"type": "refused", "of": "rewind", "reason": why, "q": 1}));
     // What needs no session is answered while the turn runs, and nothing kept is answered before it ends.
     assert!(at(&meanwhile, &|v| v["type"] == "themes" && v["items"].is_array()).is_some(), "{meanwhile:?}");
-    assert!(at(&meanwhile, &|v| v["type"] == "queued" && v["text"] == "and then?").is_some(), "{meanwhile:?}");
+    // A command is not words for the running turn to read: it waits for the turn's end, shown as waiting.
+    let command = json!({"type": "queued", "text": "/explain the parser", "later": true});
+    assert!(at(&meanwhile, &|v| *v == command).is_some(), "{meanwhile:?}");
+    assert!(at(&meanwhile, &|v| v["type"] == "deferred" && v["of"] == "send").is_some(), "{meanwhile:?}");
+    assert!(at(&meanwhile, &|v| *v == json!({"type": "queued", "text": "and then?"})).is_some(), "{meanwhile:?}");
     assert!(at(&meanwhile, &|v| v["type"] == "status" || v["type"] == "setting_kept").is_none(), "{meanwhile:?}");
     assert!(at(&meanwhile, &|v| v["type"] == "state").is_none(), "nothing went back: {meanwhile:?}");
 
-    // The turn ended: what waited is answered in the order asked, then the message that came too late for the
-    // turn to read runs as a turn of its own, said as its question (marked late: the thread showed it as queued).
+    // The turn ended: what waited is answered in the order asked, the command among it as a turn of its own (its
+    // question marked late: the thread showed it as queued); then the message that came too late for the first
+    // turn to read runs as a turn of its own, said so too.
     let after = until(&mut page, &|v| v["type"] == "turn_end").await;
     let model = at(&after, &|v| v["type"] == "status" && v["model"] == "qwen-large" && v["thinking"] == "default")
         .expect("the model, first");
@@ -1954,25 +1963,38 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
         at(&after, &|v| v["type"] == "status" && v["model"] == "qwen-large" && v["thinking"] == "high").expect("then");
     let kept = at(&after, &|v| v["type"] == "setting_kept" && v["key"] == "workbench.colorTheme").expect("kept");
     let theme = at(&after, &|v| v["type"] == "theme" && v["theme"] == "Light Modern").expect("theme");
-    let started = at(&after, &|v| v["type"] == "turn_start").expect("the late message's turn");
-    let asked = at(&after, &|v| v["type"] == "user").expect("the late message as a question");
-    assert_eq!(after[asked], json!({"type": "user", "text": "and then?", "q": 2, "late": true}));
+    let started = at(&after, &|v| v["type"] == "turn_start").expect("the command's turn");
+    let asked = at(&after, &|v| v["type"] == "user").expect("the command as a question");
+    assert_eq!(after[asked], json!({"type": "user", "text": "/explain the parser", "q": 2, "late": true}));
     assert!(model < thinking && thinking < kept && kept < theme && theme < asked && asked < started, "{after:?}");
     let text: String = after.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
     assert_eq!(text, "The second answer.");
     assert_eq!(after.last().expect("end")["ok"], true, "{after:?}");
+    let last = until(&mut page, &|v| v["type"] == "turn_end").await;
+    let asked = at(&last, &|v| v["type"] == "user").expect("the late message as a question");
+    assert_eq!(last[asked], json!({"type": "user", "text": "and then?", "q": 3, "late": true}));
+    assert!(at(&last, &|v| v["type"] == "turn_start").is_some_and(|started| asked < started), "{last:?}");
+    let text: String = last.iter().filter(|v| v["type"] == "text").filter_map(|v| v["delta"].as_str()).collect();
+    assert_eq!(text, "The third answer.");
     let settings = std::fs::read_to_string(home.path().join("config/settings.json")).expect("settings");
     assert!(settings.contains("Light Modern"), "{settings}");
-    // The late turn was asked of the model chosen meanwhile, with the message as the person's.
+    // Both were asked of the model chosen meanwhile: the command as what it stands for, then the message as the
+    // person's.
     let requests = gateway.received_requests().await.expect("requests");
     let asked: Vec<Value> = requests
         .iter()
         .filter(|r| r.url.path().ends_with("/chat/completions"))
         .map(|r| serde_json::from_slice(&r.body).expect("json"))
         .collect();
-    assert_eq!(asked.len(), 2, "two turns");
-    assert_eq!((asked[0]["model"].as_str(), asked[1]["model"].as_str()), (Some("qwen"), Some("qwen-large")));
-    let last = asked[1]["messages"].as_array().and_then(|m| m.last()).cloned().unwrap_or_default();
+    assert_eq!(asked.len(), 3, "three turns");
+    let models: Vec<&str> = asked.iter().filter_map(|a| a["model"].as_str()).collect();
+    assert_eq!(models, ["qwen", "qwen-large", "qwen-large"]);
+    let command = asked[1]["messages"].as_array().and_then(|m| m.last()).cloned().unwrap_or_default();
+    assert!(
+        command["content"].as_str().is_some_and(|c| c.starts_with("Explain the parser in this project")),
+        "{command}"
+    );
+    let last = asked[2]["messages"].as_array().and_then(|m| m.last()).cloned().unwrap_or_default();
     assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some("and then?")), "{last}");
 
     // Between turns the same messages are answered at once, and a name of the driver's own is not a page's to send.

@@ -664,6 +664,10 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                         continue;
                     }
                     let mut sent = Sent::new(&msg, text, false);
+                    // It waited for a turn to end, and the faces showed it as `queued` then.
+                    if msg["late"] == true {
+                        sent.fields.insert("late".into(), json!(true));
+                    }
                     ide_ext::shape(&sh, &mut sent);
                     if !sent.done {
                         let mut ctx = Ctx { app: &mut *app, p: &mut p, side: &mut side, drv: &mut drv, sh: &sh };
@@ -726,15 +730,22 @@ fn during(m: &Value, sh: &Shared, drv: &mut Driver, pending: &Pending) -> bool {
         "skip" => {
             sh.skip.ask();
         }
-        // Sent meanwhile: the turn reads it at its next step (or, when an area says so, it waits whole for the
-        // turn's end: a command).
+        // Sent meanwhile: the turn reads it at its next step. A command (`/name`) is not words for the running
+        // turn to read: it waits whole for the turn's end and runs then, as in the terminal (and so does what an
+        // area says must wait). The faces show either as `queued`; the one that waits is said again as the
+        // question when its own turn begins (`user{late}`).
         "send" => {
             let text = m["text"].as_str().unwrap_or("").trim().to_string();
             if !text.is_empty() {
                 let mut sent = Sent::new(m, text, true);
+                sent.later = sent.model.starts_with('/');
                 ide_ext::shape(sh, &mut sent);
                 if sent.later {
-                    ide_ext::defer(m, &mut drv.later, out, false);
+                    let mut kept = m.clone();
+                    kept["late"] = json!(true);
+                    if ide_ext::defer(&kept, &mut drv.later, out, false) {
+                        send(out, sent.with_fields(json!({"type": "queued", "text": sent.shown, "later": true})));
+                    }
                 } else if !sent.done {
                     if let Ok(mut q) = drv.inbox.lock() {
                         q.push(sent.model.clone());

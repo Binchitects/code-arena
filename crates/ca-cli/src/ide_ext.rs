@@ -66,6 +66,11 @@
 //! `user{late: true}`: the faces showed it as `queued` when it was sent, and a face that keeps that bubble may put
 //! the question in its place); then `said_next`.
 //!
+//! A message the person sends while a turn runs is read by that turn at its next step (`queued`). A command
+//! (`/name`), and whatever an area marks ([`Sent::later`]), waits whole for the turn's end instead
+//! (`queued{later: true}` and `deferred{of: "send"}`) and is sent then with the rest of what waited, its `user`
+//! marked `late` too. So one sent before a command, and not read by the turn, runs after that command's turn.
+//!
 //! # Whose the shared messages are
 //!
 //! The messages several areas have a part in stay the driver's, and each area takes its part through a function
@@ -217,13 +222,16 @@ impl Later {
     }
 }
 
-/// Keeps a message for the turn's end and tells the faces (`deferred`), or refuses it when too many wait.
-pub fn defer(m: &Value, later: &mut Later, out: &broadcast::Sender<String>, latest: bool) {
-    if later.keep(m.clone(), latest) {
+/// Keeps a message for the turn's end and tells the faces (`deferred`), or refuses it when too many wait
+/// (`false`).
+pub fn defer(m: &Value, later: &mut Later, out: &broadcast::Sender<String>, latest: bool) -> bool {
+    let kept = later.keep(m.clone(), latest);
+    if kept {
         send(out, with_key(json!({"type": "deferred", "of": kind(m)}), m));
     } else {
         refuse(out, m, "Too much waits for the answer to end already: wait for it, or stop it.");
     }
+    kept
 }
 
 /// A message that came while a turn runs: `true` when it is answered now ([T], by the driver or [`shared`]).
@@ -435,8 +443,9 @@ pub struct Sent {
     pub model: String,
     /// A turn runs: the message joins it at its next step (`queued`) instead of starting one.
     pub meanwhile: bool,
-    /// Set by an area while a turn runs: keep the whole message until the turn has ended and send it then (a
-    /// command needs the session).
+    /// While a turn runs: keep the whole message until the turn has ended and send it then. The driver sets it
+    /// for a command (`/name`: it is not words for the running turn to read), an area for what else needs the
+    /// session; an area may also take it back.
     pub later: bool,
     /// Set by an area that answered it itself: nothing goes to the model.
     pub done: bool,
