@@ -932,10 +932,10 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     match m["type"].as_str().unwrap_or("") {
         "git_status" if m["repo"].as_str().unwrap_or("").is_empty() => {
             let s = Status::of(m);
-            if let Some(b) = &s.branch {
-                if ui.branch.with_untracked(|was| was != b) {
-                    ui.branch.set(b.clone());
-                }
+            if let Some(b) = &s.branch
+                && ui.branch.with_untracked(|was| was != b)
+            {
+                ui.branch.set(b.clone());
             }
             crate::badges::set(ui, View::Scm, s.total);
             if me.status.with_untracked(|was| was.as_ref() != Some(&s)) {
