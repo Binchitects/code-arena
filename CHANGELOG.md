@@ -422,6 +422,18 @@ Sections used:
   watches git's own files. A folder without a repository offers Initialize Repository.
 - **Git commands.** Git: Commit, Commit (Amend), Refresh, Stage All Changes, Unstage All Changes,
   Discard All Changes and Initialize Repository are in the palette.
+- **Accept or revert the agent's changes.** In the Changes view, pointing at a file shows Open File,
+  Revert and Accept. Revert asks first and says what it will do: a file the agent made is deleted,
+  any other goes back to how it was. The view's title has Accept All Changes
+  (codeArena.acceptAllChanges, also in the palette), Refresh, View as Tree or View as List, and
+  Collapse All.
+- **A menu on each changed file.** Right-click a file in the Changes view for Open Changes, Open
+  File, Add to Chat, Explain These Changes, Fix These Changes, Accept, Revert, Copy Path and Copy
+  Relative Path.
+- **The agent's changes counted.** The status bar shows 'Agent changes: N files' and a click opens
+  the view. The view's activity bar icon has the count as its badge. The list is asked for again
+  when the view is shown and after each write by the agent, and an open diff tab closes once its
+  file is accepted or reverted.
 
 
 ### :bug: Bugs fixed
