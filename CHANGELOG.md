@@ -404,8 +404,8 @@ Sections used:
   replace one file's matches or one match from its row. With a regex, `$1` puts a group back. Line
   endings stay as they were, and open tabs without changes take in the new text.
 - **A search result opens as a preview with its match selected.** Find in Folder... in the
-  Explorer's menu fills in files to include, and Edit > Find in Files and Replace in Files are in the
-  menu. The query and options are kept with the folder and come back at the next start.
+  Explorer's menu fills in files to include, and Edit > Find in Files and Replace in Files are in
+  the menu. The query and options are kept with the folder and come back at the next start.
 
 
 ### :bug: Bugs fixed
