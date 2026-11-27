@@ -402,12 +402,6 @@ impl Dock {
         d
     }
 
-    /// `v` put among the views of the group `g` before `before` (none: last), and shown there.
-    pub fn put_in(&self, v: View, g: u32, before: Option<View>) -> Dock {
-        let d = if self.group_of(v) == Some(g) { self.shown(v) } else { self.docked(v, g, Side::Center) };
-        d.reordered(v, before)
-    }
-
     /// Every group, by number, in the tree's order.
     pub fn all_groups(&self) -> Vec<u32> {
         let mut out = Vec::new();
@@ -784,7 +778,7 @@ mod tests {
         assert_eq!(side(&d.nudged(Search, 1)), [Files, Outline, Changes, Search]);
         assert_eq!(side(&d.nudged(Files, -1)), [Files, Outline, Search, Changes]);
         // Put in from another group at a place, and shown there.
-        let d = Dock::default().put_in(Agent, 2, Some(Search));
+        let d = Dock::default().docked(Agent, 2, Side::Center).reordered(Agent, Some(Search));
         ok(&d);
         assert_eq!(side(&d), [Files, Agent, Search, Changes, Outline]);
         assert!(matches!(d.find(2), Some(Node::Tabs { active: Agent, .. })));

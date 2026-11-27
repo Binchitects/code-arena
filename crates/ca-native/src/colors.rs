@@ -77,6 +77,10 @@ colors! {
     activity_border: ["activityBar.border", "contrastBorder"], "#00000000", "#00000000";
     badge_bg: ["activityBarBadge.background"], "#007ACC", "#007ACC";
     badge_fg: ["activityBarBadge.foreground"], "#FFFFFF", "#FFFFFF";
+    activity_drop: ["activityBar.dropBorder", "activityBar.foreground"], "#FFFFFF", "#FFFFFF";
+    activity_top_fg: ["activityBarTop.foreground"], "#E7E7E7", "#424242";
+    activity_top_inactive: ["activityBarTop.inactiveForeground"], "#E7E7E799", "#424242BF";
+    activity_top_border: ["activityBarTop.activeBorder"], "#E7E7E7", "#424242";
 
     side_bg: ["sideBar.background"], "#252526", "#F3F3F3";
     side_fg: ["sideBar.foreground", "foreground"], "#CCCCCC", "#616161";

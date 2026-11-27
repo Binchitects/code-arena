@@ -55,6 +55,8 @@ pub struct Drag {
     pub over: Option<(u32, Rect)>,
     pub drop: Option<(u32, Side)>,
     pub shade: Option<Rect>,
+    /// Over the activity bar: the icon it would go before (none: last), and the line drawn there.
+    pub bar: Option<(Option<View>, Rect)>,
 }
 
 /// The least a part may be: a side bar's 170 px across, the panel's 77 down; the editor's 220 and 70.
@@ -491,6 +493,8 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     };
     let title = h_stack((header.style(|s| s.flex_grow(1.0_f32).height_full()), actions))
         .style(|s| s.height(35.0).width_full().items_center().selectable(false));
+    // The side bar holds the activity bar when it is put at the top (hidden otherwise).
+    let top = if side_bar { crate::activity_bar::top(ui, send.clone()).into_any() } else { empty().into_any() };
     let body = dyn_container(
         move || shown.get(),
         move |v| match v {
@@ -501,7 +505,7 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
     .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     // Its look by where it is: a panel's under or over the editor, a side bar's beside it, its border on the
     // editor's side.
-    let view = v_stack((title, body)).style(move |s| {
+    let view = v_stack((top, title, body)).style(move |s| {
         let c = t.get();
         let s = s.size_full();
         match place {
@@ -598,6 +602,8 @@ pub fn handle<V: IntoView + 'static>(ui: Ui, v: View, view: V, click: impl Fn() 
             Some(d) => {
                 ui.drag.set(None);
                 match d.drop {
+                    // On the activity bar: among its icons where the line showed.
+                    _ if d.bar.is_some() => crate::activity_bar::dropped(ui, d.view, d.bar.and_then(|b| b.0)),
                     Some((target, side)) => ui.dock_view(d.view, target, side),
                     // Released away from every guide, as in Visual Studio: in a window of its own.
                     None if was.is_some_and(|w| (d.at - w).hypot() > 60.0) => ui.float(d.view),
@@ -608,13 +614,20 @@ pub fn handle<V: IntoView + 'static>(ui: Ui, v: View, view: V, click: impl Fn() 
             None => {}
         }
     })
-    .on_secondary_click_stop(move |_| crate::workbench::open_view_menu(ui, v))
+    .on_secondary_click_stop(move |e| {
+        crate::activity_bar::open_view_menu(ui, crate::widgets::popup::At::pointer(id, e), v)
+    })
 }
 
 /// What the pointer is over while a view is dragged: the window's edge guides first, then the part under it and
 /// its guide.
 fn aim(ui: Ui, v: View, p: Point) -> Drag {
-    let mut d = Drag { view: v, at: p, over: None, drop: None, shade: None };
+    let mut d = Drag { view: v, at: p, over: None, drop: None, shade: None, bar: None };
+    // Over the activity bar: a place among its icons, no guide.
+    if let Some(place) = crate::activity_bar::aim(ui, p) {
+        d.bar = Some(place);
+        return d;
+    }
     let Some(area) = rect_of(ROOT) else { return d };
     if let Some(side) = dock::zone(&dock::edge_guides(area), p) {
         d.drop = Some((ROOT, side));
@@ -674,11 +687,26 @@ pub fn overlay(ui: Ui) -> impl IntoView {
         })
     };
     // Drawn again when the part pointed at or the shade changes, not at every move of the pointer.
-    let state = create_memo(move |_| ui.drag.with(|d| d.as_ref().map(|d| (d.over.map(|o| o.1), d.shade, d.view))));
+    let state = create_memo(move |_| {
+        ui.drag.with(|d| d.as_ref().map(|d| (d.over.map(|o| o.1), d.shade, d.view, d.bar.map(|b| b.1))))
+    });
     dyn_container(
         move || state.get(),
         move |state| {
-            let Some((over, shade, _)) = state else { return empty().into_any() };
+            let Some((over, shade, _, bar)) = state else { return empty().into_any() };
+            // Over the activity bar: only the line where the view would go among its icons.
+            if let Some(r) = bar {
+                return empty()
+                    .style(move |s| {
+                        s.position(Position::Absolute)
+                            .inset_left(r.x0)
+                            .inset_top(r.y0)
+                            .width(r.width())
+                            .height(r.height())
+                            .background(t.get().activity_drop)
+                    })
+                    .into_any();
+            }
             let mut parts: Vec<floem::AnyView> = Vec::new();
             if let Some(r) = shade {
                 parts.push(
