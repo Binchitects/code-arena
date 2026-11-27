@@ -34,20 +34,106 @@ pub struct Run {
     pub selected: bool,
 }
 
-/// What the screen shows: its rows of runs, and where the caret is (none when hidden, or scrolled back).
+/// What the screen shows: its rows of runs, and where the caret is (none when hidden, or scrolled back); how many
+/// lines scrolled off are kept, and how far back it is scrolled (for its scrollbar).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Screen {
     pub rows: Vec<Vec<Run>>,
     pub cursor: Option<(usize, usize)>,
+    pub history: usize,
+    pub offset: usize,
 }
 
-/// The theme's terminal colours: the 16 of ANSI, the foreground, the background, the caret.
+/// A colour's relative luminance, as WCAG reckons it.
+fn luminance(c: u32) -> f64 {
+    let [_, r, g, b] = c.to_be_bytes();
+    let l = |x: u8| {
+        let v = x as f64 / 255.0;
+        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * l(r) + 0.7152 * l(g) + 0.0722 * l(b)
+}
+
+/// The contrast of two colours, from 1 (the same) to 21 (black on white).
+pub fn contrast(a: u32, b: u32) -> f64 {
+    let (x, y) = (luminance(a), luminance(b));
+    (x.max(y) + 0.05) / (x.min(y) + 0.05)
+}
+
+/// A text colour made lighter or darker, a tenth at a time, until it has the least contrast asked for on its
+/// background, as VS Code's terminal does (lighter on a dark background, darker on a light one; the other way when
+/// that way cannot reach it). A colour that has it already is kept.
+pub fn contrasted(fg: u32, bg: u32, least: f64) -> u32 {
+    if least <= 1.0 || contrast(fg, bg) >= least {
+        return fg;
+    }
+    let toward = |to: u8| {
+        let [_, r, g, b] = fg.to_be_bytes();
+        let mut best = fg;
+        for step in 1..=10 {
+            let mix = |x: u8| (x as f64 + (to as f64 - x as f64) * step as f64 / 10.0).round() as u8;
+            best = u32::from_be_bytes([0, mix(r), mix(g), mix(b)]);
+            if contrast(best, bg) >= least {
+                return (best, true);
+            }
+        }
+        (best, false)
+    };
+    let dark = luminance(bg) < 0.5;
+    let (first, second) = if dark { (255, 0) } else { (0, 255) };
+    match toward(first) {
+        (c, true) => c,
+        (c, false) => match toward(second) {
+            (other, true) => other,
+            _ => c,
+        },
+    }
+}
+
+/// Where a terminal's link leads: a page of the web, or a file of the project at its place.
+pub type Link = crate::citations::Target;
+
+/// The address of the web in a line of output.
+static ADDRESS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r#"(?i)\b(?:https?://|mailto:)[^\s<>"'`]+"#).expect("an address")
+});
+
+/// The links in a line of output: the addresses of the web, and the project's files with their line and column
+/// (`src/app.rs:12:5`, `./src/app.rs`, or the path written from the project's folder, `/home/me/app/src/app.rs:12`).
+/// Each with where it is in the line (bytes).
+pub fn links(text: &str, files: &std::collections::HashSet<String>, folder: &str) -> Vec<(std::ops::Range<usize>, Link)> {
+    let mut found: Vec<(std::ops::Range<usize>, Link)> = ADDRESS
+        .find_iter(text)
+        .map(|m| {
+            let address = m.as_str().trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"']);
+            (m.start()..m.start() + address.len(), Link::Web(address.to_string()))
+        })
+        .collect();
+    // The project's folder written before a path is blanked out (as many bytes), so the path after it is read as
+    // the project's; the link then takes the folder in.
+    let prefix = format!("{}/", folder.trim_end_matches('/'));
+    let blanked = if folder.is_empty() { text.to_string() } else { text.replace(&prefix, &" ".repeat(prefix.len())) };
+    for (mut range, r) in crate::citations::find_refs(&blanked, files) {
+        if range.start >= prefix.len() && text[..range.start].ends_with(&prefix) && !folder.is_empty() {
+            range.start -= prefix.len();
+        }
+        if !found.iter().any(|(w, _)| w.start < range.end && range.start < w.end) {
+            found.push((range, Link::File(r)));
+        }
+    }
+    found.sort_by_key(|(r, _)| r.start);
+    found
+}
+
+/// The theme's terminal colours: the 16 of ANSI, the foreground, the background, the caret; and the least contrast
+/// text is drawn with on its background (`terminal.integrated.minimumContrastRatio`; 1 keeps the colours).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Palette {
     pub ansi: [u32; 16],
     pub fg: u32,
     pub bg: u32,
     pub cursor: u32,
+    pub contrast: f64,
 }
 
 impl Palette {
@@ -95,7 +181,7 @@ impl Palette {
             0xFFFFFF
         });
         let cursor = get("terminalCursor.foreground").unwrap_or(fg);
-        Palette { ansi, fg, bg, cursor }
+        Palette { ansi, fg, bg, cursor, contrast: 1.0 }
     }
 
     fn rgb(r: Rgb) -> u32 {
@@ -170,8 +256,13 @@ pub struct Emulator {
 
 impl Emulator {
     pub fn new(columns: usize, lines: usize) -> Emulator {
+        Emulator::keeping(columns, lines, 10_000)
+    }
+
+    /// An emulator that keeps as many lines of what scrolled off (`terminal.integrated.scrollback`).
+    pub fn keeping(columns: usize, lines: usize, scrollback: usize) -> Emulator {
         let answers = Answers::default();
-        let config = Config { scrolling_history: 10_000, ..Config::default() };
+        let config = Config { scrolling_history: scrollback, ..Config::default() };
         let term = Term::new(config, &TermSize::new(columns.max(2), lines.max(1)), answers.clone());
         Emulator { term, parser: Processor::new(), answers }
     }
@@ -180,6 +271,37 @@ impl Emulator {
     pub fn feed(&mut self, text: &str) -> Vec<String> {
         self.parser.advance(&mut self.term, text.as_bytes());
         std::mem::take(&mut *self.answers.0.borrow_mut())
+    }
+
+    /// The lines kept of what scrolled off, changed (the oldest dropped when fewer).
+    pub fn set_scrollback(&mut self, lines: usize) {
+        self.term.set_options(Config { scrolling_history: lines, ..Config::default() });
+        std::mem::take(&mut *self.answers.0.borrow_mut());
+    }
+
+    /// A line of the screen as shown: its text, and the column each of its characters starts at (a wide one takes
+    /// two).
+    pub fn line_text(&self, line: usize) -> (String, Vec<usize>) {
+        let (mut text, mut columns) = (String::new(), Vec::new());
+        if line >= self.term.screen_lines() {
+            return (text, columns);
+        }
+        let row = &self.term.grid()[Line(line as i32 - self.term.grid().display_offset() as i32)];
+        for col in 0..self.term.columns() {
+            let cell = &row[Column(col)];
+            if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                continue;
+            }
+            text.push(cell.c);
+            columns.push(col);
+        }
+        (text, columns)
+    }
+
+    /// Scrolled to be as far back as `offset` lines (0: the end).
+    pub fn scroll_to(&mut self, offset: usize) {
+        let now = self.term.grid().display_offset() as i32;
+        self.term.scroll_display(Scroll::Delta(offset.min(self.term.history_size()) as i32 - now));
     }
 
     pub fn resize(&mut self, columns: usize, lines: usize) {
@@ -271,6 +393,8 @@ impl Emulator {
             .then(|| (content.cursor.point.line.0.max(0) as usize, content.cursor.point.column.0));
         let selection = self.term.selection.as_ref().and_then(|s| s.to_range(&self.term));
         let mut rows = Vec::with_capacity(self.term.screen_lines());
+        // The last colours made to contrast, for the cells after them (most are drawn alike).
+        let mut last_contrast: Option<(u32, u32, u32)> = None;
         for l in 0..self.term.screen_lines() as i32 {
             let row = &grid[Line(l - offset)];
             let mut runs: Vec<Run> = Vec::new();
@@ -293,6 +417,16 @@ impl Emulator {
                     && (n as usize) < 8
                 {
                     fg = p.ansi[n as usize + 8];
+                }
+                if p.contrast > 1.0 {
+                    fg = match last_contrast {
+                        Some((f, b, c)) if (f, b) == (fg, bg) => c,
+                        _ => {
+                            let c = contrasted(fg, bg, p.contrast);
+                            last_contrast = Some((fg, bg, c));
+                            c
+                        }
+                    };
                 }
                 let ch = if cell.flags.contains(Flags::HIDDEN) { ' ' } else { cell.c };
                 let run = Run {
@@ -327,7 +461,7 @@ impl Emulator {
             }
             rows.push(runs);
         }
-        Screen { rows, cursor }
+        Screen { rows, cursor, history: self.term.history_size(), offset: offset as usize }
     }
 }
 
@@ -388,6 +522,62 @@ mod tests {
 
     fn palette() -> Palette {
         Palette::of(&serde_json::json!({"colors": {}}), true)
+    }
+
+    #[test]
+    fn text_is_made_to_contrast_with_its_background_as_much_as_asked() {
+        // Dark blue on VS Code's dark background is under 4.5: it is made lighter until it is not.
+        let (fg, bg) = (0x0451A5, 0x1E1E1E);
+        assert!(contrast(fg, bg) < 4.5);
+        let c = contrasted(fg, bg, 4.5);
+        assert!(contrast(c, bg) >= 4.5 && c != fg, "{c:06x}");
+        // On a light background a pale colour is made darker; one with enough contrast, or a ratio of 1, is kept.
+        let pale = contrasted(0xE5E5E5, 0xFFFFFF, 4.5);
+        assert!(luminance(pale) < luminance(0xE5E5E5) && contrast(pale, 0xFFFFFF) >= 4.5);
+        assert_eq!(contrasted(0xCCCCCC, bg, 4.5), 0xCCCCCC);
+        assert_eq!(contrasted(fg, bg, 1.0), fg);
+        assert!((contrast(0, 0xFFFFFF) - 21.0).abs() < 0.01);
+        let mut p = palette();
+        p.contrast = 4.5;
+        let mut e = Emulator::new(20, 2);
+        e.feed("\x1b[34mblue");
+        assert_ne!(e.screen(&p).rows[0][0].fg, palette().ansi[4]);
+    }
+
+    #[test]
+    fn addresses_and_the_projects_files_in_output_are_links() {
+        let files: std::collections::HashSet<String> = ["src/main.rs", "README.md"].map(String::from).into();
+        let line = "error --> src/main.rs:12:5 see https://doc.rust-lang.org/E0308.html. /home/me/app/README.md:3 x.rs:1";
+        let found = links(line, &files, "/home/me/app");
+        let at: Vec<(&str, Link)> = found.iter().map(|(r, l)| (&line[r.clone()], l.clone())).collect();
+        let file = |path: &str, line: usize, column: Option<usize>| {
+            Link::File(crate::citations::Ref { path: path.into(), line: Some(line), end: None, column })
+        };
+        assert_eq!(
+            at,
+            [
+                ("src/main.rs:12:5", file("src/main.rs", 12, Some(5))),
+                ("https://doc.rust-lang.org/E0308.html", Link::Web("https://doc.rust-lang.org/E0308.html".into())),
+                ("/home/me/app/README.md:3", file("README.md", 3, None)),
+            ]
+        );
+        assert!(links("./src/main.rs", &files, "").iter().any(|(r, _)| *r == (0..13)));
+    }
+
+    #[test]
+    fn a_line_is_read_with_its_columns_and_the_scrollback_is_kept_as_set() {
+        let mut e = Emulator::keeping(10, 2, 3);
+        e.feed("a界b");
+        let (text, columns) = e.line_text(0);
+        assert_eq!(text.trim_end(), "a界b");
+        assert_eq!(&columns[..3], [0, 1, 3]);
+        e.feed("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6");
+        let s = e.screen(&palette());
+        assert_eq!((s.history, s.offset), (3, 0));
+        e.scroll_to(2);
+        assert_eq!(e.screen(&palette()).offset, 2);
+        e.set_scrollback(1);
+        assert_eq!(e.screen(&palette()).history, 1);
     }
 
     #[test]
