@@ -437,8 +437,8 @@ Sections used:
 - **The Explorer's file menu matches VS Code's.** Right-clicking a file puts Open to the Side first.
   New File and New Folder now appear only on folders and on the empty part of the tree.
 - **Find in Files starts from your selection.** Ctrl+Shift+F and Ctrl+Shift+H put the text selected
-  on one line into the search box. Replace in Files puts the cursor in the search box unless that box
-  was just filled from a selection.
+  on one line into the search box. Replace in Files puts the cursor in the search box unless that
+  box was just filled from a selection.
 
 
 ### :bug: Bugs fixed
