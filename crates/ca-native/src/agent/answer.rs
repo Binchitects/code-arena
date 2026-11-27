@@ -334,7 +334,7 @@ fn thinking(ui: Ui, send: Send, answer: Answer) -> impl IntoView {
     let paragraphs = create_memo(move |_| reasoning.with(|r| r.split("\n\n").count()));
     let paragraph = move |n: usize| {
         label(move || reasoning.with(|r| r.split("\n\n").nth(n).unwrap_or("").trim().to_string()))
-            .style(|s| s.text_overflow(TextOverflow::Wrap).width_full().min_width(0.0))
+            .style(|s| s.text_overflow(TextOverflow::Wrap).line_height(1.5).width_full().min_width(0.0))
     };
     let words = dyn_stack(move || 0..paragraphs.get(), |n| *n, paragraph)
         .style(|s| s.flex_col().gap(8.0).width_full().min_width(0.0));
