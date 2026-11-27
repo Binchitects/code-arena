@@ -7,8 +7,9 @@
 //! it was on). What is changed while in Zen (Ctrl+B shows the side bar) is not kept past it, as in VS Code.
 //!
 //! Full screen (F11): Floem 0.2 has no full screen once the window is open, so the window is made to cover its
-//! monitor (its bounds before are kept) and the title bar is hidden; F11 again puts the bounds back. Under Wayland a
-//! client may not place its window, so there the window is maximized instead (and given back as it was).
+//! monitor (its bounds before are kept) and the title bar is hidden; F11 again puts the bounds back. Where a client
+//! may not place its window (Wayland), the window is not where it was asked to be a moment after, and is then
+//! maximized instead (and given back as it was).
 //!
 //! The Konami code (up up down down left right left right b a), typed where no box has the keys, throws confetti.
 
@@ -190,9 +191,9 @@ fn window() -> Option<floem::window::WindowId> {
     MAIN.with(Cell::get).and_then(|v| v.window_id())
 }
 
-/// Under Wayland a client may not place its window.
-fn wayland() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_some_and(|w| !w.is_empty())
+/// Two bounds the same to a pixel.
+fn same(a: Rect, b: Rect) -> bool {
+    (a.x0 - b.x0).abs() < 1.0 && (a.y0 - b.y0).abs() < 1.0 && (a.x1 - b.x1).abs() < 1.0 && (a.y1 - b.y1).abs() < 1.0
 }
 
 pub fn toggle_full_screen(ui: Ui) {
@@ -201,14 +202,14 @@ pub fn toggle_full_screen(ui: Ui) {
         Some(was) => {
             full.set(None);
             if let Some(w) = window() {
-                match was.bounds {
-                    Some(b) if !wayland() => {
-                        w.set_window_outer_bounds(b);
-                        if was.maximized {
-                            w.maximized(true);
-                        }
-                    }
-                    _ => w.maximized(was.maximized),
+                if !was.maximized {
+                    w.maximized(false);
+                }
+                if let Some(b) = was.bounds {
+                    w.set_window_outer_bounds(b);
+                }
+                if was.maximized {
+                    w.maximized(true);
                 }
             }
         }
@@ -219,17 +220,21 @@ pub fn toggle_full_screen(ui: Ui) {
                 maximized: w.is_some_and(|w| w.is_maximized()),
             };
             full.set(Some(was));
-            if let Some(w) = w {
-                match w.monitor_bounds() {
-                    Some(m) if !wayland() => {
-                        if was.maximized {
-                            w.maximized(false);
-                        }
-                        w.set_window_outer_bounds(m);
-                    }
-                    _ => w.maximized(true),
-                }
+            let Some(w) = w else { return };
+            let Some(m) = w.monitor_bounds() else {
+                w.maximized(true);
+                return;
+            };
+            if was.maximized {
+                w.maximized(false);
             }
+            w.set_window_outer_bounds(m);
+            // Where the window may not be placed (Wayland), it is maximized instead.
+            floem::action::exec_after(std::time::Duration::from_millis(200), move |_| {
+                if full.get_untracked().is_some() && !w.bounds_on_screen_including_frame().is_some_and(|b| same(b, m)) {
+                    w.maximized(true);
+                }
+            });
         }
     }
 }
