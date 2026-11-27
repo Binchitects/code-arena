@@ -442,6 +442,16 @@ Sections used:
 - **Long lines scroll sideways.** A line wider than the editor now scrolls into view with the caret,
   with a horizontal scrollbar, instead of being cut off at the editor's edge.
 - **Ctrl+PageUp and Ctrl+PageDown switch tabs in the editor.** They used to scroll a page there.
+- **Sessions view.** The side bar's Sessions view lists this folder's sessions newest first under
+  Today, Yesterday, Last 7 Days, Last 30 Days and Older. The one you are in has a dot that beats
+  while an answer is written, a cloud marks a session kept with Arena, and 'not sent' shows until
+  Arena has all of it. Rest the pointer on a row to see its title, message count and id, click it to
+  take the session up, or use Fork on hover. The search box finds earlier sessions by their words.
+  The foot shows the folder, the branch and the version.
+- **New and forked sessions.** New Session (the + in the Sessions view, the chat's More menu, or
+  `/clear` and `/new` in the input) starts a fresh session and keeps the last one. It stays on the
+  same model, mode and thinking. Fork Session copies all of the session, and Fork from a Question...
+  copies what came before the question you pick. While an answer is written these wait or say why.
 
 
 ### :bug: Bugs fixed
