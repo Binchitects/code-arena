@@ -422,20 +422,25 @@ fn rows(ui: Ui, table: calls::Table) -> impl IntoView {
 /// What it adds to the window's registries, once at start.
 pub fn register(_ui: Ui, _send: &Send) {}
 
-/// The call of an id in the answer being written, changed; false when there is none of it.
+/// The call of an id, changed where it is: in the answer being written, or in one before the agent's question
+/// that it waited on; false when there is none of it.
 fn change(ui: Ui, id: &str, f: impl FnOnce(&mut Tool)) -> bool {
-    let Kind::Assistant(answer) = ui.current().kind else { return false };
     if id.is_empty() {
         return false;
     }
-    let mut found = false;
-    answer.tools.update(|ts| {
+    let held = ui.items.with_untracked(|l| {
+        l.iter().rev().find_map(|i| match &i.kind {
+            Kind::Assistant(a) if a.tools.with_untracked(|ts| ts.iter().any(|t| t.id == id)) => Some(a.tools),
+            _ => None,
+        })
+    });
+    let Some(tools) = held else { return false };
+    tools.update(|ts| {
         if let Some(t) = ts.iter_mut().rev().find(|t| t.id == id) {
             f(t);
-            found = true;
         }
     });
-    found
+    true
 }
 
 /// The session's messages that are a call's (waiting, begun, going, ended), taken in. Never taken away from the
@@ -478,28 +483,26 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             change(ui, id, |t| t.progress = Some(progress));
         }
         "tool_end" => {
-            if let Kind::Assistant(answer) = ui.current().kind {
+            // The call as it ended: what the session says of it now, over what it said when it began (its
+            // arguments kept when the end says none).
+            let ended = Tool { ok: m["ok"] == true, ..Tool::from_json(m, true) };
+            let end = |t: &mut Tool| {
+                let arguments = std::mem::take(&mut t.arguments);
+                *t = ended.clone();
+                if t.arguments.is_null() {
+                    t.arguments = arguments;
+                }
+            };
+            // The call it ends: the one of its id, wherever it is; for a session that does not number its calls,
+            // the last one of its name and subject in the answer being written that has not ended.
+            if !change(ui, id, end)
+                && let Kind::Assistant(answer) = ui.current().kind
+            {
                 answer.tools.update(|ts| {
-                    // The call as it ended: what the session says of it now, over what it said when it began.
-                    let ended = Tool { ok: m["ok"] == true, ..Tool::from_json(m, true) };
-                    // The call it ends: the one of its id, when the session numbers its calls; else the last one
-                    // of its name and subject that has not ended.
-                    let same = |t: &Tool| {
-                        if ended.id.is_empty() {
-                            !t.done && t.name == ended.name && t.subject == ended.subject
-                        } else {
-                            t.id == ended.id
-                        }
-                    };
+                    let same = |t: &Tool| id.is_empty() && !t.done && t.name == ended.name && t.subject == ended.subject;
                     match ts.iter_mut().rev().find(|t| same(t)) {
-                        Some(t) => {
-                            let arguments = std::mem::take(&mut t.arguments);
-                            *t = ended;
-                            if t.arguments.is_null() {
-                                t.arguments = arguments;
-                            }
-                        }
-                        None => ts.push(ended),
+                        Some(t) => end(t),
+                        None => ts.push(ended.clone()),
                     }
                 });
             }
@@ -547,6 +550,22 @@ mod tests {
         said(json!({"type": "tool_end", "id": "c1", "name": "run_shell", "subject": "ls", "ok": true, "text": "a", "ms": 40, "status": "done"}));
         let now = answer.tools.get_untracked();
         assert_eq!((now.len(), now[0].done, now[0].ms, now[0].arguments["command"].clone()), (1, true, 40, json!("ls")));
+    }
+
+    #[test]
+    fn a_call_asked_about_runs_and_ends_in_its_card_though_the_question_came_after_it() {
+        let ui = Ui::new();
+        let send: Send = std::rc::Rc::new(|_| {});
+        let said = |v: Value| take(ui, &v, &send);
+        said(json!({"type": "tool_waiting", "id": "c1", "name": "edit_file", "subject": "a.rs"}));
+        ui.push(Kind::Notice("the question".into()));
+        said(json!({"type": "tool_start", "id": "c1", "name": "edit_file", "subject": "a.rs"}));
+        said(json!({"type": "tool_end", "id": "c1", "name": "edit_file", "subject": "a.rs", "ok": true, "text": "ok"}));
+        let answers: Vec<Vec<Tool>> = ui.items.with_untracked(|l| {
+            l.iter().filter_map(|i| if let Kind::Assistant(a) = &i.kind { Some(a.tools.get_untracked()) } else { None }).collect()
+        });
+        assert_eq!(answers.len(), 1, "no answer is begun for the call's start");
+        assert!(answers[0][0].done && answers[0][0].ok);
     }
 
     #[test]
