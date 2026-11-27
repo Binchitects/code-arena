@@ -953,8 +953,7 @@ impl Side {
         let source = Path::new(kept);
         // The folder it is in resolved (never a link out of the deleted ones), its own name as it is.
         let inside = source.parent().and_then(|p| std::fs::canonicalize(p).ok()).zip(source.file_name());
-        let Some(source) = inside.map(|(dir, name)| dir.join(name)).filter(|s| s.starts_with(&all) && *s != all)
-        else {
+        let Some(source) = inside.map(|(dir, name)| dir.join(name)).filter(|s| s.starts_with(&all) && *s != all) else {
             return fail("only what the Explorer deleted is put back");
         };
         if std::fs::symlink_metadata(&source).is_err() {

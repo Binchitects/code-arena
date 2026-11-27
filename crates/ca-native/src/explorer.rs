@@ -215,7 +215,12 @@ fn name_of(path: &str) -> &str {
 /// The rows shown: each folder's entries under it while it is open, and the inline input where it belongs (a new
 /// folder before its folder's entries, a new file before its folder's files).
 /// A folder still being listed, or one that could not be, has a line of its own under it.
-fn rows_of(tree: &HashMap<String, Vec<Entry>>, expanded: &HashSet<String>, edit: Option<&Edit>, x: &Listed) -> Vec<Row> {
+fn rows_of(
+    tree: &HashMap<String, Vec<Entry>>,
+    expanded: &HashSet<String>,
+    edit: Option<&Edit>,
+    x: &Listed,
+) -> Vec<Row> {
     fn walk(
         tree: &HashMap<String, Vec<Entry>>,
         expanded: &HashSet<String>,
@@ -455,7 +460,9 @@ fn drop_on(ui: Ui, send: &Send, paths: &[String], folder: &str, copy: bool) {
     }
     let into = if folder.is_empty() { project_name(ui) } else { name_of(folder).to_string() };
     let question = match asks.as_slice() {
-        [one] => format!("Are you sure you want to move '{}' into '{into}'?", name_of(one["path"].as_str().unwrap_or(""))),
+        [one] => {
+            format!("Are you sure you want to move '{}' into '{into}'?", name_of(one["path"].as_str().unwrap_or("")))
+        }
         many => format!("Are you sure you want to move the following {} files into '{into}'?", many.len()),
     };
     let detail = names(asks.iter().filter_map(|m| m["path"].as_str()));
@@ -770,12 +777,16 @@ fn ask_delete(ui: Ui, send: &Send, paths: Vec<String>) {
             format!("Are you sure you want to delete '{}' and its contents?", name_of(path)),
             "You can restore this folder from the backups.".to_string(),
         ),
-        [path] => {
-            (format!("Are you sure you want to delete '{}'?", name_of(path)), "You can restore this file from the backups.".into())
-        }
+        [path] => (
+            format!("Are you sure you want to delete '{}'?", name_of(path)),
+            "You can restore this file from the backups.".into(),
+        ),
         many => {
             let question = if many.iter().any(|p| is_dir(ui, p)) {
-                format!("Are you sure you want to delete the following {} files/directories and their contents?", many.len())
+                format!(
+                    "Are you sure you want to delete the following {} files/directories and their contents?",
+                    many.len()
+                )
             } else {
                 format!("Are you sure you want to delete the following {} files?", many.len())
             };
@@ -997,9 +1008,9 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
     })
     .style(move |s| {
         let c = t.get();
-        let selected = ui.selected.with(|sel| {
-            *sel == shown || x.picked.with(|p| p.len() > 1 && p.contains(sel) && p.contains(&shown))
-        });
+        let selected = ui
+            .selected
+            .with(|sel| *sel == shown || x.picked.with(|p| p.len() > 1 && p.contains(sel) && p.contains(&shown)));
         let cut = x.clip.with(|k| k.as_ref().is_some_and(|k| k.cut && k.paths.contains(&shown)));
         let dropped = x.over.with(|o| o.as_ref().is_some_and(|f| !f.is_empty() && inside(&shown, f)));
         let s = s
@@ -1234,13 +1245,19 @@ pub fn register(ui: Ui, send: &Send) {
     add(command("filesExplorer.cut", "File", "Cut", |ui, _| take_rows(ui, true)));
     add(command("filesExplorer.copy", "File", "Copy", |ui, _| take_rows(ui, false)));
     add(command("filesExplorer.paste", "File", "Paste", paste).when(|ui| me(ui).clip.with_untracked(Option::is_some)));
-    add(command("workbench.files.action.showActiveFileInExplorer", "File", "Reveal Active File in Explorer View", |ui, send| {
-        let Some(path) = ui.active.get_untracked().and_then(|a| ui.tab(&a)).filter(|t| t.is_file()).map(|t| t.path) else {
-            return;
-        };
-        crate::commands::run(ui, send, crate::workbench::SHOW_EXPLORER);
-        reveal(ui, send, &path, true);
-    }));
+    add(command(
+        "workbench.files.action.showActiveFileInExplorer",
+        "File",
+        "Reveal Active File in Explorer View",
+        |ui, send| {
+            let Some(path) = ui.active.get_untracked().and_then(|a| ui.tab(&a)).filter(|t| t.is_file()).map(|t| t.path)
+            else {
+                return;
+            };
+            crate::commands::run(ui, send, crate::workbench::SHOW_EXPLORER);
+            reveal(ui, send, &path, true);
+        },
+    ));
     add(command("openInIntegratedTerminal", "File", "Open in Integrated Terminal", |ui, send| {
         let folder = folder_of(ui, &ui.selected.get_untracked());
         open_terminal(ui, send, &folder);
@@ -1278,8 +1295,12 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 .iter()
                 .map(|e| Entry { name: e["name"].as_str().unwrap_or("").into(), dir: e["dir"] == true })
                 .collect();
-            let links: HashSet<String> =
-                all.iter().filter(|e| e["link"] == true).filter_map(|e| e["name"].as_str()).map(|n| join(&path, n)).collect();
+            let links: HashSet<String> = all
+                .iter()
+                .filter(|e| e["link"] == true)
+                .filter_map(|e| e["name"].as_str())
+                .map(|n| join(&path, n))
+                .collect();
             let gone_or_new = x.links.with_untracked(|l| {
                 l.iter().any(|p| parent_of(p) == path && !links.contains(p)) || links.iter().any(|p| !l.contains(p))
             });
@@ -1667,7 +1688,10 @@ mod tests {
             ]
         );
         assert!(moves(&p(&["src/a.rs"]), "src", false).is_empty(), "already there");
-        assert_eq!(moves(&p(&["src/a.rs"]), "src", true), [json!({"type": "copy", "path": "src/a.rs", "to": "src/a.rs"})]);
+        assert_eq!(
+            moves(&p(&["src/a.rs"]), "src", true),
+            [json!({"type": "copy", "path": "src/a.rs", "to": "src/a.rs"})]
+        );
         assert!(moves(&p(&["src"]), "src/in", true).is_empty() && moves(&p(&["src"]), "src", false).is_empty());
         assert_eq!(moves(&p(&["src/in"]), "", false), [json!({"type": "rename", "path": "src/in", "to": "in"})]);
         assert_eq!(range(&p(&["a", "b", "c", "d"]), "c", "a"), p(&["a", "b", "c"]));
@@ -1789,7 +1813,8 @@ mod tests {
         assert_eq!(icon_of("Cargo.toml", false, false), "settings-gear");
         assert_eq!(icon_of("README.md", false, false), "file-text");
         assert_eq!(icon_of("src", true, true), "folder-opened");
-        for name in ["file-code", "symbol-namespace", "terminal", "file-media", "settings-gear", "file-text", "folder"] {
+        for name in ["file-code", "symbol-namespace", "terminal", "file-media", "settings-gear", "file-text", "folder"]
+        {
             assert!(crate::icons::known(name), "{name}");
         }
     }
