@@ -124,6 +124,8 @@ Sections used:
 - **The IDE knows what the About box and Help need.** The session's state now carries the licence
   and its text, the source link, the log's place, the link to the Arena's manual and what this
   edition locks, each with why.
+- **Show Outline is in the Command Palette.** `View: Show Outline` shows the Outline view from the
+  palette of the native window, like the other views.
 
 
 ### :bug: Bugs fixed
@@ -143,6 +145,15 @@ Sections used:
 - **The IDE says why it cannot do something yet.** Going back to an earlier question, asking again
   or compacting while an answer is written now says "Wait for the answer, or stop it, to ..."
   instead of doing nothing.
+- **Ctrl+K Ctrl+T opens the theme picker however you press it.** In the native window the chord no
+  longer breaks when Ctrl is let go between its two keys.
+- **A message that waited for the answer is shown once (native window).** What you send too late for
+  the running answer, or a `/command` sent meanwhile, shows as the question of its own turn in place
+  of the bubble that waited, not twice. (A command Code Arena does not know keeps its waiting
+  bubble.)
+- **A single change to the layout is remembered.** In the native window the first change after
+  opening a folder (the panel hidden, a side bar resized, a tab opened) was forgotten at the next
+  start unless a second change followed; it is now kept.
 
 ## v0.5.0 (2026-11-26)
 
