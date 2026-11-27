@@ -126,6 +126,22 @@ Sections used:
   edition locks, each with why.
 - **Show Outline is in the Command Palette.** `View: Show Outline` shows the Outline view from the
   palette of the native window, like the other views.
+- **The IDE's settings are real settings.** Every editor, files, workbench, Explorer, source
+  control, compare, terminal, debug, accessibility and language server setting of the old Code
+  Arena (138, under VS Code's names) can be set in settings.json and is checked as it is read. A
+  value of the wrong kind is not taken, and the status bar says which and why.
+- **Settings in layers, and per language.** A setting comes from its default, then your
+  settings.json, then the project's .code-arena/settings.json, then its .vscode/settings.json. A
+  `"[python]": {…}` block in any of them wins for that language.
+- **Settings files are followed live.** When a settings file is saved in the window or changed on
+  disk, the window has the new values within half a second, also while the agent is answering. A
+  changed colour theme recolours the window at once.
+- **Open your settings as JSON.** Preferences: Open User Settings (JSON) and Preferences: Open
+  Workspace Settings (JSON) open them as tabs, edited and saved like any file; your comments stay.
+- **The chat's box takes several lines.** Shift+Enter starts a new line and the box grows with
+  them; Up and Down bring back what you sent before (kept per folder, with the terminal's
+  history); what you typed stays when you look elsewhere. With no thread yet, the box stands in the
+  middle of the view under "What should we work on?" with first messages to start from.
 
 
 ### :bug: Bugs fixed
