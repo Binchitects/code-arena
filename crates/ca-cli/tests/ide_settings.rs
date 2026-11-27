@@ -75,6 +75,22 @@ async fn until(page: &mut Page, is: impl Fn(&Value) -> bool) -> Value {
     }
 }
 
+/// The next two messages waited for, whichever comes first; the others are passed over.
+async fn both(page: &mut Page, a: impl Fn(&Value) -> bool, b: impl Fn(&Value) -> bool) -> (Value, Value) {
+    let (mut first, mut second) = (None, None);
+    loop {
+        let v = until(page, |v| a(v) || b(v)).await;
+        if a(&v) {
+            first = Some(v);
+        } else {
+            second = Some(v);
+        }
+        if let (Some(a), Some(b)) = (&first, &second) {
+            return (a.clone(), b.clone());
+        }
+    }
+}
+
 async fn say(page: &mut Page, m: Value) {
     page.send(Message::text(m.to_string())).await.expect("send");
 }
@@ -162,9 +178,8 @@ async fn the_ide_says_its_settings_again_when_one_is_kept_or_a_file_changes_and_
     assert_eq!(file["path"], config.join("settings.json").display().to_string());
     let edited = text.replace("\"editor.tabSize\": 8", "\"editor.tabSize\": 6");
     say(page, json!({"type": "save_user", "name": "settings.json", "text": edited})).await;
-    let saved = until(page, |v| v["type"] == "saved_user").await;
+    let (saved, s) = both(page, |v| v["type"] == "saved_user", settings).await;
     assert!(saved["name"] == "settings.json" && saved.get("error").is_none() && saved["modified"].is_u64(), "{saved}");
-    let s = until(page, settings).await;
     assert_eq!(s["values"]["editor.tabSize"], 6);
     assert_eq!(std::fs::read_to_string(config.join("settings.json")).expect("saved"), edited);
     // No other file of the settings folder is read or written through here.
@@ -197,6 +212,51 @@ async fn the_ide_says_its_settings_again_when_one_is_kept_or_a_file_changes_and_
     // Asked for again, it is what was read last, and the session itself reads the same from now on.
     say(page, json!({"type": "settings"})).await;
     assert_eq!(until(page, settings).await["values"]["workbench.colorTheme"], "Light Modern");
+    say(page, json!({"type": "state"})).await;
+    assert_eq!(until(page, |v| v["type"] == "state").await["theme"], "Light Modern");
+}
+
+#[tokio::test]
+async fn a_settings_file_changed_while_a_turn_runs_is_said_at_once_and_is_the_sessions_own_after_it() {
+    // A model that takes its time, so that the turn is still running when the file changes.
+    let gateway = wiremock::MockServer::start().await;
+    let answer = json!({"choices": [{"delta": {"content": "Done."}, "finish_reason": "stop"}]});
+    wiremock::Mock::given(wiremock::matchers::path("/v1/chat/completions"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(format!("data: {answer}\n\ndata: [DONE]\n\n"))
+                .set_delay(Duration::from_secs(3)),
+        )
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    let config = home.path().join("config");
+    std::fs::create_dir_all(&config).expect("config");
+    let quiet = "\"mcp.arenaTools\": false, \"mcp.codeIntelTools\": false, \"arena.syncChats\": false";
+    std::fs::write(config.join("settings.json"), format!("{{{quiet}}}")).expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let (_child, mut page) = ide(home.path(), folder.path(), &gateway.uri()).await;
+    let page = &mut page;
+    until(page, |v| v["type"] == "state").await;
+    say(page, json!({"type": "send", "text": "take your time"})).await;
+    until(page, |v| v["type"] == "turn_start").await;
+    // The file changes while the model is asked: the settings and the theme are said before the turn ends.
+    std::fs::write(
+        config.join("settings.json"),
+        format!("{{{quiet}, \"editor.tabSize\": 2, \"workbench.colorTheme\": \"Light Modern\"}}"),
+    )
+    .expect("write");
+    let s = until(page, |v| v["type"] == "settings" || v["type"] == "turn_end").await;
+    assert_eq!(s["type"], "settings", "the settings are said while the turn runs, not after it");
+    assert_eq!(s["values"]["editor.tabSize"], 2);
+    assert_eq!(until(page, |v| v["type"] == "theme").await["theme"], "Light Modern");
+    // Asked for meanwhile, they are as they were read last.
+    say(page, json!({"type": "settings"})).await;
+    assert_eq!(until(page, |v| v["type"] == "settings").await["values"]["workbench.colorTheme"], "Light Modern");
+    // The turn ends as it would have, and the session itself has the settings read meanwhile.
+    let end = until(page, |v| v["type"] == "turn_end").await;
+    assert!(end["error"].is_null(), "{end}");
     say(page, json!({"type": "state"})).await;
     assert_eq!(until(page, |v| v["type"] == "state").await["theme"], "Light Modern");
 }

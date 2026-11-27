@@ -54,7 +54,6 @@ pub mod editor;
 /// VS Code's ids of the commands that open the settings files.
 pub const OPEN_USER_JSON: &str = "workbench.action.openSettingsJson";
 pub const OPEN_WORKSPACE_JSON: &str = "workbench.action.openWorkspaceSettingsFile";
-pub const OPEN_KEYS_JSON: &str = "workbench.action.openGlobalKeybindingsFile";
 
 /// The kind of tab one of the person's own files is in, and what its tabs' paths begin with.
 pub const USER: &str = "user";
@@ -330,8 +329,9 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
 }
 
 /// What it adds to the window's registries, once at start: the kind of tab the person's files are in, and the
-/// commands that open the settings files.
-pub fn register(ui: Ui, _send: &Send) {
+/// commands that open the settings files. (The keys' file has its command with the keyboard shortcuts' part, which
+/// opens it with `open_user(ui, send, "keybindings.json")`.)
+pub fn register(_ui: Ui, _send: &Send) {
     kinds::add(
         kinds::kind(USER, |_ui, rest| format!("User › {rest}"), user_editor)
             .save(|_ui, send, tab| send(json!({"type": "save_user", "name": tab.file, "text": tab.text()})))
@@ -350,10 +350,6 @@ pub fn register(ui: Ui, _send: &Send) {
         "Open Workspace Settings (JSON)",
         open_workspace,
     ));
-    commands::add(commands::command(OPEN_KEYS_JSON, "Preferences", "Open Keyboard Shortcuts (JSON)", |ui, send| {
-        open_user(ui, send, "keybindings.json")
-    }));
-    let _ = ui;
 }
 
 /// The file's name at the end of a path.
@@ -598,7 +594,7 @@ mod tests {
         take(ui, &json!({"type": "saved_user", "name": "settings.json", "modified": 9}), &send);
         assert!(!tab.dirty.get_untracked());
         // Another of the person's files, and one whose reply says it cannot be opened.
-        assert!(commands::run(ui, &send, OPEN_KEYS_JSON));
+        open_user(ui, &send, "keybindings.json");
         assert_eq!(last(), Some(json!({"type": "user_file", "name": "keybindings.json"})));
         take(ui, &json!({"type": "user_file", "name": "keybindings.json", "error": "no"}), &send);
         assert_eq!(ui.message.get_untracked(), "Could not open keybindings.json: no");
@@ -647,6 +643,5 @@ mod tests {
         let label = |id: &str| commands::find(id).map(|c| c.label());
         assert_eq!(label(OPEN_USER_JSON).as_deref(), Some("Preferences: Open User Settings (JSON)"));
         assert_eq!(label(OPEN_WORKSPACE_JSON).as_deref(), Some("Preferences: Open Workspace Settings (JSON)"));
-        assert_eq!(label(OPEN_KEYS_JSON).as_deref(), Some("Preferences: Open Keyboard Shortcuts (JSON)"));
     }
 }
