@@ -22,7 +22,7 @@ pub type Result<T> = std::result::Result<T, SessionError>;
 
 /// The schema's version. Before 1.0 a store of another version is not migrated: it is moved aside and a new one
 /// begun (the plan's "no backward compatibility before 1.0").
-const SCHEMA: i64 = 4;
+const SCHEMA: i64 = 5;
 
 const CREATE: &str = r#"
 CREATE TABLE sessions (
@@ -55,6 +55,7 @@ CREATE TABLE messages (
   body TEXT NOT NULL,
   at INTEGER NOT NULL,
   arena TEXT,
+  details TEXT,
   PRIMARY KEY (session, seq)
 ) WITHOUT ROWID;
 CREATE INDEX messages_by_turn ON messages(session, turn);
@@ -103,6 +104,12 @@ ALTER TABLE sessions ADD COLUMN goals_sent INTEGER NOT NULL DEFAULT 1;
 const UPGRADE_3: &str = r#"
 ALTER TABLE sessions ADD COLUMN parent TEXT;
 ALTER TABLE sessions ADD COLUMN parent_seq INTEGER;
+"#;
+
+/// From schema 4 to 5: what the faces show with a message beyond its words (a request's quote, the files sent with
+/// it, what was typed apart from what was attached), as a JSON object of named fields.
+const UPGRADE_4: &str = r#"
+ALTER TABLE messages ADD COLUMN details TEXT;
 "#;
 
 /// Where a session stands with its chat in Arena.
@@ -194,7 +201,10 @@ impl Store {
             if version <= 2 {
                 db.execute_batch(UPGRADE_2)?;
             }
-            db.execute_batch(UPGRADE_3)?;
+            if version <= 3 {
+                db.execute_batch(UPGRADE_3)?;
+            }
+            db.execute_batch(UPGRADE_4)?;
             db.pragma_update(None, "user_version", SCHEMA)?;
         } else if version != SCHEMA {
             drop(db);
@@ -284,6 +294,47 @@ impl Store {
         Ok(messages)
     }
 
+    /// Merges these fields into what the faces show with a message (`details`): each named field takes the place of
+    /// one of the same name, a null one is taken away. A message that is not there is left alone.
+    pub fn merge_details(&self, id: &str, seq: i64, fields: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+        let tx = self.db.unchecked_transaction()?;
+        let was: Option<Option<String>> = tx
+            .query_row("SELECT details FROM messages WHERE session = ?1 AND seq = ?2", params![id, seq], |r| r.get(0))
+            .optional()?;
+        let Some(was) = was else { return Ok(()) };
+        let mut all = was
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        for (k, v) in fields {
+            if v.is_null() {
+                all.remove(k);
+            } else {
+                all.insert(k.clone(), v.clone());
+            }
+        }
+        let text = (!all.is_empty()).then(|| serde_json::Value::Object(all).to_string());
+        tx.execute("UPDATE messages SET details = ?3 WHERE session = ?1 AND seq = ?2", params![id, seq, text])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// What the faces show with the messages from `from` on, by their places: only those that have any.
+    pub fn details(&self, id: &str, from: i64) -> Result<std::collections::HashMap<i64, serde_json::Value>> {
+        let mut q = self
+            .db
+            .prepare("SELECT seq, details FROM messages WHERE session = ?1 AND seq >= ?2 AND details IS NOT NULL")?;
+        let rows = q.query_map(params![id, from], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (seq, text) = row?;
+            if let Ok(v) = serde_json::from_str(&text) {
+                out.insert(seq, v);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn set_model(&self, id: &str, model: &str, mode: &str) -> Result<()> {
         self.db.execute("UPDATE sessions SET model = ?2, mode = ?3 WHERE id = ?1", params![id, model, mode])?;
         Ok(())
@@ -346,7 +397,7 @@ impl Store {
         let new = self.create(&s.folder, &s.model, &s.mode)?;
         let tx = self.db.unchecked_transaction()?;
         tx.execute(
-            "INSERT INTO messages (session, seq, turn, role, body, at) SELECT ?2, seq, turn, role, body, at FROM messages WHERE session = ?1 AND seq < ?3",
+            "INSERT INTO messages (session, seq, turn, role, body, at, details) SELECT ?2, seq, turn, role, body, at, details FROM messages WHERE session = ?1 AND seq < ?3",
             params![id, new, cut],
         )?;
         tx.execute(
@@ -843,7 +894,7 @@ mod tests {
             // Schema 1, as 0.2 made it.
             let v1 = CREATE
                 .replace(",\n  chat TEXT,\n  chat_stamp TEXT,\n  chat_branch INTEGER NOT NULL DEFAULT 0,\n  chat_off INTEGER NOT NULL DEFAULT 0,\n  plan TEXT,\n  plan_sent INTEGER NOT NULL DEFAULT 1,\n  goals TEXT,\n  goals_sent INTEGER NOT NULL DEFAULT 1,\n  parent TEXT,\n  parent_seq INTEGER", "")
-                .replace("  arena TEXT,\n", "")
+                .replace("  arena TEXT,\n  details TEXT,\n", "")
                 .replace("  sent INTEGER NOT NULL DEFAULT 0,\n", "");
             assert!(!v1.contains("chat_off") && !v1.contains("arena TEXT") && !v1.contains("sent INTEGER"));
             db.execute_batch(&v1).expect("v1");
@@ -858,6 +909,25 @@ mod tests {
         s.append("s1", &Message::user("still here"), true).expect("append");
         assert_eq!(s.summary("s1").expect("kept").messages, 1);
         assert_eq!(s.unsent("s1", 5).expect("unsent").len(), 1);
+    }
+
+    #[test]
+    fn a_message_keeps_its_details_merged_and_a_fork_keeps_them_too() {
+        let s = Store::in_memory().expect("store");
+        let id = s.create("/w", "m", "ask").expect("create");
+        let seq = s.append(&id, &Message::user("@a.rs explain"), true).expect("append");
+        let fields = |v: serde_json::Value| v.as_object().cloned().expect("object");
+        s.merge_details(&id, seq, &fields(serde_json::json!({"typed": "explain", "quote": "q"}))).expect("set");
+        s.merge_details(&id, seq, &fields(serde_json::json!({"quote": null, "skill": "k"}))).expect("merge");
+        // A message that is not there is left alone.
+        s.merge_details(&id, 9, &fields(serde_json::json!({"typed": "x"}))).expect("none");
+        let all = s.details(&id, 0).expect("details");
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[&seq], serde_json::json!({"typed": "explain", "skill": "k"}));
+        assert!(s.details(&id, seq + 1).expect("after").is_empty());
+        s.append(&id, &Message::assistant("ok"), false).expect("answer");
+        let f = s.fork(&id, None).expect("fork");
+        assert_eq!(s.details(&f, 0).expect("forked")[&seq]["typed"], "explain");
     }
 
     #[test]
