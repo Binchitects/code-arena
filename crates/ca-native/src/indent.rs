@@ -419,6 +419,7 @@ fn pick_size(ui: Ui, then: impl FnOnce(Ui, String, usize) + 'static) {
         })
         .collect();
     quick::pick("Select Tab Size for the Current File")
+        .back_to_editor(ui)
         .placeholder("Select Tab Size for the Current File")
         .items(items)
         .active(&now.to_string())
@@ -458,6 +459,7 @@ fn pick_indent(ui: Ui, send: Send) {
     let view = |id: &str, label: &str| quick::item(id, label).group("change view");
     let file = |id: &str, label: &str| quick::item(id, label).group("convert file");
     quick::pick("Select Action")
+        .back_to_editor(ui)
         .placeholder("Select Action")
         .items(vec![
             view(USE_SPACES, "Indent Using Spaces"),
@@ -478,6 +480,7 @@ fn pick_eol(ui: Ui) {
     let Some((path, _)) = live(ui) else { return };
     let now = doc_of(ui, &path).1;
     quick::pick("Select End of Line Sequence")
+        .back_to_editor(ui)
         .placeholder("Select End of Line Sequence")
         .items(vec![quick::item("lf", "LF"), quick::item("crlf", "CRLF")])
         .active(if now == Eol::CrLf { "crlf" } else { "lf" })
@@ -506,6 +509,7 @@ fn set_eol(ui: Ui, path: &str, to: Eol) {
 
 fn pick_encoding(ui: Ui) {
     quick::pick("Select File Encoding")
+        .back_to_editor(ui)
         .placeholder("Select Action")
         .items(vec![quick::item("utf8", "UTF-8").description("utf8").detail("Only UTF-8 is read and written")])
         .active("utf8")
