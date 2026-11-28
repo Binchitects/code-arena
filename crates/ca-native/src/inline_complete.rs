@@ -92,6 +92,8 @@ thread_local! {
     static RESTING: Cell<Option<Instant>> = const { Cell::new(None) };
     /// The agent was working when it was time to ask: asked once it is done.
     static PENDING: Cell<bool> = const { Cell::new(false) };
+    /// The status item's pulse is running.
+    static PULSING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Whether completions are on for a file's language.
@@ -201,7 +203,13 @@ fn edited(ui: Ui, send: &Send) {
 fn through(ui: Ui) {
     let Some(shown) = SHOWN.with(|s| s.borrow().clone()) else { return };
     let Some((path, editor, offset)) = live(ui) else { return };
-    let rest = (path == shown.path && offset > shown.start)
+    // Only the ghost's own letters typed (never more than it has), from a place still between two characters.
+    let boundary = editor.doc().text().at_or_prev_codepoint_boundary(shown.start) == Some(shown.start);
+    let rest = (enabled(ui, &path)
+        && path == shown.path
+        && offset > shown.start
+        && offset - shown.start < shown.text.len()
+        && boundary)
         .then(|| {
             let typed = editor.rope_text().slice_to_cow(shown.start..offset).to_string();
             typed_through(&shown.text, &typed).map(str::to_string)
@@ -262,13 +270,21 @@ fn ask(ui: Ui, send: &Send) {
 
 /// The status item's pulse, while an answer is awaited (none when motion is reduced).
 fn pulse(ui: Ui, me: Inline) {
-    exec_after(PULSE, move |_| {
-        let on = me.waiting.get_untracked();
-        set_if(me.dim, on && !crate::accessibility::still(ui) && !me.dim.get_untracked());
-        if on {
-            pulse(ui, me);
-        }
-    });
+    if PULSING.with(|p| p.replace(true)) {
+        return;
+    }
+    fn beat(ui: Ui, me: Inline) {
+        exec_after(PULSE, move |_| {
+            let on = me.waiting.get_untracked();
+            set_if(me.dim, on && !crate::accessibility::still(ui) && !me.dim.get_untracked());
+            if on {
+                beat(ui, me);
+            } else {
+                PULSING.with(|p| p.set(false));
+            }
+        });
+    }
+    beat(ui, me);
 }
 
 /// An answer: shown when it is the newest asked and the caret and the text are where they were.
@@ -282,10 +298,9 @@ fn answered(ui: Ui, m: &Value) {
     set_if(me.waiting, false);
     set_if(me.dim, false);
     if let Some(error) = m["error"].as_str() {
-        if let Some(secs) = m["retry_after"].as_u64() {
-            let rest = if secs == 0 { REST } else { Duration::from_secs(secs) };
-            RESTING.with(|r| r.set(Some(Instant::now() + rest)));
-        }
+        // Any failure rests the asking (a gateway without completions would be asked at every pause otherwise).
+        let rest = m["retry_after"].as_u64().filter(|&s| s > 0).map_or(REST, Duration::from_secs);
+        RESTING.with(|r| r.set(Some(Instant::now() + rest)));
         set_if(me.error, error.to_string());
         return;
     }
@@ -293,7 +308,12 @@ fn answered(ui: Ui, m: &Value) {
     let text = m["text"].as_str().unwrap_or("");
     keep(asked.key, text);
     let Some((path, editor, offset)) = live(ui) else { return };
-    if text.is_empty() || path != asked.path || offset != asked.offset || ui.edited.get_untracked() != asked.edited {
+    if text.is_empty()
+        || !enabled(ui, &path)
+        || path != asked.path
+        || offset != asked.offset
+        || ui.edited.get_untracked() != asked.edited
+    {
         return;
     }
     show(ui, &path, &editor, offset, offset, text, text);
@@ -306,8 +326,17 @@ fn toggle(ui: Ui, send: &Send) {
     if !on && crate::settings::now(ui, "editor.inlineSuggest.enabled", None).as_bool() == Some(false) {
         send(json!({"type": "set_setting", "key": "editor.inlineSuggest.enabled", "value": true}));
     }
-    if on && let Some((path, _)) = ui.live.get_untracked() {
-        crate::complete::ghost_clear(ui, &path);
+    if on {
+        ASKED.with(|a| a.borrow_mut().take());
+        SHOWN.with(|s| s.borrow_mut().take());
+        PENDING.with(|p| p.set(false));
+        set_if(ui.state::<Inline>().waiting, false);
+        if let Some((path, _)) = ui.live.get_untracked() {
+            crate::complete::ghost_clear(ui, &path);
+        }
+    } else {
+        // Turned on again: asked at once, not after the rest of a failure before.
+        RESTING.with(|r| r.set(None));
     }
 }
 
