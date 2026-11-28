@@ -855,6 +855,13 @@ Sections used:
   and tokens ('12 s · 8.6K in (73% cached) · 1.2K out'), a dot for the session's connection, and
   'code-arena <version>', which opens About. The Local remote item offers Open Folder and Open
   Recent. Every item has a tooltip.
+- **Compact the chat and see where it was compacted.** Type /compact and press Enter, or run Compact
+  Now, to have the model summarize the older part of the chat. It is refused while an answer is
+  being written and when there is too little to compact. A line over the box says it is
+  compacting, and a toast says how it ended. A 'Chat compacted' divider then sits after the last
+  turn it covers: Show summary shows what the model goes on with, and after another compaction
+  the divider moves and shows the latest summary. Questions the summary covers can no longer be
+  edited or answered again.
 
 
 ### :bug: Bugs fixed
