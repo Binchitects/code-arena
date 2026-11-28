@@ -41,8 +41,10 @@ pub const MOST: usize = 4000;
 /// The questions "Ask about this" offers, each sent at once.
 pub const ASKS: [&str; 3] = ["Explain this", "Say more", "Give an example"];
 
-/// The height of the toolbar, and the room kept between it and the words.
+/// The height of the toolbar, of it as it asks a question (its field and the offered questions), and the room kept
+/// between it and the words.
 const BAR: f64 = 30.0;
+const ASKING: f64 = 64.0;
 const GAP: f64 = 4.0;
 
 /// The quote of the next message: its words (cut to `MOST`), whether they were cut, the session it belongs to.
@@ -216,9 +218,10 @@ pub fn around(ui: Ui, send: Send, answer: Answer, body: impl FnOnce(Quoting) -> 
 }
 
 /// Where the toolbar is in an answer's view: over the words, under them when there is no room over them; at their
-/// start, but never past the view's right edge.
-pub fn place(rect: Rect, width: f64, bar_width: f64) -> (f64, f64) {
-    let top = if rect.y0 >= BAR + GAP { rect.y0 - BAR - GAP } else { rect.y1 + GAP };
+/// start, but never past the view's right edge. Its size is the toolbar's as it stands, so a toolbar grown to ask a
+/// question stands clear of the words too.
+pub fn place(rect: Rect, width: f64, (bar_width, bar_height): (f64, f64)) -> (f64, f64) {
+    let top = if rect.y0 >= bar_height + GAP { rect.y0 - bar_height - GAP } else { rect.y1 + GAP };
     let left = rect.x0.min(width - bar_width).max(0.0);
     (left, top)
 }
@@ -260,7 +263,7 @@ fn toolbar(ui: Ui, send: Send, answer: RwSignal<String>) -> impl IntoView {
             .z_index(5);
         match at {
             Some((rect, w)) => {
-                let (left, top) = place(rect, w, width(asking));
+                let (left, top) = place(rect, w, (width(asking), if asking { ASKING } else { BAR }));
                 s.inset_left(left).inset_top(top).apply_if(asking, |s| s.width(width(true)))
             }
             _ => s.hide(),
@@ -532,12 +535,16 @@ mod tests {
     #[test]
     fn the_toolbar_stands_over_the_words_under_them_on_the_first_line_and_inside_the_answer() {
         let words = Rect::new(40.0, 100.0, 90.0, 118.0);
-        assert_eq!(place(words, 600.0, 236.0), (40.0, 100.0 - BAR - GAP));
+        assert_eq!(place(words, 600.0, (236.0, BAR)), (40.0, 100.0 - BAR - GAP));
         let first = Rect::new(40.0, 0.0, 90.0, 18.0);
-        assert_eq!(place(first, 600.0, 236.0), (40.0, 18.0 + GAP));
+        assert_eq!(place(first, 600.0, (236.0, BAR)), (40.0, 18.0 + GAP));
         let right = Rect::new(500.0, 100.0, 590.0, 118.0);
-        assert_eq!(place(right, 600.0, 236.0).0, 364.0);
-        assert_eq!(place(right, 200.0, 236.0).0, 0.0);
+        assert_eq!(place(right, 600.0, (236.0, BAR)).0, 364.0);
+        assert_eq!(place(right, 200.0, (236.0, BAR)).0, 0.0);
+        // Grown to ask a question, it stands as far over the words, and goes under them when that has no room.
+        assert_eq!(place(words, 600.0, (320.0, ASKING)), (40.0, 100.0 - ASKING - GAP));
+        let near = Rect::new(40.0, 40.0, 90.0, 58.0);
+        assert_eq!(place(near, 600.0, (320.0, ASKING)), (40.0, 58.0 + GAP));
     }
 
     #[test]
