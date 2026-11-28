@@ -14,6 +14,8 @@ alacritty_terminal = "0.26.0"
 base64 = "0.22"
 ca-settings.workspace = true
 ca-themes.workspace = true
+# A snippet's CURRENT_* variables: the date and time where the person is.
+chrono.workspace = true
 crossbeam-channel = "0.5"
 floem = "0.2"
 # Floem's own drawing (fills, strokes, text) for the views this crate paints itself: the editor's margin, the

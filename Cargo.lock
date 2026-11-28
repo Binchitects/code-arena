@@ -565,6 +565,7 @@ dependencies = [
  "base64 0.22.1",
  "ca-settings",
  "ca-themes",
+ "chrono",
  "crossbeam-channel",
  "floem",
  "floem_renderer",
