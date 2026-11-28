@@ -23,6 +23,16 @@ pub struct JobInfo {
     pub exit: Option<i32>,
     /// The turn that started it (its question's place in the session).
     pub turn: Option<i64>,
+    /// It was stopped (by the person, or with its turn), not left to end.
+    pub stopped: bool,
+    /// When it began and when it ended, in milliseconds since the Unix epoch.
+    pub started_ms: u64,
+    pub ended_ms: Option<u64>,
+}
+
+/// Now, in milliseconds since the Unix epoch.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
 /// A job with no time limit ended.
@@ -47,6 +57,7 @@ struct Job {
 pub struct Jobs {
     jobs: Mutex<Vec<Job>>,
     ended: Mutex<Option<mpsc::UnboundedSender<Ended>>>,
+    ends: Mutex<Option<mpsc::UnboundedSender<u32>>>,
     current_turn: Mutex<Option<i64>>,
 }
 
@@ -61,6 +72,15 @@ impl Jobs {
     pub fn listen(&self) -> mpsc::UnboundedReceiver<Ended> {
         let (tx, rx) = mpsc::unbounded_channel();
         if let Ok(mut e) = self.ended.lock() {
+            *e = Some(tx);
+        }
+        rx
+    }
+
+    /// Where every job's end is told by its id, those in the background too: for what shows the jobs.
+    pub fn ends(&self) -> mpsc::UnboundedReceiver<u32> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        if let Ok(mut e) = self.ends.lock() {
             *e = Some(tx);
         }
         rx
@@ -108,6 +128,9 @@ impl Jobs {
             running: true,
             exit: None,
             turn,
+            stopped: false,
+            started_ms: now_ms(),
+            ended_ms: None,
         }));
         let output = Arc::new(Mutex::new(VecDeque::new()));
         let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -139,25 +162,31 @@ impl Jobs {
         }
         let (i2, o2, s2) = (info.clone(), output.clone(), stopped.clone());
         let tell = self.ended.lock().ok().and_then(|e| e.clone());
+        let ends = self.ends.lock().ok().and_then(|e| e.clone());
         tokio::spawn(async move {
             let status = child.wait().await.ok();
             // The readers end when its pipes close: the output is whole then. A program it left running (`cmd &`)
             // may hold them open: then what came within two seconds is what is told.
             let _ = tokio::time::timeout(Duration::from_secs(2), futures_util::future::join_all(readers)).await;
             let exit = status.and_then(|s| s.code());
+            let stopped = s2.load(std::sync::atomic::Ordering::SeqCst);
             let (command, background) = match i2.lock() {
                 Ok(mut i) => {
                     i.running = false;
                     i.exit = exit;
+                    i.stopped = stopped;
+                    i.ended_ms = Some(now_ms());
                     (i.command.clone(), i.background)
                 }
                 Err(_) => return,
             };
+            if let Some(tx) = ends {
+                let _ = tx.send(id);
+            }
             // Its end starts no turn when it ran in the background.
             if !background && let Some(tx) = tell {
                 let tail = tail_of(&o2, 8_000);
-                let _ =
-                    tx.send(Ended { id, command, exit, stopped: s2.load(std::sync::atomic::Ordering::SeqCst), tail });
+                let _ = tx.send(Ended { id, command, exit, stopped, tail });
             }
         });
         if let Ok(mut j) = self.jobs.lock() {
@@ -276,22 +305,28 @@ mod tests {
         let e = tokio::time::timeout(Duration::from_secs(10), ended.recv()).await.expect("in time").expect("told");
         assert_eq!((e.id, e.exit, e.stopped), (id, Some(0), false));
         assert_eq!(e.tail, "building\nbuilt\n");
-        assert_eq!(jobs.info(id).expect("info").turn, Some(7));
+        let info = jobs.info(id).expect("info");
+        assert_eq!(info.turn, Some(7));
+        assert!(!info.stopped && info.ended_ms.is_some_and(|e| e >= info.started_ms));
     }
 
     #[tokio::test]
     async fn stopping_a_turns_jobs_leaves_the_background_ones() {
         let jobs = Jobs::default();
         let mut ended = jobs.listen();
+        let mut ends = jobs.ends();
         jobs.begin_turn(3);
         let d = tempfile::tempdir().expect("temp");
         let long = jobs.start("sleep", "sh", &["-c".into(), "sleep 30".into()], d.path(), &[], false).expect("start");
         let server = jobs.start("server", "sh", &["-c".into(), "sleep 30".into()], d.path(), &[], true).expect("start");
         assert_eq!(jobs.stop_turn(3), vec![long]);
         let e = tokio::time::timeout(Duration::from_secs(10), ended.recv()).await.expect("in time").expect("told");
-        assert!(e.stopped);
+        assert!(e.stopped && jobs.info(long).expect("info").stopped);
+        assert_eq!(ends.recv().await, Some(long));
         assert!(jobs.info(server).expect("info").running);
         jobs.stop_all();
         assert!(jobs.wait(server, Duration::from_secs(10)).await);
+        // The one in the background tells its end there too, though no turn is started by it.
+        assert_eq!(tokio::time::timeout(Duration::from_secs(10), ends.recv()).await.expect("in time"), Some(server));
     }
 }

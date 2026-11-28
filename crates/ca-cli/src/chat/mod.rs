@@ -687,13 +687,22 @@ fn context_line(a: &ca_agent::Agent) -> String {
 
 /// A job with no time limit ended: said here, and the model carries on from it in a turn of its own.
 fn job_note(j: &ca_tools::jobs::Ended, ui: Ui) -> String {
-    let how = match (j.stopped, j.exit) {
+    ui.say(&ui.dim(&format!("job {} {}: the model carries on", j.id, job_end(j))));
+    job_words(j)
+}
+
+/// How a job with no time limit ended, as the session says it: "ended with exit code 0", "was stopped".
+pub(crate) fn job_end(j: &ca_tools::jobs::Ended) -> String {
+    match (j.stopped, j.exit) {
         (true, _) => "was stopped".to_string(),
         (false, Some(c)) => format!("ended with exit code {c}"),
         (false, None) => "ended by a signal".to_string(),
-    };
-    ui.say(&ui.dim(&format!("job {} {how}: the model carries on", j.id)));
-    format!("(Code Arena: job {} `{}` {how}. The end of its output:)\n{}", j.id, j.command, j.tail.trim_end())
+    }
+}
+
+/// The note the model carries on from when a job with no time limit ended: the job, how it ended, its output's end.
+pub(crate) fn job_words(j: &ca_tools::jobs::Ended) -> String {
+    format!("(Code Arena: job {} `{}` {}. The end of its output:)\n{}", j.id, j.command, job_end(j), j.tail.trim_end())
 }
 
 /// The last two turns of a resumed session, as they were said.

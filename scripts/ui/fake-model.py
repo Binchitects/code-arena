@@ -7,6 +7,7 @@
 # The last user message decides: "delegate" starts two sub-agents (each thinks, reads src/main.rs and reports),
 # "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a command that needs an approval
 # in ask mode, "picture" runs a command that makes a picture in .code-arena/media/,
+# "build" runs a command with no time limit (some seconds of output; its end is answered with a line),
 # "think" thinks for some seconds before it answers (with its usage),
 # anything else streams a Markdown answer with a code block. A tool's
 # result is answered with a short line, so each turn ends.
@@ -117,6 +118,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif last["role"] == "tool":
             ev({"content": "Done."})
             ev({}, "stop")
+        elif "(Code Arena: job" in text:
+            ev({"content": "The build passed."})
+            ev({}, "stop")
+        elif "build" in text:
+            ev({"content": "Building; it takes a while."})
+            steps = "for i in 1 2 3 4 5 6 7 8; do echo compiling part $i; sleep 1; done; echo built"
+            call("run_shell", {"command": steps, "no_time_limit": True})
         elif "Survey" in text:
             # A sub-agent: it thinks a while, then reads.
             for word in ("Looking at the file first. " * 6).split(" ")[:-1]:

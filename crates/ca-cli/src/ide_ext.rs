@@ -771,6 +771,7 @@ mod tests {
         let mut later = Later::default();
         // [T]: now, and nothing said about it.
         assert!(meanwhile(&json!({"type": "stop_job", "id": 2}), &mut later, &out));
+        assert!(meanwhile(&json!({"type": "job_output", "id": 2}), &mut later, &out));
         assert!(got(&mut rx).is_empty() && later.is_empty());
         // [Q]: kept, in the order asked, and the faces told.
         assert!(!meanwhile(&json!({"type": "model", "model": "qwen-large"}), &mut later, &out));
