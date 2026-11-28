@@ -14,7 +14,7 @@ use super::tell;
 use crate::state::Ui;
 
 /// A key as the editor's own keymap has it (what `default_key_handler` does, with the keymap made once).
-pub(super) fn default_key(
+pub(crate) fn default_key(
     map: &KeypressMap,
     editor: RwSignal<Editor>,
     press: &KeyPress,
@@ -35,7 +35,7 @@ pub(super) fn default_key(
 /// The workbench's keys that are about the editor, taken by the editor itself (a key it is given goes no further):
 /// the suggest widget's (`complete::key`), the find widget's (`find::find_key`: Ctrl+H, F3 and Shift+F3, its toggles, Escape), Ctrl+F finds, Ctrl+S saves,
 /// Ctrl+W closes the tab.
-pub(super) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
+pub(crate) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
     let KeyInput::Keyboard(key, _) = &press.key else { return false };
     // The suggest widget's and the ghost text's keys first (Enter, Tab, Escape, the arrows while it is open).
     if crate::complete::key(ui, key, mods) {

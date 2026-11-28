@@ -219,6 +219,9 @@ colors! {
     chat_flash: ["editor.findMatchHighlightBackground"], "#EA5C0055", "#EA5C0055";
     diff_added: ["diffEditor.insertedLineBackground", "diffEditor.insertedTextBackground"], "#9BB95533", "#9CCC2C40";
     diff_removed: ["diffEditor.removedLineBackground", "diffEditor.removedTextBackground"], "#FF000033", "#FF000033";
+    diff_added_text: ["diffEditor.insertedTextBackground"], "#9CCC2C33", "#9CCC2C40";
+    diff_removed_text: ["diffEditor.removedTextBackground"], "#FF000033", "#FF000033";
+    diff_fill: ["diffEditor.diagonalFill"], "#CCCCCC33", "#22222233";
     added_fg: ["gitDecoration.addedResourceForeground"], "#81B88B", "#587C0C";
     removed_fg: ["gitDecoration.deletedResourceForeground"], "#C74E39", "#AD0707";
     scm_modified: ["gitDecoration.modifiedResourceForeground"], "#E2C08D", "#895503";
