@@ -347,14 +347,13 @@ fn notices(ui: Ui, item: &Item) -> floem::AnyView {
         move |(_, text)| {
             h_stack((
                 icon("warning", 14.0).style(move |s| s.color(t.get().warning).flex_shrink(0.0_f32)),
-                label(move || text.clone())
-                    .style(move |s| {
-                        s.color(t.get().desc)
-                            .font_size(12.0)
-                            .line_height(1.4)
-                            .min_width(0.0)
-                            .text_overflow(TextOverflow::Wrap)
-                    }),
+                label(move || text.clone()).style(move |s| {
+                    s.color(t.get().desc)
+                        .font_size(12.0)
+                        .line_height(1.4)
+                        .min_width(0.0)
+                        .text_overflow(TextOverflow::Wrap)
+                }),
             ))
             .style(|s| s.gap(6.0).items_start().width_full())
         },
