@@ -1233,6 +1233,15 @@ Sections used:
   the repository from its top.
 - **A long side bar title no longer runs under its buttons.** The Source Control title with the
   tree buttons is now cut with '…', as in VS Code.
+- **Inline completions stay out of the way.** The model's grey suggestion no longer shows while the
+  suggestions list is open or while you fill in a snippet's next placeholder, so Tab takes the
+  suggestion or moves to the next placeholder, as in VS Code.
+- **Inline completions only after typing.** Buttons in the merge editor, undo and reload no longer
+  ask the model for a completion or show a suggestion at the caret.
+- **Highlights end at the word.** A highlighted word or range no longer stretches over an inline
+  completion, inlay hint or error text drawn right after it.
+- **Default formatter's description.** The editor.defaultFormatter setting now says its own
+  formatters are listed in settings.json, not config.json.
 
 ## v0.5.0 (2026-11-26)
 
