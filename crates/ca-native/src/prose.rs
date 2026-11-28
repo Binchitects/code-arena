@@ -17,7 +17,7 @@ use floem::kurbo::Rect;
 use floem::reactive::{
     Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal,
 };
-use floem::style::{CursorStyle, Position, TextOverflow};
+use floem::style::{CursorStyle, FlexDirection, Position, TextOverflow};
 use floem::text::{Attrs, AttrsList, FamilyOwned, LineHeightValue, Style as Slant, TextLayout, Weight};
 use floem::views::{
     Decorators, container, dyn_stack, empty, h_stack, label, rich_text, scroll, stack, text_input, tooltip, v_stack,
@@ -174,31 +174,43 @@ fn block(
         }
         Block::Item { depth, marker, .. } => {
             let (depth, marker) = (*depth as f64, marker.clone());
+            // The list's bullets stand on the side of its first item's direction (told when it changes, as its
+            // first strong letter may come later in the stream); each item's words take their own.
+            let rtl = create_memo(move |_| blocks.with(|b| crate::bidi::list_rtl(b, n)));
             h_stack((
                 label(move || marker.clone()).style(move |s| {
-                    s.min_width(22.0)
-                        .padding_right(6.0)
-                        .justify_end()
-                        .line_height(1.5)
-                        .color(t.get().fg)
-                        .selectable(false)
+                    let s = s.min_width(22.0).line_height(1.5).color(t.get().fg).selectable(false);
+                    if rtl.get() { s.padding_left(6.0).justify_start() } else { s.padding_right(6.0).justify_end() }
                 }),
                 prose(ui, words, 13.0, false, q, doc).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0)),
             ))
-            .style(move |s| s.width_full().min_width(0.0).padding_left(depth * 20.0).margin_top(over(4.0)))
+            .style(move |s| {
+                let s = s.width_full().min_width(0.0).margin_top(over(4.0));
+                if rtl.get() {
+                    s.flex_direction(FlexDirection::RowReverse).padding_right(depth * 20.0)
+                } else {
+                    s.padding_left(depth * 20.0)
+                }
+            })
             .into_any()
         }
-        Block::Quote(_) => container(prose(ui, words, 13.0, false, q, doc))
-            .style(move |s| {
-                s.width_full()
-                    .min_width(0.0)
-                    .padding_left(10.0)
-                    .padding_vert(2.0)
-                    .border_left(4.0)
-                    .border_color(t.get().quote_border)
-                    .margin_top(over(8.0))
-            })
-            .into_any(),
+        Block::Quote(_) => {
+            // Its bar on the side of its words' direction.
+            let rtl = create_memo(move |_| {
+                now.with(|b| matches!(b.as_deref(), Some(Block::Quote(t)) if crate::bidi::rtl(&t.text)))
+            });
+            container(prose(ui, words, 13.0, false, q, doc))
+                .style(move |s| {
+                    let s = s
+                        .width_full()
+                        .min_width(0.0)
+                        .padding_vert(2.0)
+                        .border_color(t.get().quote_border)
+                        .margin_top(over(8.0));
+                    if rtl.get() { s.padding_right(10.0).border_right(4.0) } else { s.padding_left(10.0).border_left(4.0) }
+                })
+                .into_any()
+        }
         Block::Code { lang, name, .. } => {
             let text = move || {
                 now.with(|b| match b.as_deref() {
@@ -232,6 +244,9 @@ struct Laid {
     marks: Vec<Range<usize>>,
     links: Vec<(Range<usize>, Target)>,
     text: String,
+    /// Whether a line of it goes right to left: it is then laid out to its whole width, so the shaper stands that
+    /// line on the right.
+    rtl: bool,
 }
 
 /// Where a text's links lead: its own links (to the web or the project's files), and the citations of the
@@ -375,12 +390,13 @@ fn prose(
             None => cited(&words, &citations::files(ui)),
         };
         let (layout, marks) = lay_out(&words, &links, &c, size, heading);
-        whole.set(Laid { layout, marks, links, text: words.text });
+        let rtl = crate::bidi::any_rtl_line(&words.text);
+        whole.set(Laid { layout, marks, links, text: words.text, rtl });
     });
     create_effect(move |_| {
         let width = width.get();
         let mut l = whole.with(Laid::clone);
-        if width > 0.0 && l.layout.size().width > width {
+        if width > 0.0 && (l.rtl || l.layout.size().width > width) {
             l.layout.set_size(width as f32, f32::MAX);
         }
         laid.set(l);
@@ -884,6 +900,8 @@ pub(crate) fn code_with(
                 .line_height(LineHeightValue::Px(18.0))
                 .color(t.get_untracked().editor_fg);
             let mut attrs = AttrsList::new(base);
+            // Left to right always, a line that would start right to left led by the left-to-right mark.
+            let (line, shift) = crate::bidi::ltr_line(&l.text);
             for run in &l.runs {
                 let mut a = base.color(run.colour);
                 if run.bold {
@@ -892,11 +910,11 @@ pub(crate) fn code_with(
                 if run.italic && *crate::widgets::ITALIC {
                     a = a.style(Slant::Italic);
                 }
-                attrs.add_span(run.range.clone(), a);
+                attrs.add_span(run.range.start + shift..run.range.end + shift, a);
             }
             let mut layout = TextLayout::new();
             layout.set_tab_width(4);
-            layout.set_text(&l.text, attrs);
+            layout.set_text(&line, attrs);
             rich_text(move || layout.clone()).style(move |s| match wrap.get() {
                 true => s.width_full().min_width(0.0).min_height(18.0).text_overflow(TextOverflow::Wrap),
                 false => s.height(18.0).text_overflow(TextOverflow::Clip),
