@@ -59,8 +59,13 @@ pub fn expand(context: &Value, ws: &ca_workspace::Workspace) -> (String, Vec<Val
             }
             None => {
                 // The words before the expansion are the mention itself: only what is added after them is kept.
-                let mention = if shown.contains(' ') { format!("@\"{shown}\"") } else { format!("@{shown}") };
-                let mention = format!("{mention}:{start}-{end}");
+                // In quotes when the path has what else would end the mention (the lines inside them).
+                let ends = |c: char| c.is_whitespace() || matches!(c, ',' | ')' | ']' | '`' | '\'');
+                let mention = if shown.contains(ends) {
+                    format!("@\"{shown}:{start}-{end}\"")
+                } else {
+                    format!("@{shown}:{start}-{end}")
+                };
                 let whole = ca_agent::mentions::attach(&mention, ws);
                 let added = whole.strip_prefix(&mention).unwrap_or("").to_string();
                 if added.trim().is_empty() {
@@ -87,24 +92,28 @@ mod tests {
     fn pieces_are_read_with_three_lines_around_and_named_for_the_question() {
         let d = tempfile::tempdir().expect("dir");
         let body: String = (1..=20).map(|i| format!("line {i}\n")).collect();
-        std::fs::write(d.path().join("a.rs"), body).expect("write");
+        std::fs::write(d.path().join("a.rs"), &body).expect("write");
+        std::fs::write(d.path().join("my notes.md"), &body).expect("write");
         let ws = ca_workspace::Workspace::open(d.path(), &[]).expect("ws");
         let context = json!([
             {"path": "a.rs", "start": 10, "end": 12},
             {"path": "a.rs", "start": 2, "end": 2, "text": "fn changed() {}"},
             {"path": "gone.rs", "start": 1, "end": 1},
+            {"path": "my notes.md", "start": 1, "end": 1},
             {"path": "", "start": 1, "end": 1},
         ]);
         let (read, files) = expand(&context, &ws);
         assert!(read.starts_with("\n\n<file path=\"a.rs\">"), "{read}");
         assert!(read.contains("     7\tline 7\n") && read.contains("    15\tline 15\n"));
         assert!(!read.contains("\tline 6\n") && !read.contains("\tline 16\n"));
+        assert!(read.contains("<file path=\"my notes.md\">\n     1\tline 1\n"));
         assert!(read.contains("<file path=\"a.rs\" unsaved=\"true\">\n     2\tfn changed() {}\n</file>"));
         assert_eq!(
             files,
             [
                 json!({"path": "a.rs", "start": 10, "end": 12}),
                 json!({"path": "a.rs", "start": 2, "end": 2, "text": "fn changed() {}"}),
+                json!({"path": "my notes.md", "start": 1, "end": 1}),
             ]
         );
         // None sent, nothing read; a file outside the folder is not one the tools may read.
