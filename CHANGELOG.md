@@ -765,6 +765,11 @@ Sections used:
   bullets on the side of its first item, and code blocks stay left to right. Thinking, queued
   requests and quotes do the same, and plan step and session titles are isolated so they do not
   reorder the words around them.
+- **Memory view.** See what the agent remembers, grouped as This project, About you and The
+  company's, pinned ones first with their kind. Find a memory by its words, keep one with Remember
+  something… (up to 500 characters, for this project only or every project), forget your own, open
+  the project's long memory, and see when memories are kept on this machine. The view is gone when
+  Arena denies memory.
 
 
 ### :bug: Bugs fixed
