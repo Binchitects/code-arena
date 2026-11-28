@@ -517,11 +517,14 @@ pub fn layout(path: &str, line: usize, len: usize, line_height: f64, l: &mut Tex
             wave_line: None,
         });
     }
-    // Columns past the line's own text (marks said before an edit) stop at its end.
+    // Columns past the line's own text (marks said before an edit) stop at its end. A range starts after text that
+    // is not in the file at its first column and ends before the one at its last (an inline completion or an error
+    // lens just past a highlighted word is not highlighted with it).
     let shown = |col: usize| l.phantom_text.col_at(col.min(len));
+    let shown_end = |col: usize| l.phantom_text.col_after_force(col.min(len), false);
     for s in &marks.spans {
         let x0 = l.text.hit_position(shown(s.start)).point.x;
-        let mut x1 = l.text.hit_position(shown(s.end.unwrap_or(len))).point.x;
+        let mut x1 = l.text.hit_position(shown_end(s.end.unwrap_or(len))).point.x;
         // A range with no width (a problem at a line's end) still shows a little.
         if x1 - x0 < 1.0 {
             x1 = x0 + 6.0;

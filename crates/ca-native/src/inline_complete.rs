@@ -183,7 +183,7 @@ fn set_if<T: PartialEq + Clone + 'static>(s: RwSignal<T>, v: T) {
 }
 
 /// An edit of an open file: the ghost's next letters typed keep the rest of it; otherwise a completion is asked
-/// once typing pauses.
+/// once typing pauses (an edit not typed, such as an undo, a reload or the merge editor's buttons, asks none).
 fn edited(ui: Ui, send: &Send) {
     let n = PAUSED.with(|p| {
         p.set(p.get() + 1);
@@ -191,6 +191,9 @@ fn edited(ui: Ui, send: &Send) {
     });
     // The caret moves after the edit is told: read on the next turn of the loop.
     exec_after(Duration::ZERO, move |_| through(ui));
+    if !crate::complete::typed_lately() {
+        return;
+    }
     let send = send.clone();
     exec_after(PAUSE, move |_| {
         if PAUSED.with(Cell::get) == n {

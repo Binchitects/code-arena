@@ -318,6 +318,8 @@ thread_local! {
     /// The character just typed and the offset before it: the caret moving past it opens the widget.
     static TYPED: Cell<Option<(char, usize)>> = const { Cell::new(None) };
     static SEQ: Cell<u64> = const { Cell::new(0) };
+    /// When a key that edits (a letter, Enter, Backspace, Delete, Tab) was last pressed in an editor.
+    static KEYED: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
     /// Each document's words, by path, as of its text's revision.
     static WORDS: RefCell<HashMap<String, Words>> = RefCell::new(HashMap::new());
 }
@@ -667,6 +669,9 @@ fn show(ui: Ui, again: bool) {
     }
     let n = s.rows.with_untracked(im::Vector::len).clamp(1, MOST_ROWS);
     set_if(s.place, spot(&editor, start, line, n));
+    if is_open(ui) && ghost_shown().is_some() {
+        drop_ghost(ui);
+    }
 }
 
 /// Where the widget goes for a word starting at `start`: its label under the word's, below the line, or above it
@@ -859,11 +864,30 @@ fn tab_complete(ui: Ui) -> bool {
 
 // ---- Ghost text. ----
 
+/// Whether a key edits the text as typing does (Ctrl+Backspace and Ctrl+Delete too).
+fn edits(key: &Key, plain: bool) -> bool {
+    match key {
+        Key::Character(_) => plain,
+        Key::Named(NamedKey::Backspace | NamedKey::Delete) => true,
+        Key::Named(NamedKey::Enter | NamedKey::Tab | NamedKey::Space) => plain,
+        _ => false,
+    }
+}
+
+/// Whether a key that edits was pressed in an editor within the last second: an edit then is typing, not a button's,
+/// an undo's or a reload's (an inline completion is asked only after typing, as in VS Code).
+pub fn typed_lately() -> bool {
+    KEYED.with(Cell::get).is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(1))
+}
+
 /// Shows an inline suggestion at a place of a file (line and column from 0, the column a byte in the line), in place
-/// of the one shown; only its first line is drawn, Tab takes it whole.
+/// of the one shown; only its first line is drawn, Tab takes it whole. None is shown while the suggestions widget is
+/// open, as in VS Code, nor while a snippet has a next tab stop: Tab there is the widget's or the snippet's.
 pub fn ghost(ui: Ui, path: &str, line: usize, col: usize, text: &str) {
     if crate::settings::now(ui, "editor.inlineSuggest.enabled", crate::language::of(ui, path)).as_bool() == Some(false)
         || text.is_empty()
+        || is_open(ui)
+        || crate::snippets::has_next(ui)
     {
         return ghost_clear(ui, path);
     }
@@ -919,6 +943,9 @@ fn take_ghost(ui: Ui) -> bool {
 pub fn key(ui: Ui, key: &Key, mods: Modifiers) -> bool {
     let ctrl = mods.contains(Modifiers::CONTROL);
     let plain = !mods.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::META);
+    if edits(key, plain) {
+        KEYED.with(|k| k.set(Some(std::time::Instant::now())));
+    }
     let bare = plain && !mods.contains(Modifiers::SHIFT);
     let s = ui.state::<Suggest>();
     let open = is_open(ui);
@@ -1302,6 +1329,35 @@ mod tests {
         ghost_clear(ui, path);
         assert!(ghost_shown().is_none());
         assert!(crate::decor::of(path).is_none_or(|m| m.lines.get(&1).is_none_or(|l| l.texts.is_empty())));
+    }
+
+    #[test]
+    fn only_keys_that_type_count_as_typing() {
+        assert!(edits(&Key::Character("a".into()), true));
+        assert!(!edits(&Key::Character("z".into()), false), "Ctrl+Z is an undo");
+        assert!(edits(&Key::Named(NamedKey::Backspace), false));
+        assert!(edits(&Key::Named(NamedKey::Enter), true));
+        assert!(!edits(&Key::Named(NamedKey::ArrowLeft), true));
+        let ui = Ui::new();
+        key(ui, &Key::Character("a".into()), Modifiers::empty());
+        assert!(typed_lately());
+    }
+
+    #[test]
+    fn no_ghost_text_is_shown_while_the_suggestions_widget_is_open() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let path = "/tmp/ghost-widget-test.rs";
+        ui.take(&serde_json::json!({"type": "file", "path": path, "text": "forr\n", "modified": 1}), &send);
+        let s = ui.state::<Suggest>();
+        s.rows.set(filtered([&item("for")], "fo").into_iter().collect());
+        s.place.set(Some(Spot { x: 0.0, y: 0.0, row: 20.0 }));
+        ghost(ui, path, 0, 4, " + 1");
+        assert!(ghost_shown().is_none(), "the widget's Tab is not the ghost's");
+        s.place.set(None);
+        ghost(ui, path, 0, 4, " + 1");
+        assert!(ghost_shown().is_some());
+        ghost_clear(ui, path);
     }
 
     #[test]

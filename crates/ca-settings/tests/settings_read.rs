@@ -60,7 +60,6 @@ const NOT_READ_YET: &[&str] = &[
     "git.autofetch",
     "git.confirmSync",
     "git.enableStatusBarSync",
-    "git.mergeEditor",
     "merge-conflict.codeLens.enabled",
     "merge-conflict.decorators.enabled",
     "git.rebaseWhenSync",
