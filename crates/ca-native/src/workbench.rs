@@ -26,13 +26,18 @@ const MENUS: [&str; 8] = ["File", "Edit", "Selection", "View", "Go", "Run", "Ter
 pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
     let keys = send.clone();
-    let body = h_stack((crate::activity_bar::view(ui, send.clone()), crate::docking::tree(ui, send.clone())))
+    // The activity bar, the title bar and the status bar are hidden in Zen mode and full screen (`layout_commands`).
+    let bars = move |s: floem::style::Style| s.apply_if(!crate::layout_commands::bars_shown(ui), |s| s.hide());
+    let activity = container(crate::activity_bar::view(ui, send.clone())).style(move |s| bars(s.height_full()));
+    let body = h_stack((activity, crate::docking::tree(ui, send.clone())))
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     // The title bar, the parts' banners under it (`layers.rs`; none: no row), the views, the status bar.
-    let mut rows = vec![title_bar(ui, send.clone()).into_any()];
+    let title = container(title_bar(ui, send.clone()))
+        .style(move |s| s.width_full().apply_if(!crate::layout_commands::title_bar_shown(ui), |s| s.hide()));
+    let mut rows = vec![title.into_any()];
     rows.extend(crate::layers::views(ui, &send, crate::layers::Place::Banner));
     rows.push(body.into_any());
-    rows.push(status_bar(ui, send.clone()).into_any());
+    rows.push(container(status_bar(ui, send.clone())).style(move |s| bars(s.width_full())).into_any());
     // Over them: the window's own layers, then the parts', then the strips the window is resized by.
     let mut all = vec![
         v_stack_from_iter(rows).style(|s| s.size_full()).into_any(),
@@ -216,6 +221,7 @@ fn register_menus() {
 /// VS Code's keys for the workbench: the command a key (or a chord of two) is bound to runs; Escape, bound to
 /// none, closes what is open over the window.
 pub(crate) fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
+    crate::layout_commands::key_seen(ui, key, m);
     // An editing command's key does nothing where no editor has the keys (the editor runs it itself).
     if crate::editor::editing::editor_only(key, m) {
         return;
@@ -238,6 +244,7 @@ fn title_bar(ui: Ui, send: Send) -> impl IntoView {
         |(n, _)| *n,
         move |(n, name)| {
             label(move || name)
+                .on_move(move |p| crate::layout_commands::title_at(n, p.x))
                 .on_click_stop(move |_| ui.menu.update(|m| *m = if *m == Some(n) { None } else { Some(n) }))
                 .on_event_cont(EventListener::PointerEnter, move |_| {
                     if ui.menu.get_untracked().is_some() {
@@ -322,21 +329,34 @@ fn title_bar(ui: Ui, send: Send) -> impl IntoView {
     })
 }
 
-/// The open menu, under its title, and a layer behind it that closes it on a click elsewhere.
+/// The open menu, under its title, and a layer behind it that closes it on a click elsewhere. It has the keys while
+/// it is open (`layout_commands::menu_key`: the arrows, Enter, Left and Right to the menus beside it).
 fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
+    let lit = ui.scope.create_rw_signal(None::<usize>);
     dyn_container(
         move || ui.menu.get(),
         move |open| {
-            let Some(n) = open else { return empty().into_any() };
+            let Some(n) = open else {
+                crate::layout_commands::menu_closed(ui);
+                return empty().into_any();
+            };
+            if lit.get_untracked().is_some() {
+                lit.set(None);
+            }
             let send = send.clone();
-            // Where the menu's title is: the icon (35) and the titles before it, each its text and 16 of padding.
-            let left = 35.0 + MENUS[..n].iter().map(|m| m.len() as f64 * 7.4 + 16.0).sum::<f64>();
+            let keys = send.clone();
+            let shown = crate::menus::rows(ui, crate::menus::Menu::TitleBar(n));
+            let live: Vec<bool> = shown.iter().map(|r| matches!(r, Row::Entry { command: Some(_), .. })).collect();
+            // Where the menu's title is, as laid out (before that: the icon's 35 and the titles before it, each its
+            // text and 16 of padding).
+            let left = crate::layout_commands::title_x(n)
+                .unwrap_or_else(|| 35.0 + MENUS[..n].iter().map(|m| m.len() as f64 * 7.4 + 16.0).sum::<f64>());
             let rows = crate::menus::rows(ui, crate::menus::Menu::TitleBar(n));
             let items = dyn_stack(
                 move || rows.clone().into_iter().enumerate().collect::<Vec<_>>(),
                 |(i, _)| *i,
-                move |(_, row): (usize, Row)| {
+                move |(i, row): (usize, Row)| {
                     let send = send.clone();
                     let Row::Entry { title, keys, command, .. } = row else {
                         return empty()
@@ -366,7 +386,11 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
                             .border_radius(4.0)
                             .margin_horiz(4.0);
                         if live {
-                            s.color(c.menu_fg).hover(|s| s.background(c.menu_selected).color(c.menu_selected_fg))
+                            s.color(c.menu_fg)
+                                .hover(|s| s.background(c.menu_selected).color(c.menu_selected_fg))
+                                .apply_if(lit.get() == Some(i), |s| {
+                                    s.background(c.menu_selected).color(c.menu_selected_fg)
+                                })
                         } else {
                             s.color(c.menu_fg.multiply_alpha(0.4))
                         }
@@ -391,9 +415,35 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
                     .font_size(13.0)
                     .selectable(false)
             });
-            stack((empty().on_click_stop(move |_| ui.menu.set(None)).style(|s| s.size_full()), items))
-                .style(|s| s.position(Position::Absolute).inset(0.0).size_full())
-                .into_any()
+            let layer = stack((empty().on_click_stop(move |_| ui.menu.set(None)).style(|s| s.size_full()), items))
+                .keyboard_navigable()
+                .on_event_stop(EventListener::KeyDown, move |e| {
+                    let Event::KeyDown(k) = e else { return };
+                    use crate::layout_commands::MenuKey;
+                    match crate::layout_commands::menu_key(&live, lit.get_untracked(), &k.key.logical_key) {
+                        MenuKey::Lit(to) => lit.set(to),
+                        MenuKey::Switch(by) => {
+                            ui.menu.set(Some((n as isize + by).rem_euclid(MENUS.len() as isize) as usize))
+                        }
+                        MenuKey::Run(row) => {
+                            // The command run says where the keys go.
+                            crate::layout_commands::menu_keys_kept();
+                            ui.menu.set(None);
+                            if let Some(Row::Entry { command: Some(id), .. }) = shown.get(row) {
+                                crate::commands::run(ui, &keys, id);
+                            }
+                        }
+                        MenuKey::Close => ui.menu.set(None),
+                        MenuKey::Nothing => {}
+                    }
+                })
+                .style(|s| s.position(Position::Absolute).inset(0.0).size_full());
+            // It has the keys while it is open (by a click too: the click took them from the editor), and gives
+            // them back when it closes.
+            crate::layout_commands::menu_took_keys();
+            let id = floem::View::id(&layer);
+            floem::action::exec_after(std::time::Duration::ZERO, move |_| id.request_focus());
+            layer.into_any()
         },
     )
     .style(move |s| {

@@ -27,7 +27,10 @@ if not d.value:
     sys.exit("no X display (is DISPLAY set and Xvfb running?)")
 
 if title:
-    found = subprocess.run(["xdotool", "search", "--name", f"^{title}$"], capture_output=True, text=True).stdout.split()
+    # The window of that title, or of the folder's name before it ("work · Code Arena", as the main window is called).
+    ids = subprocess.run(["xdotool", "search", "--name", f"{title}$"], capture_output=True, text=True).stdout.split()
+    name = lambda w: subprocess.run(["xdotool", "getwindowname", w], capture_output=True, text=True).stdout.strip()
+    found = [w for w in ids if name(w) == title or name(w).endswith(f" \u00b7 {title}")]
     if not found:
         sys.exit(f"no window named {title!r}")
     win = int(found[0])

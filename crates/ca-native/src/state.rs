@@ -549,6 +549,9 @@ impl Ui {
         let tabs: Vec<String> = self.tabs.with_untracked(|t| {
             t.iter().map(|t| &t.path).filter(|p| editors.contains(p) || kind_tabs.contains(p)).cloned().collect()
         });
+        // In Zen mode, the groups hidden before it (`layout_commands`): a start after it shows them.
+        let mut hidden: Vec<u32> = crate::layout_commands::kept_hidden(*self).into_iter().collect();
+        hidden.sort();
         json!({
             "editors": editors,
             "kind_tabs": kind_tabs,
@@ -556,7 +559,7 @@ impl Ui {
             "active": active,
             "groups": crate::editor::groups::kept(*self),
             "dock": self.dock.get_untracked().to_json(),
-            "hidden": self.hidden.with_untracked(|h| { let mut h: Vec<u32> = h.iter().copied().collect(); h.sort(); h }),
+            "hidden": hidden,
             "sizes": self.sizes.with_untracked(|m| {
                 m.iter().map(|(id, s)| (id.to_string(), json!(s.get_untracked()))).collect::<serde_json::Map<_, _>>()
             }),
