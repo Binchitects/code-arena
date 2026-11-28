@@ -613,7 +613,7 @@ pub static ALL: &[&Setting] = &[
         "\"\"",
         Scope::Language,
         "Formatting",
-        "The formatter used: its id here (prettier, ruff, black, gofmt, rustfmt, clang-format, dotnet-format, or one of config.json's \"formatters\"), or VS Code's extension id (esbenp.prettier-vscode). Empty: the first found for the language.",
+        "The formatter used: its id here (prettier, ruff, black, gofmt, rustfmt, clang-format, dotnet-format, or one of settings.json's \"formatters\"), or VS Code's extension id (esbenp.prettier-vscode). Empty: the first found for the language.",
     ),
     &row("editor.formatOnSave", Kind::Bool, "false", Scope::Language, "Formatting", "Formats a file as you save it."),
     &row(
