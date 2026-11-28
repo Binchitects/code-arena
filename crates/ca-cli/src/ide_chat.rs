@@ -24,12 +24,15 @@
 //! - `quotes.rs`: a message that quotes part of an answer (`send{quote}`): the quote put first for the model.
 //! - `rating.rs`: an answer's thumbs, kept with it and told to Arena (`rate`), and whether answers can be rated.
 //! - `rewind.rs`: what going back to a question would do (`rewind_preview`), and a question asked again.
+//! - `builtins.rs`: the chat's own commands (`/help`, `/model`, ... and `!command`) answered in the thread or by
+//!   opening a view (`ui_action`), and what follows each turn (`git.autoCommit`, the status line, the notices).
 
 use serde_json::Value;
 
-use crate::ide_ext::{Area, Ctx, Rule, Sent, Shared, kind};
+use crate::ide_ext::{Area, Ctx, Rule, Sent, Shared, TurnEnd, kind};
 use crate::session::Prepared;
 
+pub(crate) mod builtins;
 pub mod context;
 mod history;
 pub(crate) mod library;
@@ -75,6 +78,7 @@ impl Area for Here {
         v["queued"] = queue::items(sh);
         context::compact(sh, p, v);
         rating::state(sh, v);
+        builtins::state(sh, v);
     }
 
     fn status(sh: &Shared, p: Option<&Prepared>, v: &mut Value) {
@@ -83,6 +87,7 @@ impl Area for Here {
 
     fn start(sh: &Shared) {
         context::start(sh);
+        builtins::start(sh);
     }
 
     async fn idle(ctx: &mut Ctx<'_>, m: &Value) -> bool {
@@ -97,9 +102,19 @@ impl Area for Here {
         pieces::sent(sh, sent);
         history::sent(sh, sent);
         quotes::sent(sh, sent);
+        builtins::shape(sent);
+    }
+
+    async fn command(ctx: &mut Ctx<'_>, sent: &mut Sent) {
+        builtins::command(ctx, sent).await;
     }
 
     async fn before_turn(ctx: &mut Ctx<'_>, message: &str) {
         mentions::before_turn(ctx, message).await;
+        builtins::before_turn(ctx).await;
+    }
+
+    async fn after_turn(ctx: &mut Ctx<'_>, end: &TurnEnd) {
+        builtins::after_turn(ctx, end).await;
     }
 }
