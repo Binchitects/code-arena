@@ -136,7 +136,7 @@ pub fn mark_of(s: &Standing) -> Option<(&'static str, String, String)> {
     }
     s.chat.as_ref()?;
     let whose = s.account.as_deref().map(|a| format!(" ({a})")).unwrap_or_default();
-    Some(("check", "In step".into(), format!("In step with the chat in Arena{whose}: Arena has every message.")))
+    Some(("cloud", "In step".into(), format!("In step with the chat in Arena{whose}: Arena has every message.")))
 }
 
 /// The section's title: the account's chats.
@@ -392,8 +392,8 @@ pub fn section(ui: Ui, send: Send) -> AnyView {
         Row::key,
         move |row| match row {
             Row::Chat(c) => chat_row(ui, send.clone(), c).into_any(),
-            Row::Note(n) => note(ui, n).into_any(),
-            Row::More(n) => note(ui, format!("{n} more: find one by its title.")).into_any(),
+            Row::Note(n) => note(ui, n, true).into_any(),
+            Row::More(n) => note(ui, format!("{n} more: find one by its title."), false).into_any(),
         },
     )
     .style(|s| s.flex_col().width_full());
@@ -410,11 +410,17 @@ pub fn section(ui: Ui, send: Send) -> AnyView {
         .into_any()
 }
 
-/// A line in the list's place.
-fn note(ui: Ui, text: String) -> impl IntoView {
+/// A line in the list's place; `cut`: what comes before its first ": ", the whole of it on hover (an error's
+/// details).
+fn note(ui: Ui, text: String, cut: bool) -> impl IntoView {
     let t = ui.colors;
-    label(move || text.clone())
-        .style(move |s| s.padding_horiz(20.0).height(22.0).items_center().text_ellipsis().color(t.get().desc))
+    let short = text.split_once(": ").filter(|_| cut).map(|(a, _)| format!("{a}.")).unwrap_or_else(|| text.clone());
+    let line = label(move || short.clone())
+        .style(move |s| s.padding_horiz(20.0).height(22.0).items_center().text_ellipsis().color(t.get().desc));
+    tooltip(line, move || {
+        let text = text.clone();
+        label(move || text.clone())
+    })
 }
 
 fn chat_row(ui: Ui, send: Send, c: Chat) -> impl IntoView {
@@ -473,11 +479,13 @@ fn chat_row(ui: Ui, send: Send, c: Chat) -> impl IntoView {
 pub fn mark(ui: Ui) -> impl IntoView {
     let (t, st) = (ui.colors, state(ui));
     let now = create_memo(move |_| st.sync.with(|s| s.as_ref().and_then(mark_of)));
-    let glyph = create_memo(move |_| now.with(|m| m.as_ref().map(|m| m.0).unwrap_or("check")));
+    let glyph = create_memo(move |_| now.with(|m| m.as_ref().map(|m| m.0).unwrap_or("cloud")));
     let trouble = create_memo(move |_| glyph.get() == "warning");
     let body = h_stack((
         dyn_container(move || glyph.get(), |g| icon(g, 14.0)),
-        label(move || now.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_default())),
+        // In step is the cloud alone (its words on hover), so that the view's tabs keep their room.
+        label(move || now.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_default()))
+            .style(move |s| s.apply_if(glyph.get() == "cloud", |s| s.hide())),
     ))
     .on_click_stop(move |_| ui.reveal(View::Sessions))
     .style(move |s| {
@@ -569,7 +577,7 @@ mod tests {
     fn the_mark_says_the_worst_first_and_nothing_when_there_is_nothing_to_say() {
         let s = standing();
         let (g, short, full) = mark_of(&s).expect("in step");
-        assert_eq!((g, short.as_str()), ("check", "In step"));
+        assert_eq!((g, short.as_str()), ("cloud", "In step"));
         assert!(full.contains("(Ali)"));
         let waiting = Standing { waiting: 3, ..s.clone() };
         assert_eq!(mark_of(&waiting).map(|m| m.1), Some("3 to send".into()));
