@@ -689,6 +689,16 @@ Sections used:
   deletion in Code Studio ends it.
 - **Ports view.** The panel's Ports view says the folder is on this machine, so what its programs
   listen on is already at localhost.
+- **Help overlay.** Help: Show Help, or Help > Code Arena Help, opens a sheet at the window's right.
+  It says what Code Arena is for and what each of its 23 parts does, gives 21 step-by-step recipes
+  and lists the keys as the keymap has them now, with a link to the manual when the session gives
+  one. The '?' in a view's title, or Help: the Chat in the chat's More menu, opens it with that part
+  first. Escape, the cross or a click beside it closes it.
+- **About dialog.** Help: About and the activity bar's info button show the version, licence,
+  folder, log and source, with Copy, View Licence and Open Source. Help: View License and Help:
+  Documentation are in the Help menu too.
+- **Manage menu.** The gear now has Settings, Extensions and Keyboard Shortcuts beside the Command
+  Palette and the colour theme, each with its keys.
 
 
 ### :bug: Bugs fixed
