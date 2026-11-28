@@ -278,6 +278,11 @@ colors! {
     checkbox_bg: ["checkbox.background", "dropdown.background"], "#3C3C3C", "#FFFFFF";
     checkbox_fg: ["checkbox.foreground", "dropdown.foreground"], "#F0F0F0", "#616161";
     checkbox_border: ["checkbox.border", "dropdown.border"], "#6B6B6B", "#919191";
+    settings_header: ["settings.headerForeground"], "#E7E7E7", "#444444";
+    settings_modified: ["settings.modifiedItemIndicator"], "#0C7D9D", "#66AFE0";
+    settings_row_hover: ["settings.rowHoverBackground"], "#2A2D2E80", "#E8E8E880";
+    settings_dropdown_bg: ["settings.dropdownBackground", "dropdown.background"], "#3C3C3C", "#FFFFFF";
+    settings_dropdown_border: ["settings.dropdownBorder", "dropdown.border"], "#3C3C3C", "#CECECE";
     danger_bg: ["statusBarItem.errorBackground"], "#C72E0F", "#C72E0F";
     danger_fg: ["statusBarItem.errorForeground"], "#FFFFFF", "#FFFFFF";
     danger_hover: ["statusBarItem.errorHoverBackground"], "#DD3A1B", "#B02609";
