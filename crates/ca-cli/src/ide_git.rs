@@ -27,6 +27,14 @@
 //!   refused because the branch is not merged says `unmerged`; a publish, `published` (the remote); an undo, the
 //!   commit's `message`; an automatic fetch, `auto` (one is skipped, and says `skipped`, while another fetch, pull or push runs). A
 //!   fetch, pull, push or sync is stopped after ten minutes; a fetch or a push does not hold staging up.
+//! - `git_merge_info{repo, path}` → `git_merge_info{repo, path, unmerged, kind, current, incoming, base_text,
+//!   current_text, incoming_text, binary, too_large, error}`: what the merge editor shows of a file in conflict.
+//!   `unmerged` is whether the index still has the file in conflict; `kind` is `merge`, `rebase`, `cherry-pick` or
+//!   `revert` (what is under way); `current` and `incoming` are each `{name, commit, short, subject}` (the branch
+//!   or the commit's name, its hash, short and long, its first line); the three texts are git's stages of the file
+//!   (empty when a side has none).
+//! - `git_merge_complete{repo, path, anyway}` → the file staged and `git_done{repo, of, path}`, then `git_status`;
+//!   while it still has conflict markers (and `anyway` is not true), `git_failed{repo, of, path, error: "markers"}`.
 //!
 //! Once a face has asked a repository's status it is told again by itself whenever git's own files change (the
 //! index, HEAD, its log): a commit, a checkout or staging made in a terminal. The faces ask again after a file is
@@ -80,6 +88,8 @@ impl Area for Here {
         ("git_push", Rule::Side),
         ("git_sync", Rule::Side),
         ("git_undo_commit", Rule::Side),
+        ("git_merge_info", Rule::Side),
+        ("git_merge_complete", Rule::Side),
     ];
 
     fn start(sh: &Shared) {
@@ -623,6 +633,142 @@ fn show_working(dir: &Path, path: &str) -> Value {
     }
 }
 
+/// What is under way in a repository whose git folder this is: a rebase, a cherry-pick, a revert or a merge (the
+/// rebase first: a stopped rebase may leave a cherry-pick's file too).
+fn under_way(git_dir: &Path) -> &'static str {
+    if git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir() {
+        "rebase"
+    } else if git_dir.join("CHERRY_PICK_HEAD").is_file() {
+        "cherry-pick"
+    } else if git_dir.join("REVERT_HEAD").is_file() {
+        "revert"
+    } else {
+        "merge"
+    }
+}
+
+/// A file of git's folder, its first line trimmed (none: not there or empty).
+fn first_line(file: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let line = text.lines().next()?.trim().to_string();
+    (!line.is_empty()).then_some(line)
+}
+
+/// A commit as the merge editor names a side: `{name, commit, short, subject}`; the name given, else the branch git
+/// names the commit by, else its short hash.
+fn side_of(dir: &Path, rev: &str, name: Option<String>) -> Value {
+    let said = git(dir, &["log", "-1", "--format=%H%x00%h%x00%s", rev, "--"], None).unwrap_or_default();
+    let said = String::from_utf8_lossy(&said).trim_end().to_string();
+    let mut parts = said.splitn(3, '\0');
+    let (commit, short, subject) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    let name = name.filter(|n| !n.is_empty()).or_else(|| {
+        let named =
+            git(dir, &["name-rev", "--name-only", "--no-undefined", "--exclude=refs/tags/*", rev], None).ok()?;
+        let named = String::from_utf8_lossy(&named).trim().to_string();
+        (!named.is_empty()).then_some(named)
+    });
+    json!({"name": name.unwrap_or_else(|| short.to_string()), "commit": commit, "short": short, "subject": subject})
+}
+
+/// One of git's stages of a file in conflict (1 the base, 2 the current, 3 the incoming), as `git_shown` says a file.
+fn stage_of(dir: &Path, path: &str, n: u8) -> Value {
+    let object = format!(":{n}:./{}", path.trim_start_matches("./"));
+    let size = match git(dir, &["cat-file", "-s", &object], None) {
+        Ok(o) => String::from_utf8_lossy(&o).trim().parse::<u64>().unwrap_or(0),
+        Err(_) => return json!({"exists": false}),
+    };
+    if size > MOST_SHOWN {
+        return json!({"exists": true, "too_large": true});
+    }
+    match git(dir, &["cat-file", "blob", &object], None) {
+        Ok(bytes) => text_of(&bytes),
+        Err(_) => json!({"exists": false}),
+    }
+}
+
+/// What the merge editor shows of a file in conflict, as `git_merge_info` says it (without its type and keys).
+pub(crate) fn merge_info(dir: &Path, path: &str) -> Value {
+    if !path_ok(path) {
+        return json!({"unmerged": false, "error": "not a path inside the project"});
+    }
+    let git_dir = match where_is(dir) {
+        Ok(Some((_, _, g))) => g,
+        Ok(None) => return json!({"unmerged": false, "error": "the folder has no git repository"}),
+        Err(e) => return json!({"unmerged": false, "error": e}),
+    };
+    let listed = git(dir, &["--literal-pathspecs", "ls-files", "-u", "--", path.trim_start_matches("./")], None);
+    let unmerged = listed.is_ok_and(|o| !o.is_empty());
+    let kind = under_way(&git_dir);
+    let branch = git(dir, &["symbolic-ref", "--short", "-q", "HEAD"], None)
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o).trim().to_string());
+    let (incoming_rev, incoming_name) = match kind {
+        // The branch being rebased is the incoming side's; its commit being put on the other is REBASE_HEAD.
+        "rebase" => {
+            let head = ["rebase-merge", "rebase-apply"]
+                .iter()
+                .find_map(|d| first_line(&git_dir.join(d).join("head-name")))
+                .map(|h| h.trim_start_matches("refs/heads/").to_string());
+            ("REBASE_HEAD", head)
+        }
+        "cherry-pick" => ("CHERRY_PICK_HEAD", None),
+        "revert" => ("REVERT_HEAD", None),
+        _ => {
+            // "Merge branch 'feature'": the branch merged, as the message git wrote names it.
+            let named = first_line(&git_dir.join("MERGE_MSG")).and_then(|m| {
+                let rest =
+                    m.strip_prefix("Merge branch '").or_else(|| m.strip_prefix("Merge remote-tracking branch '"))?;
+                rest.split('\'').next().map(str::to_string)
+            });
+            ("MERGE_HEAD", named)
+        }
+    };
+    let current = side_of(dir, "HEAD", if kind == "rebase" { None } else { branch });
+    let incoming = if git(dir, &["rev-parse", "--verify", "-q", incoming_rev], None).is_ok() {
+        side_of(dir, incoming_rev, incoming_name)
+    } else {
+        json!({"name": incoming_name.unwrap_or_default(), "commit": "", "short": "", "subject": ""})
+    };
+    let mut v = json!({"unmerged": unmerged, "kind": kind, "current": current, "incoming": incoming,
+        "binary": false, "too_large": false});
+    for (n, key) in [(1, "base_text"), (2, "current_text"), (3, "incoming_text")] {
+        let stage = stage_of(dir, path, n);
+        for flag in ["binary", "too_large"] {
+            if stage[flag] == true {
+                v[flag] = json!(true);
+            }
+        }
+        v[key] = json!(stage["text"].as_str().unwrap_or(""));
+    }
+    v
+}
+
+/// Whether a text still has a conflict's markers: a `<<<<<<<` line, a `=======` after it, a `>>>>>>>` after that.
+pub(crate) fn has_markers(text: &str) -> bool {
+    let mut seen = 0;
+    for l in text.lines() {
+        match seen {
+            0 if l.starts_with("<<<<<<<") => seen = 1,
+            1 if l.starts_with("=======") => seen = 2,
+            2 if l.starts_with(">>>>>>>") => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Complete Merge: the file as saved staged, unless it still has markers and that was not asked for anyway.
+pub(crate) fn merge_complete(dir: &Path, path: &str, anyway: bool) -> Result<(), String> {
+    if !path_ok(path) {
+        return Err(format!("{path} is not a path inside the project"));
+    }
+    let file = dir.join(path.trim_start_matches("./"));
+    if !anyway && std::fs::read(&file).is_ok_and(|b| has_markers(&String::from_utf8_lossy(&b))) {
+        return Err("markers".into());
+    }
+    stage(dir, &[path.to_string()])
+}
+
 /// A request answered, on git's thread.
 fn answer(
     of: &str,
@@ -686,6 +832,23 @@ fn answer(
                 v["key"] = json!(key);
             }
             send(out, v);
+        }
+        "git_merge_info" => {
+            let path = m["path"].as_str().unwrap_or("");
+            let mut v = merge_info(dir, path);
+            v["type"] = json!("git_merge_info");
+            v["repo"] = json!(repo);
+            v["path"] = json!(path);
+            send(out, v);
+        }
+        "git_merge_complete" => {
+            let path = m["path"].as_str().unwrap_or("");
+            let reply = match merge_complete(dir, path, m["anyway"].as_bool().unwrap_or(false)) {
+                Ok(()) => json!({"type": "git_done", "repo": repo, "of": of, "op": of, "ok": true, "path": path}),
+                Err(e) => json!({"type": "git_failed", "repo": repo, "of": of, "path": path, "error": e}),
+            };
+            send(out, reply);
+            push_status(kept, out, repo, dir);
         }
         "git_init" => {
             if let Err(e) = git(dir, &["init", "--quiet"], None) {
@@ -1292,5 +1455,78 @@ mod tests {
         commit(d.path(), "Again", true, false).expect("commit");
         let said = answered(d.path(), json!({"type": "git_push", "force": false}));
         assert_eq!(done_of(&said)["error"], "Your repository has no remotes configured to publish to.");
+    }
+
+    /// A repository where `a.txt` was changed on `main` and on `feature`, each a commit of its own.
+    fn diverged() -> Option<tempfile::TempDir> {
+        let d = repo()?;
+        let p = d.path();
+        let commit = |text: &str, msg: &str| {
+            std::fs::write(p.join("a.txt"), text).expect("w");
+            git(p, &["add", "a.txt"], None).expect("add");
+            git(p, &["commit", "-q", "-m", msg], None).expect("commit");
+        };
+        commit("one\ntwo\nthree\n", "base");
+        git(p, &["checkout", "-q", "-b", "feature"], None).expect("branch");
+        commit("one\nTWO\nthree\n", "Shout two");
+        git(p, &["checkout", "-q", "main"], None).expect("main");
+        commit("one\n2\nthree\n", "Number two");
+        Some(d)
+    }
+
+    #[test]
+    fn a_merges_conflict_is_told_with_its_three_stages_and_completed_only_without_markers() {
+        let Some(d) = diverged() else { return };
+        let p = d.path();
+        assert!(git(p, &["merge", "-q", "feature"], None).is_err(), "the merge stops on the conflict");
+        let info = merge_info(p, "a.txt");
+        assert_eq!(info["unmerged"], true, "{info}");
+        assert_eq!(info["kind"], "merge");
+        assert_eq!(info["current"]["name"], "main");
+        assert_eq!(info["current"]["subject"], "Number two");
+        assert_eq!(info["incoming"]["name"], "feature");
+        assert_eq!(info["incoming"]["subject"], "Shout two");
+        assert!(info["incoming"]["short"].as_str().map(str::len).unwrap_or(0) >= 7);
+        assert_eq!(info["base_text"], "one\ntwo\nthree\n");
+        assert_eq!(info["current_text"], "one\n2\nthree\n");
+        assert_eq!(info["incoming_text"], "one\nTWO\nthree\n");
+        assert_eq!(info["binary"], false);
+        assert_eq!(merge_complete(p, "a.txt", false), Err("markers".into()), "the file still has its markers");
+        std::fs::write(p.join("a.txt"), "one\nTWO\nthree\n").expect("w");
+        merge_complete(p, "a.txt", false).expect("completed");
+        let after = merge_info(p, "a.txt");
+        assert_eq!(after["unmerged"], false, "staged, it is merged: {after}");
+        // Asked to anyway, a file with its markers is staged as it is.
+        git(p, &["checkout", "-m", "--", "a.txt"], None).expect("the conflict made again");
+        assert_eq!(merge_info(p, "a.txt")["unmerged"], true);
+        merge_complete(p, "a.txt", true).expect("completed with conflicts");
+        assert_eq!(merge_info(p, "a.txt")["unmerged"], false);
+        assert!(has_markers(&std::fs::read_to_string(p.join("a.txt")).expect("r")));
+        assert_eq!(merge_complete(p, "../out.txt", true).map_err(|e| e.contains("not a path")), Err(true));
+        assert!(!has_markers("a\n=======\nb\n"), "a lone ======= is text");
+        assert!(has_markers("<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n"));
+    }
+
+    #[test]
+    fn a_rebase_and_a_cherry_pick_say_what_is_under_way_and_whose_side_is_whose() {
+        let Some(d) = diverged() else { return };
+        let p = d.path();
+        let main =
+            String::from_utf8_lossy(&git(p, &["rev-parse", "--short", "main"], None).expect("rev")).trim().to_string();
+        git(p, &["checkout", "-q", "feature"], None).expect("feature");
+        assert!(git(p, &["rebase", "-q", "main"], None).is_err(), "the rebase stops on the conflict");
+        let info = merge_info(p, "a.txt");
+        assert_eq!(info["kind"], "rebase", "{info}");
+        assert_eq!(info["incoming"]["name"], "feature", "the branch being rebased comes in");
+        assert_eq!(info["incoming"]["subject"], "Shout two");
+        assert_eq!(info["current"]["short"], main.as_str(), "the commit it is put on is the current side");
+        assert_eq!(info["current_text"], "one\n2\nthree\n");
+        git(p, &["rebase", "--abort"], None).expect("abort");
+        git(p, &["checkout", "-q", "main"], None).expect("main");
+        assert!(git(p, &["cherry-pick", "feature"], None).is_err(), "the cherry-pick stops on the conflict");
+        let info = merge_info(p, "a.txt");
+        assert_eq!(info["kind"], "cherry-pick", "{info}");
+        assert_eq!(info["incoming"]["subject"], "Shout two");
+        assert_eq!(info["current"]["name"], "main");
     }
 }

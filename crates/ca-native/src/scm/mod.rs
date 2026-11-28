@@ -548,13 +548,15 @@ pub(crate) fn view_id(ui: Ui) -> Option<floem::ViewId> {
     state(ui).root.get_untracked()
 }
 
-/// A file's row opened: its changes in a tab, or the file itself (one git does not track yet, one in conflict).
+/// A file's row opened: its changes in a tab, or the file itself (one git does not track yet, one in conflict: in
+/// the merge editor when `git.mergeEditor` is on).
 fn open_row(ui: Ui, send: &Send, id: &str) {
     let Some(Row::File(g, path)) = row_of(id) else { return };
     let f =
         state(ui).status.with_untracked(|s| s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned()));
     let Some(f) = f else { return };
     match g {
+        Group::Merge if crate::settings::flag(ui, "git.mergeEditor", None) => crate::merge_editor::open(ui, send, path),
         Group::Merge => ui.open(path, send),
         Group::Changes if f.untracked => ui.open(path, send),
         Group::Changes => crate::editor::kinds::open(ui, &format!("{KIND}:w:{path}")),
@@ -793,7 +795,14 @@ fn row_actions(ui: Ui, send: &Send, node: &wt::Node) -> Vec<wt::Action> {
                 wt::act("go-to-file", "Open File", move || ui.open(&path, &s))
             };
             match g {
-                Group::Merge => vec![open, wt::act("add", "Stage Changes", move || stage(&s, &file()))],
+                Group::Merge => {
+                    let (m, p) = (s.clone(), path.clone());
+                    vec![
+                        open,
+                        wt::act("git-merge", "Resolve in Merge Editor", move || crate::merge_editor::open(ui, &m, &p)),
+                        wt::act("add", "Stage Changes", move || stage(&s, &file())),
+                    ]
+                }
                 Group::Staged => vec![open, wt::act("remove", "Unstage Changes", move || unstage(&s, &file()))],
                 Group::Changes => {
                     let (d, f2) = (s.clone(), file.clone());
