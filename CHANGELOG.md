@@ -1183,6 +1183,14 @@ Sections used:
 - **Source Control opens the compare editor.** Clicking a modified file now shows 'a.rs (Index) ↔
   a.rs' for Changes and 'a.rs (HEAD) ↔ a.rs (Index)' for Staged Changes, side by side. Both sides
   are read from git again after every status.
+- **Explorer decorations.** Files in the Explorer show their letters and colours as in VS Code:
+  the agent's A/M, git's M/U/A/R/D/C, and a count of errors and warnings in red or yellow (9+ past
+  nine); folders take the strongest colour inside them and a closed one shows a dot; a row's
+  tooltip says its path and each decoration. git.decorations.enabled,
+  problems.decorations.enabled, explorer.decorations.colors and explorer.decorations.badges turn
+  each part off.
+- **Ignored files dimmed.** What the repository ignores (a whole ignored folder and all in it) is
+  dimmed in the Explorer and its tooltip says Ignored.
 
 
 ### :bug: Bugs fixed
