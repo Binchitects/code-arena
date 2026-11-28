@@ -60,6 +60,9 @@ pub struct Model {
     pub focused: u64,
     /// One under the other (a column), else side by side (a row).
     pub vertical: bool,
+    /// The groups each in a window of their own (Move Editor into New Window), last in `groups`, in the order
+    /// made; the others are the editor's place in the window.
+    pub apart: Vec<u64>,
     next: u64,
     /// While a kept layout comes back: the groups each tab not come yet is kept for.
     waiting: HashMap<String, Vec<u64>>,
@@ -73,6 +76,7 @@ impl Default for Model {
             groups: vec![Group { id: 1, tabs: Vec::new(), active: None, share: 1.0 }],
             focused: 1,
             vertical: false,
+            apart: Vec::new(),
             next: 2,
             waiting: HashMap::new(),
             kept: None,
@@ -111,19 +115,31 @@ impl Model {
         self.current().active.clone()
     }
 
+    /// Whether a group is in a window of its own.
+    pub fn is_apart(&self, id: u64) -> bool {
+        self.apart.contains(&id)
+    }
+
+    /// How many groups the window's editor place has (they come first in `groups`).
+    pub fn main_len(&self) -> usize {
+        self.groups.len() - self.groups.iter().filter(|g| self.is_apart(g.id)).count()
+    }
+
     /// The shares made to come to the whole room again (evenly when they make nothing).
     fn even_out(&mut self) {
-        let sum: f64 = self.groups.iter().map(|g| g.share).filter(|s| s.is_finite() && *s > 0.0).sum();
-        let n = self.groups.len() as f64;
-        for g in &mut self.groups {
+        let main = self.main_len();
+        let sum: f64 = self.groups[..main].iter().map(|g| g.share).filter(|s| s.is_finite() && *s > 0.0).sum();
+        let n = main as f64;
+        for g in &mut self.groups[..main] {
             g.share = if sum > 0.0 && g.share.is_finite() && g.share > 0.0 { g.share / sum } else { 1.0 / n };
         }
     }
 
     /// The room shared evenly between the groups (a divider double-clicked).
     pub fn share_evenly(&mut self) {
-        let n = self.groups.len() as f64;
-        for g in &mut self.groups {
+        let main = self.main_len();
+        let n = main as f64;
+        for g in &mut self.groups[..main] {
             g.share = 1.0 / n;
         }
     }
@@ -132,7 +148,7 @@ impl Model {
     /// focused group's room is halved between the two. None when there is no tab to show or eight groups already.
     pub fn split(&mut self, after: bool) -> Option<u64> {
         let shown = self.shown()?;
-        if self.groups.len() >= MOST {
+        if self.groups.len() >= MOST || self.is_apart(self.focused) {
             return None;
         }
         let at = self.at();
@@ -148,7 +164,7 @@ impl Model {
 
     /// The layout turned to one under the other (true) or side by side, when there is a single group to split.
     pub fn orient(&mut self, vertical: bool) {
-        if self.groups.len() == 1 {
+        if self.main_len() == 1 {
             self.vertical = vertical;
         }
     }
@@ -169,17 +185,23 @@ impl Model {
         kept.tabs = all;
         kept.share = 1.0;
         self.groups = vec![kept];
+        self.apart.clear();
     }
 
     /// A group gone (never the last one): the group before it focused when it was, else the one after.
+    /// A group in a window of its own goes as well (the window closes), the last group of the editor's place
+    /// focused when it was.
     pub fn remove(&mut self, id: u64) {
-        if self.groups.len() < 2 {
+        let apart = self.is_apart(id);
+        if !apart && self.main_len() < 2 {
             return;
         }
         let Some(at) = self.groups.iter().position(|g| g.id == id) else { return };
         self.groups.remove(at);
+        self.apart.retain(|a| *a != id);
         if self.focused == id {
-            self.focused = self.groups[at.saturating_sub(1)].id;
+            let main = self.main_len();
+            self.focused = self.groups[if apart { main - 1 } else { at.saturating_sub(1).min(main - 1) }].id;
         }
         self.even_out();
     }
@@ -202,10 +224,13 @@ impl Model {
     /// group there. The tab is shown and focused where it went; a group left with no tab goes.
     pub fn move_shown(&mut self, forward: bool, order: &[String]) -> bool {
         let Some(path) = self.shown() else { return false };
+        if self.is_apart(self.focused) {
+            return false;
+        }
         let at = self.at();
         let from = self.focused;
         let to = if forward {
-            match self.groups.get(at + 1) {
+            match self.groups.get(at + 1).filter(|_| at + 1 < self.main_len()) {
                 Some(g) => g.id,
                 None if self.groups.len() < MOST && self.current().tabs.len() > 1 => match self.split(true) {
                     Some(id) => id,
@@ -234,17 +259,18 @@ impl Model {
 
     /// The n-th group (from 0) focused; one past the last splits the focused group to the right (or below).
     pub fn focus_at(&mut self, n: usize) -> bool {
-        if let Some(g) = self.groups.get(n) {
+        if let Some(g) = self.groups.get(n).filter(|_| n < self.main_len()) {
             let changed = self.focused != g.id;
             self.focused = g.id;
             return changed;
         }
-        n == self.groups.len() && self.split(true).is_some()
+        n == self.main_len() && self.split(true).is_some()
     }
 
     /// The next group focused (or the one before), round from the last to the first.
     pub fn focus_step(&mut self, forward: bool, round: bool) -> bool {
-        let (at, n) = (self.at(), self.groups.len());
+        let n = self.main_len();
+        let at = self.at().min(n - 1);
         let to = match (forward, round) {
             (true, _) if at + 1 < n => at + 1,
             (false, _) if at > 0 => at - 1,
@@ -263,7 +289,7 @@ impl Model {
     /// The divider after the i-th group moved to a place (a share of the room from its start); each of the two
     /// groups beside it keeps at least its least.
     pub fn drag(&mut self, i: usize, to: f64) {
-        if i + 1 >= self.groups.len() || !to.is_finite() {
+        if i + 1 >= self.main_len() || !to.is_finite() {
             return;
         }
         let start = self.boundary(i) - self.groups[i].share;
@@ -380,8 +406,8 @@ impl Model {
 
     /// What is kept with the layout; `places` gives a tab's caret and scroll in a group.
     pub fn to_json(&self, places: impl Fn(u64, &str) -> Option<Place>) -> Value {
-        let list: Vec<Value> = self
-            .groups
+        let main = self.main_len();
+        let list: Vec<Value> = self.groups[..main]
             .iter()
             .map(|g| {
                 let kept: serde_json::Map<String, Value> = g
@@ -392,7 +418,48 @@ impl Model {
                 json!({"tabs": g.tabs, "active": g.active, "share": g.share, "places": kept})
             })
             .collect();
-        json!({"list": list, "focused": self.at(), "vertical": self.vertical})
+        json!({"list": list, "focused": self.at().min(main - 1), "vertical": self.vertical})
+    }
+
+    /// A group's tab moved into a window of its own: a new group, last, holding it alone and shown, focused; the
+    /// group it left shows its neighbour (and goes when it had no other tab, unless it is the editor's last).
+    /// None when there are eight groups already or the group has not the tab.
+    pub fn detach(&mut self, from: u64, path: &str) -> Option<u64> {
+        if self.groups.len() >= MOST || !self.group(from).is_some_and(|g| g.tabs.iter().any(|t| t == path)) {
+            return None;
+        }
+        let id = self.next;
+        self.next += 1;
+        self.groups.push(Group { id, tabs: vec![path.to_string()], active: Some(path.to_string()), share: 1.0 });
+        self.apart.push(id);
+        self.drop_tab(from, path);
+        self.focused = id;
+        Some(id)
+    }
+
+    /// A window's group given back to the editor's place: its tabs join `to` (the editor's group the keys were
+    /// last in, else its first), in the window's order (`order`), the one it showed shown there and focused.
+    pub fn attach(&mut self, id: u64, to: u64, order: &[String]) {
+        if !self.is_apart(id) {
+            return;
+        }
+        let Some(gone) = self.group(id).cloned() else { return };
+        let main = self.main_len();
+        let to = self.groups[..main].iter().find(|g| g.id == to).unwrap_or(&self.groups[0]).id;
+        if let Some(g) = self.group_mut(to) {
+            for p in &gone.tabs {
+                if !g.tabs.contains(p) {
+                    g.tabs.push(p.clone());
+                }
+            }
+            g.tabs.sort_by_key(|p| order.iter().position(|o| o == p).unwrap_or(usize::MAX));
+            if gone.active.is_some() {
+                g.active = gone.active.clone();
+            }
+        }
+        self.groups.retain(|g| g.id != id);
+        self.apart.retain(|a| *a != id);
+        self.focused = to;
     }
 
     /// A kept layout read (`to_json`'s): the groups are there at once, empty, and wait for their tabs (the tabs
@@ -621,7 +688,12 @@ pub fn holder(ui: Ui, path: &str) -> u64 {
 pub fn open_to_side(ui: Ui, path: &str, send: &Send) {
     let open = ui.tab(path).is_some();
     change(ui, |m, order| {
-        if m.groups.len() == 1 {
+        // From a window of its own: beside the editor's last group.
+        let n = m.main_len();
+        if m.is_apart(m.focused) {
+            m.focused = m.groups[n - 1].id;
+        }
+        if n == 1 {
             if m.split(true).is_none() {
                 return;
             }
@@ -631,7 +703,7 @@ pub fn open_to_side(ui: Ui, path: &str, send: &Send) {
                 g.active = Some(path.to_string());
             }
         } else {
-            let to = (m.at() + 1).min(m.groups.len() - 1);
+            let to = (m.at() + 1).min(n - 1);
             let to = if to == m.at() { m.at().saturating_sub(1) } else { to };
             m.focused = m.groups[to].id;
             if open && let Some(g) = m.group_mut(m.focused) {
@@ -738,8 +810,10 @@ fn settle(ui: Ui) {
 /// The groups drawn: a row or a column of them, a divider between two, the question before a tab closes over all.
 pub fn area(ui: Ui) -> impl IntoView {
     let g = groups(ui);
-    let ids =
-        floem::reactive::create_memo(move |_| g.model.with(|m| m.groups.iter().map(|g| g.id).collect::<Vec<_>>()));
+    // Not the groups in windows of their own (`window.rs` draws each).
+    let ids = floem::reactive::create_memo(move |_| {
+        g.model.with(|m| m.groups.iter().map(|g| g.id).filter(|id| !m.is_apart(*id)).collect::<Vec<_>>())
+    });
     let vertical = floem::reactive::create_memo(move |_| g.model.with(|m| m.vertical));
     let row = dyn_stack(move || ids.get(), |id| *id, move |id| one(ui, id))
         .on_resize(move |r| {
@@ -752,7 +826,8 @@ pub fn area(ui: Ui) -> impl IntoView {
             let s = s.size_full().min_width(0.0).min_height(0.0);
             if vertical.get() { s.flex_col() } else { s.flex_row() }
         });
-    stack((row, super::tabs::close_question(ui))).style(|s| s.size_full().min_width(0.0).min_height(0.0))
+    let here = floem::reactive::create_memo(move |_| g.model.with(|m| !m.is_apart(m.focused)));
+    stack((row, super::tabs::close_question(ui, here))).style(|s| s.size_full().min_width(0.0).min_height(0.0))
 }
 
 /// What a group's parts are drawn from: its own tabs, the tab it shows, whether it has the keys.
@@ -764,11 +839,12 @@ pub struct Shown {
     pub focused: Memo<bool>,
 }
 
-fn one(ui: Ui, id: u64) -> impl IntoView {
+/// What a group's parts are drawn from, followed from the groups.
+pub fn shown_of(ui: Ui, id: u64) -> Shown {
     use floem::reactive::create_memo;
     let g = groups(ui);
     // A group gone keeps what it showed until it is taken away (nothing in it is drawn again meanwhile).
-    let shown = Shown {
+    Shown {
         id,
         tabs: create_memo(move |was: Option<&Vec<String>>| {
             g.model.with(|m| m.group(id).map(|g| g.tabs.clone())).or_else(|| was.cloned()).unwrap_or_default()
@@ -777,7 +853,13 @@ fn one(ui: Ui, id: u64) -> impl IntoView {
             g.model.with(|m| m.group(id).map(|g| g.active.clone())).or_else(|| was.cloned()).flatten()
         }),
         focused: create_memo(move |_| g.model.with(|m| m.focused == id)),
-    };
+    }
+}
+
+fn one(ui: Ui, id: u64) -> impl IntoView {
+    use floem::reactive::create_memo;
+    let g = groups(ui);
+    let shown = shown_of(ui, id);
     let at = create_memo(move |was: Option<&usize>| {
         g.model.with(|m| m.groups.iter().position(|g| g.id == id)).or(was.copied()).unwrap_or(0)
     });
@@ -1049,7 +1131,8 @@ pub fn register(ui: Ui, _send: &Send) {
 fn close_group(ui: Ui) {
     let g = groups(ui);
     let m = g.model.get_untracked();
-    if m.groups.len() < 2 {
+    let apart = m.is_apart(m.focused);
+    if m.groups.len() < 2 || (!apart && m.main_len() < 2) {
         return;
     }
     let here = m.current().clone();
@@ -1059,7 +1142,13 @@ fn close_group(ui: Ui) {
     let keep: Vec<String> = only.iter().filter(|p| dirty(p)).cloned().collect();
     change(ui, |m, order| {
         let at = m.at();
-        let to = m.groups[if at == 0 { 1 } else { at - 1 }].id;
+        // A window's group gives what is kept to the editor's last group.
+        let to = match (apart, at) {
+            (true, _) => m.main_len() - 1,
+            (false, 0) => 1,
+            (false, at) => at - 1,
+        };
+        let to = m.groups[to].id;
         if let Some(g) = m.group_mut(to) {
             g.tabs.extend(keep.iter().cloned());
             g.tabs.sort_by_key(|p| order.iter().position(|o| o == p).unwrap_or(usize::MAX));
@@ -1286,5 +1375,52 @@ mod tests {
         m.split(true);
         m.rename(|p| crate::state::moved_path(p, "src", "lib"));
         assert!(m.groups.iter().all(|g| g.tabs == paths(&["lib/a.rs"]) && g.active.as_deref() == Some("lib/a.rs")));
+    }
+
+    #[test]
+    fn an_editor_moved_into_a_window_is_a_group_apart_that_gives_its_tabs_back() {
+        let mut m = Model::default();
+        m.reconcile(&paths(&["a", "b", "c"]), Some("b"));
+        let w = m.detach(1, "b").expect("a window");
+        assert_eq!((m.groups[0].tabs.clone(), m.groups[0].active.as_deref()), (paths(&["a", "c"]), Some("c")));
+        assert_eq!((m.focused, m.apart.clone(), m.main_len()), (w, vec![w], 1));
+        assert_eq!(m.shown().as_deref(), Some("b"));
+        // The window's group is no part of the editor's place: no split, no move, no divider, not kept.
+        assert_eq!(m.split(true), None);
+        assert!(!m.move_shown(true, &paths(&["a", "b", "c"])));
+        assert_eq!(m.to_json(|_, _| None)["list"].as_array().map(Vec::len), Some(1));
+        assert!(m.focus_step(true, true));
+        assert_eq!(m.focused, 1, "focusing the next group stays in the editor's place");
+        m.focused = w;
+        // A file opened while the window has the keys joins it; the window's order is the tabs'.
+        m.reconcile(&paths(&["a", "b", "c", "d"]), Some("d"));
+        assert_eq!(m.group(w).expect("the window's group").tabs, paths(&["b", "d"]));
+        m.focused = w;
+        m.reconcile(&paths(&["a", "b", "c", "d"]), Some("b"));
+        m.attach(w, 1, &paths(&["a", "b", "c", "d"]));
+        assert_eq!((m.groups.len(), m.apart.len(), m.focused), (1, 0, 1));
+        assert_eq!((m.groups[0].tabs.clone(), m.shown().as_deref()), (paths(&["a", "b", "c", "d"]), Some("b")));
+    }
+
+    #[test]
+    fn a_window_whose_last_tab_closes_goes_and_the_editor_keeps_an_empty_group() {
+        let mut m = Model::default();
+        m.reconcile(&paths(&["a"]), Some("a"));
+        let w = m.detach(1, "a").expect("a window");
+        // The editor's last group stays, empty.
+        assert_eq!((m.groups.len(), m.main_len(), m.groups[0].tabs.len()), (2, 1, 0));
+        m.reconcile(&paths(&["a"]), Some("a"));
+        assert_eq!(m.group(w).map(|g| g.tabs.clone()), Some(paths(&["a"])));
+        m.reconcile(&[], None);
+        assert_eq!((m.groups.len(), m.apart.len(), m.focused), (1, 0, 1));
+        // Splits fill the editor's place before a window; the window comes last and its share is none of theirs.
+        m.reconcile(&paths(&["a", "b"]), Some("a"));
+        let w = m.detach(1, "b").expect("a window");
+        m.focused = 1;
+        let s = m.split(true).expect("a split");
+        assert_eq!(m.groups.iter().map(|g| g.id).collect::<Vec<_>>(), vec![1, s, w]);
+        m.remove(s);
+        assert_eq!(m.groups[0].share, 1.0);
+        assert_eq!(m.detach(1, "zzz"), None);
     }
 }

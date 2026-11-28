@@ -73,25 +73,31 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
                 .font_size(13.0)
                 .color(c.fg)
                 .background(c.editor_bg)
-                // VS Code's hovers and placeholders, in place of Floem's own light ones.
-                .class(floem::views::TooltipClass, |s| {
-                    s.border(1.0)
-                        .border_color(c.widget_border)
-                        .border_radius(4.0)
-                        .padding_horiz(8.0)
-                        .padding_vert(4.0)
-                        .margin(6.0)
-                        .background(c.widget)
-                        .color(c.fg)
-                        .font_size(12.0)
-                        .box_shadow_blur(8.0)
-                        .box_shadow_h_offset(0.0)
-                        .box_shadow_v_offset(2.0)
-                        .box_shadow_color(c.shadow)
-                })
-                .class(floem::views::PlaceholderTextClass, |s| s.color(c.placeholder).font_size(13.0))
+                .apply(hovers(&c))
                 .apply(crate::accessibility::rings(ui, floem::style::Style::new()))
         })
+}
+
+/// VS Code's hovers and placeholders, in place of Floem's own light ones (for a window's root).
+pub(crate) fn hovers(c: &crate::colors::Colors) -> floem::style::Style {
+    let c = *c;
+    floem::style::Style::new()
+        .class(floem::views::TooltipClass, |s| {
+            s.border(1.0)
+                .border_color(c.widget_border)
+                .border_radius(4.0)
+                .padding_horiz(8.0)
+                .padding_vert(4.0)
+                .margin(6.0)
+                .background(c.widget)
+                .color(c.fg)
+                .font_size(12.0)
+                .box_shadow_blur(8.0)
+                .box_shadow_h_offset(0.0)
+                .box_shadow_v_offset(2.0)
+                .box_shadow_color(c.shadow)
+        })
+        .class(floem::views::PlaceholderTextClass, |s| s.color(c.placeholder).font_size(13.0))
 }
 
 /// The ids of the workbench's own commands that other parts name (VS Code's, and the old Code Arena's where only it
