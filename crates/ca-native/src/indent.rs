@@ -10,8 +10,10 @@
 //! Display Size, Detect Indentation from Content, or Convert Indentation to Spaces or Tabs. What is picked stays
 //! with the file until one of those three settings changes for its language, when the file's indentation is worked
 //! out again. Its line ending ("LF", "CRLF") is the one most of its lines end with, or `files.eol` for a file with
-//! one line (`auto`: the system's); a click changes every line's, as one step Undo takes back. The encoding item
-//! says what is so: only UTF-8 is read and written.
+//! one line (`auto`: the system's); a click picks another, and the file is saved with every line ending so
+//! (`written`). Floem 0.2 fixes a document's ending when it is made and writes what is typed and pasted with it,
+//! so the text on screen keeps its own until the file is opened again, and Undo does not take the pick back. The
+//! encoding item says what is so: only UTF-8 is read and written.
 //!
 //! What every part has (`register`, `take`) is said in `ext.rs`.
 
@@ -198,19 +200,15 @@ fn change(edits: Vec<(usize, usize, String)>, sels: &[Sel]) -> Option<Change> {
     Some(Change { edits, sels })
 }
 
-/// Every line's ending made `to`.
-pub fn change_eol(text: &str, sels: &[Sel], to: Eol) -> Option<Change> {
-    let bytes = text.as_bytes();
-    let mut edits = Vec::new();
-    for (at, _) in text.match_indices('\n') {
-        let cr = at > 0 && bytes[at - 1] == b'\r';
-        match to {
-            Eol::Lf if cr => edits.push((at - 1, at + 1, "\n".to_string())),
-            Eol::CrLf if !cr => edits.push((at, at + 1, "\r\n".to_string())),
-            _ => {}
-        }
+/// The text with every line ending `to` (it is given back as it is when they all are).
+pub fn with_eol(text: String, to: Eol) -> String {
+    let lf = text.bytes().filter(|b| *b == b'\n').count();
+    let crlf = text.matches("\r\n").count();
+    match to {
+        Eol::Lf if crlf > 0 => text.replace("\r\n", "\n"),
+        Eol::CrLf if crlf < lf => text.replace("\r\n", "\n").replace('\n', "\r\n"),
+        _ => text,
     }
-    change(edits, sels)
 }
 
 /// How many columns a line's leading spaces and tabs take, a tab to the next stop.
@@ -312,9 +310,15 @@ pub fn unit(ui: Ui, path: &str) -> (String, usize) {
     (i.unit(), i.size)
 }
 
-/// A file's line ending: what Enter puts in.
-pub fn eol(ui: Ui, path: &str) -> &'static str {
-    doc_of(ui, path).1.text()
+/// A file's line ending.
+pub fn eol(ui: Ui, path: &str) -> Eol {
+    doc_of(ui, path).1
+}
+
+/// A file's text as it is saved: every line ending its own. (A document's ending is fixed when it is made in Floem
+/// 0.2, which writes what is typed and pasted with it, so the one picked or `files.eol`'s is put in here.)
+pub fn written(ui: Ui, path: &str, text: String) -> String {
+    with_eol(text, eol(ui, path))
 }
 
 /// A tab drawn as wide as the file's indentation says, in every editor of it.
@@ -342,16 +346,16 @@ fn keep(ui: Ui, path: &str, doc: Doc) {
     draw_tabs(ui, path, doc.indent.size);
 }
 
-/// A file's text taken in: a tab opened is looked at; one read again keeps what was picked for it.
-fn opened(ui: Ui, path: &str) {
+/// A file's text taken in: a tab opened is looked at; one read again keeps what was picked for it, and takes the
+/// line ending the file has on disk (its document keeps its own, see `written`).
+fn opened(ui: Ui, path: &str, text: &str) {
     let Some(tab) = ui.tab(path).filter(|t| t.is_file()) else { return };
     let doc = Rc::as_ptr(&tab.doc) as *const () as usize;
-    let text = tab.text();
     let kept = ui.state::<Docs>().docs.with_untracked(|d| d.get(path).copied()).filter(|d| d.doc == doc);
     let said = said(ui, path);
     let new = match kept {
-        Some(k) => Doc { eol: eol_of(&text, k.eol), ..k },
-        None => Doc { indent: resolve(&text, said), eol: eol_of(&text, new_eol(ui, path)), said, doc },
+        Some(k) => Doc { eol: eol_of(text, k.eol), ..k },
+        None => Doc { indent: resolve(text, said), eol: eol_of(text, new_eol(ui, path)), said, doc },
     };
     keep(ui, path, new);
 }
@@ -482,14 +486,25 @@ fn pick_eol(ui: Ui) {
         .active(if now == Eol::CrLf { "crlf" } else { "lf" })
         .open(ui, move |it| {
             let Some(it) = it else { return };
-            let to = if it.id == "crlf" { Eol::CrLf } else { Eol::Lf };
-            edit(ui, |t, s| change_eol(t, s, to));
-            let (indent, _) = doc_of(ui, &path);
-            let old = ui.state::<Docs>().docs.with_untracked(|d| d.get(&path).copied());
-            let doc = old.map_or(0, |d| d.doc);
-            let said = old.map_or_else(|| said(ui, &path), |d| d.said);
-            keep(ui, &path, Doc { indent, eol: to, said, doc });
+            set_eol(ui, &path, if it.id == "crlf" { Eol::CrLf } else { Eol::Lf });
         });
+}
+
+/// A file's line ending picked: what it is saved with, so the file has changes to save when it is another.
+fn set_eol(ui: Ui, path: &str, to: Eol) {
+    let (indent, now) = doc_of(ui, path);
+    if now == to {
+        return;
+    }
+    let old = ui.state::<Docs>().docs.with_untracked(|d| d.get(path).copied());
+    let doc = old.map_or(0, |d| d.doc);
+    let said = old.map_or_else(|| said(ui, path), |d| d.said);
+    keep(ui, path, Doc { indent, eol: to, said, doc });
+    if let Some(tab) = ui.tab(path)
+        && !tab.dirty.get_untracked()
+    {
+        tab.dirty.set(true);
+    }
 }
 
 fn pick_encoding(ui: Ui) {
@@ -557,7 +572,9 @@ pub fn register(_ui: Ui, _send: &Send) {
     });
 
     crate::ext::after("indent", |ui, m, _| match m["type"].as_str() {
-        Some("file") => opened(ui, m["path"].as_str().unwrap_or("")),
+        Some("file") if m["text"].is_string() => {
+            opened(ui, m["path"].as_str().unwrap_or(""), m["text"].as_str().unwrap_or(""))
+        }
         Some("settings") => settings_changed(ui),
         _ => {}
     });
@@ -608,12 +625,11 @@ mod tests {
     }
 
     #[test]
-    fn line_endings_change_in_one_change_and_the_carets_follow() {
-        let (t, s) = run("a\r\nb\r\nc", change_eol("a\r\nb\r\nc", &[Sel::caret(6)], Eol::Lf));
-        assert_eq!((t.as_str(), s), ("a\nb\nc", vec![Sel::caret(4)]));
-        let (t, s) = run("a\nb\r\nc", change_eol("a\nb\r\nc", &[Sel::new(0, 5)], Eol::CrLf));
-        assert_eq!((t.as_str(), s), ("a\r\nb\r\nc", vec![Sel::new(0, 6)]));
-        assert!(change_eol("a\nb", &[], Eol::Lf).is_none());
+    fn a_text_is_written_with_one_line_ending() {
+        assert_eq!(with_eol("a\r\nb\nc\r\n".into(), Eol::Lf), "a\nb\nc\n");
+        assert_eq!(with_eol("a\nb\r\nc".into(), Eol::CrLf), "a\r\nb\r\nc");
+        assert_eq!(with_eol("a\r\nb".into(), Eol::CrLf), "a\r\nb");
+        assert_eq!(with_eol("one".into(), Eol::CrLf), "one");
     }
 
     #[test]
@@ -641,6 +657,30 @@ mod tests {
     }
 
     #[test]
+    fn a_line_ending_picked_is_what_the_file_is_saved_with() {
+        use serde_json::json;
+        let ui = Ui::new();
+        let told = Rc::new(std::cell::RefCell::new(Vec::<Value>::new()));
+        let send: Send = {
+            let to = told.clone();
+            Rc::new(move |v: Value| to.borrow_mut().push(v))
+        };
+        register(ui, &send);
+        let path = "/tmp/eol-test.txt";
+        ui.take(&json!({"type": "file", "path": path, "text": "a\r\nb\r\n", "modified": 1}), &send);
+        assert_eq!(eol(ui, path), Eol::CrLf);
+        set_eol(ui, path, Eol::Lf);
+        let tab = ui.tab(path).expect("open");
+        assert!(tab.dirty.get_untracked(), "another ending is a change to save");
+        ui.save_tab(path, &send);
+        assert_eq!(told.borrow().last().expect("saved")["text"], "a\nb\n");
+        // A new empty file: files.eol's.
+        let empty = "/tmp/eol-empty.txt";
+        ui.take(&json!({"type": "file", "path": empty, "text": "", "modified": 1}), &send);
+        assert_eq!(eol(ui, empty), if cfg!(windows) { Eol::CrLf } else { Eol::Lf });
+    }
+
+    #[test]
     fn a_file_opened_is_looked_at_and_what_is_picked_stays_until_its_settings_change() {
         use serde_json::json;
         let ui = Ui::new();
@@ -649,11 +689,11 @@ mod tests {
         let path = "/tmp/indent-test.py";
         ui.take(&json!({"type": "file", "path": path, "text": "if a:\r\n  b\r\n", "modified": 1}), &send);
         assert_eq!(indent(ui, path), Indent { spaces: true, size: 2 });
-        assert_eq!((unit(ui, path), eol(ui, path)), (("  ".to_string(), 2), "\r\n"));
+        assert_eq!((unit(ui, path), eol(ui, path)), (("  ".to_string(), 2), Eol::CrLf));
         // Picked: kept when the file is read again, and when other settings change.
         choose(ui, path, Indent { spaces: false, size: 8 });
         ui.take(&json!({"type": "file", "path": path, "text": "if a:\n  b\n", "modified": 2}), &send);
-        assert_eq!((indent(ui, path), eol(ui, path)), (Indent { spaces: false, size: 8 }, "\n"));
+        assert_eq!((indent(ui, path), eol(ui, path)), (Indent { spaces: false, size: 8 }, Eol::Lf));
         let settings = |values: Value| {
             json!({"type": "settings", "values": values, "by_lang": {}, "sources": {}, "problems": [], "files": {}})
         };

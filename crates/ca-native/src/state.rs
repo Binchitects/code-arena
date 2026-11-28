@@ -476,7 +476,10 @@ impl Ui {
         match self.tab(path) {
             // A tab of a kind is saved its kind's way.
             Some(tab) if tab.kind.is_some() => crate::editor::kinds::save(*self, send, &tab),
-            Some(tab) if tab.is_file() => send(json!({"type": "save", "path": path, "text": tab.text()})),
+            // Written with the file's line ending (`indent.rs`), which its document cannot change.
+            Some(tab) if tab.is_file() => {
+                send(json!({"type": "save", "path": path, "text": crate::indent::written(*self, path, tab.text())}))
+            }
             _ => {}
         }
     }
