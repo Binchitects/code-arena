@@ -17,9 +17,9 @@ use crate::app::App;
 const FOLLOW: Duration = Duration::from_secs(600);
 
 /// Whether this Arena has `f` for the person, and if not, why in a line.
-pub async fn usable(app: &App, arena: &ArenaClient, f: Feature) -> Result<(), String> {
+pub async fn usable(paths: &ca_core::Paths, arena: &ArenaClient, f: Feature) -> Result<(), String> {
     let caps = arena
-        .capabilities_kept(&ca_arena::Kept::file(&app.paths.servers_dir(), arena.base()))
+        .capabilities_kept(&ca_arena::Kept::file(&paths.servers_dir(), arena.base()))
         .await
         .map_err(|e| e.to_string())?;
     let what = if f == Feature::AutomationAgents { "Agent Studio's agents" } else { "scheduled tasks" };
@@ -27,6 +27,9 @@ pub async fn usable(app: &App, arena: &ArenaClient, f: Feature) -> Result<(), St
         State::On => Ok(()),
         State::Absent => Err(format!("This Arena does not give Code Arena its {what} (Arena 8.1 on does).")),
         State::Off(w) | State::Denied(w) if !w.is_empty() => Err(w),
+        State::Unknown(w) if !w.is_empty() => {
+            Err(format!("This Arena's {what} cannot be used now: {}.", w.trim_end_matches('.')))
+        }
         s => Err(format!("This Arena's {what} cannot be used now: {s:?}.")),
     }
 }
@@ -102,7 +105,7 @@ pub async fn agents_command(app: &App, rest: &str, notices: &crate::session::Not
         Ok(a) => a,
         Err(e) => return e.to_string(),
     };
-    if let Err(w) = usable(app, &arena, Feature::AutomationAgents).await {
+    if let Err(w) = usable(&app.paths, &arena, Feature::AutomationAgents).await {
         return w;
     }
     let list = match arena.agents().await {
@@ -151,7 +154,7 @@ pub async fn tasks_command(app: &App, rest: &str) -> String {
 }
 
 async fn tasks_said(arena: &ArenaClient, app: &App, rest: &str) -> Result<String, String> {
-    usable(app, arena, Feature::AutomationScheduled).await?;
+    usable(&app.paths, arena, Feature::AutomationScheduled).await?;
     let list = arena.scheduled().await.map_err(|e| e.to_string())?;
     let (word, which) = rest.split_once(char::is_whitespace).map(|(a, b)| (a, b.trim())).unwrap_or((rest, ""));
     let chosen =
@@ -203,7 +206,7 @@ async fn tasks_said(arena: &ArenaClient, app: &App, rest: &str) -> Result<String
 /// `code-arena agents [run NAME [TEXT…] [--field K=V]…]`: the run waited for, its answer printed.
 pub async fn agents_cli(app: &App, args: &[String]) -> anyhow::Result<i32> {
     let arena = app.arena()?;
-    if let Err(w) = usable(app, &arena, Feature::AutomationAgents).await {
+    if let Err(w) = usable(&app.paths, &arena, Feature::AutomationAgents).await {
         eprintln!("{w}");
         return Ok(1);
     }
