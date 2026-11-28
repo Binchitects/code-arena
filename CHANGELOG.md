@@ -893,6 +893,18 @@ Sections used:
   thread and the list are drawn again. The session's notices (Arena out of reach and back, messages
   taken in) show once, as toasts. After each turn the chat in Arena is let go in the background, and
   closing the window sends what Arena still lacks.
+- **Tools picker.** The wrench in the chat box's toolbar shows how many tool groups are on. Click it
+  for 'Tools: N of M on': Code Arena's own tools (always on), the Arena project's tools and each MCP
+  server's. Each group has an icon, a shield when it asks you before each call, an About that shows
+  what it is for and its functions, and a switch. Turning a group off keeps it off for the session,
+  including tools that join later. A change made while an answer runs applies when the answer is
+  done. Customize tools… is at the foot of the list. The wrench is hidden when the model calls no
+  tools.
+- **MCP servers in the status bar.** The plug shows connected/total servers, in the warning colours
+  when one is down. Click it, or run MCP: List Servers, for the MCP servers dialog. It lists each
+  server's state, its tools or why it is not connected, its address (without user, password or
+  query), when it is tried again, and Try again (also Try All Again). A footer says which settings
+  turn Arena's tools and Farzan Graph's on and off.
 
 
 ### :bug: Bugs fixed
