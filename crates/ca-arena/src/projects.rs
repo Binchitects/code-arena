@@ -132,8 +132,22 @@ impl ArenaClient {
         description: Option<&str>,
         repository: Option<(&str, &str)>,
     ) -> Result<String, ArenaError> {
-        let v: Value =
-            self.call(Method::POST, "/api/projects", Some(&json!({"name": name, "description": description}))).await?;
+        self.make_project_for(name, description, repository, false).await
+    }
+
+    /// As [`ArenaClient::make_project`], and global (everyone in the company sees it and may add to it) when asked.
+    pub async fn make_project_for(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        repository: Option<(&str, &str)>,
+        global: bool,
+    ) -> Result<String, ArenaError> {
+        let mut body = json!({"name": name, "description": description});
+        if global {
+            body["global"] = json!(true);
+        }
+        let v: Value = self.call(Method::POST, "/api/projects", Some(&body)).await?;
         let id = v
             .get("id")
             .and_then(Value::as_str)
@@ -199,6 +213,55 @@ impl ArenaClient {
     pub async fn assistants(&self) -> Result<Vec<Assistant>, ArenaError> {
         self.get(&format!("{API}/assistants")).await
     }
+
+    /// Every project the person sees, as the Projects page lists them: their role, goals and this month's spend.
+    pub async fn project_rows(&self) -> Result<Vec<ProjectRow>, ArenaError> {
+        self.get("/api/projects").await
+    }
+
+    /// Whether the person may make a project, and a global one.
+    pub async fn may_make(&self) -> Result<May, ArenaError> {
+        self.get("/api/projects/may").await
+    }
+}
+
+/// A project as the Projects page lists it.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRow {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub global: bool,
+    /// active or archived.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// owner, contributor or viewer.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// The person's own, or one they are in (not one they only see as global).
+    #[serde(default)]
+    pub mine: bool,
+    /// Its goals (those not dropped), and how many of them are done.
+    #[serde(default)]
+    pub goals: u32,
+    #[serde(default)]
+    pub goals_done: u32,
+    #[serde(default)]
+    pub spent_this_month: f64,
+    #[serde(default)]
+    pub monthly_budget: Option<f64>,
+}
+
+/// What the person may make.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+pub struct May {
+    #[serde(default)]
+    pub create: bool,
+    #[serde(default)]
+    pub global: bool,
 }
 
 #[cfg(test)]
@@ -246,6 +309,39 @@ mod tests {
             (v.goals[0].title.as_str(), v.tasks[0].done, v.tasks[0].goal_id.as_deref()),
             ("Refunds work", true, Some("g1"))
         );
+    }
+
+    #[tokio::test]
+    async fn the_pages_list_is_read_with_goals_and_spend_and_a_global_project_is_made_so() {
+        let s = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/projects"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "id": "p1", "name": "Payments", "global": true, "status": "archived", "role": "viewer", "mine": false,
+                "goals": 4, "goalsDone": 1, "spentThisMonth": 12.5, "monthlyBudget": 100.0, "members": 3
+            }])))
+            .mount(&s)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/projects/may"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"create": true, "global": false})))
+            .mount(&s)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/projects"))
+            .and(body_json(json!({"name": "All", "description": null, "global": true})))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id": "p2"})))
+            .expect(1)
+            .mount(&s)
+            .await;
+        let c = ArenaClient::new(&s.uri(), Some(Secret::new("sk-x")), None).expect("client");
+        let rows = c.project_rows().await.expect("rows");
+        assert_eq!(
+            (rows[0].goals_done, rows[0].spent_this_month, rows[0].monthly_budget, rows[0].role.as_deref()),
+            (1, 12.5, Some(100.0), Some("viewer"))
+        );
+        assert_eq!(c.may_make().await.expect("may"), May { create: true, global: false });
+        assert_eq!(c.make_project_for("All", None, None, true).await.expect("made"), "p2");
     }
 
     #[tokio::test]

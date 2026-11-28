@@ -106,14 +106,29 @@ async fn make(
     key: &str,
     words: &str,
 ) -> String {
+    make_global(p, arena, sync, key, words, false).await.unwrap_or_else(|e| e)
+}
+
+/// As `/project new`, and global when asked: what is said of it, or (as an error) why Arena did not make it.
+pub async fn make_global(
+    p: &mut Prepared,
+    arena: &ca_arena::ArenaClient,
+    sync: &ca_sync::ChatSync,
+    key: &str,
+    words: &str,
+    global: bool,
+) -> Result<String, String> {
     let (name, description) = match words.split_once(':') {
         Some((n, d)) => (n.trim(), Some(d.trim()).filter(|d| !d.is_empty())),
         None => (words, None),
     };
     let repo = ca_arena::projects::repository_of(key);
-    let id = match arena.make_project(name, description, repo.as_ref().map(|(a, b)| (a.as_str(), b.as_str()))).await {
+    let id = match arena
+        .make_project_for(name, description, repo.as_ref().map(|(a, b)| (a.as_str(), b.as_str())), global)
+        .await
+    {
         Ok(id) => id,
-        Err(e) => return format!("Arena did not make it: {e}"),
+        Err(e) => return Err(format!("Arena did not make it: {e}")),
     };
     let mut said = vec![format!(
         "Made the project {name}{} in Arena.",
@@ -129,7 +144,7 @@ async fn make(
         },
         None => said.push("Say something first, then /project N puts this session in it.".into()),
     }
-    said.join(" ")
+    Ok(said.join(" "))
 }
 
 /// A project as its page has it, in lines.
@@ -223,7 +238,7 @@ pub async fn command(name: &str, rest: &str, p: &mut Prepared) -> String {
         out.push("/project N puts it in one; /project off in none.".into());
         return out.join("\n");
     }
-    let chosen = if rest == "off" {
+    let chosen = if rest == "off" || rest == "none" {
         None
     } else {
         match rest.parse::<usize>() {
@@ -234,22 +249,24 @@ pub async fn command(name: &str, rest: &str, p: &mut Prepared) -> String {
             },
         }
     };
+    put_in(p, &sync, chosen.as_ref().map(|c| (c.id.as_str(), c.name.as_str()))).await.unwrap_or_else(|e| e)
+}
+
+/// The session's chat put in this project (its id and name), or in none: what is said of it, or why it could not.
+pub async fn put_in(p: &mut Prepared, sync: &ca_sync::ChatSync, chosen: Option<(&str, &str)>) -> Result<String, String> {
     let Some(chat) = sync.ensure_chat().await else {
-        return "This session has no chat in Arena yet: say something first.".into();
+        return Err("This session has no chat in Arena yet: say something first.".into());
     };
-    if let Err(e) = arena.move_chat(&chat, chosen.as_ref().map(|c| c.id.as_str())).await {
-        return e.to_string();
-    }
+    sync.arena().move_chat(&chat, chosen.map(|c| c.0)).await.map_err(|e| e.to_string())?;
     let work = take_up(p, true).await;
-    match (chosen, work) {
+    Ok(match (chosen, work) {
         (None, _) => "This session is in no project now.".into(),
-        (Some(c), Some(w)) if !w.functions.is_empty() => format!(
-            "This session is in {} now: the model keeps its goals and tasks ({}).",
-            c.name,
+        (Some((_, name)), Some(w)) if !w.functions.is_empty() => format!(
+            "This session is in {name} now: the model keeps its goals and tasks ({}).",
             w.functions.join(", ")
         ),
-        (Some(c), _) => format!("This session is in {} now.", c.name),
-    }
+        (Some((_, name)), _) => format!("This session is in {name} now."),
+    })
 }
 
 type Tools = Vec<Arc<dyn Tool>>;
@@ -308,14 +325,8 @@ pub async fn assistant(rest: &str, p: &mut Prepared) -> String {
         out.push("/assistant N works as one; /assistant off as Code Arena's own.".into());
         return out.join("\n");
     }
-    if rest == "off" {
-        let back = tool_groups(p, None);
-        p.agent.note("(Code Arena: the person stopped the assistant: work as Code Arena's own from now on.)".into());
-        return if back > 0 {
-            format!("Working as Code Arena's own again, with all of Arena's tools ({back} back).")
-        } else {
-            "Working as Code Arena's own again.".into()
-        };
+    if rest == "off" || rest == "none" {
+        return own_again(p);
     }
     let chosen = match rest.parse::<usize>() {
         Ok(n) if (1..=list.len()).contains(&n) => list[n - 1].clone(),
@@ -324,6 +335,23 @@ pub async fn assistant(rest: &str, p: &mut Prepared) -> String {
             None => return format!("No assistant {rest}: /assistant lists them."),
         },
     };
+    work_as(p, &sync, &chosen)
+}
+
+/// Code Arena's own again, with all of Arena's tools an assistant set aside: what is said of it.
+pub fn own_again(p: &mut Prepared) -> String {
+    let back = tool_groups(p, None);
+    p.agent.note("(Code Arena: the person stopped the assistant: work as Code Arena's own from now on.)".into());
+    if back > 0 {
+        format!("Working as Code Arena's own again, with all of Arena's tools ({back} back).")
+    } else {
+        "Working as Code Arena's own again.".into()
+    }
+}
+
+/// The session works as this assistant from the next message (its instructions, tools, model, thinking and
+/// skills): what is said of it.
+pub fn work_as(p: &mut Prepared, sync: &ca_sync::ChatSync, chosen: &ca_arena::projects::Assistant) -> String {
     let mut said = vec![format!("Working as {}.", chosen.name)];
     if let Some(groups) = &chosen.tools {
         tool_groups(p, Some(groups));
