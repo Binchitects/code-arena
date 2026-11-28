@@ -566,6 +566,15 @@ Sections used:
   would not fit, or as your Arena account says. Keep the recent part within 5% to ten points under
   the threshold (default 25). The settings are checked, have Defaults, apply live and are kept in
   settings.json (also: Agent: Compaction Settings...).
+- **Corner bubbles while you look elsewhere.** When the window is not in front or the Agent view is
+  hidden, Code Arena tells you in the bottom-right corner (up to four bubbles). 'Waiting for you:
+  TOOL' can be answered there with Allow, Always or Deny. 'Ready: the agent finished' has a Reply
+  box and Send. 'The turn failed' shows the error. Ready and failed bubbles close after 20 s, and a
+  click on a title opens the Agent view. A call answered anywhere is not asked again.
+- **Desktop Notifications.** A new checked entry in the Manage menu (setting
+  `codeArena.desktopNotifications`, off by default). While the window is minimized, notifications go
+  to the desktop through notify-send, osascript or PowerShell. The window asks for attention when a
+  bubble comes while it is not in front.
 
 
 ### :bug: Bugs fixed
