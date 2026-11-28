@@ -978,6 +978,16 @@ Sections used:
   new rule is added after it, and the person's own rules are changed in place. The other rules and
   comments are kept. Rules that do nothing are listed above the table, and Preferences: Open
   Keyboard Shortcuts (JSON) opens the file.
+- **3-way merge editor.** Open a file in conflict with **Resolve in Merge Editor** (the conflict
+  lens, the palette, or the merge icon on a Merge Changes row in Source Control; a row click opens
+  it too when `git.mergeEditor` is on). The incoming and current sides each show their branch and
+  commit. Take a conflict from either side with **Accept Incoming**, **Accept Current** or **Accept
+  Combination**, or with the check in a side's margin. You can also edit the result, which is the
+  file itself, and save it with Ctrl+S. The header says how many conflicts remain, steps through
+  them with Previous and Next (both sides follow), and **Reset** puts back the text the editor
+  opened with. **Complete Merge** saves the file, stages it and closes the editor. It asks first
+  while conflicts remain. A file that is not text is refused, and a banner says when git has already
+  merged the file. Below 700 px the three panes stack into one column.
 
 
 ### :bug: Bugs fixed
