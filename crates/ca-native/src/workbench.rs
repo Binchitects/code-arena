@@ -223,6 +223,9 @@ fn register_menus() {
 /// none, closes what is open over the window.
 pub(crate) fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
     crate::layout_commands::key_seen(ui, key, m);
+    if crate::layout_commands::zen_escape(ui, key, m) {
+        return;
+    }
     // An editing command's key does nothing where no editor has the keys (the editor runs it itself).
     if crate::editor::editing::editor_only(key, m) {
         return;
