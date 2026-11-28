@@ -1012,6 +1012,18 @@ Sections used:
 - **Status bar: Complete.** Click `Complete` / `Complete off` to turn code completion on or off
   (`codeArena.inlineCompletion.enabled`, your own setting, with `editor.inlineSuggest.enabled`). The
   item pulses while an answer is on its way, and its tooltip shows the last failure.
+- **Snippets.** Snippets from your own `snippets/NAME.json` (one language) and `NAME.code-snippets`
+  files, and from the project's `.vscode/NAME.code-snippets`, are suggested as you type their prefix
+  ("User Snippet" or "Workspace Snippet"). Their scope, include and exclude globs are followed, and
+  they are read again when a file is saved or changes on disk.
+- **Snippet tab stops.** VS Code's snippet syntax is supported: `$1`, `${1:placeholder}`,
+  `${1|a,b|}`, `$0`, the `TM_*`, `CURRENT_*`, `RANDOM`, `UUID` and comment variables, and
+  transforms. Tab and Shift+Tab move between stops, mirrors change as you type, a choice stop opens
+  its choices, and Escape or moving the caret out ends the snippet.
+- **Insert Snippet, Surround With Snippet, Configure Snippets.** Pick a snippet for the file's
+  language and put it in at the caret or around the selection. Configure Snippets opens an existing
+  snippets file, or makes a new global, folder or language file that starts with a commented
+  example.
 
 
 ### :bug: Bugs fixed
