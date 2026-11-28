@@ -615,9 +615,9 @@ mod tests {
         let send: Send = Rc::new(move |v| to.borrow_mut().push(v));
         register(ui, &send);
         let dir = std::env::temp_dir().join(format!("attach-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("as the test makes it");
         let file = dir.join("notes.md");
-        std::fs::write(&file, "# Notes").unwrap();
+        std::fs::write(&file, "# Notes").expect("as the test makes it");
         // No Arena: nothing is attached.
         add_path(ui, &send, &file);
         assert!(said.borrow().is_empty());
@@ -629,9 +629,9 @@ mod tests {
         remove(ui, &me.uploads.get_untracked()[0].key);
         take(ui, &json!({"type": "state", "attach": {"arena": true, "most_bytes": 1024}}), &send);
         add_path(ui, &send, &file);
-        let key = said.borrow()[0]["key"].as_str().unwrap().to_string();
+        let key = said.borrow()[0]["key"].as_str().expect("as the test makes it").to_string();
         assert_eq!(said.borrow()[0]["from"], file.to_string_lossy().as_ref());
-        assert!(chat_bridge::ready(ui) == false && !chat_bridge::more(ui), "an upload on its way holds the message");
+        assert!(!chat_bridge::ready(ui) && !chat_bridge::more(ui), "an upload on its way holds the message");
         take(ui, &json!({"type": "attach_progress", "key": key, "pct": 40}), &send);
         assert_eq!(line_of(&me.uploads.get_untracked()[0]), "Uploading 40%");
         // Another window's reply is not this one's.

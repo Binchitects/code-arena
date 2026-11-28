@@ -454,11 +454,14 @@ mod tests {
         assert_eq!(mime_of("A.PNG"), "image/png");
         assert_eq!(mime_of("noext"), "application/octet-stream");
         let mut png = std::io::Cursor::new(Vec::new());
-        image::DynamicImage::new_rgb8(400, 200).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        image::DynamicImage::new_rgb8(400, 200)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("as the test makes it");
         let t = thumb(&png.into_inner()).expect("a thumb");
-        let bytes =
-            base64::engine::general_purpose::STANDARD.decode(t.trim_start_matches("data:image/png;base64,")).unwrap();
-        let small = image::load_from_memory(&bytes).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(t.trim_start_matches("data:image/png;base64,"))
+            .expect("as the test makes it");
+        let small = image::load_from_memory(&bytes).expect("as the test makes it");
         assert_eq!((small.width(), small.height()), (128, 64));
         assert!(thumb(b"not a picture").is_none());
     }

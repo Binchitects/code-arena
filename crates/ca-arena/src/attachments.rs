@@ -144,14 +144,14 @@ mod tests {
     #[test]
     fn a_form_holds_the_one_file_with_its_name_made_safe() {
         let body = form("B", "a \"b\"\n.txt", "text/plain", b"hi");
-        let text = String::from_utf8(body).unwrap();
+        let text = String::from_utf8(body).expect("as the test makes it");
         assert_eq!(
             text,
             "--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a _b__.txt\"\r\nContent-Type: text/plain\r\n\r\nhi\r\n--B--\r\n"
         );
         assert!(
             String::from_utf8(form("B", "", "", b""))
-                .unwrap()
+                .expect("as the test makes it")
                 .contains("filename=\"file\"\r\nContent-Type: application/octet-stream")
         );
     }
@@ -177,19 +177,23 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string("# Notes"))
             .mount(&server)
             .await;
-        let arena = ArenaClient::new(&server.uri(), Some(ca_core::Secret::new("test-key")), None).unwrap();
+        let arena = ArenaClient::new(&server.uri(), Some(ca_core::Secret::new("test-key")), None)
+            .expect("as the test makes it");
         let said = Arc::new(Mutex::new(Vec::new()));
         let kept = said.clone();
         let bytes = vec![b'x'; 200_000];
-        let up =
-            arena.upload("notes.md", "text/markdown", &bytes, move |n, of| kept.lock().unwrap().push((n, of))).await;
-        let up = up.unwrap();
+        let up = arena
+            .upload("notes.md", "text/markdown", &bytes, move |n, of| {
+                kept.lock().expect("as the test makes it").push((n, of))
+            })
+            .await;
+        let up = up.expect("as the test makes it");
         assert_eq!((up.file_name.as_str(), up.kind.as_str(), up.truncated), ("notes.md", "text", true));
-        let said = said.lock().unwrap().clone();
+        let said = said.lock().expect("as the test makes it").clone();
         assert!(said.len() >= 4, "{said:?}");
         assert_eq!(said.last().map(|(n, of)| n == of), Some(true));
         assert!(said.windows(2).all(|w| w[0].0 < w[1].0));
-        let text = arena.attachment_content(&up.id, 1_000).await.unwrap();
+        let text = arena.attachment_content(&up.id, 1_000).await.expect("as the test makes it");
         assert_eq!(text, b"# Notes");
         assert!(matches!(arena.attachment_content(&up.id, 3).await, Err(ArenaError::Status { status: 413, .. })));
     }
@@ -203,8 +207,9 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let arena = ArenaClient::new(&server.uri(), Some(ca_core::Secret::new("test-key")), None).unwrap();
-        let e = arena.upload("big.bin", "", b"1", |_, _| {}).await.unwrap_err();
+        let arena = ArenaClient::new(&server.uri(), Some(ca_core::Secret::new("test-key")), None)
+            .expect("as the test makes it");
+        let e = arena.upload("big.bin", "", b"1", |_, _| {}).await.expect_err("refused");
         assert!(e.to_string().contains("larger than 20 MB"), "{e}");
     }
 }

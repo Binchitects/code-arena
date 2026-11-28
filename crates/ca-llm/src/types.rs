@@ -225,9 +225,10 @@ mod tests {
                 {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
             ])
         );
-        let kept: Message = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        let kept: Message = serde_json::from_str(&serde_json::to_string(&m).expect("as the test makes it"))
+            .expect("as the test makes it");
         assert_eq!(kept.images, m.images);
-        assert!(!serde_json::to_string(&Message::user("x")).unwrap().contains("images"));
+        assert!(!serde_json::to_string(&Message::user("x")).expect("as the test makes it").contains("images"));
     }
 
     #[test]
