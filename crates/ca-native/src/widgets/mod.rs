@@ -79,6 +79,27 @@ pub fn action(t: Theme, name: &'static str, on: impl Fn() + 'static) -> impl Int
     })
 }
 
+/// The same, greyed out while `dim` says so (as VS Code draws a disabled action), still pressable to say why.
+pub fn action_dim(
+    t: Theme,
+    name: &'static str,
+    dim: impl Fn() -> bool + 'static,
+    on: impl Fn() + 'static,
+) -> impl IntoView {
+    container(icon(name, 16.0)).on_click_stop(move |_| on()).style(move |s| {
+        let c = t.get();
+        let off = dim();
+        s.width(22.0)
+            .height(22.0)
+            .items_center()
+            .justify_center()
+            .border_radius(5.0)
+            .color(if off { c.icon.multiply_alpha(0.4) } else { c.icon })
+            .cursor(CursorStyle::Pointer)
+            .apply_if(!off, |s| s.hover(|s| s.background(c.toolbar_hover)))
+    })
+}
+
 /// The same, drawn only while `on` is true (the action lit, as the layout buttons when their part is shown).
 pub fn action_lit(t: Theme, name: impl Fn() -> &'static str + 'static, on: impl Fn() + 'static) -> impl IntoView {
     let shown = floem::views::dyn_container(name, move |n| icon(n, 16.0));
