@@ -158,7 +158,7 @@ fn quote(ui: Ui, at: u64, text: String) -> impl IntoView {
 }
 
 /// A quote as its two lines show it: its first two lines, at most 140 characters, "…" where it was cut.
-fn two_lines(text: &str) -> String {
+pub(super) fn two_lines(text: &str) -> String {
     let lines: Vec<&str> = text.lines().take(2).collect();
     let mut short: String = lines.join("\n").chars().take(140).collect();
     if short.trim_end() != text.trim_end() {
