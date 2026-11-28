@@ -704,10 +704,10 @@ mod tests {
             ]
         );
         let toml = said("Cargo.toml", "[package]\nname = \"a\"\n[[bin]]\n");
-        assert_eq!(toml.iter().map(|s| (s.0.as_str(), s.1)).collect::<Vec<_>>(), [
-            ("package", Kind::Heading),
-            ("bin", Kind::Heading)
-        ]);
+        assert_eq!(
+            toml.iter().map(|s| (s.0.as_str(), s.1)).collect::<Vec<_>>(),
+            [("package", Kind::Heading), ("bin", Kind::Heading)]
+        );
         assert!(said("notes.txt", "fn main() {}\n# Title\n").is_empty());
     }
 
