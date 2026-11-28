@@ -446,7 +446,7 @@ fn step_row(ui: Ui, send: Send, s: Step, proposed: floem::reactive::Memo<bool>) 
     let marked = icon(mark(&status, &t.get_untracked()).0, 16.0)
         .style(move |st| st.color(mark(&mark_status, &t.get()).1).flex_shrink(0.0_f32).margin_top(1.0));
     let word = status_word(&status);
-    let title = format!("{n}. {}", s.title);
+    let title = format!("{n}. {}", crate::bidi::isolate(&s.title));
     let done = status == "done";
     let head = h_stack((
         label(move || title.clone()).style(move |s| {

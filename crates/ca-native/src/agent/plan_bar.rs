@@ -73,7 +73,7 @@ pub(super) fn view(ui: Ui) -> impl IntoView {
 fn step(ui: Ui, s: Step) -> impl IntoView {
     let t = ui.colors;
     let status = s.status.clone();
-    let words = format!("{}. {}", s.number, s.title);
+    let words = format!("{}. {}", s.number, crate::bidi::isolate(&s.title));
     h_stack((
         icon(mark(&status, &t.get_untracked()).0, 14.0).style(move |st| st.color(mark(&status, &t.get()).1)),
         label(move || words.clone()).style(|s| s.font_size(12.0).min_width(0.0).text_overflow(TextOverflow::Wrap)),

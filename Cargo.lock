@@ -578,6 +578,7 @@ dependencies = [
  "similar",
  "syntect",
  "tokio",
+ "unicode-bidi",
 ]
 
 [[package]]

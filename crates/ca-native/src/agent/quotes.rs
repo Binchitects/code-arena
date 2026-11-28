@@ -407,6 +407,8 @@ fn chip(ui: Ui) -> impl IntoView {
         let session = me.session.get();
         me.quote.get().filter(|q| q.session == session)
     });
+    let shown =
+        create_memo(move |_| now.with(|q| q.as_ref().map(|q| super::question::two_lines(&q.text)).unwrap_or_default()));
     let x = floem::views::tooltip(
         floem::views::container(icon("close", 14.0)).on_click_stop(move |_| me.quote.set(None)).style(move |s| {
             s.padding(3.0)
@@ -420,8 +422,18 @@ fn chip(ui: Ui) -> impl IntoView {
         icon("quote", 14.0).style(move |s| s.color(t.get().desc).margin_top(2.0)),
         v_stack((
             label(|| "Quoted in your reply").style(move |s| s.font_size(11.0).color(t.get().desc)),
-            label(move || now.with(|q| q.as_ref().map(|q| super::question::two_lines(&q.text)).unwrap_or_default()))
-                .style(move |s| s.font_size(12.0).line_height(1.4).color(t.get().fg).text_overflow(TextOverflow::Wrap)),
+            // Its lines each on the side of its own words' direction (drawn again only when the quote changes).
+            dyn_container(
+                move || shown.get(),
+                move |words| {
+                    let rtl = crate::bidi::rtl(&words);
+                    let look = move || crate::bidi::Look { size: 12.0, line_height: 1.4, color: t.get().fg };
+                    crate::bidi::lines(move || words.clone(), look).style(move |s| {
+                        crate::bidi::stand(s.font_size(12.0).text_overflow(TextOverflow::Wrap).min_width(0.0), rtl)
+                    })
+                },
+            )
+            .style(|s| s.flex_col().min_width(0.0)),
             label(move || format!("Cut to {} characters.", super::answer::thousands(MOST as u64))).style(move |s| {
                 s.font_size(11.0)
                     .color(t.get().desc)

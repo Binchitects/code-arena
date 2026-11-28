@@ -38,8 +38,12 @@ pub(super) fn bubble(ui: Ui, question: Question) -> AnyView {
     let skill = question.skill.clone();
     let card = (!skill.is_empty()).then(|| skill_card(ui, skill));
     let inside = v_stack((
-        label(move || words.clone())
-            .style(move |s| s.color(t.get().fg).line_height(1.5).text_overflow(TextOverflow::Wrap)),
+        // Each of its lines on the side of its own words' direction.
+        crate::bidi::lines(
+            move || words.clone(),
+            move || crate::bidi::Look { size: 13.0, line_height: 1.5, color: t.get().fg },
+        )
+        .style(|s| s.text_overflow(TextOverflow::Wrap)),
         match card {
             Some(c) => c.into_any(),
             None => empty().style(|s| s.hide()).into_any(),
@@ -133,6 +137,8 @@ fn quote(ui: Ui, at: u64, text: String) -> impl IntoView {
     let short = two_lines(&text);
     let long = short != text;
     let words = text.clone();
+    // Its words, and its bar, on the side of their direction.
+    let rtl = crate::bidi::rtl(&text);
     let toggle = label(move || if all.get() { "Show less" } else { "Show all" })
         .on_click_stop(move |_| all.update(|a| *a = !*a))
         .style(move |s| {
@@ -142,18 +148,25 @@ fn quote(ui: Ui, at: u64, text: String) -> impl IntoView {
         .on_click_stop(move |_| go_to_quote(ui, at, &text))
         .style(move |s| s.font_size(11.0).color(t.get().link).cursor(CursorStyle::Pointer));
     v_stack((
-        label(move || if all.get() { words.clone() } else { short.clone() })
-            .style(move |s| s.font_size(12.0).line_height(1.5).color(t.get().desc).text_overflow(TextOverflow::Wrap)),
+        // Its lines each on the side of its own words' direction.
+        floem::views::dyn_container(
+            move || all.get(),
+            move |all| {
+                let words = if all { words.clone() } else { short.clone() };
+                let look = move || crate::bidi::Look { size: 12.0, line_height: 1.5, color: t.get().desc };
+                crate::bidi::lines(move || words.clone(), look).style(move |s| {
+                    crate::bidi::stand(s.font_size(12.0).text_overflow(TextOverflow::Wrap).min_width(0.0), rtl)
+                })
+            },
+        )
+        .style(|s| s.flex_col().min_width(0.0)),
         h_stack((toggle, go)).style(|s| s.gap(12.0)),
     ))
     .style(move |s| {
         let c = t.get();
-        s.gap(2.0)
-            .padding_left(8.0)
-            .border_left(2.0)
-            .border_color(c.quote_border)
-            .max_width_pct(85.0)
-            .margin_bottom(4.0)
+        let s = s.gap(2.0).border_color(c.quote_border);
+        let s = if rtl { s.padding_right(8.0).border_right(2.0) } else { s.padding_left(8.0).border_left(2.0) };
+        s.max_width_pct(85.0).margin_bottom(4.0)
     })
 }
 
