@@ -125,6 +125,15 @@ colors! {
     ruler_error: ["editorOverviewRuler.errorForeground"], "#FF1212B3", "#FF1212B3";
     ruler_warning: ["editorOverviewRuler.warningForeground", "editorWarning.foreground"], "#CCA700", "#BF8803";
     ruler_info: ["editorOverviewRuler.infoForeground", "editorInfo.foreground"], "#3794FF", "#1A85FF";
+    merge_current_header: ["merge.currentHeaderBackground"], "#40C8AE80", "#40C8AE80";
+    merge_current_content: ["merge.currentContentBackground"], "#40C8AE33", "#40C8AE33";
+    merge_incoming_header: ["merge.incomingHeaderBackground"], "#40A6FF80", "#40A6FF80";
+    merge_incoming_content: ["merge.incomingContentBackground"], "#40A6FF33", "#40A6FF33";
+    merge_common_header: ["merge.commonHeaderBackground"], "#60606066", "#60606066";
+    merge_common_content: ["merge.commonContentBackground"], "#60606029", "#60606029";
+    ruler_current: ["editorOverviewRuler.currentContentForeground"], "#40C8AE80", "#40C8AE80";
+    ruler_incoming: ["editorOverviewRuler.incomingContentForeground"], "#40A6FF80", "#40A6FF80";
+    ruler_common: ["editorOverviewRuler.commonContentForeground"], "#60606066", "#60606066";
     gutter_added: ["editorGutter.addedBackground"], "#487E02", "#48985D";
     gutter_modified: ["editorGutter.modifiedBackground"], "#1B81A8", "#2090D3";
     gutter_deleted: ["editorGutter.deletedBackground", "editorError.foreground"], "#F14C4C", "#E51400";

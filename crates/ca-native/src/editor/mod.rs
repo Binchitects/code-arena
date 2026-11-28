@@ -364,6 +364,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 }
                 let ed = options::follow(ui, ed, &editor, tab.colours.clone(), o);
                 let ed = highlights::follow(ui, ed, &editor, tab.doc.clone(), &tab.path);
+                let ed = crate::merge_inline::follow(ui, ed, &editor, &tab.path);
                 crate::decor::around(ui, ed, &editor, &tab.path).into_any()
             }
         },
