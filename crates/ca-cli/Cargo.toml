@@ -56,6 +56,10 @@ zip.workspace = true
 base64 = "0.22"
 sha2 = "0.10"
 ring = "0.17"
+# A newer Code Arena's signature: the code-signing certificate's chain to the Arena's CA, and its key's signature.
+rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1"
+rustls-native-certs = "0.8"
 walkdir = "2"
 # A small copy of a picture attached to a message, for its chip (the native window's own features).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp"] }

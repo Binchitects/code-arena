@@ -118,6 +118,7 @@ impl Ui {
             }
             return;
         }
+        crate::log::line(text);
         let mut e = std::io::stderr().lock();
         let _ = e.write_all(term(&format!("{text}\n")).as_bytes());
         let _ = e.flush();

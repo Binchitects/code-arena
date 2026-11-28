@@ -169,8 +169,6 @@ const NOT_NAMED: &[(&str, &str)] = &[
     // Read from each settings file by itself (the person's always, a project's only once it is trusted), so not
     // through the layers: `session::load_hooks`.
     ("hooks", "read from the files one by one, by trust"),
-    // The daily look for a newer Code Arena is not written yet.
-    ("update.check", "its reader, the update check, is to come"),
 ];
 
 fn sources(dir: &Path, out: &mut Vec<PathBuf>) {

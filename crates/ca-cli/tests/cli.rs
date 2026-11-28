@@ -1996,7 +1996,10 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
     assert_eq!((first["license"].as_str(), first["source"].as_str()), (Some("MIT"), Some(ca_core::SOURCE)), "{first}");
     assert!(first["license_text"].as_str().is_some_and(|t| t.starts_with("MIT License")), "{first}");
     assert_eq!(first["manual"], "https://arena.example/help/code-arena");
-    assert_eq!((&first["locked"], &first["log"]), (&json!({}), &Value::Null), "{first}");
+    // The log: in the data folder, for a program run from its build folder.
+    let log = home.path().join("data").join("logs").join("code-arena.log");
+    assert_eq!((&first["locked"], &first["log"]), (&json!({}), &json!(log.display().to_string())), "{first}");
+    assert!(log.exists(), "{}", log.display());
     // What the pickers offer: the model as the gateway describes it, the levels of thinking, the modes.
     assert_eq!(first["models"], json!(["qwen", "small"]), "{first}");
     assert_eq!(
