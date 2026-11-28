@@ -523,6 +523,16 @@ Sections used:
   lists are kept with the folder. The palette also finds commands by id or by words in any order,
   and opens with F1 too, from the editor and the terminal.
 - **Go menu.** Go to File, Go to Symbol in Editor and Go to Line/Column are now in the Go menu.
+- **Breadcrumb pickers.** Click a folder in the breadcrumbs to list its files and open one ("No
+  files here, only folders." when there are none). The file's part lists the files beside it, and
+  each symbol part lists the symbols beside it with their kinds. Type to filter a list; Up, Down and
+  Enter choose a row; Escape closes it.
+- **Focus Breadcrumbs keys.** Focus and Select Breadcrumbs (Ctrl+Shift+.) and Focus Breadcrumbs
+  (Ctrl+Shift+;) give the bar the keys. Left and Right move between parts, Enter, Space or Down open
+  a part's list, and Escape goes back to the editor. `breadcrumbs.symbolPath` hides the symbols.
+- **Outline filter, Collapse All and signatures.** The Outline has a Filter box that keeps the
+  symbols matching it and the symbols they are in, a Collapse All button in its title, and a
+  tooltip on each row with the symbol's definition line.
 
 
 ### :bug: Bugs fixed
