@@ -1076,62 +1076,7 @@ impl Agent {
                     let kind = tool.kind();
                     let subject = tool.subject(&m.args);
                     let said = Call { id: &call.id, name: &m.name, subject: &subject, arguments: &m.args };
-                    // A hook's "allow" spares the question (not a mode's refusal); its "ask" asks whatever the mode.
-                    let decision = match (self.policy.decide(&m.name, kind, &subject), pre.permission.as_deref()) {
-                        (Decision::Ask, Some("allow")) => Decision::Run,
-                        (Decision::Run, Some("ask")) => Decision::Ask,
-                        (d, _) => d,
-                    };
-                    let forced = pre.permission.as_deref() == Some("ask");
-                    // Laya reads a command that is not refused; 60% or more asks whatever the mode.
-                    let risk = match decision {
-                        Decision::Refuse(_) => None,
-                        _ => self.policy.risk(&m.name, &subject).await,
-                    };
-                    let laya_asks = decision == Decision::Run && risk.is_some_and(|r| r.asks());
-                    let decision = policy::weigh(decision, risk.as_ref());
-                    let allowed = match decision {
-                        Decision::Run => Ok(()),
-                        Decision::Refuse(why) => Err(why),
-                        Decision::Ask => {
-                            events.tool_waiting(&said);
-                            // A question that would come back anyway offers no "always".
-                            let always = policy::always_text(&m.name, kind, &subject)
-                                .filter(|_| !forced && !risk.is_some_and(|r| r.asks()));
-                            let title = policy::title(&m.name, kind);
-                            let (timeless, background, _) = policy::waits(&subject);
-                            let q = Question {
-                                tool: &m.name,
-                                subject: &subject,
-                                title: &title,
-                                arguments: &m.args,
-                                always: always.as_deref(),
-                                risk,
-                                timeless,
-                                background,
-                            };
-                            match Self::ask(self.hooks.clone(), self.approver.clone(), &q).await {
-                                Some(Answer::Yes) => Ok(()),
-                                Some(Answer::Always) if always.is_some() => {
-                                    self.policy.remember(&m.name, kind, &subject);
-                                    Ok(())
-                                }
-                                Some(Answer::Always) => Ok(()),
-                                Some(Answer::No) => {
-                                    Err(format!("{SAID_NO}: ask what they would like instead, or find another way."))
-                                }
-                                None if laya_asks => Err(format!(
-                                    "This run cannot ask, and Laya reads this command as risky ({}): it was not run. Say what you would have done, or find a safer way.",
-                                    risk.map(|r| r.line()).unwrap_or_default()
-                                )),
-                                None => Err(format!(
-                                    "This run cannot ask, and {} asks in {} mode: it was not run. Say what you would have done; the person can run again with --mode auto-edit (edits) or --mode yolo (commands too).",
-                                    m.name,
-                                    self.policy.mode.name()
-                                )),
-                            }
-                        }
-                    };
+                    let allowed = self.allow(kind, &said, pre.permission.as_deref(), events).await;
                     match allowed {
                         Err(why) => {
                             events.tool_not_run(&said, &why, true);
@@ -1159,6 +1104,73 @@ impl Agent {
         }
     }
 
+    /// Whether a call may run, as the mode, the kept rules and Laya say, with a hook's word (`permission`: allow or
+    /// ask): asks the person when one says to. `Err` holds why it may not.
+    pub(crate) async fn allow(
+        &mut self,
+        kind: Kind,
+        said: &Call<'_>,
+        permission: Option<&str>,
+        events: &mut dyn Events,
+    ) -> Result<(), String> {
+        // A hook's "allow" spares the question (not a mode's refusal); its "ask" asks whatever the mode.
+        let decision = match (self.policy.decide(said.name, kind, said.subject), permission) {
+            (Decision::Ask, Some("allow")) => Decision::Run,
+            (Decision::Run, Some("ask")) => Decision::Ask,
+            (d, _) => d,
+        };
+        let forced = permission == Some("ask");
+        // Laya reads a command that is not refused; 60% or more asks whatever the mode.
+        let risk = match decision {
+            Decision::Refuse(_) => None,
+            _ => self.policy.risk(said.name, said.subject).await,
+        };
+        let laya_asks = decision == Decision::Run && risk.is_some_and(|r| r.asks());
+        let decision = policy::weigh(decision, risk.as_ref());
+        match decision {
+            Decision::Run => Ok(()),
+            Decision::Refuse(why) => Err(why),
+            Decision::Ask => {
+                events.tool_waiting(said);
+                // A question that would come back anyway offers no "always".
+                let always = policy::always_text(said.name, kind, said.subject)
+                    .filter(|_| !forced && !risk.is_some_and(|r| r.asks()));
+                let title = policy::title(said.name, kind);
+                let (timeless, background, _) = policy::waits(said.subject);
+                let q = Question {
+                    tool: said.name,
+                    subject: said.subject,
+                    title: &title,
+                    arguments: said.arguments,
+                    always: always.as_deref(),
+                    risk,
+                    timeless,
+                    background,
+                };
+                match Self::ask(self.hooks.clone(), self.approver.clone(), &q).await {
+                    Some(Answer::Yes) => Ok(()),
+                    Some(Answer::Always) if always.is_some() => {
+                        self.policy.remember(said.name, kind, said.subject);
+                        Ok(())
+                    }
+                    Some(Answer::Always) => Ok(()),
+                    Some(Answer::No) => {
+                        Err(format!("{SAID_NO}: ask what they would like instead, or find another way."))
+                    }
+                    None if laya_asks => Err(format!(
+                        "This run cannot ask, and Laya reads this command as risky ({}): it was not run. Say what you would have done, or find a safer way.",
+                        risk.map(|r| r.line()).unwrap_or_default()
+                    )),
+                    None => Err(format!(
+                        "This run cannot ask, and {} asks in {} mode: it was not run. Say what you would have done; the person can run again with --mode auto-edit (edits) or --mode yolo (commands too).",
+                        said.name,
+                        self.policy.mode.name()
+                    )),
+                }
+            }
+        }
+    }
+
     /// The person asked about a call (their Notification hooks told first).
     async fn ask(hooks: Arc<crate::hooks::Hooks>, approver: Arc<dyn Approver>, q: &Question<'_>) -> Option<Answer> {
         if hooks.has("Notification") {
@@ -1173,7 +1185,7 @@ impl Agent {
         approver.ask(q).await
     }
 
-    async fn pre_tool(
+    pub(crate) async fn pre_tool(
         hooks: &crate::hooks::Hooks,
         name: &str,
         args: &Value,
@@ -1190,7 +1202,7 @@ impl Agent {
     }
 
     /// A `PostToolUse` hook's word goes with the result to the model.
-    async fn post_tool(
+    pub(crate) async fn post_tool(
         hooks: &crate::hooks::Hooks,
         name: &str,
         args: &Value,
