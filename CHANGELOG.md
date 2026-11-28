@@ -1034,6 +1034,25 @@ Sections used:
   that window has the keys open in it. Move back into the IDE (the window's button, its tab menu, or
   the command) gives the tabs back. Closing the window also gives them back, and the window closes
   when its last tab closes.
+- **Tasks.** Run Task, Run Build Task (Ctrl+Shift+B), Run Test Task, Terminate Task and Show Running
+  Tasks, from the palette and the Terminal menu. They run the tasks of .vscode/tasks.json 2.0.0:
+  shell and process tasks, npm, typescript and cargo tasks, args with their quoting, options
+  cwd/env/shell, the block for your system, a group's default, dependsOn in sequence or in parallel,
+  isBackground and hide. They also run the tasks the project's own files offer: npm scripts (also
+  one folder down), cargo, go, make targets, dotnet, cmake, ctest and pytest.
+- **A task's own terminal.** Each task runs in a 'Task - LABEL' tab, and its next run takes that
+  tab's place. Its dependencies run first, and one that fails stops the tasks that depend on it. A
+  task that is still active is not started twice. What tasks.json gets wrong is listed when you open
+  Run Task.
+- **Variables and inputs.** ${workspaceFolder}, ${file}, ${relativeFile}, ${fileDirname},
+  ${lineNumber}, ${selectedText}, ${env:NAME} (never the Arena's or a provider's key), ${config:key}
+  and ${codeArena.buildConfiguration} are filled in. ${input:id} is asked in the quick input: a
+  promptString (a password as dots) or a pickString.
+- **Restricted Mode.** In a folder you have not trusted, a task first shows the commands it would
+  run. You can trust the folder and run it, or run it once. Taking trust back stops the tasks that
+  run.
+- **Build configuration.** Tasks: Select Build Configuration picks Debug or Release for each folder.
+  The tasks found in the project build with it (cargo --release, dotnet -c, CMAKE_BUILD_TYPE).
 
 
 ### :bug: Bugs fixed
