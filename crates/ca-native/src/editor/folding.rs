@@ -816,9 +816,10 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
         // the cache for them, as the lines scrolled to get theirs) leave the view where it was scrolled to (the
         // minimap, the scroll bar), as the viewport itself is always visible.
         let now = (cursor.offset(), cursor.is_insert(), editor.doc().text());
-        let same = kept.borrow().as_ref().is_some_and(|k: &(usize, bool, Rope)| {
-            k.0 == now.0 && k.1 == now.1 && k.2.ptr_eq(&now.2)
-        });
+        let same = kept
+            .borrow()
+            .as_ref()
+            .is_some_and(|k: &(usize, bool, Rope)| k.0 == now.0 && k.1 == now.1 && k.2.ptr_eq(&now.2));
         if same {
             editor.es.track();
             return viewport.get_untracked();
