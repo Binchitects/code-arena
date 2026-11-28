@@ -207,7 +207,8 @@ pub fn around(ui: Ui, send: Send, answer: Answer, body: impl FnOnce(Quoting) -> 
                 None => {}
             }
         }),
-        held: Rc::new(move || me.held.get_untracked()),
+        // The words stay selected while a question is asked about them (its field has the keys).
+        held: Rc::new(move || me.held.get_untracked() || me.asking.get_untracked()),
     };
     let content = body(quoting);
     frame.set(Some(content.id()));
@@ -242,8 +243,9 @@ fn toolbar(ui: Ui, send: Send, answer: RwSignal<String>) -> impl IntoView {
     )
     .style(move |s| {
         let c = t.get();
+        // Another answer's toolbar reads no more than whether it is shown.
+        let Some(asking) = shown.get() else { return s.position(Position::Absolute).hide() };
         let at = me.picked.with(|p| p.as_ref().map(|p| (p.rect, p.width)));
-        let asking = me.asking.get();
         let s = s
             .position(Position::Absolute)
             .padding(3.0)
@@ -256,8 +258,8 @@ fn toolbar(ui: Ui, send: Send, answer: RwSignal<String>) -> impl IntoView {
             .box_shadow_blur(8.0)
             .box_shadow_color(floem::peniko::Color::rgba8(0, 0, 0, 0x40))
             .z_index(5);
-        match (shown.get(), at) {
-            (Some(_), Some((rect, w))) => {
+        match at {
+            Some((rect, w)) => {
                 let (left, top) = place(rect, w, width(asking));
                 s.inset_left(left).inset_top(top).apply_if(asking, |s| s.width(width(true)))
             }
