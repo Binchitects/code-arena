@@ -1,5 +1,6 @@
-//! The input's tools picker: the wrench in the box's toolbar, with how many of the session's tool groups are on
-//! (hidden while the model calls no tools). A click opens its popover over the box, "Tools: N of M on": each group
+//! The input's tools picker: the wrench in the box's toolbar (without the word "Tools": the panel is narrow), with
+//! how many of the session's tool groups are on (hidden while the model calls no tools). A click opens its popover
+//! over the box, "Tools: N of M on": each group
 //! (Code Arena's own, the Arena project's, each MCP server's) with its icon, its title, a shield when it asks before
 //! each call, an About button that opens what it is for and its functions, and a switch (Code Arena's own is always
 //! on). Customize tools… at the foot opens the Configure Tools dialog (`CUSTOMIZE`).
@@ -175,7 +176,6 @@ fn button(ui: Ui, _send: Send) -> impl IntoView {
     let shown = create_memo(move |_| (counted(&st.groups.get()), calls_tools(ui)));
     let inner = h_stack((
         icon("tools", 14.0),
-        label(|| "Tools").style(|s| s.font_size(12.0).selectable(false)),
         label(move || shown.get().0.0.to_string()).style(move |s| {
             let c = t.get();
             s.font_size(11.0)
@@ -401,7 +401,7 @@ fn body(ui: Ui, send: Send, groups: Vec<Group>, about: Option<String>, waiting: 
 }
 
 /// The popover's layer: over the window while open, its left at the wrench's and its bottom over it; a press
-/// outside or Escape closes it.
+/// outside or Escape closes it. It stays within the window when the wrench is near its right edge.
 fn popover(ui: Ui, send: &Send) -> AnyView {
     let t = ui.colors;
     let st = ui.state::<Tools>();
@@ -424,7 +424,7 @@ fn popover(ui: Ui, send: &Send) -> AnyView {
             Some(id) => {
                 let r = id.layout_rect();
                 let window = window_size(ui, Some(id));
-                (r.x0.max(8.0), (window.height - r.y0 + 6.0).max(8.0))
+                (r.x0.min(window.width - WIDE - 8.0).max(8.0), (window.height - r.y0 + 6.0).max(8.0))
             }
             None => (8.0, 8.0),
         };
