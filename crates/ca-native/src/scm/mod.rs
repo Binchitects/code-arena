@@ -562,9 +562,7 @@ fn open_row(ui: Ui, send: &Send, id: &str) {
         Group::Changes if f.untracked => ui.open(path, send),
         // A file changed on both sides opens in the compare editor, as VS Code's, where its lines can be staged
         // (`compare::ranges`); one added, taken away or renamed in its changes tab.
-        Group::Changes if f.y == 'M' => {
-            crate::compare::open(ui, send, Src::Index(path.into()), Src::Live(path.into()))
-        }
+        Group::Changes if f.y == 'M' => crate::compare::open(ui, send, Src::Index(path.into()), Src::Live(path.into())),
         Group::Staged if f.x == 'M' && f.from.is_none() => {
             crate::compare::open(ui, send, Src::Head(path.into()), Src::Index(path.into()))
         }

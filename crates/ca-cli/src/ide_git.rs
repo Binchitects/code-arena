@@ -592,7 +592,8 @@ pub(crate) fn stage_text(dir: &Path, path: &str, text: &str) -> Result<(), (Stri
         return Err((format!("{path} is not a path inside the project"), false));
     }
     let path = path.trim_start_matches("./");
-    let listed = git(dir, &["--literal-pathspecs", "ls-files", "-s", "-z", "--", path], None).map_err(|e| (e, false))?;
+    let listed =
+        git(dir, &["--literal-pathspecs", "ls-files", "-s", "-z", "--", path], None).map_err(|e| (e, false))?;
     let listed = String::from_utf8_lossy(&listed);
     let mut mode = None;
     for entry in listed.split('\0').filter(|e| !e.is_empty()) {

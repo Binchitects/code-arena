@@ -360,7 +360,8 @@ mod tests {
         ui.take(&json!({"type": "file", "path": "a.rs", "text": "a\nB\nc\nD\n", "modified": 1}), &send);
         asked.borrow_mut().clear();
         super::super::open(ui, &send, Source::Index("a.rs".into()), Source::Live("a.rs".into()));
-        let shown = json!({"type": "git_show", "repo": "", "path": "a.rs", "rev": "", "working": false, "key": "compare"});
+        let shown =
+            json!({"type": "git_show", "repo": "", "path": "a.rs", "rev": "", "working": false, "key": "compare"});
         assert_eq!(*asked.borrow(), [shown.clone()], "the index's text is asked of git");
         let e = super::super::entry("compare:index:a.rs ↔ live:a.rs").expect("open");
         assert!(!super::super::has_come(&e.left), "nothing is staged before the index's text has come");
