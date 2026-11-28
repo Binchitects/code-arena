@@ -360,7 +360,7 @@ fn row(ui: Ui, send: Send, r: Row) -> floem::AnyView {
             let pin = icon("pinned", 14.0).style(move |s| s.color(t.get().icon).flex_shrink(0.0_f32).margin_top(2.0));
             let pin = if i.pinned { pin.into_any() } else { empty().style(|s| s.width(14.0)).into_any() };
             let text = i.text.clone();
-            let kind = (!i.kind.is_empty()).then(|| format!("({})", i.kind)).unwrap_or_default();
+            let kind = if i.kind.is_empty() { String::new() } else { format!("({})", i.kind) };
             let no_kind = kind.is_empty();
             let words = h_stack((
                 label(move || text.clone()).style(move |s| {
