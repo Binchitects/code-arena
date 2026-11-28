@@ -318,7 +318,7 @@ fn lay_out(
         .family(&UI)
         .font_size(size)
         .line_height(LineHeightValue::Px(size * if heading { 1.4 } else { 1.5 }))
-        .weight(if heading { Weight::SEMIBOLD } else { Weight::NORMAL })
+        .weight(if heading { *crate::widgets::SEMIBOLD } else { Weight::NORMAL })
         .color(c.fg);
     let mut attrs = AttrsList::new(base);
     let mut marks = Vec::new();
@@ -689,7 +689,7 @@ fn table(ui: Ui, now: Memo<Option<Rc<Block>>>, q: Option<Quoting>, doc: Option<R
                 _ => "unfold",
             };
             h_stack((
-                label(move || text.clone()).style(|s| s.font_weight(Weight::SEMIBOLD).min_width(0.0)),
+                label(move || text.clone()).style(|s| s.font_weight(*crate::widgets::SEMIBOLD).min_width(0.0)),
                 floem::views::dyn_container(mark, |m| crate::icons::icon(m, 14.0)).style(move |s| {
                     let unsorted = sort.get().is_none_or(|(c, _)| c != n);
                     s.color(t.get().icon).apply_if(unsorted, |s| s.color(t.get().icon.multiply_alpha(0.4)))

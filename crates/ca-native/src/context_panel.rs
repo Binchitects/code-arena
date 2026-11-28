@@ -417,7 +417,7 @@ fn field(ui: Ui, send: Send, name: &'static str, hint: &'static str, value: RwSi
         });
     v_stack((
         label(move || name).style(|s| {
-            s.font_size(12.0).line_height(1.4).font_weight(Weight::SEMIBOLD).text_overflow(TextOverflow::Wrap)
+            s.font_size(12.0).line_height(1.4).font_weight(*crate::widgets::SEMIBOLD).text_overflow(TextOverflow::Wrap)
         }),
         input,
         label(move || hint).style(move |s| s.font_size(12.0).color(t.get().desc)),
@@ -472,7 +472,7 @@ fn settings_box(ui: Ui, send: Send) -> AnyView {
     ))
     .style(|s| s.gap(8.0).width_full().margin_top(4.0));
     v_stack((
-        label(|| "Context").style(|s| s.font_size(15.0).font_weight(Weight::SEMIBOLD)),
+        label(|| "Context").style(|s| s.font_size(15.0).font_weight(*crate::widgets::SEMIBOLD)),
         label(description).style(|s| s.line_height(1.4).text_overflow(TextOverflow::Wrap)),
         note(t, move || ring::use_line(&now.get())),
         parts,

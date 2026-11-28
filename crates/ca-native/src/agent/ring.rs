@@ -496,7 +496,7 @@ fn body(ui: Ui, send: Send, w: Window, d: Option<Detail>) -> AnyView {
     let t = ui.colors;
     let st = ui.state::<Context>();
     let mut rows: Vec<AnyView> = vec![
-        label(|| "Context").style(|s| s.font_size(13.0).font_weight(Weight::SEMIBOLD)).into_any(),
+        label(|| "Context").style(|s| s.font_size(13.0).font_weight(*crate::widgets::SEMIBOLD)).into_any(),
         note(t, use_line(&w)).into_any(),
     ];
     if let Some(over) = over_line(&w) {
@@ -525,7 +525,7 @@ fn body(ui: Ui, send: Send, w: Window, d: Option<Detail>) -> AnyView {
                 })
                 .collect();
             if !big.is_empty() {
-                rows.push(label(|| "Biggest").style(|s| s.font_size(12.0).font_weight(Weight::SEMIBOLD)).into_any());
+                rows.push(label(|| "Biggest").style(|s| s.font_size(12.0).font_weight(*crate::widgets::SEMIBOLD)).into_any());
                 rows.push(v_stack_from_iter(big).style(|s| s.gap(6.0).width_full()).into_any());
             }
         }

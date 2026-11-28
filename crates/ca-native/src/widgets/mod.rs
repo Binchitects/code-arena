@@ -49,6 +49,17 @@ pub static ITALIC: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
     fonts.db().faces().any(|f| f.style == floem::text::Style::Italic && f.stretch == floem::text::Stretch::Normal)
 });
 
+/// The weight VS Code gives headings (600), or bold where the UI font has no semibold face: asked for a weight its
+/// family lacks, the text system picks the nearest weight of any family, so headings came out in the mono font.
+pub static SEMIBOLD: std::sync::LazyLock<floem::text::Weight> = std::sync::LazyLock::new(|| {
+    let ui = UI_FONT.as_str();
+    let fonts = floem::text::FONT_SYSTEM.lock();
+    let has = fonts.db().faces().any(|f| {
+        f.weight == floem::text::Weight::SEMIBOLD && f.families.iter().any(|(name, _)| name == ui)
+    });
+    if has { floem::text::Weight::SEMIBOLD } else { floem::text::Weight::BOLD }
+});
+
 pub type Theme = RwSignal<Colors>;
 
 /// A toolbar action: a 16 px codicon in a 22 px square, rounded, with VS Code's hover background.
