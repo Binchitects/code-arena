@@ -1011,12 +1011,22 @@ impl Side {
     /// A terminal the driver starts itself (a task, a run, a debuggee: `kind` is "task", "run" or "debug"): every
     /// face is told with `term_started{id, title, kind}` before its first output, so the window shows it at once.
     /// Its number, from [`FIRST_DRIVER_TERM`].
-    #[allow(dead_code)] // The tasks, runs and debuggers call it.
     pub fn term_start(&self, title: &str, kind: &str, program: &Path, args: &[String], cwd: &Path) -> u64 {
         let id = NEXT_DRIVER_TERM.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         send(&self.out, json!({"type": "term_started", "id": id, "title": title, "kind": kind}));
         self.term_spawn(id, program, args, cwd, (80, 24), Some((title.to_string(), kind.to_string())));
         id
+    }
+
+    /// Whether a terminal still runs (its program has not ended, nobody closed it).
+    pub fn term_alive(&self, id: u64) -> bool {
+        self.terms.lock().map(|t| t.contains_key(&id)).unwrap_or(false)
+    }
+
+    /// The shell a terminal opened now would run (`$SHELL`, else bash, else sh): what a shell task runs in.
+    pub fn default_shell(&self) -> PathBuf {
+        let path = std::env::var_os("PATH").map(|p| p.to_string_lossy().into_owned());
+        shell_for(None, self.shell.as_deref(), path.as_deref())
     }
 
     fn term_spawn(
