@@ -113,7 +113,7 @@ mod tests {
         let seqs = [0, 1];
         let mut last = page(&seqs);
         mark(&mut last, &seqs, &the_mark(5), true);
-        assert_eq!(last.last().unwrap()["role"], "mark");
+        assert_eq!(last[2]["role"], "mark");
         let mut older = page(&seqs);
         mark(&mut older, &seqs, &the_mark(5), false);
         assert_eq!(older.len(), 2);
