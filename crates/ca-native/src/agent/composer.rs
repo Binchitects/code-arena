@@ -768,7 +768,16 @@ pub(super) fn input(ui: Ui, send: Send, anchor: RwSignal<Rect>) -> (AnyView, Vie
         };
         if ui.draft.with(|d| d.is_empty()) && composing.with(|p| p.is_none()) { s } else { s.hide() }
     });
-    let typed = stack((ask, field)).style(|s| s.width_full().min_width(0.0).margin_horiz(2.0).margin_vert(3.0));
+    // A press anywhere on the text's place gives the box the keys: a box drawn again (a new session's, in the middle)
+    // can take presses on only part of it at first, and the rest of a press went nowhere.
+    let typed = stack((ask, field))
+        .on_event_cont(floem::event::EventListener::PointerDown, move |_| {
+            if !focused.get_untracked() {
+                me.focus_wanted.set(true);
+                focus_now(ui);
+            }
+        })
+        .style(|s| s.width_full().min_width(0.0).margin_horiz(2.0).margin_vert(3.0));
     // The text, with what is sent with the message over it (no gap of the box's between them: what is there brings
     // its own space, and nothing takes none).
     let text = match slots::column(ui, &send, Slot::BoxTop) {
