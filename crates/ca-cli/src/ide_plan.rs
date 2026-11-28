@@ -130,7 +130,8 @@ fn said(kind: &str, step: Option<u64>, r: Result<String, String>) -> Value {
 /// why there are none when the session is not kept in Arena or Arena did not answer.
 async fn listing(sh: &Shared) -> Value {
     let root = sh.workspace.root().to_path_buf();
-    let repo = tokio::task::spawn_blocking(move || ca_arena::checklists::repo_checklists(&root)).await.unwrap_or_default();
+    let repo =
+        tokio::task::spawn_blocking(move || ca_arena::checklists::repo_checklists(&root)).await.unwrap_or_default();
     let Some(sync) = sh.sync.clone() else {
         return checklists_said(None, &[], &repo, Some(crate::checklist::SIGN_IN.into()), false);
     };
@@ -213,7 +214,9 @@ async fn checklist(p: &mut crate::session::Prepared, m: &Value) -> Result<(), St
             }
             arena.save_checklist(text("id").as_deref(), &name, &items).await.map(|_| ()).map_err(e)
         }
-        "checklist_delete" => arena.delete_checklist(&text("id").ok_or("Say which checklist to delete.")?).await.map_err(e),
+        "checklist_delete" => {
+            arena.delete_checklist(&text("id").ok_or("Say which checklist to delete.")?).await.map_err(e)
+        }
         _ => Err("Not a request of the checklists.".into()),
     }
 }
@@ -292,19 +295,27 @@ mod tests {
             "total": 2, "items": [{"number": 1, "text": "tests", "done": true, "note": "42 passed", "by": "model"},
             {"number": 2, "text": "docs"}]}))
         .expect("run");
-        let mine = [Checklist { id: "k1".into(), name: "Before a merge".into(), description: None, items: vec![
-            "tests".into(),
-            "docs".into(),
-        ] }];
+        let mine = [Checklist {
+            id: "k1".into(),
+            name: "Before a merge".into(),
+            description: None,
+            items: vec!["tests".into(), "docs".into()],
+        }];
         let repo = [RepoChecklist { name: "Release".into(), items: vec!["tag".into()], file: "r.md".into() }];
         let v = checklists_said(Some(&run), &mine, &repo, None, true);
-        assert_eq!(v["on"]["items"][0], json!({"number": 1, "text": "tests", "done": true, "note": "42 passed",
-            "by": "model"}));
+        assert_eq!(
+            v["on"]["items"][0],
+            json!({"number": 1, "text": "tests", "done": true, "note": "42 passed",
+            "by": "model"})
+        );
         assert_eq!((v["on"]["done"].clone(), v["on"]["checklist_id"].clone()), (json!(1), json!("k1")));
         assert_eq!(v["mine"], json!([{"id": "k1", "name": "Before a merge", "items": ["tests", "docs"]}]));
         assert_eq!(v["repo"], json!([{"name": "Release", "items": ["tag"]}]));
         let none = checklists_said(None, &[], &[], Some("sign in".into()), false);
-        assert_eq!((none["on"].clone(), none["problem"].clone(), none["edit"].clone()), (Value::Null, json!("sign in"), json!(false)));
+        assert_eq!(
+            (none["on"].clone(), none["problem"].clone(), none["edit"].clone()),
+            (Value::Null, json!("sign in"), json!(false))
+        );
     }
 
     #[test]

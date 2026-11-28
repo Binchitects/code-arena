@@ -209,7 +209,11 @@ pub fn card(ui: Ui, send: Send) -> AnyView {
     .style(|s| s.width_full());
     scroll(body)
         .style(move |s| {
-            s.width_full().max_height_pct(45.0).flex_shrink(0.0_f32).border_bottom(1.0).border_color(ui.colors.get().section_border)
+            s.width_full()
+                .max_height_pct(45.0)
+                .flex_shrink(0.0_f32)
+                .border_bottom(1.0)
+                .border_color(ui.colors.get().section_border)
         })
         .into_any()
 }
@@ -224,7 +228,11 @@ fn desc(t: Theme, words: impl Fn() -> String + 'static) -> impl IntoView {
 fn link(t: Theme, words: &'static str, on: impl Fn() + 'static) -> impl IntoView {
     label(move || words).on_click_stop(move |_| on()).style(move |s| {
         let c = t.get();
-        s.font_size(12.0).color(c.link).cursor(CursorStyle::Pointer).flex_shrink(0.0_f32).hover(|s| s.color(c.link_active))
+        s.font_size(12.0)
+            .color(c.link)
+            .cursor(CursorStyle::Pointer)
+            .flex_shrink(0.0_f32)
+            .hover(|s| s.color(c.link_active))
     })
 }
 
@@ -236,7 +244,11 @@ fn on_card(ui: Ui, send: Send) -> impl IntoView {
     let head = h_stack((
         label(|| "Checklist").style(move |s| bold(s).font_size(13.0).color(t.get().fg).flex_shrink(0.0_f32)),
         label(move || on.with(|o| o.as_ref().map(|o| o.name.clone()).unwrap_or_default())).style(move |s| {
-            s.font_size(12.0).color(t.get().desc).flex_grow(1.0_f32).min_width(0.0).text_overflow(TextOverflow::Ellipsis)
+            s.font_size(12.0)
+                .color(t.get().desc)
+                .flex_grow(1.0_f32)
+                .min_width(0.0)
+                .text_overflow(TextOverflow::Ellipsis)
         }),
         label(move || on.with(|o| o.as_ref().map(progress).unwrap_or_default()))
             .style(move |s| s.font_size(12.0).color(t.get().desc).flex_shrink(0.0_f32)),
@@ -271,7 +283,11 @@ fn item_row(ui: Ui, send: Send, i: Item) -> impl IntoView {
             .cursor(CursorStyle::Pointer)
     });
     let words = tick_words(&i);
-    let mark = tooltip(mark, move || { let w = words.clone(); label(move || w.clone()) }).on_click_stop(move |_| {
+    let mark = tooltip(mark, move || {
+        let w = words.clone();
+        label(move || w.clone())
+    })
+    .on_click_stop(move |_| {
         st.list.update(|l| {
             if let Some(on) = l.as_mut().and_then(|l| l.on.as_mut()) {
                 ticked(on, n, !done);
@@ -315,10 +331,12 @@ fn off_card(ui: Ui, send: Send) -> impl IntoView {
     });
     let group = move |words: &'static str, of: floem::reactive::Memo<Vec<List>>| {
         label(move || words).style(move |s| {
-            caps(s).font_bold().color(t.get().desc).padding_horiz(20.0).padding_top(6.0).apply_if(
-                of.with(Vec::is_empty),
-                |s| s.hide(),
-            )
+            caps(s)
+                .font_bold()
+                .color(t.get().desc)
+                .padding_horiz(20.0)
+                .padding_top(6.0)
+                .apply_if(of.with(Vec::is_empty), |s| s.hide())
         })
     };
     let (s1, s2) = (send.clone(), send.clone());
@@ -371,7 +389,10 @@ fn list_row(ui: Ui, send: Send, c: List, edit: floem::reactive::Memo<bool>) -> i
             .cursor(CursorStyle::Pointer)
             .hover(|s| s.background(t.get().list_hover))
     });
-    tooltip(row, move || { let w = format!("Turn on {tip_name}"); label(move || w.clone()) })
+    tooltip(row, move || {
+        let w = format!("Turn on {tip_name}");
+        label(move || w.clone())
+    })
 }
 
 /// Delete, once the person said so.
@@ -452,7 +473,13 @@ fn host(ui: Ui, send: Send) -> AnyView {
     let items = f.named(ui, "Items, one per line", box_.into_any());
     let buttons = form::buttons(vec![
         form::button(ui, || "Cancel".into(), false, || true, move || f.close()),
-        form::button(ui, || "Save".into(), true, move || st.name.with(|n| !n.trim().is_empty()), move || save(ui, &send)),
+        form::button(
+            ui,
+            || "Save".into(),
+            true,
+            move || st.name.with(|n| !n.trim().is_empty()),
+            move || save(ui, &send),
+        ),
     ]);
     f.host(
         ui,
