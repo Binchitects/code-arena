@@ -774,8 +774,16 @@ fn paste(ui: Ui, book: &Book, after: Option<u64>) {
 // --- What is drawn -------------------------------------------------------------------------------------------
 
 /// A button of the notebook's toolbar: its codicon and its words, as VS Code's.
-fn tool(t: Theme, name: &'static str, text: &'static str, on: impl Fn() + 'static) -> impl IntoView {
-    h_stack((icon(name, 16.0), label(move || text)))
+/// Its words are left out while `short` holds (a narrow editor), as VS Code's toolbar does.
+fn tool(
+    t: Theme,
+    short: RwSignal<bool>,
+    name: &'static str,
+    text: &'static str,
+    on: impl Fn() + 'static,
+) -> impl IntoView {
+    let words = label(move || text).style(move |s| s.apply_if(short.get(), |s| s.hide()));
+    h_stack((icon(name, 16.0), words))
         .on_click_stop(move |_| on())
         .style(move |s| {
             let c = t.get();
@@ -798,35 +806,36 @@ fn separator(t: Theme) -> impl IntoView {
 
 fn toolbar(ui: Ui, send: &Send, book: &Rc<Book>) -> AnyView {
     let t = ui.colors;
+    let short = floem::reactive::create_rw_signal(false);
     let (b1, b2, b3, b4, b5, b6) =
         (book.clone(), book.clone(), book.clone(), book.clone(), book.clone(), book.clone());
     let (s1, s2, s3, s4) = (send.clone(), send.clone(), send.clone(), send.clone());
     let path = book.path.clone();
     let kernel_at = book.path.clone();
     h_stack((
-        tool(t, "add", "Code", move || insert(ui, &b1, b1.selected.get_untracked().and_then(|k| b1.at(k)).map_or(b1.len(), |a| a + 1), Kind::Code, true)),
-        tool(t, "add", "Markdown", move || insert(ui, &b2, b2.selected.get_untracked().and_then(|k| b2.at(k)).map_or(b2.len(), |a| a + 1), Kind::Markdown, true)),
+        tool(t, short, "add", "Code", move || insert(ui, &b1, b1.selected.get_untracked().and_then(|k| b1.at(k)).map_or(b1.len(), |a| a + 1), Kind::Code, true)),
+        tool(t, short, "add", "Markdown", move || insert(ui, &b2, b2.selected.get_untracked().and_then(|k| b2.at(k)).map_or(b2.len(), |a| a + 1), Kind::Markdown, true)),
         separator(t),
-        tool(t, "run-all", "Run All", move || {
+        tool(t, short, "run-all", "Run All", move || {
             let keys: Vec<u64> = b3.cells.with_untracked(|c| c.iter().map(|l| l.key).collect());
             run(ui, &s1, &b3, &keys);
         }),
-        tool(t, "clear-all", "Clear All Outputs", move || {
+        tool(t, short, "clear-all", "Clear All Outputs", move || {
             change(ui, &b4, Change::Clear(None));
         }),
-        tool(t, "debug-stop", "Interrupt", move || {
+        tool(t, short, "debug-stop", "Interrupt", move || {
             if let Some(k) = kernel() {
                 (k.interrupt)(ui, &s2, &b5.path);
             }
         }),
-        tool(t, "debug-restart", "Restart", move || {
+        tool(t, short, "debug-restart", "Restart", move || {
             if let Some(k) = kernel() {
                 (k.restart)(ui, &s3, &b6.path);
             }
         }),
         empty().style(|s| s.flex_grow(1.0_f32)),
         tooltip(
-            tool(t, "go-to-file", "Open as Text", move || open_as_text(ui, &s4, &path)),
+            tool(t, short, "go-to-file", "Open as Text", move || open_as_text(ui, &s4, &path)),
             || label(|| "Reopen the notebook as its JSON text"),
         ),
         label(move || kernel_label(ui, &kernel_at)).on_click_stop(move |_| {
@@ -846,6 +855,13 @@ fn toolbar(ui: Ui, send: &Send, book: &Rc<Book>) -> AnyView {
                 .hover(|s| s.background(c.toolbar_hover))
         }),
     ))
+    .on_resize(move |r| {
+        // Its words left out where they do not fit beside the kernel's name.
+        let now = r.width() < 760.0;
+        if short.get_untracked() != now {
+            short.set(now);
+        }
+    })
     .style(move |s| {
         let c = t.get();
         s.width_full()
@@ -889,6 +905,7 @@ fn view(ui: Ui, send: Send, path: &str) -> AnyView {
 
 fn cells_view(ui: Ui, send: &Send, book: &Rc<Book>) -> AnyView {
     let t = ui.colors;
+    let short = floem::reactive::create_rw_signal(false);
     let (b, s) = (book.clone(), send.clone());
     let cells = book.cells;
     let list = dyn_stack(
@@ -899,8 +916,8 @@ fn cells_view(ui: Ui, send: &Send, book: &Rc<Book>) -> AnyView {
     .style(|s| s.flex_col().width_full());
     let (b1, b2) = (book.clone(), book.clone());
     let end = h_stack((
-        tool(t, "add", "Code", move || insert(ui, &b1, b1.len(), Kind::Code, true)),
-        tool(t, "add", "Markdown", move || insert(ui, &b2, b2.len(), Kind::Markdown, true)),
+        tool(t, short, "add", "Code", move || insert(ui, &b1, b1.len(), Kind::Code, true)),
+        tool(t, short, "add", "Markdown", move || insert(ui, &b2, b2.len(), Kind::Markdown, true)),
     ))
     .style(|s| s.gap(8.0).padding_vert(12.0).padding_left(56.0));
     let (kb, ks) = (book.clone(), send.clone());
@@ -949,7 +966,7 @@ fn cell_view(ui: Ui, send: &Send, book: &Rc<Book>, l: Rc<Live>) -> AnyView {
     let body = container(body).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0_f32).min_width(0.0));
     let tools = cell_tools(ui, book, &l);
     let b = book.clone();
-    let row = h_stack((left, body, tools))
+    let row = h_stack((left, body, tools.style(|s| s.align_self(Some(floem::taffy::AlignItems::FlexStart)))))
         .on_click_cont(move |_| {
             if b.selected.get_untracked() != Some(key) || b.editing.get_untracked() {
                 // A press on the cell (not in its editor, which takes it first) selects it.
@@ -1097,6 +1114,7 @@ fn cell_editor(ui: Ui, send: &Send, book: &Rc<Book>, l: &Rc<Live>) -> AnyView {
         _ => "cell.md".into(),
     };
     let o = crate::editor::options::memo(ui, move || Some(file.clone()));
+    let (selected, editing) = (book.selected, book.editing);
     l.colours.set_theme(crate::highlight::theme_of(&ui.theme_json()));
     let field = text_editor_keys("", move |editor, press, mods| {
         if let KeyInput::Keyboard(k, _) = &press.key {
@@ -1146,7 +1164,7 @@ fn cell_editor(ui: Ui, send: &Send, book: &Rc<Book>, l: &Rc<Live>) -> AnyView {
         let c = t.get();
         s.hide_gutter(true)
             .scroll_beyond_last_line(false)
-            .cursor_color(c.cursor)
+            .cursor_color(if selected.get() == Some(key) && editing.get() { c.cursor } else { floem::peniko::Color::TRANSPARENT })
             .selection_color(c.selection)
             .current_line_color(floem::peniko::Color::TRANSPARENT)
             .indent_guide_color(c.indent_guide)
@@ -1198,8 +1216,6 @@ fn cell_editor(ui: Ui, send: &Send, book: &Rc<Book>, l: &Rc<Live>) -> AnyView {
         });
     }
     let line = f64::from(editor.line_height(0)).max(16.0);
-    let selected = book.selected;
-    let editing = book.editing;
     let field = field.style(move |s| {
         let c = t.get();
         s.width_full()
