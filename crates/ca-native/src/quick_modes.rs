@@ -244,6 +244,13 @@ pub fn file_rows(files: &Files, text: &str, recent: &[String]) -> Vec<Row> {
     grouped(vec![("recently opened".into(), first), ("file results".into(), others)])
 }
 
+/// The row Quick Open chooses first: with nothing typed, the file opened before the one shown when the one shown
+/// heads the list (VS Code's Ctrl+P then Enter goes back to it), else the first.
+pub fn first_chosen(rows: &[Row], text: &str, shown: Option<&str>) -> usize {
+    let heads = matches!((rows.first().map(|r| &r.pick), shown), (Some(Pick::File(p)), Some(s)) if p == s);
+    usize::from(text.trim().is_empty() && heads && rows.len() > 1)
+}
+
 /// Whether a command matches what is typed by its id ("workbench.action.files.save"), or by its words in any order
 /// ("save file" for "File: Save").
 fn matches_otherwise(c: &Command, typed: &str) -> bool {
@@ -605,6 +612,17 @@ mod tests {
         assert_eq!(rows[2].detail, "Go to Line/Column");
         assert!(matches!(&rows[3].pick, Pick::Prefix(p) if p == "@"));
         assert_eq!(names(&help_rows("symbol")), ["@"]);
+    }
+
+    #[test]
+    fn quick_open_with_nothing_typed_chooses_the_file_before_the_one_shown() {
+        let files = Files::of(["a.rs", "b.rs"].into_iter(), false);
+        let recent = vec!["b.rs".to_string(), "a.rs".to_string()];
+        let rows = file_rows(&files, "", &recent);
+        assert_eq!(first_chosen(&rows, "", Some("b.rs")), 1);
+        assert_eq!(first_chosen(&rows, "", Some("a.rs")), 0, "the one shown is not first");
+        assert_eq!(first_chosen(&rows, "", None), 0);
+        assert_eq!(first_chosen(&file_rows(&files, "b", &recent), "b", Some("b.rs")), 0, "something typed");
     }
 
     #[test]
