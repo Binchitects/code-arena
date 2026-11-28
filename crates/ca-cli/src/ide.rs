@@ -78,7 +78,7 @@ impl Approver for PageApprover {
 
 /// What the session is working through: its plan, its goal, its jobs (the bars above the box), and what the
 /// areas add. From the session's handles, so it is said while a turn runs too.
-fn tasks(sh: &Shared) -> Value {
+pub(crate) fn tasks(sh: &Shared) -> Value {
     let plan = sh.plan.get();
     let goals = sh.goals.get();
     let jobs: Vec<Value> = sh
@@ -641,7 +641,7 @@ fn theme(app: &App) -> String {
 }
 
 /// What the status line shows, without the thread (after a turn, or a change: the page keeps its thread).
-fn status(p: &Prepared, sh: &Shared) -> Value {
+pub(crate) fn status(p: &Prepared, sh: &Shared) -> Value {
     let mut v = json!({"type": "status", "model": p.agent.model, "mode": p.agent.policy.mode.name(),
            "thinking": thinking_name(&p.agent.thinking), "context": context(p), "running": false,
            "branch": ca_agent::instructions::git_branch(p.agent.ctx.workspace.root())});
