@@ -575,6 +575,19 @@ Sections used:
   `codeArena.desktopNotifications`, off by default). While the window is minimized, notifications go
   to the desktop through notify-send, osascript or PowerShell. The window asks for attention when a
   bubble comes while it is not in front.
+- **Add to chat from the editor.** Code Arena: Add to chat (Ctrl+L, or the editor's right-click
+  menu) puts the selection, or the caret's line, in a chip over the chat's box ('src/cart.rs:12-30',
+  '(unsaved)' when the file has changes not saved). X leaves it out, and adding the same lines again
+  replaces their chip; the box keeps 8 at most. A dashed '+ path:line' chip offers the editor's
+  current lines. Lines sent with no words go as 'Look at these lines.', and they come back to the
+  box if the message is refused.
+- **Explain this, Fix this, Complete this.** From the editor's right-click menu, each asks about the
+  selected lines at once (queued while an answer is written) and leaves the chips in the box alone.
+- **The model reads the lines it is sent.** Each piece goes with three lines around it, numbered as
+  read_file numbers them; an unsaved piece goes as the person sees it. The pieces appear under the
+  question as 'Sent with it' and are kept with it.
+- **Add to Chat in the Explorer.** A row's menu puts its @path before what is typed in the chat's
+  box.
 
 
 ### :bug: Bugs fixed
