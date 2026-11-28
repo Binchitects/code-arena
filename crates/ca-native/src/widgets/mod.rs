@@ -22,6 +22,7 @@ use crate::icons::icon;
 use crate::state::Ui;
 
 pub mod dialog;
+pub mod form;
 pub mod popup;
 pub mod quick;
 pub mod toast;

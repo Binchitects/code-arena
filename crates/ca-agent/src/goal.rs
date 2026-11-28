@@ -188,7 +188,7 @@ impl Goals {
     }
 
     /// The next goal waiting, started.
-    fn start_next(&mut self) -> bool {
+    pub fn start_next(&mut self) -> bool {
         if self.next.is_empty() {
             return false;
         }

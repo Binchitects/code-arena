@@ -1,11 +1,12 @@
 //! Goal mode in the terminal: `/goal TEXT [--check CMD | --when CONDITION] [--steps N] [--minutes N] [--tokens N]
-//! [--until-met]`, `/goal` (where it stands), `pause`, `resume`, `cancel`, `drop N`; and `code-arena -p --goal TEXT`.
-//! After each goal turn the check runs (a command in the sandbox as run_shell runs one; a condition read by a fresh
-//! sub-agent), and the next turn starts by itself while the goal is worked on.
+//! [--until-met]`, `/goal` (where it stands), `pause`, `resume`, `cancel`, `next`, `drop N`; and
+//! `code-arena -p --goal TEXT`. After each goal turn the check runs (a command in the sandbox as run_shell runs one; a
+//! condition read by a fresh sub-agent), and the next turn starts by itself while the goal is worked on. The IDE's
+//! goal messages (`ide_goal.rs`) change the goals through the same functions.
 
 use std::sync::Arc;
 
-use ca_agent::goal::{self, Budget, Check, Checker, Goal, GoalBook, TurnSpent};
+use ca_agent::goal::{self, Budget, Check, Checker, Goal, GoalBook, Goals, TurnSpent};
 use ca_tools::Tool;
 use serde_json::json;
 
@@ -52,49 +53,77 @@ impl Checker for SessionChecker {
 pub fn command(rest: &str, p: &mut Prepared) -> String {
     let book = p.goals.clone();
     let words: Vec<&str> = rest.split_whitespace().collect();
+    let said = |r: Result<String, String>| r.unwrap_or_else(|e| e);
     match words.first().copied() {
         None => book.get().describe(),
-        Some("pause") => book.change(|g| match &mut g.current {
-            Some(c) if c.status == goal::WORKING => {
-                c.status = goal::PAUSED.into();
-                "The goal is paused: /goal resume carries it on.".into()
-            }
-            _ => "No goal is being worked on.".into(),
-        }),
-        Some("resume") => book.change(|g| match &mut g.current {
-            Some(c) if c.status == goal::PAUSED => {
-                c.status = goal::WORKING.into();
-                "The goal is worked on again from the next turn (send a message, or press Enter on an empty line)."
-                    .into()
-            }
-            _ => "No goal is paused.".into(),
-        }),
-        Some("cancel") => book.change(|g| match &mut g.current {
-            Some(c) if c.status == goal::WORKING || c.status == goal::PAUSED => {
-                c.status = goal::CANCELLED.into();
-                c.outcome = Some(format!("Cancelled by the person after {}.", c.usage()));
-                "The goal is cancelled.".into()
-            }
-            _ => "No goal to cancel.".into(),
-        }),
+        Some("pause") => said(book.change(pause)),
+        Some("resume") => said(book.change(resume)),
+        Some("cancel") => said(book.change(cancel)),
+        Some("next") if words.len() == 1 => said(book.change(start_next)),
         Some("drop") => match words.get(1).and_then(|n| n.parse::<usize>().ok()) {
-            Some(n) => book.change(|g| {
-                if (1..=g.next.len()).contains(&n) {
-                    let d = g.next.remove(n - 1);
-                    format!("Dropped: {}", d.text)
-                } else {
-                    format!("No goal waits at {n}: /goal lists them.")
-                }
-            }),
+            Some(n) => said(book.change(|g| drop_waiting(g, n))),
             None => "/goal drop N: the waiting goal's number.".into(),
         },
         Some(_) => match parse(rest) {
-            Ok(goal) => match book.change(|g| g.set(goal)) {
-                Ok(said) => said,
-                Err(e) => e,
-            },
+            Ok(goal) => said(book.change(|g| g.set(goal))),
             Err(e) => e,
         },
+    }
+}
+
+/// The goal worked on paused: no turn carries it on until it is resumed.
+pub fn pause(g: &mut Goals) -> Result<String, String> {
+    match &mut g.current {
+        Some(c) if c.status == goal::WORKING => {
+            c.status = goal::PAUSED.into();
+            Ok("The goal is paused: /goal resume carries it on.".into())
+        }
+        _ => Err("No goal is being worked on.".into()),
+    }
+}
+
+/// The paused goal worked on again.
+pub fn resume(g: &mut Goals) -> Result<String, String> {
+    match &mut g.current {
+        Some(c) if c.status == goal::PAUSED => {
+            c.status = goal::WORKING.into();
+            Ok("The goal is worked on again from the next turn (send a message, or press Enter on an empty line)."
+                .into())
+        }
+        _ => Err("No goal is paused.".into()),
+    }
+}
+
+/// The goal worked on or paused given up.
+pub fn cancel(g: &mut Goals) -> Result<String, String> {
+    match &mut g.current {
+        Some(c) if c.status == goal::WORKING || c.status == goal::PAUSED => {
+            c.status = goal::CANCELLED.into();
+            c.outcome = Some(format!("Cancelled by the person after {}.", c.usage()));
+            Ok("The goal is cancelled.".into())
+        }
+        _ => Err("No goal to cancel.".into()),
+    }
+}
+
+/// The first goal waiting started, once the one before it has ended (met, spent, stuck or cancelled).
+pub fn start_next(g: &mut Goals) -> Result<String, String> {
+    if g.current.as_ref().is_some_and(|c| c.status == goal::WORKING || c.status == goal::PAUSED) {
+        return Err("A goal is being worked on: the next starts when it is met.".into());
+    }
+    if !g.start_next() {
+        return Err("No goal waits.".into());
+    }
+    Ok(format!("Next goal: {}", g.current.as_ref().map(|c| c.text.as_str()).unwrap_or("")))
+}
+
+/// The goal waiting at `n` (from 1) dropped.
+pub fn drop_waiting(g: &mut Goals, n: usize) -> Result<String, String> {
+    if (1..=g.next.len()).contains(&n) {
+        let d = g.next.remove(n - 1);
+        Ok(format!("Dropped: {}", d.text))
+    } else {
+        Err(format!("No goal waits at {n}: /goal lists them."))
     }
 }
 

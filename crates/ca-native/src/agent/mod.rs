@@ -25,6 +25,7 @@ pub mod compaction;
 pub mod composer;
 pub mod diffs;
 pub mod goal_bar;
+pub mod goal_form;
 pub mod header;
 pub mod jobs_bar;
 pub mod media;
