@@ -770,6 +770,21 @@ Sections used:
   something… (up to 500 characters, for this project only or every project), forget your own, open
   the project's long memory, and see when memories are kept on this machine. The view is gone when
   Arena denies memory.
+- **Goal mode in the IDE.** Chat: Work Toward a Goal… (the target in the chat's header, or `/goal
+  TEXT`) opens a form for the goal, how it is checked (a command succeeds, a condition holds, or the
+  agent writes it down first) and its budget (until it is met, or steps, minutes and tokens). The
+  agent then works on it turn after turn until the check passes, the budget is spent or it gets
+  stuck.
+- **The goal's bar over the chat box.** It shows the goal's status, what it has spent (`turn N · X
+  of Y steps · …`) with a budget bar that turns to the warning colour at 90%, the check and how the
+  goal ended. Pause, Resume, Cancel and Put away are on the bar, with the goals waiting after it
+  (each with a drop) and Start the next. Add a Goal After This One…, Pause, Resume and Cancel the
+  Goal are in the palette too.
+- **Loops in the IDE.** Chat: Loops… (or `/loop`) lists the loops, each with how often it runs,
+  whether it may change files, its runs, the runs it skipped and how its last run went, and a stop.
+  It also adds a loop: a prompt run every 15 minutes, 30 minutes, 1 hour, 4 hours or 1 day. A bar
+  over the box says how many loops run, and each run's report goes to the agent with your next
+  message.
 
 
 ### :bug: Bugs fixed
