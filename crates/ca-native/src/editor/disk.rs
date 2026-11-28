@@ -57,7 +57,9 @@ pub(super) fn disk_bar(ui: Ui) -> impl IntoView {
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).text_ellipsis()),
         small(t, "Revert", move || on_active(|ui, path, send| ui.take_disk(path, send)))
             .style(move |s| s.apply_if(state() != Some(OnDisk::Changed), |s| s.hide())),
-        small(t, "Overwrite", move || on_active(|ui, path, send| ui.save_tab(path, send))),
+        small(t, "Overwrite", move || {
+            on_active(|ui, path, send| crate::save::save(ui, path, send, crate::save::How::Overwrite))
+        }),
         action(t, "close", move || {
             if let Some(path) = ui.active.get_untracked() {
                 ui.forget_on_disk(&path);
@@ -105,12 +107,16 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 }
                 return false;
             }
-            if let Some(at) = m["modified"].as_u64() {
-                ui.modified.update(|k| {
-                    k.insert(path.clone(), at);
-                });
+            // When it was changed is known only with its text taken: a tab with changes of its own keeps the time
+            // it read, so a save over what changed since is still asked about.
+            if ui.tab(&path).is_none_or(|t| !t.dirty.get_untracked()) {
+                if let Some(at) = m["modified"].as_u64() {
+                    ui.modified.update(|k| {
+                        k.insert(path.clone(), at);
+                    });
+                }
+                ui.forget_on_disk(&path);
             }
-            ui.forget_on_disk(&path);
             match ui.tab(&path) {
                 // Taken in only when the tab has no changes of its own.
                 Some(tab) => {
