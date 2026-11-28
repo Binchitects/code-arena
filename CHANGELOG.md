@@ -1160,6 +1160,14 @@ Sections used:
 - **Keyless local provider not flagged.** A provider at an http:// address or ollama, kept without a
   key, says 'No key needed' instead of a red 'No key'.
 - **Sign-in prompt.** The address step no longer says twice to press Enter.
+- **A folder opened under the same repository gets its shell there.** After Open Folder or Open
+  Recent picks a subfolder of the repository already open, a new terminal starts in that folder.
+  Before, it started in the old folder.
+- **The Explorer still lists the project when the folder is a repository's subfolder.** Opening
+  such a folder, or starting there, showed 'is outside the folders' in the Explorer. It now lists
+  the repository from its top.
+- **A long side bar title no longer runs under its buttons.** The Source Control title with the
+  tree buttons is now cut with '…', as in VS Code.
 
 ## v0.5.0 (2026-11-26)
 
