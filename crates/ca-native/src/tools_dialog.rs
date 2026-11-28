@@ -394,7 +394,8 @@ fn close(st: ToolsDialog) {
 fn close_form(st: ToolsDialog) {
     if let Some(f) = st.form.get_untracked() {
         st.form.set(None);
-        f.scope.dispose();
+        // Its views go with the next drawing: its signals a moment after.
+        floem::action::exec_after(std::time::Duration::from_millis(100), move |_| f.scope.dispose());
     }
 }
 
@@ -790,6 +791,7 @@ fn form_view(ui: Ui, send: Send) -> AnyView {
     let (save_send, reset_send, name, reset_name, args, description) =
         (send.clone(), send, f.name.clone(), f.name.clone(), f.args.clone(), f.description);
     let save_was = was.clone();
+    let (reset_description, reset_args) = (description, args.clone());
     let buttons = h_stack((
         button(t, "Save", true, move || {
             let given: Vec<(Arg, How, String)> =
@@ -798,7 +800,18 @@ fn form_view(ui: Ui, send: Send) -> AnyView {
         }),
         button(t, "Reset", false, move || {
             save(ui, &reset_send, &reset_name, was.bare());
-            toggle_form(ui, &reset_name, true);
+            // The form as Reset leaves it: its own words, every argument the model's.
+            if !reset_description.with_untracked(String::is_empty) {
+                reset_description.set(String::new());
+            }
+            for a in &reset_args {
+                if a.how.get_untracked() != How::Model {
+                    a.how.set(How::Model);
+                }
+                if !a.value.with_untracked(String::is_empty) {
+                    a.value.set(String::new());
+                }
+            }
         }),
     ))
     .style(|s| s.gap(8.0).margin_top(6.0));

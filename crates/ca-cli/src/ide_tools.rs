@@ -110,7 +110,7 @@ impl Area for Here {
         off.set(&ctx.sh.session, &group, on);
         if on {
             // A tool turned off by its own settings stays off.
-            let own_off = ctx.sh.kept.of::<settings::ToolOff>().of(&ctx.sh.session);
+            let own_off = ctx.p.tools_off.clone();
             let (back, still): (Vec<_>, Vec<_>) =
                 ctx.p.disabled.drain(..).partition(|t| t.group() == group && !own_off.contains(&t.def().name));
             ctx.p.disabled = still;

@@ -19,7 +19,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use ca_agent::tool_settings::{self as ts, Approval, Approvals, Choice, Levels};
 use ca_tools::{Kind, Tool};
@@ -119,22 +119,6 @@ fn lock(name: &str, group: &str, kind: Kind, servers: &[ServerRow]) -> Option<&'
     arena_asks.then_some(ts::ARENA_ASKS)
 }
 
-/// The tools turned off by their own settings, for the session that turned them off: brought back when turned on.
-#[derive(Default)]
-pub struct ToolOff(Mutex<(String, BTreeSet<String>)>);
-
-impl ToolOff {
-    pub fn of(&self, session: &str) -> BTreeSet<String> {
-        self.0.lock().ok().filter(|g| g.0 == session).map(|g| g.1.clone()).unwrap_or_default()
-    }
-
-    fn put(&self, session: &str, names: BTreeSet<String>) {
-        if let Ok(mut g) = self.0.lock() {
-            *g = (session.to_string(), names);
-        }
-    }
-}
-
 /// The session's tool lists, as settling them needs them.
 struct Lists<'a> {
     pub tools: &'a mut Vec<Arc<dyn Tool>>,
@@ -190,13 +174,14 @@ pub fn apply(sh: &Shared, p: &mut Prepared) {
     let levels = Places::of(&sh.paths, sh.workspace.root()).levels();
     let servers = server_rows(&sh.servers);
     let groups_off = sh.kept.of::<Off>().of(&sh.session);
-    let kept = sh.kept.of::<ToolOff>();
-    let was_off = kept.of(&sh.session);
+    let was_off: BTreeSet<String> = p.tools_off.iter().cloned().collect();
     let locked = |t: &dyn Tool| lock(&t.def().name, &t.group(), t.kind(), &servers).is_some();
     let lists = Lists { tools: &mut p.agent.tools, deferred: &mut p.agent.deferred, disabled: &mut p.disabled };
     let s = settle(lists, &levels, &groups_off, &p.assistant_off, &was_off, &locked);
     p.agent.policy.approvals = s.approvals;
-    kept.put(&sh.session, s.off);
+    p.tools_off = s.off.into_iter().collect();
+    // The sub-agents start from the tools and the policy as they are now.
+    crate::session::refresh_crew(p, p.ui);
 }
 
 /// Settles a session's tools as it starts, before any face asks: the terminal's too.
@@ -206,6 +191,7 @@ pub fn first(p: &mut Prepared, paths: &ca_core::Paths, root: &Path) {
     let lists = Lists { tools: &mut p.agent.tools, deferred: &mut p.agent.deferred, disabled: &mut p.disabled };
     let s = settle(lists, &levels, &BTreeSet::new(), &p.assistant_off, &BTreeSet::new(), &locked);
     p.agent.policy.approvals = s.approvals;
+    p.tools_off = s.off.into_iter().collect();
 }
 
 fn kind_word(k: Kind) -> &'static str {
@@ -289,7 +275,7 @@ pub fn set(ctx: &mut Ctx<'_>, m: &Value) {
         return;
     }
     let places = Places::of(&ctx.sh.paths, ctx.sh.workspace.root());
-    if choice.enabled != Some(false) && places.levels().of(&name).2.enabled == Some(false) {
+    if choice.enabled == Some(true) && places.levels().of(&name).2.enabled == Some(false) {
         refuse(&ctx.sh.out, &asked, &format!("Turned off by the project ({PROJECT_FILE})."));
         return;
     }
@@ -370,6 +356,19 @@ mod tests {
         assert_eq!(names(&tools), ["a"]);
         assert_eq!(names(&disabled), ["b"]);
         assert!(s.off.is_empty());
+    }
+
+    #[test]
+    fn a_tool_off_from_the_start_comes_back_when_turned_on() {
+        let (mut tools, mut deferred, mut disabled) = (vec![tool("a", OWN)], vec![], vec![]);
+        let off = Levels::new(&json!({"a": {"enabled": false}}), &json!({}), &json!({}));
+        let none = BTreeSet::new();
+        let l = Lists { tools: &mut tools, deferred: &mut deferred, disabled: &mut disabled };
+        let first = settle(l, &off, &none, &[], &none, &|_| false);
+        let l = Lists { tools: &mut tools, deferred: &mut deferred, disabled: &mut disabled };
+        settle(l, &Levels::default(), &none, &[], &first.off, &|_| false);
+        assert_eq!(names(&tools), ["a"]);
+        assert!(disabled.is_empty());
     }
 
     #[test]
