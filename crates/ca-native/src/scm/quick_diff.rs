@@ -259,16 +259,17 @@ impl crate::ext::State for Quick {
     }
 }
 
-/// The index's text of a file asked of the session.
-fn ask(send: &Send, path: &str) {
-    send(json!({"type": "git_show", "repo": "", "path": path, "rev": "", "working": false, "key": OWNER}));
+/// The index's text of a file asked of the session, of the repository the file is in.
+fn ask(ui: Ui, send: &Send, path: &str) {
+    let (repo, path) = super::repos::split(ui, path);
+    send(json!({"type": "git_show", "repo": repo, "path": path, "rev": "", "working": false, "key": OWNER}));
 }
 
 /// Every open file's index text asked again.
-fn ask_all(send: &Send) {
+fn ask_all(ui: Ui, send: &Send) {
     let paths: Vec<String> = FILES.with(|f| f.borrow().keys().cloned().collect());
     for p in paths {
-        ask(send, &p);
+        ask(ui, send, &p);
     }
 }
 
@@ -376,7 +377,7 @@ fn follow_tabs(ui: Ui, send: &Send) {
     }
     for p in &asked {
         crate::decor::clear(ui, OWNER, p);
-        ask(send, p);
+        ask(ui, send, p);
     }
     if !gone.is_empty() || !asked.is_empty() {
         ui.state::<Quick>().rev.update(|r| *r += 1);
@@ -534,7 +535,7 @@ pub fn register(ui: Ui, send: &Send) {
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     match m["type"].as_str().unwrap_or("") {
         "git_shown" if m["key"] == OWNER => {
-            let path = m["path"].as_str().unwrap_or("");
+            let path = &super::repos::full(m["repo"].as_str().unwrap_or(""), m["path"].as_str().unwrap_or(""));
             let base: Option<Arc<str>> =
                 if m["exists"].as_bool().unwrap_or(false) { m["text"].as_str().map(Arc::from) } else { None };
             let changed = FILES.with(|f| {
@@ -551,11 +552,11 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             }
             return true;
         }
-        "git_status" if m["repo"].as_str().unwrap_or("").is_empty() => ask_all(send),
-        "git_committed" => ask_all(send),
+        "git_status" => ask_all(ui, send),
+        "git_committed" => ask_all(ui, send),
         "saved" => {
             if let Some(path) = m["path"].as_str() {
-                ask(send, path);
+                ask(ui, send, path);
             }
         }
         // Read again from disk (an agent's edit): its lines compared again once the tab has the text.

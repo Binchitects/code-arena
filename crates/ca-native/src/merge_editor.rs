@@ -345,7 +345,8 @@ pub fn open(ui: Ui, send: &Send, file: &str) {
             completing: Cell::new(None),
         });
         ENTRIES.with(|o| o.borrow_mut().insert(path.clone(), e));
-        send(json!({"type": "git_merge_info", "repo": "", "path": file}));
+        let (repo, rel) = crate::scm::repos::split(ui, file);
+        send(json!({"type": "git_merge_info", "repo": repo, "path": rel}));
     }
     if ui.tab(file).is_some_and(|t| t.is_file()) {
         if let Some(e) = entry(&path) {
@@ -572,12 +573,18 @@ pub fn complete(ui: Ui, send: &Send, path: &str) {
 }
 
 /// The file saved (when it has changes) and then staged by the driver.
+/// A file's merge completed by git, in the repository it is in.
+fn complete_in_git(ui: Ui, send: &Send, file: &str, anyway: bool) {
+    let (repo, rel) = crate::scm::repos::split(ui, file);
+    send(json!({"type": "git_merge_complete", "repo": repo, "path": rel, "anyway": anyway}));
+}
+
 fn finish(ui: Ui, send: &Send, e: &Rc<Entry>, anyway: bool) {
     if ui.tab(&e.file).is_some_and(|t| t.dirty.get_untracked()) {
         e.completing.set(Some(anyway));
         ui.save_tab(&e.file, send);
     } else {
-        send(json!({"type": "git_merge_complete", "repo": "", "path": e.file, "anyway": anyway}));
+        complete_in_git(ui, send, &e.file, anyway);
     }
 }
 
@@ -935,7 +942,8 @@ pub fn register(_ui: Ui, _send: &Send) {
 /// The session's messages that are this part's: what git says of a file in a merge editor, Complete Merge's save
 /// and its answer (taken away: Source Control would say a failure again).
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
-    let path = m["path"].as_str().unwrap_or("");
+    // git names the file from its repository's top; the window, from the project's.
+    let path = &crate::scm::repos::full(m["repo"].as_str().unwrap_or(""), m["path"].as_str().unwrap_or(""));
     let name = path.rsplit('/').next().unwrap_or(path);
     match m["type"].as_str().unwrap_or("") {
         "git_merge_info" => {
@@ -969,7 +977,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             if let Some(e) = waiting {
                 let anyway = e.completing.take().unwrap_or(false);
                 if m["error"].is_null() {
-                    send(json!({"type": "git_merge_complete", "repo": "", "path": path, "anyway": anyway}));
+                    complete_in_git(ui, send, path, anyway);
                 }
             }
             false
