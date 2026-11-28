@@ -17,6 +17,8 @@
 //!   thinking, the modes).
 //! - `queue.rs`: the messages sent while a turn runs, numbered, changed or taken back until read (`queue_edit`,
 //!   `queue_cancel`, `queue_clear`), and said to be read (`took_in`).
+//! - `pieces.rs`: the lines of files a message is sent with (its `context`), read for the model and named in its
+//!   `files`.
 //! - `rewind.rs`: what going back to a question would do (`rewind_preview`), and a question asked again.
 
 use serde_json::Value;
@@ -27,6 +29,7 @@ use crate::session::Prepared;
 mod history;
 pub(crate) mod library;
 mod mentions;
+mod pieces;
 pub mod pickers;
 pub mod queue;
 pub mod replay;
@@ -63,6 +66,7 @@ impl Area for Here {
     }
 
     fn shape(sh: &Shared, sent: &mut Sent) {
+        pieces::sent(sh, sent);
         history::sent(sh, sent);
     }
 
