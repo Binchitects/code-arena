@@ -931,7 +931,7 @@ fn cells_view(ui: Ui, send: &Send, book: &Rc<Book>) -> AnyView {
                 EventPropagation::Continue
             }
         })
-        .style(|s| s.flex_col().width_full().padding_vert(8.0).padding_right(20.0));
+        .style(|s| s.flex_col().width_full().padding_vert(8.0).padding_right(20.0).min_height_pct(100.0));
     book.list.set(Some(all.id()));
     // The cells' view has the keys when the notebook is shown in command mode.
     let first = book.clone();
@@ -967,14 +967,6 @@ fn cell_view(ui: Ui, send: &Send, book: &Rc<Book>, l: Rc<Live>) -> AnyView {
     let tools = cell_tools(ui, book, &l);
     let b = book.clone();
     let row = h_stack((left, body, tools.style(|s| s.align_self(Some(floem::taffy::AlignItems::FlexStart)))))
-        .on_click_cont(move |_| {
-            if b.selected.get_untracked() != Some(key) || b.editing.get_untracked() {
-                // A press on the cell (not in its editor, which takes it first) selects it.
-                if !b.editing.get_untracked() || b.selected.get_untracked() != Some(key) {
-                    b.selected.set(Some(key));
-                }
-            }
-        })
         .style(move |s| {
             let c = t.get();
             let on = is_selected.get();
@@ -986,7 +978,45 @@ fn cell_view(ui: Ui, send: &Send, book: &Rc<Book>, l: Rc<Live>) -> AnyView {
                 .margin_vert(2.0)
         });
     book.views.borrow_mut().insert(key, row.id());
-    row.into_any()
+    // A press on the cell selects it, in command mode: once what was pressed (its text, which takes the keys to
+    // copy) has done with it. One in its editor is the editor's (edit mode).
+    catch(row, move |_| {
+        let b = b.clone();
+        floem::action::exec_after(Duration::ZERO, move |_| {
+            if !(b.editing.get_untracked() && b.selected.get_untracked() == Some(key)) {
+                select(&b, key);
+            }
+        });
+    })
+    .style(|s| s.width_full())
+    .into_any()
+}
+
+/// A view that is told of each press in it (the number of clicks) before what is under the pointer takes it.
+struct Catch {
+    id: ViewId,
+    on: Box<dyn Fn(u8)>,
+}
+
+fn catch(child: impl IntoView + 'static, on: impl Fn(u8) + 'static) -> Catch {
+    let id = ViewId::new();
+    id.set_children(vec![child.into_any()]);
+    Catch { id, on: Box::new(on) }
+}
+
+impl View for Catch {
+    fn id(&self) -> ViewId {
+        self.id
+    }
+
+    fn event_before_children(&mut self, _: &mut floem::context::EventCx, event: &Event) -> EventPropagation {
+        if let Event::PointerDown(p) = event
+            && p.button.is_primary()
+        {
+            (self.on)(p.count);
+        }
+        EventPropagation::Continue
+    }
 }
 
 /// A cell's left column: a code cell's run button (a spinner while it runs) and its count, as `[3]`, `[*]`.
@@ -1298,10 +1328,16 @@ fn markdown_cell(ui: Ui, send: &Send, book: &Rc<Book>, l: &Rc<Live>) -> AnyView 
                     }
                 },
             );
-            v_stack((drawn, prose::document(ui, blocks, doc).style(|s| s.width_full())))
-                .on_double_click_stop(move |_| edit(&bb, key))
-                .style(|s| s.width_full().padding_horiz(10.0).padding_vert(4.0).min_height(24.0))
-                .into_any()
+            let text = v_stack((drawn, prose::document(ui, blocks, doc).style(|s| s.width_full())))
+                .style(|s| s.width_full().padding_horiz(10.0).padding_vert(4.0).min_height(24.0));
+            // A double-click edits it (seen before its text, which takes the presses to select words).
+            catch(text, move |count| {
+                if count >= 2 {
+                    edit(&bb, key);
+                }
+            })
+            .style(|s| s.width_full())
+            .into_any()
         },
     )
     .style(|s| s.width_full())
