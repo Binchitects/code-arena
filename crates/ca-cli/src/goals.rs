@@ -59,7 +59,7 @@ pub fn command(rest: &str, p: &mut Prepared) -> String {
         Some("pause") => said(book.change(pause)),
         Some("resume") => said(book.change(resume)),
         Some("cancel") => said(book.change(cancel)),
-        Some("next") => said(book.change(start_next)),
+        Some("next") if words.len() == 1 => said(book.change(start_next)),
         Some("drop") => match words.get(1).and_then(|n| n.parse::<usize>().ok()) {
             Some(n) => said(book.change(|g| drop_waiting(g, n))),
             None => "/goal drop N: the waiting goal's number.".into(),

@@ -55,6 +55,7 @@ impl Area for Here {
     /// Another session (or folder): its loops are its own.
     fn start(sh: &Shared) {
         set_seen(sh, Vec::new());
+        send(&sh.out, loops_message(sh));
     }
 
     fn shared(sh: &Shared, m: &Value) -> bool {

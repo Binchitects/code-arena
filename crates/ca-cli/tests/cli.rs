@@ -2315,6 +2315,12 @@ async fn a_goal_set_in_the_ide_is_worked_on_until_its_check_passes_and_loops_are
     ask(&mut page, json!({"type": "goal_next"})).await;
     let no = until(&mut page, &|v| v["type"] == "goal_next").await.pop().expect("reply");
     assert_eq!(no["error"], "No goal waits.", "{no}");
+    // Typed in the box, /goal says where the goal stands, as in the terminal.
+    ask(&mut page, json!({"type": "send", "text": "/goal"})).await;
+    let stands =
+        until(&mut page, &|v| v["type"] == "notice" && v["text"].as_str().is_some_and(|t| t.starts_with("Goal (")))
+            .await;
+    assert!(stands.last().is_some_and(|n| n["text"].as_str().is_some_and(|t| t.contains("say hello"))), "{stands:?}");
     // A loop added is listed with its runs, and stopped.
     ask(&mut page, json!({"type": "loop_add", "every": "1h", "prompt": "check the notes", "edits": false})).await;
     let added = until(&mut page, &|v| v["type"] == "loops").await;
