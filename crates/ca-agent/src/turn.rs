@@ -361,6 +361,8 @@ impl Agent {
     }
 
     pub async fn turn(&mut self, text: &str, events: &mut dyn Events) -> Result<TurnOutcome, TurnError> {
+        // Taken first: files of a message a hook blocks do not go with the next one.
+        let attached = std::mem::take(&mut self.attached);
         let said = self.hooks.run("UserPromptSubmit", "", serde_json::json!({"prompt": text})).await;
         for n in &said.notes {
             events.notice(n);
@@ -368,7 +370,6 @@ impl Agent {
         if let Some(why) = said.block.or(said.stop) {
             return Err(TurnError::Blocked(format!("A hook blocked the message: {why}")));
         }
-        let attached = std::mem::take(&mut self.attached);
         let mut asked = Message::user(crate::mentions::attach(text, &self.ctx.workspace) + &attached.section);
         asked.images = attached.images;
         let seq = self.add(asked, true).unwrap_or(self.history.len() as i64);

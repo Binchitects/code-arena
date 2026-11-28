@@ -259,7 +259,7 @@ fn named(ui: Ui, name: String, line: String, error: bool) -> floem::AnyView {
             label(move || name.clone()).style(|s| s.max_width(176.0).text_ellipsis()),
             label(move || line.clone()).style(move |s| {
                 let c = t.get();
-                s.font_size(11.0).color(if error { c.error } else { c.desc })
+                s.font_size(11.0).max_width(176.0).text_ellipsis().color(if error { c.error } else { c.desc })
             }),
         )),
     ))
