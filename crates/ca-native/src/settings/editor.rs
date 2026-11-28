@@ -356,7 +356,8 @@ pub fn parse(e: &Entry, text: &str) -> Result<Value, String> {
             // A whole number is written as one, as a person types it.
             Ok(if n.fract() == 0.0 && n.abs() < 1e15 { Value::from(n as i64) } else { Value::from(n) })
         }
-        "string" if e.value.is_null() && e.default.is_null() && text.is_empty() => Ok(Value::Null),
+        // Emptied, a setting that is none by default (the model) is taken out rather than set to "".
+        "string" if e.default.is_null() && text.is_empty() => Ok(Value::Null),
         _ => Ok(Value::String(text.to_string())),
     }
 }
@@ -573,19 +574,27 @@ fn typed(ui: Ui, send: Send, shown: Memo<Option<Shown>>) -> AnyView {
     let t = ui.colors;
     let buffer = create_rw_signal(String::new());
     let focused = create_rw_signal(false);
-    // What the session says is put in the box while it does not have the keys.
-    floem::reactive::create_effect(move |_| {
-        let now = shown.with(|s| s.as_ref().map(|s| as_text(&s.value)).unwrap_or_default());
-        if !focused.get_untracked() && buffer.with_untracked(|b| *b != now) {
-            buffer.set(now);
+    // What was sent last, with the value it was sent over: Enter then the keys lost send it once.
+    let sent = create_rw_signal(None::<(Value, Value)>);
+    // The row's value as the session says it is put in the box whenever it changes (a reset, a file edited), and
+    // what was sent is forgotten: the same value may be sent again.
+    floem::reactive::create_effect(move |was: Option<Value>| {
+        let value = shown.with(|s| s.as_ref().map(|s| s.value.clone()).unwrap_or_default());
+        if was.as_ref() != Some(&value) {
+            let now = as_text(&value);
+            if buffer.with_untracked(|b| *b != now) {
+                buffer.set(now);
+            }
+            if sent.with_untracked(Option::is_some) {
+                sent.set(None);
+            }
         }
+        value
     });
     let error = create_memo(move |_| {
         let text = buffer.get();
         shown.with(|s| s.as_ref().and_then(|s| parse(&s.entry, &text).err()))
     });
-    // What was sent last, with the value it was sent over: Enter then the keys lost send it once.
-    let sent = create_rw_signal(None::<(Value, Value)>);
     let commit = move || {
         let Some(sh) = shown.get_untracked() else { return };
         let text = buffer.get_untracked();
@@ -1187,7 +1196,8 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
 fn offer(ui: Ui, m: &Value) {
     let path = m["path"].as_str().unwrap_or("").to_string();
     if m["found"] != true {
-        toast::info(ui, &format!("No settings of VS Code's were found ({path})."));
+        let at = if path.is_empty() { String::new() } else { format!(" ({path})") };
+        toast::info(ui, &format!("No settings of VS Code's were found{at}."));
         return;
     }
     let keys: Vec<String> =
@@ -1374,6 +1384,11 @@ mod tests {
         assert_eq!(parse(tab, "8"), Ok(json!(8)));
         let text = Entry { kind: "string".into(), default: json!(""), value: json!(""), ..Entry::default() };
         assert_eq!(parse(&text, "Fira Code"), Ok(json!("Fira Code")));
+        assert_eq!(parse(&text, ""), Ok(json!("")));
+        // Emptied, one that is none by default is taken out, whatever it is now.
+        let model = Entry { kind: "string".into(), default: Value::Null, value: json!("qwen"), ..Entry::default() };
+        assert_eq!(parse(&model, ""), Ok(Value::Null));
+        assert_eq!(parse(&model, "qwen"), Ok(json!("qwen")));
         assert_eq!(as_text(&json!("on")), "on");
         assert_eq!(as_text(&json!(4)), "4");
         assert_eq!(as_text(&Value::Null), "");
