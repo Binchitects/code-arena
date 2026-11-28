@@ -38,7 +38,9 @@ const DESKTOP_MOST: usize = 200;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum What {
     /// A call waits for a yes: its number, as the session's `ask` says it.
-    Waiting { call: u64 },
+    Waiting {
+        call: u64,
+    },
     Ready,
     Failed,
 }
@@ -70,7 +72,11 @@ pub fn said(m: &Value) -> Option<(What, String, String)> {
         "turn_end" if m["stopped"] == true => None,
         "turn_end" => {
             let error = s("error");
-            Some((What::Failed, "The turn failed".into(), if error.is_empty() { "The turn failed.".into() } else { error }))
+            Some((
+                What::Failed,
+                "The turn failed".into(),
+                if error.is_empty() { "The turn failed.".into() } else { error },
+            ))
         }
         _ => None,
     }
@@ -115,10 +121,9 @@ pub fn desktop_command(os: &str, title: &str, body: &str) -> Option<(String, Vec
             );
             Some(("powershell".into(), vec!["-NoProfile".into(), "-NonInteractive".into(), "-Command".into(), script]))
         }
-        "linux" | "freebsd" | "openbsd" | "netbsd" | "dragonfly" => Some((
-            "notify-send".into(),
-            vec!["--app-name=Code Arena".into(), "--".into(), title.to_string(), body],
-        )),
+        "linux" | "freebsd" | "openbsd" | "netbsd" | "dragonfly" => {
+            Some(("notify-send".into(), vec!["--app-name=Code Arena".into(), "--".into(), title.to_string(), body]))
+        }
         _ => None,
     }
 }
@@ -260,11 +265,16 @@ fn bubble(ui: Ui, send: Send, n: Notice) -> impl IntoView {
         v_stack((
             label(move || title.clone()).style(|s| bold(s).text_overflow(TextOverflow::Wrap)),
             label(move || detail.clone()).style(move |s| {
-                s.font_size(12.0).color(t.get().desc).text_overflow(TextOverflow::Wrap).apply_if(no_detail, |s| s.hide())
+                s.font_size(12.0)
+                    .color(t.get().desc)
+                    .text_overflow(TextOverflow::Wrap)
+                    .apply_if(no_detail, |s| s.hide())
             }),
         ))
         .on_click_stop(move |_| open_chat(ui, id))
-        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).gap(2.0).margin_left(8.0).cursor(CursorStyle::Pointer)),
+        .style(|s| {
+            s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).gap(2.0).margin_left(8.0).cursor(CursorStyle::Pointer)
+        }),
         container(icon("close", 16.0)).on_click_stop(move |_| drop_notice(ui, id)).style(move |s| {
             let c = t.get();
             s.width(22.0)
@@ -289,9 +299,13 @@ fn bubble(ui: Ui, send: Send, n: Notice) -> impl IntoView {
                     send(json!({"type": "answer", "id": call, "answer": a}));
                 }
             };
-            h_stack((button(t, "Allow", true, reply("yes")), button(t, "Always", false, reply("always")), button(t, "Deny", false, reply("no"))))
-                .style(|s| s.gap(6.0).margin_top(8.0))
-                .into_any()
+            h_stack((
+                button(t, "Allow", true, reply("yes")),
+                button(t, "Always", false, reply("always")),
+                button(t, "Deny", false, reply("no")),
+            ))
+            .style(|s| s.gap(6.0).margin_top(8.0))
+            .into_any()
         }
         What::Ready => {
             let text = floem::reactive::create_rw_signal(String::new());
@@ -336,7 +350,9 @@ fn bubble(ui: Ui, send: Send, n: Notice) -> impl IntoView {
                         .cursor_color(floem::peniko::Brush::Solid(c.cursor));
                     crate::widgets::steady_input(s, c.input_bg, Some(c.focus))
                 });
-            h_stack((input, button(t, "Send", true, go))).style(|s| s.gap(6.0).items_center().margin_top(8.0)).into_any()
+            h_stack((input, button(t, "Send", true, go)))
+                .style(|s| s.gap(6.0).items_center().margin_top(8.0))
+                .into_any()
         }
         What::Failed => empty().style(|s| s.hide()).into_any(),
     };
@@ -455,13 +471,16 @@ mod tests {
 
     #[test]
     fn what_the_session_says_is_told_as_vs_code_words_say_it() {
-        let ask = said(&json!({"type": "ask", "id": 7, "tool": "run_shell", "subject": "ls"})).unwrap();
+        let ask = said(&json!({"type": "ask", "id": 7, "tool": "run_shell", "subject": "ls"})).expect("said");
         assert_eq!(ask, (What::Waiting { call: 7 }, "Waiting for you: run_shell".into(), "ls".into()));
-        assert_eq!(said(&json!({"type": "turn_end", "ok": true})).unwrap().1, "Ready: the agent finished");
-        let failed = said(&json!({"type": "turn_end", "ok": false, "error": "no model"})).unwrap();
+        assert_eq!(said(&json!({"type": "turn_end", "ok": true})).expect("said").1, "Ready: the agent finished");
+        let failed = said(&json!({"type": "turn_end", "ok": false, "error": "no model"})).expect("said");
         assert_eq!((failed.0, failed.2.as_str()), (What::Failed, "no model"));
-        assert_eq!(said(&json!({"type": "turn_end", "ok": false})).unwrap().2, "The turn failed.");
-        assert!(said(&json!({"type": "turn_end", "ok": false, "stopped": true})).is_none(), "a stop is the person's own");
+        assert_eq!(said(&json!({"type": "turn_end", "ok": false})).expect("said").2, "The turn failed.");
+        assert!(
+            said(&json!({"type": "turn_end", "ok": false, "stopped": true})).is_none(),
+            "a stop is the person's own"
+        );
         assert!(said(&json!({"type": "text", "text": "hi"})).is_none());
     }
 
@@ -485,22 +504,22 @@ mod tests {
 
     #[test]
     fn each_desktop_has_its_command_with_the_words_quoted() {
-        let (p, a) = desktop_command("linux", "Ready: the agent finished", "it's \"done\"").unwrap();
+        let (p, a) = desktop_command("linux", "Ready: the agent finished", "it's \"done\"").expect("said");
         assert_eq!(p, "notify-send");
         assert_eq!(a, ["--app-name=Code Arena", "--", "Ready: the agent finished", "it's \"done\""]);
-        let (p, a) = desktop_command("macos", "Waiting for you: run_shell", "say \"hi\" \\ there").unwrap();
+        let (p, a) = desktop_command("macos", "Waiting for you: run_shell", "say \"hi\" \\ there").expect("said");
         assert_eq!(p, "osascript");
         assert_eq!(
             a[1],
             "display notification \"say \\\"hi\\\" \\\\ there\" with title \"Code Arena\" subtitle \"Waiting for you: run_shell\""
         );
-        let (p, a) = desktop_command("windows", "The turn failed", "it's gone").unwrap();
+        let (p, a) = desktop_command("windows", "The turn failed", "it's gone").expect("said");
         assert_eq!(p, "powershell");
         assert!(a[3].contains("CreateTextNode('The turn failed')") && a[3].contains("CreateTextNode('it''s gone')"));
         assert!(desktop_command("plan9", "a", "b").is_none());
         // Cut by characters: a long error that is not ASCII does not break in a character.
         let long = "é".repeat(300);
-        let (_, a) = desktop_command("linux", "t", &long).unwrap();
+        let (_, a) = desktop_command("linux", "t", &long).expect("said");
         assert_eq!(a[3].chars().count(), DESKTOP_MOST);
     }
 

@@ -791,7 +791,13 @@ mod tests {
             ui.message.set("went".into())
         }));
         let rows = vec![
-            Row::Entry { title: "Go".into(), keys: "F9".into(), icon: "", command: Some("test.popup.go".into()), checked: false },
+            Row::Entry {
+                title: "Go".into(),
+                keys: "F9".into(),
+                icon: "",
+                command: Some("test.popup.go".into()),
+                checked: false,
+            },
             Row::Line,
             Row::Entry { title: "Later".into(), keys: String::new(), icon: "", command: None, checked: false },
         ];
