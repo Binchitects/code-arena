@@ -159,6 +159,8 @@ colors! {
     status_fg: ["statusBar.foreground"], "#FFFFFF", "#FFFFFF";
     status_border: ["statusBar.border", "contrastBorder"], "#00000000", "#00000000";
     status_hover: ["statusBarItem.hoverBackground"], "#FFFFFF1F", "#FFFFFF1F";
+    status_prominent_bg: ["statusBarItem.prominentBackground"], "#00000080", "#00000080";
+    status_prominent_hover: ["statusBarItem.prominentHoverBackground"], "#0000004D", "#0000004D";
     remote_bg: ["statusBarItem.remoteBackground"], "#16825D", "#16825D";
     remote_fg: ["statusBarItem.remoteForeground"], "#FFFFFF", "#FFFFFF";
 
