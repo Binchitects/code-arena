@@ -188,9 +188,10 @@ pub async fn switch_in(ctx: &mut Ctx<'_>, resume: Resume, folder: Option<std::pa
         p.agent.thinking = ctx.p.agent.thinking.clone();
     }
     p.agent.inbox = Some(ctx.drv.inbox.clone());
-    let root = p.agent.ctx.workspace.root().to_path_buf();
+    let (root, cwd) = (p.agent.ctx.workspace.root().to_path_buf(), p.agent.ctx.workspace.cwd().to_path_buf());
     *ctx.p = p;
-    if root != ctx.side.workspace().root() {
+    // A folder under the same root takes another side too: its shells begin in the folder now worked in.
+    if root != ctx.side.workspace().root() || cwd != ctx.side.workspace().cwd() {
         let side = Arc::new(Side::new(
             ctx.p.agent.ctx.workspace.clone(),
             ctx.p.agent.ctx.checkpoints.clone(),
