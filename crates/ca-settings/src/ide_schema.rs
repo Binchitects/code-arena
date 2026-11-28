@@ -641,6 +641,79 @@ pub static ALL: &[&Setting] = &[
         "Milliseconds format on save waits for the formatter; past it the file is saved as it is.",
     ),
     &row(
+        "formatters",
+        Kind::Object,
+        "{}",
+        Scope::User,
+        "Formatting",
+        "Your own formatters, by id: {\"yapf\": {\"command\": \"yapf\", \"args\": [\"--style\", \"pep8\"], \"languages\": [\"python\"]}}. The text goes in on standard input and the formatted text comes back on standard output. Also \"name\", \"extensions\" ([\".py\"]), \"timeout\" (seconds) and \"rangeArgs\" (added to format a selection). Arguments may hold ${file}, ${relativeFile}, ${fileBasename}, ${fileDirname}, ${workspaceFolder}, ${tabSize}, ${insertSpaces}, and in rangeArgs ${startLine}, ${endLine}, ${startOffset}, ${endOffset}.",
+    ),
+    &row(
+        "prettier.printWidth",
+        Kind::Integer { min: 1, max: 1000 },
+        "80",
+        Scope::Language,
+        "Formatting",
+        "Prettier: the line length it wraps at. The prettier.* settings are used when the folder has no Prettier configuration of its own.",
+    ),
+    &row(
+        "prettier.tabWidth",
+        Kind::Integer { min: 1, max: 16 },
+        "2",
+        Scope::Language,
+        "Formatting",
+        "Prettier: the spaces in an indentation level.",
+    ),
+    &row("prettier.useTabs", Kind::Bool, "false", Scope::Language, "Formatting", "Prettier: indents with tabs."),
+    &row(
+        "prettier.semi",
+        Kind::Bool,
+        "true",
+        Scope::Language,
+        "Formatting",
+        "Prettier: a semicolon at the end of each statement.",
+    ),
+    &row(
+        "prettier.singleQuote",
+        Kind::Bool,
+        "false",
+        Scope::Language,
+        "Formatting",
+        "Prettier: single quotes instead of double quotes.",
+    ),
+    &row(
+        "prettier.trailingComma",
+        Kind::Enum(&["all", "es5", "none"]),
+        "\"all\"",
+        Scope::Language,
+        "Formatting",
+        "Prettier: trailing commas where they may be.",
+    ),
+    &row(
+        "prettier.bracketSpacing",
+        Kind::Bool,
+        "true",
+        Scope::Language,
+        "Formatting",
+        "Prettier: spaces inside an object's braces.",
+    ),
+    &row(
+        "prettier.arrowParens",
+        Kind::Enum(&["always", "avoid"]),
+        "\"always\"",
+        Scope::Language,
+        "Formatting",
+        "Prettier: parentheses around an arrow function's one parameter.",
+    ),
+    &row(
+        "prettier.endOfLine",
+        Kind::Enum(&["lf", "crlf", "cr", "auto"]),
+        "\"lf\"",
+        Scope::Language,
+        "Formatting",
+        "Prettier: the line ending.",
+    ),
+    &row(
         "files.hotExit",
         Kind::Enum(&["onExit", "off"]),
         "\"onExit\"",
@@ -1270,7 +1343,7 @@ mod tests {
         for key in OLD {
             assert!(find(key).is_some(), "{key} is not in the schema");
         }
-        assert_eq!(ALL.len(), 140, "a row added here is added to the count; tests/settings_read.rs wants it read");
+        assert_eq!(ALL.len(), 150, "a row added here is added to the count; tests/settings_read.rs wants it read");
         for s in ALL {
             assert!(SECTIONS.contains(&s.section), "{} is under {:?}, which is no section", s.key, s.section);
             assert!(s.env.is_none(), "{} is not read from the environment", s.key);

@@ -123,12 +123,31 @@ impl Sandbox {
 
     /// `program args…` as the sandbox runs it, in `cwd`.
     pub fn wrap(&self, program: &str, args: &[String], cwd: &Path) -> (String, Vec<String>) {
+        self.wrap_reading(program, args, cwd, &[])
+    }
+
+    /// As [`Sandbox::wrap`], with folders under `/tmp` the command must still read (a folder opened from there, the
+    /// program in it): the sandbox's own `/tmp` would hide them. Reading anywhere else needs nothing.
+    pub fn wrap_reading(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: &Path,
+        readable: &[PathBuf],
+    ) -> (String, Vec<String>) {
         match &self.kind {
             Kind::Bubblewrap(bwrap) => {
                 let mut a: Vec<String> = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
                     .iter()
                     .map(|s| s.to_string())
                     .collect();
+                for r in readable {
+                    let r = std::fs::canonicalize(r).unwrap_or_else(|_| r.clone());
+                    if r.starts_with("/tmp") && r.exists() && !self.writable.iter().any(|w| r.starts_with(w)) {
+                        let p = r.display().to_string();
+                        a.extend(["--ro-bind".into(), p.clone(), p]);
+                    }
+                }
                 for w in &self.writable {
                     if w.exists() {
                         let p = w.display().to_string();
@@ -244,6 +263,26 @@ pub fn find() -> Result<Kind, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_folder_under_tmp_that_must_be_read_is_bound_again_over_the_sandboxs_own_tmp() {
+        let d = tempfile::tempdir_in("/tmp").expect("temp");
+        let work = std::fs::canonicalize(d.path()).expect("canon");
+        let s = Sandbox {
+            kind: Kind::Bubblewrap("/usr/bin/bwrap".into()),
+            network: false,
+            writable: vec![],
+            hidden: vec![],
+        };
+        let (_, a) = s.wrap_reading("prettier", &[], &work, &[work.clone(), "/tmp/no-such-place".into()]);
+        let w = work.display().to_string();
+        let tmp = a.iter().position(|x| x == "/tmp").expect("its own /tmp");
+        let bound = a.windows(3).position(|x| x[0] == "--ro-bind" && x[1] == w && x[2] == w).expect("bound again");
+        assert!(bound > tmp);
+        assert!(!a.iter().any(|x| x == "/tmp/no-such-place"));
+        assert!(s.wrap("prettier", &[], &work).1.iter().filter(|x| **x == w).count() == 1, "only the --chdir");
+    }
 
     #[cfg(unix)]
     #[test]
