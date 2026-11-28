@@ -332,7 +332,7 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
         ))
         .style(|s| s.gap(6.0))
         .into_any(),
-        Kind::Ask { id, tool, subject, answer } => super::ask::card(ui, send, id, tool, subject, answer).into_any(),
+        Kind::Ask { id, asked, answer } => super::ask::card(ui, send, id, asked, answer).into_any(),
     }
 }
 
