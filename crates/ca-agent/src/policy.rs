@@ -477,7 +477,7 @@ mod tests {
         let r = Risk { destructive: 0.96, outside: 0.931, network: 0.03 };
         assert_eq!(r.line(), "Laya: destructive 96%, outside the workspace 93%, network 3%");
         assert!(r.asks());
-        let r: Risk = serde_json::from_value(json!({"destructive": 0.1, "network": 0.7})).unwrap();
+        let r: Risk = serde_json::from_value(json!({"destructive": 0.1, "network": 0.7})).expect("a reading");
         assert!(r.asks());
     }
 

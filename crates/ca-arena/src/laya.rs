@@ -42,7 +42,7 @@ mod tests {
 
     #[test]
     fn a_reading_takes_what_it_is_given() {
-        let r: Reading = serde_json::from_str(r#"{"destructive": 0.96, "outside": 0.93}"#).unwrap();
+        let r: Reading = serde_json::from_str(r#"{"destructive": 0.96, "outside": 0.93}"#).expect("a reading");
         assert_eq!(r, Reading { destructive: 0.96, outside: 0.93, network: 0.0 });
     }
 }
