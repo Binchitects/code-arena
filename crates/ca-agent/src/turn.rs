@@ -1398,6 +1398,29 @@ mod tests {
         assert!(!d.path().join("x.txt").exists());
     }
 
+    /// Laya that reads every command as destroying something.
+    struct Alarmed;
+    #[async_trait::async_trait]
+    impl crate::policy::CommandCheck for Alarmed {
+        async fn check(&self, _command: &str) -> Option<crate::policy::Risk> {
+            Some(crate::policy::Risk { destructive: 0.96, outside: 0.93, network: 0.03 })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_command_laya_flags_asks_even_in_yolo_and_a_run_that_cannot_ask_refuses_it() {
+        let (_s, mut a, d, seen) = agent(
+            vec![call("run_shell", r#"{"command": "touch made.txt"}"#), say("I could not.", "stop")],
+            Mode::Yolo,
+        )
+        .await;
+        a.policy.laya = Some(crate::policy::Laya(Arc::new(Alarmed)));
+        a.turn("make it", &mut Quiet).await.expect("turn");
+        assert!(!d.path().join("made.txt").exists());
+        let told = seen.lock().expect("lock")[1]["messages"][3]["content"].as_str().unwrap_or("").to_string();
+        assert!(told.contains("Laya reads this command as risky (Laya: destructive 96%"), "{told}");
+    }
+
     fn cut_call(name: &str, args: &str) -> String {
         let event = serde_json::json!({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "c-cut", "function": {"name": name, "arguments": args}}]}, "finish_reason": "length"}]});
         format!("data: {event}\n\ndata: [DONE]\n\n")
