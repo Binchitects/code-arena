@@ -146,12 +146,28 @@ impl Section {
 /// A row of the view, top to bottom. Each holds what it draws, so a row is drawn again only when that changed.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Row {
-    Head { section: Section, n: usize, open: bool },
-    Ext { e: Ext, busy: bool },
-    Rec { r: Rec, busy: bool },
-    Local { l: Local, busy: bool },
+    Head {
+        section: Section,
+        n: usize,
+        open: bool,
+    },
+    Ext {
+        e: Ext,
+        busy: bool,
+    },
+    Rec {
+        r: Rec,
+        busy: bool,
+    },
+    Local {
+        l: Local,
+        busy: bool,
+    },
     /// Words under a section: why it is empty, or what to do.
-    Note { section: Section, text: String },
+    Note {
+        section: Section,
+        text: String,
+    },
 }
 
 fn text(v: &Value) -> String {
@@ -252,7 +268,12 @@ pub fn local_of(m: &Value) -> Vec<Local> {
 pub fn recs_of(m: &Value) -> Recs {
     let one = |v: &Value| Rec {
         id: text(&v["id"]),
-        name: v["name"].as_str().map(str::trim).filter(|n| !n.is_empty()).unwrap_or(v["id"].as_str().unwrap_or("")).into(),
+        name: v["name"]
+            .as_str()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .unwrap_or(v["id"].as_str().unwrap_or(""))
+            .into(),
         status: text(&v["status"]),
         note: text(&v["note"]),
     };
@@ -545,9 +566,7 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
             st.recs.with(|r| {
                 st.local.with(|l| {
                     st.find.with(|f| {
-                        st.folded.with(|fo| {
-                            st.busy.with(|b| rows(i.as_deref(), r.as_ref(), l.as_deref(), f, fo, b))
-                        })
+                        st.folded.with(|fo| st.busy.with(|b| rows(i.as_deref(), r.as_ref(), l.as_deref(), f, fo, b)))
                     })
                 })
             })
@@ -573,7 +592,8 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         },
     )
     .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).width_full().min_height(0.0));
-    let top = container(search_box(ui)).style(|s| s.width_full().padding_horiz(12.0).padding_top(4.0).padding_bottom(6.0));
+    let top =
+        container(search_box(ui)).style(|s| s.width_full().padding_horiz(12.0).padding_top(4.0).padding_bottom(6.0));
     let root = v_stack((top, body)).style(move |s| s.size_full().min_height(0.0).color(t.get().side_fg));
     let id = root.id();
     if st.root.get_untracked() != Some(id) {
@@ -637,8 +657,11 @@ fn count_badge(t: Theme, n: usize) -> impl IntoView {
 fn small_button(t: Theme, words: &'static str, primary: bool, on: impl Fn() + 'static) -> impl IntoView {
     label(move || words).on_click_stop(move |_| on()).style(move |s| {
         let c = t.get();
-        let (bg, fg, hover) =
-            if primary { (c.button_bg, c.button_fg, c.button_hover) } else { (c.button2_bg, c.button2_fg, c.button2_hover) };
+        let (bg, fg, hover) = if primary {
+            (c.button_bg, c.button_fg, c.button_hover)
+        } else {
+            (c.button2_bg, c.button2_fg, c.button2_hover)
+        };
         s.font_size(11.0)
             .padding_horiz(6.0)
             .height(18.0)
@@ -659,20 +682,26 @@ fn switch(t: Theme, on: bool, busy: bool, flip: impl Fn() + 'static) -> impl Int
         let c = t.get();
         s.width(10.0).height(10.0).border_radius(5.0).background(if on { c.button_fg } else { c.icon })
     });
-    let track = container(knob).on_click_stop(move |_| if !busy { flip() }).style(move |s| {
-        let c = t.get();
-        s.width(28.0)
-            .height(16.0)
-            .padding_horiz(3.0)
-            .items_center()
-            .border(1.0)
-            .border_radius(8.0)
-            .border_color(if on { c.button_bg } else { c.input_border })
-            .background(if on { c.button_bg } else { c.input_bg })
-            .apply_if(on, |s| s.justify_end())
-            .flex_shrink(0.0_f32)
-            .cursor(if busy { CursorStyle::Default } else { CursorStyle::Pointer })
-    });
+    let track = container(knob)
+        .on_click_stop(move |_| {
+            if !busy {
+                flip()
+            }
+        })
+        .style(move |s| {
+            let c = t.get();
+            s.width(28.0)
+                .height(16.0)
+                .padding_horiz(3.0)
+                .items_center()
+                .border(1.0)
+                .border_radius(8.0)
+                .border_color(if on { c.button_bg } else { c.input_border })
+                .background(if on { c.button_bg } else { c.input_bg })
+                .apply_if(on, |s| s.justify_end())
+                .flex_shrink(0.0_f32)
+                .cursor(if busy { CursorStyle::Default } else { CursorStyle::Pointer })
+        });
     tooltip(track, move || label(move || if on { "Disable" } else { "Enable" }))
 }
 
@@ -700,22 +729,23 @@ fn icon_box(ui: Ui, send: &Send, id: &str, version: &str, path: Option<&str>) ->
     .into_any()
 }
 
-/// An extension's three lines: its name and version (and a tag), what it is, and who made it with its actions.
-fn card(
-    ui: Ui,
-    pic: AnyView,
+/// The words of an extension's row: its name and version (and a tag), what it is, who made it, and its tooltip.
+struct Words {
     name: String,
     version: String,
     tag: Option<&'static str>,
     middle: String,
     footer: String,
     tip: String,
-    actions: AnyView,
-    dim: bool,
-) -> AnyView {
+}
+
+/// An extension's three lines: its name and version (and a tag), what it is, and who made it with its actions.
+fn card(ui: Ui, pic: AnyView, w: Words, actions: AnyView, dim: bool) -> AnyView {
     let t = ui.colors;
+    let Words { name, version, tag, middle, footer, tip } = w;
     let title = h_stack((
-        label(move || name.clone()).style(|s| bold(s.font_size(13.0)).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)),
+        label(move || name.clone())
+            .style(|s| bold(s.font_size(13.0)).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)),
         label(move || version.clone()).style(move |s| s.font_size(12.0).color(t.get().desc).flex_shrink(0.0_f32)),
         label(move || tag.unwrap_or("")).style(move |s| {
             let c = t.get();
@@ -730,8 +760,7 @@ fn card(
         }),
     ))
     .style(|s| s.items_center().gap(6.0).min_width(0.0).width_full());
-    let middle =
-        label(move || middle.clone()).style(|s| s.font_size(13.0).text_ellipsis().min_width(0.0).width_full());
+    let middle = label(move || middle.clone()).style(|s| s.font_size(13.0).text_ellipsis().min_width(0.0).width_full());
     let footer = h_stack((
         label(move || footer.clone())
             .style(move |s| s.font_size(12.0).color(t.get().desc).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)),
@@ -754,7 +783,9 @@ fn card(
     tooltip(line, move || {
         let tip = tip.clone();
         label(move || tip.clone())
-    }).style(|s| s.width_full()).into_any()
+    })
+    .style(|s| s.width_full())
+    .into_any()
 }
 
 /// A row drawn.
@@ -796,16 +827,13 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
                 || label(|| "Uninstall"),
             );
             let unused = !e.unused.is_empty();
-            let warn = tooltip(
-                icon("warning", 14.0).style(move |s| s.color(t.get().warning).flex_shrink(0.0_f32)),
-                {
-                    let all = format!("Not used here:\n{}", e.unused.join("\n"));
-                    move || {
-                        let all = all.clone();
-                        label(move || all.clone())
-                    }
-                },
-            )
+            let warn = tooltip(icon("warning", 14.0).style(move |s| s.color(t.get().warning).flex_shrink(0.0_f32)), {
+                let all = format!("Not used here:\n{}", e.unused.join("\n"));
+                move || {
+                    let all = all.clone();
+                    label(move || all.clone())
+                }
+            })
             .style(move |s| s.apply_if(!unused, |s| s.hide()));
             let actions = h_stack((warn, toggle, remove)).style(|s| s.items_center().gap(8.0).flex_shrink(0.0_f32));
             let middle = if e.description.is_empty() { e.brings.clone() } else { e.description.clone() };
@@ -825,7 +853,8 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
                 tip.push_str(&format!("\nNot used here: {u}"));
             }
             let tag = (!e.enabled).then_some("Disabled");
-            card(ui, pic, e.name, e.version, tag, middle, footer, tip, actions.into_any(), !e.enabled || busy)
+            let w = Words { name: e.name, version: e.version, tag, middle, footer, tip };
+            card(ui, pic, w, actions.into_any(), !e.enabled || busy)
         }
         Row::Rec { r, busy } => {
             let pic = icon_box(ui, &send, &r.id, "", None);
@@ -837,7 +866,9 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
                     }
                 })
                 .into_any(),
-                "unknown" => small_button(t, "Install from VSIX\u{2026}", true, move || install_vsix(ui, &go)).into_any(),
+                "unknown" => {
+                    small_button(t, "Install from VSIX\u{2026}", true, move || install_vsix(ui, &go)).into_any()
+                }
                 _ => empty().into_any(),
             };
             let tag = match r.status.as_str() {
@@ -846,7 +877,8 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
                 _ => None,
             };
             let tip = format!("{}\n{}\n{}", r.name, r.id, r.note);
-            card(ui, pic, r.name, String::new(), tag, r.note, r.id, tip, act, busy)
+            let w = Words { name: r.name, version: String::new(), tag, middle: r.note, footer: r.id, tip };
+            card(ui, pic, w, act, busy)
         }
         Row::Local { l, busy } => {
             let pic = icon_box(ui, &send, &l.id, &l.version, None);
@@ -862,7 +894,9 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
                     })
                     .into_any()
                 }
-                Offer::Imported => label(|| "Imported").style(move |s| s.font_size(12.0).color(t.get().desc)).into_any(),
+                Offer::Imported => {
+                    label(|| "Imported").style(move |s| s.font_size(12.0).color(t.get().desc)).into_any()
+                }
                 Offer::Unusable => icon("warning", 14.0).style(move |s| s.color(t.get().warning)).into_any(),
             };
             let middle = match (&l.problem, l.description.is_empty()) {
@@ -870,7 +904,8 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
                 (_, true) => l.brings.clone(),
                 _ => l.description.clone(),
             };
-            let footer = if l.publisher.is_empty() { l.from.clone() } else { format!("{} \u{b7} {}", l.publisher, l.from) };
+            let footer =
+                if l.publisher.is_empty() { l.from.clone() } else { format!("{} \u{b7} {}", l.publisher, l.from) };
             let mut tip = format!("{}\n{} {} ({})", l.name, l.id, l.version, l.from);
             if let Some(kept) = &l.installed {
                 tip.push_str(&format!("\nKept here: {kept}."));
@@ -881,7 +916,8 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
             if let Some(p) = &l.problem {
                 tip.push_str(&format!("\n{p}"));
             }
-            card(ui, pic, l.name, l.version, None, middle, footer, tip, act, !l.usable || busy)
+            let w = Words { name: l.name, version: l.version, tag: None, middle, footer, tip };
+            card(ui, pic, w, act, !l.usable || busy)
         }
     }
 }
@@ -891,8 +927,7 @@ fn more(ui: Ui, send: &Send) {
     use crate::widgets::popup;
     let Some(view) = state(ui).root.get_untracked() else { return };
     let r = view.layout_rect();
-    let rows =
-        crate::skills_view::more_rows(crate::menus::rows(ui, crate::menus::Menu::ViewTitle(View::Extensions)));
+    let rows = crate::skills_view::more_rows(crate::menus::rows(ui, crate::menus::Menu::ViewTitle(View::Extensions)));
     popup::open(ui, popup::At::point(view, r.x1 - 8.0, r.y0), popup::of_rows(ui, send, rows));
 }
 
@@ -918,9 +953,7 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(command(REFRESH, "Extensions", "Refresh", |_, send| ask_all(send)));
     add(command(CLEAR, "Extensions", "Clear Extensions Search Results", |ui, _| search_for(ui, "")));
     add(command(SHOW_INSTALLED, "Extensions", "Show Installed Extensions", |ui, _| search_for(ui, "@installed")));
-    add(command(SHOW_RECOMMENDED, "Extensions", "Show Recommended Extensions", |ui, _| {
-        search_for(ui, "@recommended")
-    }));
+    add(command(SHOW_RECOMMENDED, "Extensions", "Show Recommended Extensions", |ui, _| search_for(ui, "@recommended")));
     add(command(MORE, "Extensions", "More Actions...", more).hidden());
     let at = Menu::ViewTitle(View::Extensions);
     let title = |id: &str, icon: &'static str, order: i32| item(id).icon(icon).group("navigation").order(order);
@@ -997,13 +1030,17 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         "ext_file" => {
             // An icon this view asked for: its key is the extension's id and the version kept.
             let version = st.items.with_untracked(|i| {
-                i.as_ref()?.iter().find(|e| e.id == id && e.icon.as_deref() == m["path"].as_str()).map(|e| e.version.clone())
+                i.as_ref()?
+                    .iter()
+                    .find(|e| e.id == id && e.icon.as_deref() == m["path"].as_str())
+                    .map(|e| e.version.clone())
             });
             if let Some(version) = version
                 && m["error"].is_null()
             {
                 let key = format!("{id}@{version}");
-                let url = format!("data:{};base64,{}", m["mime"].as_str().unwrap_or(""), m["data"].as_str().unwrap_or(""));
+                let url =
+                    format!("data:{};base64,{}", m["mime"].as_str().unwrap_or(""), m["data"].as_str().unwrap_or(""));
                 let icons = st.icons;
                 let k = key.clone();
                 crate::media::small_picture(ui, &url, &format!("extension\0{key}"), move |p| {
@@ -1173,7 +1210,8 @@ mod tests {
         for id in [INSTALL_VSIX, REFRESH, CLEAR, SHOW_INSTALLED, SHOW_RECOMMENDED] {
             assert!(crate::commands::find(id).is_some(), "{id}");
         }
-        let rows = crate::skills_view::more_rows(crate::menus::rows(ui, crate::menus::Menu::ViewTitle(View::Extensions)));
+        let rows =
+            crate::skills_view::more_rows(crate::menus::rows(ui, crate::menus::Menu::ViewTitle(View::Extensions)));
         assert!(!rows.is_empty(), "the \u{2026} menu has Install from VSIX");
     }
 
