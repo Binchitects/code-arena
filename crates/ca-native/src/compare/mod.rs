@@ -72,6 +72,9 @@ pub enum Source {
     Saved(String),
     /// Another file, as on disk.
     File(String),
+    /// The file as a revision has it, git's (the revision first; empty: the index), its text given when the compare
+    /// is opened.
+    Rev(String, String),
     /// The file before the agent changed it.
     Before(String),
     /// The clipboard's text when the compare was opened (the number tells two such compares apart).
@@ -87,6 +90,7 @@ impl Source {
             Source::Saved(p) => format!("saved:{p}"),
             Source::File(p) => format!("file:{p}"),
             Source::Before(p) => format!("before:{p}"),
+            Source::Rev(rev, p) => format!("rev:{rev}:{p}"),
             Source::Clipboard(n) => format!("clipboard:{n}"),
             Source::Empty => "empty".into(),
         }
@@ -103,6 +107,10 @@ impl Source {
             "saved" => Source::Saved(p),
             "file" => Source::File(p),
             "before" => Source::Before(p),
+            "rev" => {
+                let (rev, path) = rest.split_once(':')?;
+                Source::Rev(rev.into(), path.into())
+            }
             "clipboard" => Source::Clipboard(rest.parse().ok()?),
             _ => return None,
         })
@@ -111,7 +119,7 @@ impl Source {
     /// The file it is of (none: the clipboard, nothing).
     pub fn file(&self) -> Option<&str> {
         match self {
-            Source::Live(p) | Source::Saved(p) | Source::File(p) | Source::Before(p) => Some(p),
+            Source::Live(p) | Source::Saved(p) | Source::File(p) | Source::Before(p) | Source::Rev(_, p) => Some(p),
             Source::Clipboard(_) | Source::Empty => None,
         }
     }
@@ -123,6 +131,7 @@ impl Source {
             Source::Live(p) | Source::File(p) => name(p),
             Source::Saved(p) => format!("{} (Saved)", name(p)),
             Source::Before(p) => format!("{} (before the agent)", name(p)),
+            Source::Rev(rev, p) => format!("{} ({})", name(p), rev_label(rev)),
             Source::Clipboard(_) => "Clipboard".into(),
             Source::Empty => "Empty".into(),
         }
@@ -134,6 +143,22 @@ impl Source {
             Source::Saved(p) | Source::File(p) => Some(p),
             _ => None,
         }
+    }
+}
+
+/// A revision as a title says it, as VS Code's: `Index`, a commit's first 8 letters (its parent's with `^` after
+/// them), a branch's or `HEAD` as it is.
+pub fn rev_label(rev: &str) -> String {
+    let (base, after) = match rev.find(['^', '~']) {
+        Some(at) => rev.split_at(at),
+        None => (rev, ""),
+    };
+    if rev.is_empty() {
+        "Index".into()
+    } else if base.len() > 8 && base.chars().all(|c| c.is_ascii_hexdigit()) {
+        format!("{}{after}", &base[..8])
+    } else {
+        rev.to_string()
     }
 }
 
@@ -318,6 +343,8 @@ fn known_text(ui: Ui, s: &Source) -> Option<String> {
         ),
         Source::Clipboard(_) => Some(floem::Clipboard::get_contents().unwrap_or_default()),
         Source::Empty => Some(String::new()),
+        // Git's text is asked by whoever opens the compare (`scm/history.rs`) and given with it.
+        Source::Rev(..) => None,
     }
 }
 
@@ -777,6 +804,15 @@ mod tests {
         assert_eq!(Source::Before("x/y.py".into()).label(), "y.py (before the agent)");
         assert_eq!(Source::parse("empty"), Some(Source::Empty));
         assert_eq!(Source::parse("what:x"), None);
+        let hash = "0123456789abcdef0123456789abcdef01234567";
+        let (l, r) =
+            (Source::Rev(format!("{hash}^"), "src/old.rs".into()), Source::Rev(hash.into(), "src/a.rs".into()));
+        let rest = kinds::split(&path_of(&l, &r)).expect("a kind path").1.to_string();
+        assert_eq!(sides_of(&rest), Some((l, r)), "a revision's side, though its path has a ':' before it");
+        assert_eq!(title_of(&rest), "old.rs (01234567^) ↔ a.rs (01234567)");
+        assert_eq!(Source::Rev(String::new(), "a.rs".into()).label(), "a.rs (Index)");
+        assert_eq!(Source::Rev("main".into(), "a.rs".into()).label(), "a.rs (main)");
+        assert_eq!(Source::Rev("HEAD".into(), "a.rs".into()).file(), Some("a.rs"));
     }
 
     #[test]

@@ -1051,9 +1051,10 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         },
     )
     .style(|s| s.width_full());
+    let last = history::view(ui, send.clone());
     let boxed = commit_box(ui, send)
         .style(move |s| s.apply_if(!matches!(what.get(), Empty::Clean | Empty::Changes), |s| s.hide()));
-    let root = v_stack((boxed, words, changes)).style(|s| s.size_full().min_height(0.0));
+    let root = v_stack((boxed, words, changes, last)).style(|s| s.size_full().min_height(0.0));
     me.root.set(Some(root.id()));
     root.into_any()
 }
@@ -1157,8 +1158,8 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         "git_failed" => {
             toast::error(ui, m["error"].as_str().unwrap_or("git failed"));
         }
-        // The index's text asked by quick diff is its own (`quick_diff.rs`).
-        "git_shown" if m["key"] != quick_diff::OWNER => {
+        // Only the changes tabs ask without a key: one asked with a key is its part's (quick diff's, the history's).
+        "git_shown" if m["key"].is_null() => {
             let path = m["path"].as_str().unwrap_or("");
             let key = shown_key(m["rev"].as_str().unwrap_or(""), m["working"].as_bool().unwrap_or(false), path);
             let shown = Shown::of(m);
