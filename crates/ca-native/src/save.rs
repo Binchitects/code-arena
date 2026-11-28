@@ -128,10 +128,13 @@ pub fn trim_final_newlines(text: &str) -> String {
     format!("{body}{}", eol_of(text))
 }
 
+/// One of what is done to a file as it is saved: its text before, its text after.
+type Step = fn(&str) -> String;
+
 /// What is done to a file as it is saved, in VS Code's order, each by its setting (a language's own value wins).
 fn participants(ui: Ui, tab: &Tab) {
     let lang = crate::editor::options::language(&tab.file);
-    let steps: [(bool, fn(&str) -> String); 3] = [
+    let steps: [(bool, Step); 3] = [
         (settings::now(ui, "files.trimTrailingWhitespace", lang) == true, trim_trailing_whitespace),
         (settings::now(ui, "files.insertFinalNewline", lang) == true, insert_final_newline),
         (settings::now(ui, "files.trimFinalNewlines", lang) == true, trim_final_newlines),
@@ -348,7 +351,7 @@ fn ask_conflict(ui: Ui, path: &str) {
 pub fn register(ui: Ui, _send: &Send) {
     use crate::commands::{add, command};
     use crate::menus::{Menu, add as menu, item};
-    add(command(SAVE_ALL, "File", "Save All", |ui, send| save_all(ui, send)).keys("Ctrl+K S"));
+    add(command(SAVE_ALL, "File", "Save All", save_all).keys("Ctrl+K S"));
     add(command(SAVE_WITHOUT_FORMATTING, "File", "Save without Formatting", |ui, send| {
         if let Some(p) = ui.active.get_untracked() {
             save(ui, &p, send, How::AsItIs);
@@ -402,7 +405,7 @@ pub fn register(ui: Ui, _send: &Send) {
         now
     });
     // Once the folder's tabs are asked for again, so are the texts kept at the last exit.
-    crate::ext::after("save", |ui, m, send| after(ui, m, send));
+    crate::ext::after("save", after);
 }
 
 /// After the window took a message in: the kept texts asked for once the session said its state, and one put back
