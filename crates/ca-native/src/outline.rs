@@ -568,6 +568,7 @@ fn filter_box(ui: Ui, filter: RwSignal<String>) -> impl IntoView {
         })
         .style(move |s| {
             let c = t.get();
+            let s = crate::widgets::steady_input(s, floem::peniko::Color::TRANSPARENT, None);
             s.flex_grow(1.0_f32)
                 .min_width(0.0)
                 .padding_horiz(4.0)

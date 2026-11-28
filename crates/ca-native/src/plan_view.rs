@@ -226,7 +226,7 @@ fn change_step(ui: Ui, send: &Send, n: u64) {
     let send = send.clone();
     quick::input(&format!("Change Step {n}"))
         .placeholder("What should change in this step")
-        .prompt("Press Enter to tell the agent, Escape to cancel")
+        .prompt("Tell the agent what should change")
         .validate(|v| v.trim().is_empty().then(|| "Say what should change.".to_string()))
         .open(ui, move |what| {
             if let Some(what) = what {
@@ -370,10 +370,10 @@ fn review_card(ui: Ui, send: Send) -> impl IntoView {
             button(t, "Approve", true, move || review(&a, "approve", None, "")),
             wide(t, "Approve, asking before each change", false, move || review(&b, "approve-ask", None, "")),
             button(t, "Another Way\u{2026}", false, move || {
-                review_why(ui, &c, "another", "Another Way", "Why another way? Press Enter to ask for one")
+                review_why(ui, &c, "another", "Another Way", "Why another way?")
             }),
             button(t, "Reject\u{2026}", false, move || {
-                review_why(ui, &d, "reject", "Reject the Plan", "Why reject it? Press Enter to reject it")
+                review_why(ui, &d, "reject", "Reject the Plan", "Why reject it?")
             }),
         ))
         .style(|s| s.gap(6.0).flex_wrap(floem::style::FlexWrap::Wrap).row_gap(6.0).min_width(0.0).max_width_full()),
