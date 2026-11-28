@@ -226,7 +226,8 @@ fn broadcasts_banner(ui: Ui, send: Send) -> impl IntoView {
 }
 
 /// The window's shape, drawn plain until the session's first `state`: the activity bar, the side bar with a few
-/// rows, the editor, the status bar (under the title bar, which stays usable).
+/// rows, the editor, the status bar (under the title bar, which stays usable; the banners' row is drawn over by it
+/// only while it shows).
 fn skeleton(ui: Ui) -> impl IntoView {
     let t = ui.colors;
     let bar = move |w: f64| {
@@ -246,7 +247,8 @@ fn skeleton(ui: Ui) -> impl IntoView {
             .inset_right(0.0)
             .inset_bottom(0.0)
             .background(t.get().editor_bg)
-            .apply_if(ui.loaded.get(), |s| s.hide())
+            // Gone once the session has spoken, or once it has stopped (its banner is then the window's word).
+            .apply_if(ui.loaded.get() || ui.state::<Banners>().stopped.get(), |s| s.hide())
     })
 }
 
