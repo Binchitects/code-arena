@@ -397,6 +397,8 @@ fn frame_in(
 }
 
 #[cfg(test)]
+// The handshake's callbacks answer with tungstenite's own types, a refusal being a whole HTTP answer.
+#[allow(clippy::result_large_err)]
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
