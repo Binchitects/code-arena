@@ -699,6 +699,23 @@ Sections used:
   Documentation are in the Help menu too.
 - **Manage menu.** The gear now has Settings, Extensions and Keyboard Shortcuts beside the Command
   Palette and the colour theme, each with its keys.
+- **VS Code's keymap.** Keys resolve as in VS Code: the last rule whose `when` holds wins. `when`
+  has `!`, `&&`, `||`, brackets, `==`, `!=`, `<`, `<=`, `>`, `>=`, `=~ /re/` and `in` / `not in`. It
+  reads live context keys such as `editorTextFocus`, `terminalFocus`, `sideBarVisible`,
+  `activeViewlet`, `resourceLangId` and `config.*`. VS Code's default table fills the keys no
+  command takes.
+- **keybindings.json.** Your own rules from keybindings.json apply at once when you save the file or
+  it changes on disk. They can use `[KeyA]`, `oem_1`, `mac`/`linux`/`win`, and `-command` takes a
+  default away. A rule that cannot be read is skipped and named in a notification.
+- **Chords as in VS Code.** The status bar says '(Ctrl+K) was pressed. Waiting for the second key of
+  the chord…'. A second key that ends no chord is 'not a command' for 4 s and no longer runs on its
+  own. A chord now completes in the editor even when its second key is Ctrl+S, Ctrl+W or Enter.
+- **Terminal keys.** The terminal leaves to the workbench only the keys of the commands it skips the
+  shell for, plus chords. `terminal.integrated.commandsToSkipShell` adds or removes (`-id`)
+  commands, and `allowChords` and `sendKeybindingsToShell` work as in VS Code.
+- **Keys shown are the ones in force.** The palette, the menus and the tab menu show your own key
+  for a command when you set one. On macOS, Ctrl in a default key is Cmd and keys show as macOS
+  writes them (⇧⌘P).
 
 
 ### :bug: Bugs fixed
