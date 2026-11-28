@@ -2224,6 +2224,113 @@ async fn a_plan_proposed_in_the_ide_is_reviewed_and_the_review_runs_as_the_next_
 }
 
 #[tokio::test]
+async fn a_goal_set_in_the_ide_is_worked_on_until_its_check_passes_and_loops_are_added_and_stopped() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::io::BufRead;
+    use tokio_tungstenite::tungstenite::Message;
+    let said = |text: &str| sse(json!({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}));
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(vec![said("Done.")], AtomicUsize::new(0)))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let mut child = code_arena(home.path())
+        .args(["ide", "--no-open", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("runs");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stderr = child.stderr.take().expect("stderr");
+    let _child = Kill(child);
+    let url = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| l.split("The IDE: ").nth(1).map(str::to_string))
+        .expect("the address");
+    let (base, key) = url.split_once("/?k=").expect("key in it");
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+        format!("ws://{}/ws", base.trim_start_matches("http://")).as_str(),
+    )
+    .expect("request");
+    request.headers_mut().insert("cookie", format!("code_arena={key}").parse().expect("h"));
+    request.headers_mut().insert("origin", base.parse().expect("h"));
+    let (mut page, _) = tokio_tungstenite::connect_async(request).await.expect("the page connects");
+    let until = async |page: &mut tokio_tungstenite::WebSocketStream<_>, end: &dyn Fn(&Value) -> bool| -> Vec<Value> {
+        let mut seen = Vec::new();
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            let Message::Text(t) = m else { continue };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            let done = end(&v);
+            seen.push(v);
+            if done {
+                return seen;
+            }
+        }
+    };
+    let ask = async |page: &mut tokio_tungstenite::WebSocketStream<_>, m: Value| {
+        page.send(Message::text(m.to_string())).await.expect("send");
+    };
+    until(&mut page, &|v| v["type"] == "state").await;
+    // A budget out of bounds is refused, with the key it answers.
+    ask(&mut page, json!({"type": "goal_set", "id": 7, "text": "x", "check": null, "budget": {"steps": 0}})).await;
+    let no = until(&mut page, &|v| v["type"] == "goal_set").await.pop().expect("reply");
+    assert_eq!((&no["error"], &no["id"]), (&json!("The budget is out of bounds."), &json!(7)), "{no}");
+    // Set: worked on at once, as a turn the session says itself, and met once its check passes.
+    let goal = json!({"type": "goal_set", "text": "say hello", "check": {"kind": "command", "text": "true"},
+                      "budget": {"steps": 50, "minutes": 10, "tokens": 100_000, "until_met": false}});
+    ask(&mut page, goal).await;
+    let turn = until(&mut page, &|v| v["type"] == "tasks" && v["goal"]["status"] == "met").await;
+    let user = turn.iter().find(|v| v["type"] == "user").expect("the goal's turn");
+    assert_eq!(user["carried"], true, "{turn:?}");
+    let met = turn.last().expect("tasks");
+    assert_eq!((&met["goal"]["turns"], &met["goal"]["check"]["by"]), (&json!(1), &json!("person")), "{met}");
+    assert!(met["goal"]["outcome"].as_str().is_some_and(|o| o.starts_with("Goal met")), "{met}");
+    assert_eq!(met["next"], json!([]), "{met}");
+    // Nothing waits to be started next.
+    ask(&mut page, json!({"type": "goal_next"})).await;
+    let no = until(&mut page, &|v| v["type"] == "goal_next").await.pop().expect("reply");
+    assert_eq!(no["error"], "No goal waits.", "{no}");
+    // A loop added is listed with its runs, and stopped.
+    ask(&mut page, json!({"type": "loop_add", "every": "1h", "prompt": "check the notes", "edits": false})).await;
+    let added = until(&mut page, &|v| v["type"] == "loops").await;
+    let reply = added.iter().find(|v| v["type"] == "loop_add").expect("reply");
+    assert_eq!((&reply["id"], &reply["every"]), (&json!(1), &json!("1h")), "{reply}");
+    let list = added.last().expect("loops");
+    assert_eq!(
+        (&list["items"][0]["every_words"], &list["items"][0]["prompt"]),
+        (&json!("1h"), &json!("check the notes"))
+    );
+    ask(&mut page, json!({"type": "loop_stop", "id": 1})).await;
+    let stopped = until(&mut page, &|v| v["type"] == "loops").await;
+    assert_eq!(stopped.last().expect("loops")["items"], json!([]), "{stopped:?}");
+}
+
+#[tokio::test]
 async fn what_the_ide_is_sent_is_kept_for_the_folder_and_listed_newest_first_with_the_terminals() {
     use futures_util::{SinkExt, StreamExt};
     use std::io::BufRead;

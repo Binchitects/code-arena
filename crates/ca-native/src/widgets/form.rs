@@ -112,7 +112,13 @@ impl Form {
             match &k.key.logical_key {
                 Key::Named(NamedKey::Enter) => enter(),
                 Key::Named(NamedKey::Tab) => {
-                    let all = self.fields.get_untracked();
+                    // The inputs shown now (one may be hidden by a choice), the next or the one before.
+                    let all: Vec<ViewId> = self
+                        .fields
+                        .get_untracked()
+                        .into_iter()
+                        .filter(|f| *f == id || !f.is_hidden_recursive())
+                        .collect();
                     if let Some(i) = all.iter().position(|f| *f == id) {
                         let n = all.len();
                         let to = if k.modifiers.shift() { (i + n - 1) % n } else { (i + 1) % n };

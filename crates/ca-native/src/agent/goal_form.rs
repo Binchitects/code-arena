@@ -239,7 +239,7 @@ fn host(ui: Ui, send: Send) -> AnyView {
     let numbers = h_stack((
         f.named(ui, "Steps (1 to 100,000)", f.input(ui, st.steps, "200", enter())),
         f.named(ui, "Minutes (1 to 43,200)", f.input(ui, st.minutes, "60", enter())),
-        f.named(ui, "Tokens (10,000 or more)", f.input(ui, st.tokens, "5,000,000", enter())),
+        f.named(ui, "Tokens (from 10,000)", f.input(ui, st.tokens, "5,000,000", enter())),
     ))
     .style(move |s| s.gap(8.0).width_full().apply_if(st.until_met.get(), |s| s.hide()));
     let out = label(|| "The budget is out of bounds.")
