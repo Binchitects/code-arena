@@ -376,8 +376,7 @@ pub fn lines_shown(ui: Ui) -> Option<usize> {
 /// The caret put at a line and a column (from 1) of the editor drawn, when it shows the file, in the middle of it,
 /// and the editor given the keys. False when another file is drawn.
 pub fn put_caret(ui: Ui, path: &str, line: usize, col: usize) -> bool {
-    let Some(editor) = ui.live.with_untracked(|l| l.as_ref().filter(|(p, _)| p == path).map(|(_, e)| e.clone()))
-    else {
+    let Some(editor) = ui.live.with_untracked(|l| l.as_ref().filter(|(p, _)| p == path).map(|(_, e)| e.clone())) else {
         return false;
     };
     let line = line.saturating_sub(1).min(editor.last_line());
@@ -584,10 +583,7 @@ mod tests {
         open(ui, &send, Mode::Line);
         assert_eq!(shown(ui), Some(Mode::Line));
         refresh(ui);
-        assert_eq!(
-            ui.quick_rows.with_untracked(|r| names(r)),
-            ["Open a text editor first to go to a line."]
-        );
+        assert_eq!(ui.quick_rows.with_untracked(|r| names(r)), ["Open a text editor first to go to a line."]);
         open(ui, &send, Mode::Symbols);
         assert_eq!(shown(ui), Some(Mode::Symbols));
         // "?" then a mode chosen: its prefix typed.

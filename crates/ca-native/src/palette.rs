@@ -416,15 +416,9 @@ pub fn refresh(ui: Ui) {
     let rest = crate::quick_modes::rest_of(&text, mode);
     let recent = crate::quick_modes::recent(ui);
     let (rows, at) = match mode {
-        Mode::Files => {
-            (recent.files.with(|r| ui.quick_files.with(|f| crate::quick_modes::file_rows(f, &text, r))), 0)
-        }
-        Mode::Commands => {
-            (recent.commands.with(|r| crate::quick_modes::command_rows(&commands(ui), rest, r)), 0)
-        }
-        Mode::Line => {
-            (crate::quick_modes::line_rows(rest, ui.caret.get(), crate::quick_modes::lines_shown(ui)), 0)
-        }
+        Mode::Files => (recent.files.with(|r| ui.quick_files.with(|f| crate::quick_modes::file_rows(f, &text, r))), 0),
+        Mode::Commands => (recent.commands.with(|r| crate::quick_modes::command_rows(&commands(ui), rest, r)), 0),
+        Mode::Line => (crate::quick_modes::line_rows(rest, ui.caret.get(), crate::quick_modes::lines_shown(ui)), 0),
         Mode::Symbols => {
             let rows = match crate::quick_modes::symbols_shown(ui) {
                 None => crate::quick_modes::symbol_rows(None, rest),
