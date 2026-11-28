@@ -85,7 +85,14 @@ const KNOWN: &[Known] = &[
         hint: "npm install --save-dev prettier",
     },
     Known { id: "ruff", name: "Ruff", program: "ruff", languages: &["python"], range: true, hint: "pip install ruff" },
-    Known { id: "black", name: "Black", program: "black", languages: &["python"], range: true, hint: "pip install black" },
+    Known {
+        id: "black",
+        name: "Black",
+        program: "black",
+        languages: &["python"],
+        range: true,
+        hint: "pip install black",
+    },
     Known {
         id: "gofmt",
         name: "gofmt",
@@ -875,10 +882,14 @@ impl Runner<'_> {
         let _pass = self.gate.enter();
         if let Some((folder, rel)) = &plan.mirror {
             let file = folder.join(rel);
-            let made = file.parent().map(std::fs::create_dir_all).unwrap_or(Ok(())).and_then(|_| std::fs::write(&file, text));
+            let made =
+                file.parent().map(std::fs::create_dir_all).unwrap_or(Ok(())).and_then(|_| std::fs::write(&file, text));
             if let Err(e) = made {
                 let _ = std::fs::remove_dir_all(folder);
-                return Err(Failure::new("failed", format!("{}: the file could not be copied to format: {e}", plan.name)));
+                return Err(Failure::new(
+                    "failed",
+                    format!("{}: the file could not be copied to format: {e}", plan.name),
+                ));
             }
             let got = self.spawn(plan, "", Some(folder));
             let back = got.and_then(|_| {
@@ -1092,7 +1103,10 @@ mod tests {
         assert!(items.iter().all(|f| !f.available));
         assert_eq!(items[0].reason.as_deref(), Some(UNTRUSTED));
         // What is not found says so, trusted or not.
-        assert_eq!(items[1].reason.as_deref(), Some("Black is not in the folder's virtual environment or on the PATH."));
+        assert_eq!(
+            items[1].reason.as_deref(),
+            Some("Black is not in the folder's virtual environment or on the PATH.")
+        );
     }
 
     fn found(id: &str, available: bool) -> Formatter {
@@ -1134,7 +1148,8 @@ mod tests {
         std::fs::create_dir_all(root.join("a/src")).expect("mkdir");
         std::fs::write(root.join("a/Cargo.toml"), "[package]\nname = \"a\"\nedition = \"2018\"\n").expect("write");
         std::fs::create_dir_all(root.join("b/src")).expect("mkdir");
-        std::fs::write(root.join("b/Cargo.toml"), "[package]\nname = \"b\"\nedition.workspace = true\n").expect("write");
+        std::fs::write(root.join("b/Cargo.toml"), "[package]\nname = \"b\"\nedition.workspace = true\n")
+            .expect("write");
         std::fs::create_dir_all(root.join("c/src")).expect("mkdir");
         std::fs::write(root.join("c/Cargo.toml"), "[package]\nname = \"c\"\n\n[dependencies]\nedition = \"x\"\n")
             .expect("write");
@@ -1237,7 +1252,11 @@ mod tests {
         let f = failure("Prettier", "[error] stdin: SyntaxError: Unexpected token (3:5)\n[error]   1 | x", Some(2));
         assert_eq!(f.message, "Prettier: stdin: SyntaxError: Unexpected token (3:5)");
         assert_eq!((f.line, f.col), (Some(3), Some(5)));
-        let f = failure("Black", "error: cannot format -: Cannot parse for target version Python 3.12: 7:2: x(\n", Some(123));
+        let f = failure(
+            "Black",
+            "error: cannot format -: Cannot parse for target version Python 3.12: 7:2: x(\n",
+            Some(123),
+        );
         assert_eq!((f.line, f.col), (Some(7), Some(2)));
         let f = failure("gofmt", "<standard input>:4:10: expected '}', found 'EOF'\n", Some(2));
         assert_eq!((f.line, f.col), (Some(4), Some(10)));
