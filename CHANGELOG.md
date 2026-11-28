@@ -839,6 +839,16 @@ Sections used:
   when a keyring is available, and closes when another window answers. A corner bubble tells you it
   is waiting. The password never shows in the chat, and it is saved to the keyring only after the
   guest accepts it.
+- **Zoom the window.** View: Zoom In (Ctrl+=, Ctrl+Shift+=, Ctrl+Numpad+), Zoom Out (Ctrl+-,
+  Ctrl+Numpad-) and Reset Zoom (Ctrl+Numpad0) make the whole native window 20% larger or smaller a
+  step, from -5 to 9, kept as window.zoomLevel. Two quick presses are two steps.
+- **Accessibility options over any theme.** More contrast gives secondary text the text's colour and
+  makes borders stand out. Strong focus rings mark the keyboard's place in the text's colour.
+  Reduce motion stops the spinners. Colour-blind safe colours use blue and orange for added and
+  removed, passed and failed. The text size makes the workbench larger and leaves the editor's text
+  as it was.
+- **Accessibility toggles.** Toggle High Contrast Theme, Toggle More Contrast, Toggle Colour-Blind
+  Safe Colours and Toggle Reduce Motion are in the Command Palette.
 
 
 ### :bug: Bugs fixed
