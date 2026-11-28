@@ -694,7 +694,6 @@ const MOST_NETWORK: std::time::Duration = std::time::Duration::from_secs(10 * 60
 /// Git as [`git`] runs it, stopped once it has taken `limit`. What it writes is read beside it; a git stopped is
 /// not waited for further (what it started, ssh, may keep its output open).
 pub(crate) fn git_for(dir: &Path, args: &[&str], limit: std::time::Duration) -> Result<Vec<u8>, String> {
-    use std::io::Read as _;
     fn read(pipe: Option<impl std::io::Read + std::marker::Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
             let mut b = Vec::new();
@@ -792,7 +791,11 @@ fn current(dir: &Path) -> (Option<String>, Option<String>) {
 fn remote_for(dir: &Path, asked: Option<&str>) -> Result<String, String> {
     let remotes = remotes(dir)?;
     if let Some(a) = asked.filter(|a| !a.is_empty()) {
-        return if remotes.iter().any(|r| r == a) { Ok(a.to_string()) } else { Err(format!("There is no remote '{a}'.")) };
+        return if remotes.iter().any(|r| r == a) {
+            Ok(a.to_string())
+        } else {
+            Err(format!("There is no remote '{a}'."))
+        };
     }
     match remotes.as_slice() {
         [] => Err("Your repository has no remotes configured to publish to.".into()),
@@ -1184,10 +1187,19 @@ mod tests {
     #[test]
     fn a_line_of_the_branches_says_its_kind_upstream_and_how_far_apart() {
         let v = branch_line("*\0refs/heads/main\0abc1234\0origin/main\0ahead 2, behind 1\0Fix it").expect("one");
-        assert_eq!((v["name"].as_str(), v["kind"].as_str(), v["current"].as_bool()), (Some("main"), Some("local"), Some(true)));
-        assert_eq!((v["upstream"].as_str(), v["ahead"].as_u64(), v["behind"].as_u64()), (Some("origin/main"), Some(2), Some(1)));
+        assert_eq!(
+            (v["name"].as_str(), v["kind"].as_str(), v["current"].as_bool()),
+            (Some("main"), Some("local"), Some(true))
+        );
+        assert_eq!(
+            (v["upstream"].as_str(), v["ahead"].as_u64(), v["behind"].as_u64()),
+            (Some("origin/main"), Some(2), Some(1))
+        );
         let v = branch_line(" \0refs/remotes/origin/dev\0abc\0\0\0Dev").expect("remote");
-        assert_eq!((v["name"].as_str(), v["kind"].as_str(), v["upstream"].is_null()), (Some("origin/dev"), Some("remote"), true));
+        assert_eq!(
+            (v["name"].as_str(), v["kind"].as_str(), v["upstream"].is_null()),
+            (Some("origin/dev"), Some("remote"), true)
+        );
         assert!(branch_line(" \0refs/remotes/origin/HEAD\0abc\0\0\0x").is_none());
         assert_eq!(branch_line(" \0refs/tags/v1\0abc\0\0\0x").expect("tag")["kind"], "tag");
         assert!(!name_ok("-f") && !name_ok("") && !name_ok("a b") && name_ok("feature/x"));
@@ -1224,7 +1236,8 @@ mod tests {
         let said = answered(&dir, json!({"type": "git_branch_create", "name": "-D"}));
         assert_eq!(done_of(&said)["ok"], false);
         let listed = branches(&dir);
-        let names: Vec<&str> = listed["items"].as_array().expect("items").iter().filter_map(|i| i["name"].as_str()).collect();
+        let names: Vec<&str> =
+            listed["items"].as_array().expect("items").iter().filter_map(|i| i["name"].as_str()).collect();
         assert!(names.contains(&"main") && names.contains(&"origin/main"), "{names:?}");
         assert_eq!(listed["remotes"], json!(["origin"]));
     }
@@ -1234,7 +1247,10 @@ mod tests {
         let Some((d, bare, dir)) = cloned() else { return };
         answered(&dir, json!({"type": "git_branch_create", "name": "dev"}));
         let said = answered(&dir, json!({"type": "git_push", "force": false}));
-        assert_eq!((done_of(&said)["ok"].as_bool(), done_of(&said)["published"].as_str()), (Some(true), Some("origin")));
+        assert_eq!(
+            (done_of(&said)["ok"].as_bool(), done_of(&said)["published"].as_str()),
+            (Some(true), Some("origin"))
+        );
         assert_eq!(current(&dir).1.as_deref(), Some("origin/dev"));
         std::fs::write(dir.join("c.txt"), "c\n").expect("w");
         commit(&dir, "Third", true, false).expect("commit");
@@ -1246,7 +1262,8 @@ mod tests {
         git(d.path(), &["clone", "--quiet", "-b", "dev", "origin.git", "other"], None).expect("clone");
         std::fs::write(other.join("d.txt"), "d\n").expect("w");
         git(&other, &["add", "."], None).expect("add");
-        git(&other, &["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-qm", "Fourth"], None).expect("c");
+        git(&other, &["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-qm", "Fourth"], None)
+            .expect("c");
         git(&other, &["push", "--quiet"], None).expect("push");
         let said = answered(&dir, json!({"type": "git_fetch", "all": true, "auto": true}));
         assert_eq!((done_of(&said)["ok"].as_bool(), done_of(&said)["auto"].as_bool()), (Some(true), Some(true)));
@@ -1256,7 +1273,9 @@ mod tests {
         assert!(dir.join("d.txt").exists());
         let said = answered(&dir, json!({"type": "git_undo_commit"}));
         assert_eq!((done_of(&said)["ok"].as_bool(), done_of(&said)["message"].as_str()), (Some(true), Some("Fourth")));
-        assert!(git(&dir, &["diff", "--cached", "--name-only"], None).map(|o| o.starts_with(b"d.txt")).unwrap_or(false));
+        assert!(
+            git(&dir, &["diff", "--cached", "--name-only"], None).map(|o| o.starts_with(b"d.txt")).unwrap_or(false)
+        );
     }
 
     #[test]

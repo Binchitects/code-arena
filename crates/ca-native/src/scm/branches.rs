@@ -98,7 +98,8 @@ pub fn refs_of(m: &Value) -> (Vec<Ref>, Vec<String>) {
         })
         .filter(|r| !r.name.is_empty())
         .collect();
-    let remotes = m["remotes"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(str::to_string)).collect();
+    let remotes =
+        m["remotes"].as_array().into_iter().flatten().filter_map(|r| r.as_str().map(str::to_string)).collect();
     (refs, remotes)
 }
 
@@ -159,7 +160,9 @@ pub fn pick_rows(refs: &[Ref], create: bool) -> Vec<quick::Item> {
             Kind::Tag => ("tag", "tags"),
         };
         let what = if r.subject.is_empty() { r.hash.clone() } else { format!("{} • {}", r.hash, r.subject) };
-        rows.push(quick::item(&format!("{}:{}", r.kind.word(), r.name), &r.name).icon(glyph).group(group).description(&what));
+        rows.push(
+            quick::item(&format!("{}:{}", r.kind.word(), r.name), &r.name).icon(glyph).group(group).description(&what),
+        );
     }
     rows
 }
@@ -230,28 +233,28 @@ fn network(ui: Ui, send: &Send, mut m: Value) {
     m["repo"] = json!("");
     if me.busy.with_untracked(Option::is_none) {
         me.busy.set(Some(of));
-        turn(ui, me);
+        turn(me);
     }
     send(m);
 }
 
 /// Turns the sync item's icon while git talks to a remote, and stops once it is done.
-fn turn(ui: Ui, me: Remote) {
+fn turn(me: Remote) {
     if me.ticking.get_untracked() {
         return;
     }
     me.ticking.set(true);
-    fn go(ui: Ui, me: Remote) {
+    fn go(me: Remote) {
         exec_after(TICK, move |_| {
             if me.busy.with_untracked(Option::is_none) {
                 me.ticking.set(false);
                 return;
             }
             me.tick.update(|n| *n += 1);
-            go(ui, me);
+            go(me);
         });
     }
-    go(ui, me);
+    go(me);
 }
 
 fn push(ui: Ui, send: &Send, force: bool) {
@@ -407,10 +410,9 @@ fn delete(ui: Ui, send: &Send, refs: &[Ref]) {
 
 fn checkout(ui: Ui, send: &Send, refs: Vec<Ref>) {
     let send = send.clone();
-    quick::pick("Checkout to")
-        .placeholder("Select a branch or tag to checkout")
-        .items(pick_rows(&refs, true))
-        .open(ui, move |item| {
+    quick::pick("Checkout to").placeholder("Select a branch or tag to checkout").items(pick_rows(&refs, true)).open(
+        ui,
+        move |item| {
             let Some(item) = item else { return };
             match item.id.as_str() {
                 "+new" => create(ui, &send, &refs, None),
@@ -421,7 +423,8 @@ fn checkout(ui: Ui, send: &Send, refs: Vec<Ref>) {
                     }
                 }
             }
-        });
+        },
+    );
 }
 
 /// The ref a new branch is made from, picked, then its name asked.
@@ -565,9 +568,11 @@ pub fn sync_button(ui: Ui, send: Send) -> impl IntoView {
     });
     let busy = state(ui).busy;
     h_stack((
-        icon("sync", 16.0).style(move |s| s.apply_if(!words.with(|w| w.as_ref().is_some_and(|w| w.0 == "sync")), |s| s.hide())),
-        icon("cloud-upload", 16.0)
-            .style(move |s| s.apply_if(!words.with(|w| w.as_ref().is_some_and(|w| w.0 == "cloud-upload")), |s| s.hide())),
+        icon("sync", 16.0)
+            .style(move |s| s.apply_if(!words.with(|w| w.as_ref().is_some_and(|w| w.0 == "sync")), |s| s.hide())),
+        icon("cloud-upload", 16.0).style(move |s| {
+            s.apply_if(!words.with(|w| w.as_ref().is_some_and(|w| w.0 == "cloud-upload")), |s| s.hide())
+        }),
         label(move || words.with(|w| w.as_ref().map(|w| w.1.clone()).unwrap_or_default())),
     ))
     .on_click_stop(move |_| {
@@ -600,7 +605,11 @@ pub fn sync_button(ui: Ui, send: Send) -> impl IntoView {
 }
 
 /// A status bar item: run on a click, said in its tooltip.
-fn bar_item(view: impl IntoView + 'static, click: impl Fn() + 'static, tip: impl Fn() -> String + 'static) -> floem::AnyView {
+fn bar_item(
+    view: impl IntoView + 'static,
+    click: impl Fn() + 'static,
+    tip: impl Fn() -> String + 'static,
+) -> floem::AnyView {
     let tip = std::rc::Rc::new(tip);
     tooltip(view.on_click_stop(move |_| click()), move || {
         let tip = tip.clone();
@@ -656,7 +665,8 @@ fn register_status() {
                 };
                 s.rotate(turned).apply_if(!shown.with(|v| v.is_some_and(|v| v.0)), |s| s.hide())
             }),
-            icon("cloud-upload", 16.0).style(move |s| s.apply_if(!shown.with(|v| v.is_some_and(|v| !v.0)), |s| s.hide())),
+            icon("cloud-upload", 16.0)
+                .style(move |s| s.apply_if(!shown.with(|v| v.is_some_and(|v| !v.0)), |s| s.hide())),
             label(move || shown.get().filter(|v| v.0).map(|v| counts(v.1, v.2, true)).unwrap_or_default())
                 .style(move |s| s.apply_if(!shown.with(|v| v.is_some_and(|v| v.0)), |s| s.hide())),
         ))
@@ -697,7 +707,9 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(git(DELETE, "Delete Branch...", |ui, send| ask_refs(ui, send, "delete")));
     add(git(UNDO, "Undo Last Commit", undo));
     add(git(FETCH, "Fetch", |ui, send| network(ui, send, json!({"type": "git_fetch"}))));
-    add(git(FETCH_ALL, "Fetch From All Remotes", |ui, send| network(ui, send, json!({"type": "git_fetch", "all": true}))));
+    add(git(FETCH_ALL, "Fetch From All Remotes", |ui, send| {
+        network(ui, send, json!({"type": "git_fetch", "all": true}))
+    }));
     add(git(PULL, "Pull", |ui, send| network(ui, send, json!({"type": "git_pull", "rebase": false}))));
     add(git(PULL_REBASE, "Pull (Rebase)", |ui, send| network(ui, send, json!({"type": "git_pull", "rebase": true}))));
     add(git(PUSH, "Push", |ui, send| push(ui, send, false)));
@@ -737,7 +749,9 @@ fn done(ui: Ui, m: &Value, send: &Send) {
                 .destructive()
                 .open(ui, move |a| {
                     if a.yes() {
-                        send(json!({"type": "git_branch_delete", "repo": "", "name": name, "force": true, "key": name}));
+                        send(
+                            json!({"type": "git_branch_delete", "repo": "", "name": name, "force": true, "key": name}),
+                        );
                     }
                 });
             return;
@@ -839,7 +853,27 @@ mod tests {
         assert_eq!(name_problem("  ", &[]).as_deref(), Some("Please provide a branch name"));
         assert_eq!(name_problem("my feature", &[]), None);
         assert_eq!(tidy(" my  new feature "), "my-new-feature");
-        for bad in ["-x", "a..b", "a/", "/a", ".a", "a.lock", "a/b.lock/c", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "@", "a@{1", "a//b", "a/.b", "a."] {
+        for bad in [
+            "-x",
+            "a..b",
+            "a/",
+            "/a",
+            ".a",
+            "a.lock",
+            "a/b.lock/c",
+            "a~1",
+            "a^",
+            "a:b",
+            "a?",
+            "a*",
+            "a[",
+            "a\\b",
+            "@",
+            "a@{1",
+            "a//b",
+            "a/.b",
+            "a.",
+        ] {
             assert_eq!(name_problem(bad, &[]), Some(format!("'{bad}' is not a valid branch name")), "{bad}");
         }
         assert_eq!(name_problem("feature/cart", &["main"]), None);
@@ -901,7 +935,11 @@ mod tests {
         take(ui, &json!({"type": "git_committed", "repo": "", "error": "no"}), &send);
         assert_eq!(sent.borrow().len(), n);
         // An undo puts the commit's message back.
-        take(ui, &json!({"type": "git_done", "repo": "", "op": "git_undo_commit", "ok": true, "message": "Fix"}), &send);
+        take(
+            ui,
+            &json!({"type": "git_done", "repo": "", "op": "git_undo_commit", "ok": true, "message": "Fix"}),
+            &send,
+        );
         assert_eq!(scm(ui).message.get_untracked(), "Fix");
         // A list answered for an older ask is not opened.
         commands::run(ui, &send, CHECKOUT);

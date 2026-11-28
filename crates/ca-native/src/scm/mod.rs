@@ -736,9 +736,13 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
                         .apply_if(me.message.with(|m| !m.is_empty()), |s| s.hide())
                 });
             let input = text_input(me.message)
-                .on_key_down(Key::Named(NamedKey::Enter), |m| m.control(), move |_| {
-                    commit(ui, &go, false);
-                })
+                .on_key_down(
+                    Key::Named(NamedKey::Enter),
+                    |m| m.control(),
+                    move |_| {
+                        commit(ui, &go, false);
+                    },
+                )
                 .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true))
                 .on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false))
                 .style(move |s| {
@@ -843,7 +847,8 @@ fn commit_box(ui: Ui, send: Send) -> impl IntoView {
             .selectable(false)
             .apply_if(me.busy.get(), |s| s.color(c.button_fg.multiply_alpha(0.6)))
     });
-    v_stack((message_box(ui, send.clone()), button, branches::sync_button(ui, send))).style(|s| s.width_full().gap(6.0).padding_horiz(12.0).padding_vert(6.0))
+    v_stack((message_box(ui, send.clone()), button, branches::sync_button(ui, send)))
+        .style(|s| s.width_full().gap(6.0).padding_horiz(12.0).padding_vert(6.0))
 }
 
 /// What the view says instead of its changes.
