@@ -1839,6 +1839,25 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     page.send(Message::text(json!({"type": "servers", "key": 4}).to_string())).await.expect("send");
     let servers = until(&mut page, "servers").await;
     assert_eq!(servers["key"], 4, "{servers}");
+    // How the model is given its tools: kept in the person's settings and said back with its key; a word that is
+    // no mode is refused, and null follows Arena's word again (none: both).
+    page.send(Message::text(json!({"type": "tool_mode", "value": "code", "key": 5}).to_string())).await.expect("send");
+    let mode = until(&mut page, "tool_mode").await;
+    assert_eq!(
+        (mode["key"].as_u64(), mode["value"].as_str(), mode["set"].as_bool()),
+        (Some(5), Some("code"), Some(true))
+    );
+    page.send(Message::text(json!({"type": "tool_mode", "value": "sideways", "key": 6}).to_string()))
+        .await
+        .expect("send");
+    let no = until(&mut page, "refused").await;
+    assert_eq!((no["of"].as_str(), no["key"].as_u64()), (Some("tool_mode"), Some(6)), "{no}");
+    page.send(Message::text(json!({"type": "tool_mode", "value": null, "key": 7}).to_string())).await.expect("send");
+    let mode = until(&mut page, "tool_mode").await;
+    assert_eq!(
+        (mode["value"].as_str(), mode["set"].as_bool(), &mode["arena"]),
+        (Some("both"), Some(false), &json!(null))
+    );
     // The answer as the session kept it: its thinking, and what its turn used, for its footer after a reload.
     page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
     let st = until(&mut page, "state").await;

@@ -8,6 +8,7 @@
 # "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a command that needs an approval
 # in ask mode, "guest" runs `uname -a` in the VM test-vm (vm_run: a fake VBoxManage on PATH has it ask the sign-in),
 # "picture" runs a command that makes a picture in .code-arena/media/,
+# "python" runs a run_code program that lists the folder through `import arena` and sums,
 # "build" runs a command with no time limit (some seconds of output; its end is answered with a line),
 # "persian" answers in right-to-left and mixed text,
 # "think" thinks for some seconds before it answers (with its usage),
@@ -149,6 +150,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif "(Code Arena: job" in text:
             ev({"content": "The build passed."})
             ev({}, "stop")
+        elif "python" in text:
+            ev({"content": "I'll count it in Python."})
+            code = "import arena\nfiles = arena.local.list_dir(path='.')\nprint(str(files)[:120])\nsum(range(10))"
+            call("run_code", {"code": code})
         elif "build" in text:
             ev({"content": "Building; it takes a while."})
             steps = "for i in 1 2 3 4 5 6 7 8; do echo compiling part $i; sleep 1; done; echo built"

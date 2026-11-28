@@ -262,7 +262,7 @@ fn told(text: &str) -> String {
     }
 }
 
-const SUB_TOOLS_LEFT_OUT: &[&str] = &["task", "plan", "run_steps", "goal_check"];
+const SUB_TOOLS_LEFT_OUT: &[&str] = &["task", "plan", "run_steps", "goal_check", crate::code_mode::RUN_CODE];
 
 #[async_trait::async_trait]
 impl Tool for TaskTool {
@@ -373,6 +373,9 @@ impl Tool for TaskTool {
             repo_key: None,
             hooks: crew.hooks.clone(),
             attached: Default::default(),
+            // A sub-agent calls its tools one by one: run_code is the session's.
+            tool_mode: crate::code_mode::ToolMode::Direct,
+            kernel: None,
         };
         (crew.say)(format!("  ↳ {name} starts: {description}"));
         let watch = crew.watch.clone().zip(answers);

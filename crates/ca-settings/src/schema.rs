@@ -332,6 +332,16 @@ pub static TOOL_CHARS: Setting = Setting {
     section: "Tools",
 };
 
+pub static TOOL_MODE: Setting = Setting {
+    key: "tools.mode",
+    kind: Kind::Enum(&["direct", "code", "both"]),
+    default: r#""both""#,
+    description: "How the model is given its tools: direct (one call at a time), code (the servers' tools as functions of a run_code program, which calls them as Python), or both. Not set: as Arena says for the model.",
+    scope: Scope::User,
+    env: None,
+    section: "Tools",
+};
+
 pub static SYNC_CHATS: Setting = Setting {
     key: "arena.syncChats",
     kind: Kind::Bool,
@@ -514,6 +524,7 @@ pub static ALL: &[&Setting] = &[
     &ARENA_TOOLS,
     &CODE_INTEL_TOOLS,
     &TOOL_CHARS,
+    &TOOL_MODE,
     &SERVER_WAIT,
     &SYNC_CHATS,
     &PROJECT_MEMORY,

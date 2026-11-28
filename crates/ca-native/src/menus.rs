@@ -88,6 +88,8 @@ pub struct Item {
     pub when: Option<Test>,
     /// Whether it is drawn with a check (a setting that is on).
     pub checked: Option<Test>,
+    /// The title as it is drawn, made when the menu opens (it names what is now: the model, a setting's value).
+    pub live: Option<std::rc::Rc<dyn Fn(Ui) -> String>>,
 }
 
 /// An item running a command.
@@ -101,6 +103,7 @@ pub fn item(command: &str) -> Item {
         icon: "",
         when: None,
         checked: None,
+        live: None,
     }
 }
 
@@ -138,6 +141,12 @@ impl Item {
 
     pub fn when(mut self, test: impl Fn(Ui) -> bool + 'static) -> Item {
         self.when = Some(std::rc::Rc::new(test));
+        self
+    }
+
+    /// Drawn with this title, made when the menu opens; its own title (`title`) still says which item it is.
+    pub fn live_title(mut self, title: impl Fn(Ui) -> String + 'static) -> Item {
+        self.live = Some(std::rc::Rc::new(title));
         self
     }
 
@@ -231,6 +240,7 @@ fn rows_where(ui: Ui, menu: Menu, keep: impl Fn(&str) -> bool) -> Vec<Row> {
             out.push(Row::Line);
         }
         last = Some(item.group.clone());
+        let title = item.live.as_ref().map_or(title, |l| l(ui));
         let checked = item.checked.as_ref().is_some_and(|c| c(ui));
         out.push(Row::Entry { title, keys, icon: item.icon, command: run, checked });
     }
