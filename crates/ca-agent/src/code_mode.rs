@@ -451,22 +451,26 @@ pub enum Step {
 #[derive(Debug, Default)]
 pub struct Bounded {
     text: String,
+    /// The characters kept, counted as they come.
+    kept: usize,
     most: usize,
     more: usize,
 }
 
 impl Bounded {
     pub fn new(most: usize) -> Bounded {
-        Bounded { text: String::new(), most, more: 0 }
+        Bounded { text: String::new(), kept: 0, most, more: 0 }
     }
 
     pub fn push(&mut self, s: &str) {
-        let room = self.most.saturating_sub(self.text.chars().count());
+        let room = self.most.saturating_sub(self.kept);
         let n = s.chars().count();
         if n <= room {
             self.text.push_str(s);
+            self.kept += n;
         } else {
             self.text.extend(s.chars().take(room));
+            self.kept += room;
             self.more += n - room;
         }
     }
@@ -554,8 +558,10 @@ impl Kernel {
         // program's.
         let mut blank = false;
         loop {
-            let mut line = String::new();
-            let read = tokio::time::timeout_at(until, self.stdout.read_line(&mut line)).await;
+            // Bytes, not text: a command the program runs may print what is not UTF-8.
+            let mut bytes = Vec::new();
+            let read = tokio::time::timeout_at(until, self.stdout.read_until(b'\n', &mut bytes)).await;
+            let line = String::from_utf8_lossy(&bytes).into_owned();
             match read {
                 Err(_) => {
                     let _ = self.child.start_kill();
