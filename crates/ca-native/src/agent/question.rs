@@ -39,8 +39,11 @@ pub(super) fn bubble(ui: Ui, question: Question) -> AnyView {
     let card = (!skill.is_empty()).then(|| skill_card(ui, skill));
     let inside = v_stack((
         // Each of its lines on the side of its own words' direction.
-        crate::bidi::lines(move || words.clone(), move || crate::bidi::Look { size: 13.0, line_height: 1.5, color: t.get().fg })
-            .style(|s| s.text_overflow(TextOverflow::Wrap)),
+        crate::bidi::lines(
+            move || words.clone(),
+            move || crate::bidi::Look { size: 13.0, line_height: 1.5, color: t.get().fg },
+        )
+        .style(|s| s.text_overflow(TextOverflow::Wrap)),
         match card {
             Some(c) => c.into_any(),
             None => empty().style(|s| s.hide()).into_any(),
@@ -155,9 +158,7 @@ fn quote(ui: Ui, at: u64, text: String) -> impl IntoView {
         let c = t.get();
         let s = s.gap(2.0).border_color(c.quote_border);
         let s = if rtl { s.padding_right(8.0).border_right(2.0) } else { s.padding_left(8.0).border_left(2.0) };
-        s
-            .max_width_pct(85.0)
-            .margin_bottom(4.0)
+        s.max_width_pct(85.0).margin_bottom(4.0)
     })
 }
 

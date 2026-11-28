@@ -57,11 +57,8 @@ pub fn lines(words: impl Fn() -> String + 'static, look: impl Fn() -> Look + 'st
 
 /// A text laid out to its widest line's width, so that each line stands on the side of its own direction.
 fn laid(words: &str, l: Look) -> TextLayout {
-    let attrs = Attrs::new()
-        .family(&UI)
-        .font_size(l.size)
-        .line_height(LineHeightValue::Normal(l.line_height))
-        .color(l.color);
+    let attrs =
+        Attrs::new().family(&UI).font_size(l.size).line_height(LineHeightValue::Normal(l.line_height)).color(l.color);
     let mut layout = TextLayout::new();
     layout.set_text(words, AttrsList::new(attrs));
     let widest = layout.size().width.ceil() as f32 + 1.0;
@@ -91,7 +88,10 @@ pub fn any_rtl_line(text: &str) -> bool {
 /// A title set among other words, isolated (first strong isolate … pop directional isolate): its own direction is
 /// found from its words and it does not reorder the words around it. A title of no right-to-left letter is as it was.
 pub fn isolate(title: &str) -> String {
-    if title.chars().any(|c| matches!(unicode_bidi::bidi_class(c), unicode_bidi::BidiClass::R | unicode_bidi::BidiClass::AL)) {
+    if title
+        .chars()
+        .any(|c| matches!(unicode_bidi::bidi_class(c), unicode_bidi::BidiClass::R | unicode_bidi::BidiClass::AL))
+    {
         format!("\u{2068}{title}\u{2069}")
     } else {
         title.to_string()
@@ -198,11 +198,7 @@ mod tests {
     #[test]
     fn a_list_goes_the_way_of_its_first_item() {
         let item = |depth: u8, marker: &str, words: &str| {
-            Rc::new(Block::Item {
-                depth,
-                marker: marker.into(),
-                text: Text { text: words.into(), ..Text::default() },
-            })
+            Rc::new(Block::Item { depth, marker: marker.into(), text: Text { text: words.into(), ..Text::default() } })
         };
         let para = |words: &str| Rc::new(Block::Paragraph(Text { text: words.into(), ..Text::default() }));
         let blocks = vec![

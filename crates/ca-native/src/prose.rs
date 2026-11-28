@@ -207,7 +207,11 @@ fn block(
                         .padding_vert(2.0)
                         .border_color(t.get().quote_border)
                         .margin_top(over(8.0));
-                    if rtl.get() { s.padding_right(10.0).border_right(4.0) } else { s.padding_left(10.0).border_left(4.0) }
+                    if rtl.get() {
+                        s.padding_right(10.0).border_right(4.0)
+                    } else {
+                        s.padding_left(10.0).border_left(4.0)
+                    }
                 })
                 .into_any()
         }
