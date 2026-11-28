@@ -223,7 +223,9 @@ fn branch(ui: Ui) -> (Option<String>, Option<String>) {
 fn ask_refs(ui: Ui, send: &Send, what: &str) {
     let me = state(ui);
     me.asked.update(|n| *n += 1);
-    send(json!({"type": "git_branches", "repo": super::repos::selected(ui), "key": format!("{what}:{}", me.asked.get_untracked())}));
+    send(
+        json!({"type": "git_branches", "repo": super::repos::selected(ui), "key": format!("{what}:{}", me.asked.get_untracked())}),
+    );
 }
 
 /// A fetch, pull, push or sync asked of the driver: the sync item turns until it is done.
@@ -471,11 +473,8 @@ pub fn commit_rows(ui: Ui, send: &Send) -> Vec<popup::Item> {
 fn run_row(ui: Ui, send: &Send, id: &'static str, title: &str) -> popup::Item {
     let send = send.clone();
     let may = commands::find(id).is_some_and(|c| c.may_run(ui));
-    // The view's own menus run on the repository picked there.
     popup::entry(title, move || {
-        super::repos::quietly(ui, || {
-            commands::run(ui, &send, id);
-        });
+        commands::run(ui, &send, id);
     })
     .keys(&commands::keys_of(id))
     .enabled(may)

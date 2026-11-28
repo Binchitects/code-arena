@@ -459,7 +459,7 @@ fn refresh_soon(ui: Ui, send: &Send) {
     let send = send.clone();
     floem::action::exec_after(std::time::Duration::from_millis(300), move |_| {
         if me.asks.get_untracked() == n {
-            refresh(ui, &send, false);
+            refresh(ui, &send, true);
         }
     });
 }
@@ -470,9 +470,10 @@ fn files_of(ui: Ui, g: Group) -> Vec<File> {
         .with_untracked(|s| s.as_ref().map(|s| s.of_group(g).into_iter().cloned().collect()).unwrap_or_default())
 }
 
-/// Files of the project sent to git, a message for each repository they are in, named from its top.
+/// Files of the picked repository's status sent to git, named from its top.
 fn send_files(ui: Ui, send: &Send, of: &str, files: &[File], from: bool) {
-    for (repo, paths) in repos::group(ui, &paths_of(&files.iter().collect::<Vec<_>>(), from)) {
+    if !files.is_empty() {
+        let (repo, paths) = repos::of_selected(ui, &paths_of(&files.iter().collect::<Vec<_>>(), from));
         send(json!({"type": of, "repo": repo, "paths": paths}));
     }
 }
@@ -547,7 +548,9 @@ pub(crate) fn commit(ui: Ui, send: &Send, amend: bool) -> bool {
         return false;
     }
     me.busy.set(true);
-    send(json!({"type": "git_commit", "repo": repos::selected(ui), "message": message, "all": staged == 0 && !amend, "amend": amend}));
+    send(
+        json!({"type": "git_commit", "repo": repos::selected(ui), "message": message, "all": staged == 0 && !amend, "amend": amend}),
+    );
     true
 }
 
@@ -1073,7 +1076,8 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     let send_section = send.clone();
     let boxed = commit_box(ui, send)
         .style(move |s| s.apply_if(!matches!(what.get(), Empty::Clean | Empty::Changes), |s| s.hide()));
-    let root = v_stack((repos::section(ui, send_section), boxed, words, changes)).style(|s| s.size_full().min_height(0.0));
+    let root =
+        v_stack((repos::section(ui, send_section), boxed, words, changes)).style(|s| s.size_full().min_height(0.0));
     me.root.set(Some(root.id()));
     root.into_any()
 }
@@ -1108,7 +1112,7 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(command("git.stageAll", "Git", "Stage All Changes", |ui, send| {
         repos::choose(ui, send, |ui, send| stage(ui, send, &files_of(ui, Group::Changes)))
     })
-        .when(has_repo));
+    .when(has_repo));
     add(command("git.unstageAll", "Git", "Unstage All Changes", |ui, send| {
         repos::choose(ui, send, |ui, send| unstage(ui, send, &files_of(ui, Group::Staged)))
     })
@@ -1154,12 +1158,17 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     match m["type"].as_str().unwrap_or("") {
         "git_status" => {
             let s = Status::of(m);
-            let total = repos::record(ui, m["repo"].as_str().unwrap_or(""), &s);
+            let repo = m["repo"].as_str().unwrap_or("");
+            let (changed, total) = repos::record(ui, repo, &s);
             crate::badges::set(ui, View::Scm, total);
             if !repos::is_selected(ui, m) {
                 // What the open changes tabs of another repository compare may be another now.
-                for rest in open_tabs(ui) {
-                    ask_sides(ui, send, &rest);
+                if changed {
+                    for rest in open_tabs(ui) {
+                        if repos::split(ui, rest.get(2..).unwrap_or("")).0 == repo {
+                            ask_sides(ui, send, &rest);
+                        }
+                    }
                 }
                 return false;
             }
@@ -1174,6 +1183,15 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 for rest in open_tabs(ui) {
                     ask_sides(ui, send, &rest);
                 }
+            }
+        }
+        "git_committed" if !repos::is_selected(ui, m) => {
+            me.busy.set(false);
+            match m["error"].as_str() {
+                Some(e) => {
+                    toast::error(ui, e);
+                }
+                None => repos::committed_elsewhere(ui, m["repo"].as_str().unwrap_or("")),
             }
         }
         "git_committed" => {

@@ -265,11 +265,13 @@ fn ask(ui: Ui, send: &Send, path: &str) {
     send(json!({"type": "git_show", "repo": repo, "path": path, "rev": "", "working": false, "key": OWNER}));
 }
 
-/// Every open file's index text asked again.
-fn ask_all(ui: Ui, send: &Send) {
+/// Every open file's index text asked again; `repo`: only of the files in that repository.
+fn ask_all(ui: Ui, send: &Send, repo: Option<&str>) {
     let paths: Vec<String> = FILES.with(|f| f.borrow().keys().cloned().collect());
     for p in paths {
-        ask(ui, send, &p);
+        if repo.is_none_or(|r| super::repos::split(ui, &p).0 == r) {
+            ask(ui, send, &p);
+        }
     }
 }
 
@@ -552,8 +554,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             }
             return true;
         }
-        "git_status" => ask_all(ui, send),
-        "git_committed" => ask_all(ui, send),
+        "git_status" | "git_committed" => ask_all(ui, send, m["repo"].as_str()),
         "saved" => {
             if let Some(path) = m["path"].as_str() {
                 ask(ui, send, path);

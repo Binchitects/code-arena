@@ -43,8 +43,8 @@ pub struct Repos {
     messages: RwSignal<HashMap<String, String>>,
     /// What the last ask said (the settings and the open files): asked again only when it is another.
     asked: RwSignal<Value>,
-    /// A command run from the view itself, which knows its repository: it does not ask which.
-    quiet: RwSignal<bool>,
+    /// A command is being run from the palette: a git command asks which repository first.
+    palette: RwSignal<bool>,
 }
 
 impl crate::ext::State for Repos {
@@ -55,7 +55,7 @@ impl crate::ext::State for Repos {
             selected: ui.scope.create_rw_signal(String::new()),
             messages: ui.scope.create_rw_signal(HashMap::new()),
             asked: ui.scope.create_rw_signal(Value::Null),
-            quiet: ui.scope.create_rw_signal(false),
+            palette: ui.scope.create_rw_signal(false),
         }
     }
 }
@@ -105,19 +105,6 @@ pub fn split(ui: Ui, path: &str) -> (String, String) {
     state(ui).items.with_untracked(|items| split_of(items.iter().map(|r| r.path.as_str()), path))
 }
 
-/// Paths of the project, grouped by their repositories (in the order first met) and named from each one's top.
-pub fn group(ui: Ui, paths: &[String]) -> Vec<(String, Vec<String>)> {
-    let mut out: Vec<(String, Vec<String>)> = Vec::new();
-    for p in paths {
-        let (repo, rel) = split(ui, p);
-        match out.iter_mut().find(|(r, _)| *r == repo) {
-            Some((_, list)) => list.push(rel),
-            None => out.push((repo, vec![rel])),
-        }
-    }
-    out
-}
-
 /// The repositories asked of the driver, as the settings and the open files say now; only when that is not what
 /// was last asked (`force`: asked anyway, Refresh).
 pub fn ask(ui: Ui, send: &Send, force: bool) {
@@ -160,16 +147,36 @@ pub fn items_of(m: &Value) -> Vec<Repo> {
     if items.is_empty() { vec![Repo::default()] } else { items }
 }
 
-/// A repository's status kept; the count of changes of them all, for the view's icon.
-pub fn record(ui: Ui, repo: &str, s: &Status) -> usize {
+/// A repository's status kept: whether it is another than the one kept, and the count of changes of them all, for
+/// the view's icon.
+pub fn record(ui: Ui, repo: &str, s: &Status) -> (bool, usize) {
     let me = state(ui);
-    if me.statuses.with_untracked(|m| m.get(repo) != Some(s)) {
+    let changed = me.statuses.with_untracked(|m| m.get(repo) != Some(s));
+    if changed {
         me.statuses.update(|m| {
             m.insert(repo.to_string(), s.clone());
         });
     }
     let shown = me.items.with_untracked(|items| items.iter().map(|r| r.path.clone()).collect::<Vec<_>>());
-    me.statuses.with_untracked(|m| shown.iter().filter_map(|r| m.get(r)).map(|s| s.total).sum())
+    (changed, me.statuses.with_untracked(|m| shown.iter().filter_map(|r| m.get(r)).map(|s| s.total).sum()))
+}
+
+/// A commit made in a repository no longer picked: the message it kept is emptied.
+pub fn committed_elsewhere(ui: Ui, repo: &str) {
+    state(ui).messages.update(|m| {
+        m.remove(repo);
+    });
+}
+
+/// Paths of the repository picked (named from the project's top) named from its top.
+pub fn of_selected(ui: Ui, paths: &[String]) -> (String, Vec<String>) {
+    let repo = selected(ui);
+    let prefix = format!("{repo}/");
+    let rel = paths
+        .iter()
+        .map(|p| if repo.is_empty() { p.clone() } else { p.strip_prefix(&prefix).unwrap_or(p).to_string() })
+        .collect();
+    (repo, rel)
 }
 
 /// A repository picked: the commit box keeps the message of the one before for it and takes this one's; the
@@ -214,10 +221,10 @@ pub fn pick_rows(items: &[Repo], statuses: &HashMap<String, Status>) -> Vec<quic
         .collect()
 }
 
-/// Runs a git command on a repository: with several (and not from the view itself), the one asked first.
+/// Runs a git command on a repository: the one picked, or, run from the palette with several, the one asked first.
 pub fn choose(ui: Ui, send: &Send, run: impl Fn(Ui, &Send) + 'static) {
     let me = state(ui);
-    if !many(ui) || me.quiet.get_untracked() {
+    if !many(ui) || !me.palette.get_untracked() {
         run(ui, send);
         return;
     }
@@ -231,12 +238,13 @@ pub fn choose(ui: Ui, send: &Send, run: impl Fn(Ui, &Send) + 'static) {
     });
 }
 
-/// A command run from the view, which knows its repository (the one picked): nothing is asked.
-pub fn quietly(ui: Ui, run: impl FnOnce()) {
+/// A command run from the palette: a git command asks which repository (the view, the status bar and the keys run
+/// on the one picked).
+pub fn from_palette(ui: Ui, run: impl FnOnce()) {
     let me = state(ui);
-    me.quiet.set(true);
+    me.palette.set(true);
     run();
-    me.quiet.set(false);
+    me.palette.set(false);
 }
 
 /// Every repository's folder.
@@ -341,12 +349,8 @@ pub fn section(ui: Ui, send: Send) -> impl IntoView {
         let c = t.get();
         s.width_full().height(22.0).padding_left(12.0).items_center().font_size(11.0).font_bold().color(c.section_fg)
     });
-    let rows = dyn_stack(
-        move || me.items.get(),
-        |r| r.path.clone(),
-        move |r| row(ui, send.clone(), r),
-    )
-    .style(|s| s.flex_col().width_full());
+    let rows = dyn_stack(move || me.items.get(), |r| r.path.clone(), move |r| row(ui, send.clone(), r))
+        .style(|s| s.flex_col().width_full());
     v_stack((head, rows)).style(move |s| {
         let c = t.get();
         s.width_full()
@@ -391,8 +395,9 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 send(json!({"type": "git_status", "repo": r.path}));
             }
         }
-        // The settings are taken in after this part: they are read a moment later.
-        "settings" => {
+        // The settings are taken in after this part, a file's tab is made after its text comes: they are read a moment
+        // later.
+        "settings" | "file" => {
             let send = send.clone();
             floem::action::exec_after(std::time::Duration::ZERO, move |_| ask(ui, &send, false));
         }
@@ -425,7 +430,8 @@ mod tests {
 
     #[test]
     fn the_pick_names_each_repository_with_its_branch() {
-        let items = vec![Repo { path: String::new(), name: "p".into() }, Repo { path: "lib".into(), name: "lib".into() }];
+        let items =
+            vec![Repo { path: String::new(), name: "p".into() }, Repo { path: "lib".into(), name: "lib".into() }];
         let mut statuses = HashMap::new();
         statuses.insert("lib".to_string(), Status { branch: Some("dev".into()), ..Status::default() });
         let rows = pick_rows(&items, &statuses);
@@ -462,6 +468,10 @@ mod tests {
         select(ui, &send, "lib");
         assert_eq!(scm.message.get_untracked(), "");
         assert_eq!(ui.branch.get_untracked(), "dev");
+        // The project's own repository lists the other as a folder it does not track: it stays the project's.
+        select(ui, &send, "");
+        assert_eq!(of_selected(ui, &["lib/".to_string()]), (String::new(), vec!["lib/".to_string()]));
+        select(ui, &send, "lib");
         let files = scm.status.with_untracked(|s| s.as_ref().map(|s| s.files.clone())).unwrap_or_default();
         assert_eq!(files[0].path, "lib/src/b.rs");
         // Staged in its own repository, named from its top.
@@ -484,7 +494,13 @@ mod tests {
 
     #[test]
     fn a_row_says_branch_sync_and_count() {
-        let s = Status { branch: Some("main".into()), upstream: Some("o/main".into()), ahead: 2, total: 3, ..Status::default() };
+        let s = Status {
+            branch: Some("main".into()),
+            upstream: Some("o/main".into()),
+            ahead: 2,
+            total: 3,
+            ..Status::default()
+        };
         assert_eq!(line_of(Some(&s)), Line { branch: "main".into(), sync: "2↑".into(), total: 3 });
         assert_eq!(line_of(None), Line::default());
     }

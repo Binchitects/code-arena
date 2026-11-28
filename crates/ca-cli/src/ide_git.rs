@@ -1285,7 +1285,8 @@ mod tests {
     fn repositories_are_found_in_folders_and_open_files() {
         let d = tempfile::tempdir().expect("temp");
         let root = d.path();
-        for dir in ["lib/.git", "apps/web/.git", "node_modules/x/.git", ".hidden/y/.git", "deep/a/b/.git", "plain/src"] {
+        for dir in ["lib/.git", "apps/web/.git", "node_modules/x/.git", ".hidden/y/.git", "deep/a/b/.git", "plain/src"]
+        {
             std::fs::create_dir_all(root.join(dir)).expect("dir");
         }
         // A submodule's git is a file.
