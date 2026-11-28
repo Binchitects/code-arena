@@ -54,8 +54,12 @@ impl Area for Here {
 
     /// Another session (or folder): its loops are its own.
     fn start(sh: &Shared) {
+        let had = sh.kept.of::<LoopsSeen>().0.lock().is_ok_and(|s| !s.is_empty());
         set_seen(sh, Vec::new());
-        send(&sh.out, loops_message(sh));
+        // The faces are told only when loops went with the session that had them (a page's first word is `state`).
+        if had {
+            send(&sh.out, loops_message(sh));
+        }
     }
 
     fn shared(sh: &Shared, m: &Value) -> bool {
