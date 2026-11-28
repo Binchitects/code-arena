@@ -103,7 +103,8 @@ fn myers(a: &[&str], b: &[&str], budget: usize) -> Option<Vec<(usize, usize)>> {
         let mut k = -d;
         while k <= d {
             let at = |k: isize| (k + off) as usize;
-            let mut x = if k == -d || (k != d && v[at(k - 1)] < v[at(k + 1)]) { v[at(k + 1)] } else { v[at(k - 1)] + 1 };
+            let mut x =
+                if k == -d || (k != d && v[at(k - 1)] < v[at(k + 1)]) { v[at(k + 1)] } else { v[at(k - 1)] + 1 };
             let mut y = x - k;
             while x < n && y < m && a[x as usize] == b[y as usize] {
                 x += 1;
@@ -348,7 +349,10 @@ fn ruler_tint(kind: Kind) -> fn(&crate::colors::Colors) -> floem::peniko::Color 
 /// The open file tabs followed: one opened has its index text asked, one closed has its marks taken away.
 fn follow_tabs(ui: Ui, send: &Send) {
     let open: Vec<(String, usize)> = ui.tabs.with(|tabs| {
-        tabs.iter().filter(|t| t.is_file()).map(|t| (t.path.clone(), Rc::as_ptr(&t.doc) as *const () as usize)).collect()
+        tabs.iter()
+            .filter(|t| t.is_file())
+            .map(|t| (t.path.clone(), Rc::as_ptr(&t.doc) as *const () as usize))
+            .collect()
     });
     let (asked, gone) = FILES.with(|f| {
         let mut files = f.borrow_mut();
@@ -394,7 +398,13 @@ pub fn bars(ui: Ui, editor: &Editor, path: &str, gutter: RwSignal<f64>) -> impl 
         rev.track();
         id.request_paint();
     });
-    strip.style(move |s| s.absolute().inset_top(0.0).inset_left(gutter.get() - crate::editor::folding::CHEVRONS).width(WIDTH).height_full())
+    strip.style(move |s| {
+        s.absolute()
+            .inset_top(0.0)
+            .inset_left(gutter.get() - crate::editor::folding::CHEVRONS)
+            .width(WIDTH)
+            .height_full()
+    })
 }
 
 /// The strip's width; the bar is 3 px of it, as VS Code's.
