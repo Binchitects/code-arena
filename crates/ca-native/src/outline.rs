@@ -7,17 +7,21 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use floem::IntoView;
-use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_rw_signal};
+use floem::event::EventListener;
+use floem::keyboard::{Key, NamedKey};
+use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_memo, create_rw_signal};
 use floem::style::CursorStyle;
 use floem::views::editor::text::Document;
 use floem::views::{
-    Decorators, VirtualDirection, VirtualItemSize, container, empty, h_stack, label, scroll, virtual_stack,
+    Decorators, VirtualDirection, VirtualItemSize, container, empty, h_stack, label, scroll, text_input, tooltip,
+    virtual_stack,
 };
 use syntect::parsing::{ParseState, Scope, ScopeStack};
 
 use crate::colors::Colors;
 use crate::highlight::{SYNTAXES, syntax_for};
 use crate::icons::icon;
+use crate::layout::View;
 use crate::state::{Send, Ui};
 
 /// What a symbol is, as VS Code's outline tells them apart by icon.
@@ -74,6 +78,24 @@ impl Kind {
         }
     }
 
+    /// Its name, as a list of symbols tells it beside each (the breadcrumbs' picker).
+    pub fn word(self) -> &'static str {
+        match self {
+            Kind::Function => "function",
+            Kind::Method => "method",
+            Kind::Class => "class",
+            Kind::Struct => "struct",
+            Kind::Enum => "enum",
+            Kind::Interface => "interface",
+            Kind::Type => "type",
+            Kind::Module => "module",
+            Kind::Constant => "constant",
+            Kind::Variable => "variable",
+            Kind::Field => "field",
+            Kind::Heading => "heading",
+        }
+    }
+
     /// Its icon's colour (VS Code's `symbolIcon.*Foreground`).
     pub fn colour(self, c: &Colors) -> floem::peniko::Color {
         match self {
@@ -105,6 +127,8 @@ pub struct Symbol {
     pub kind: Kind,
     pub line: usize,
     pub depth: usize,
+    /// The line it is defined on, trimmed and cut short (its signature, shown when the pointer rests on its row).
+    pub detail: String,
 }
 
 /// Files bigger than this get no outline (a bundle, a data file: not what one finds one's way in by symbol).
@@ -183,10 +207,20 @@ pub fn symbols(path: &str, text: &str) -> Vec<Symbol> {
                 inside.push((indent, kind));
                 (kind, depth)
             };
-            out.push(Symbol { name: name.to_string(), kind, line: n + 1, depth });
+            out.push(Symbol { name: name.to_string(), kind, line: n + 1, depth, detail: detail_of(line) });
         }
     }
     out
+}
+
+/// A definition's line as its tooltip shows it: trimmed, its opening brace or colon left off, at most 200 characters.
+fn detail_of(line: &str) -> String {
+    let line = line.trim();
+    let line = line.strip_suffix('{').or_else(|| line.strip_suffix(':')).unwrap_or(line).trim_end();
+    match line.char_indices().nth(200) {
+        Some((at, _)) => format!("{}…", &line[..at]),
+        None => line.to_string(),
+    }
 }
 
 /// Rust's grammar does not mark a constant's name as defined: `const NAME:` and `static NAME:` are read here, in
@@ -230,9 +264,73 @@ struct Row {
 /// What names a symbol while the file is edited around it (its line moves).
 type Name = (String, Kind, usize);
 
-/// The rows shown: every symbol but those under a closed one.
-fn rows(symbols: &[Symbol], closed: &HashSet<Name>) -> im::Vector<Row> {
+/// Each symbol's parent: the nearest one before it that is less deep (a heading's depth may go up by more than one).
+pub fn parents(symbols: &[Symbol]) -> Vec<Option<usize>> {
+    let mut out = Vec::with_capacity(symbols.len());
+    let mut inside: Vec<usize> = Vec::new();
+    for (i, s) in symbols.iter().enumerate() {
+        while inside.last().is_some_and(|&j| symbols[j].depth >= s.depth) {
+            inside.pop();
+        }
+        out.push(inside.last().copied());
+        inside.push(i);
+    }
+    out
+}
+
+/// The symbols a line is in, outermost first: the last one at or before it, and the ones that one is nested in.
+/// A symbol has no end line here, so a line after a function's end is still the function's until the next symbol.
+pub fn chain(symbols: &[Symbol], line: usize) -> Vec<usize> {
+    let before = symbols.iter().take_while(|s| s.line <= line).count();
+    let Some(mut at) = before.checked_sub(1) else { return Vec::new() };
+    let parents = parents(symbols);
+    let mut out = vec![at];
+    while let Some(p) = parents[at] {
+        out.push(p);
+        at = p;
+    }
+    out.reverse();
+    out
+}
+
+/// The symbols beside one, itself among them, in order: those with its parent.
+pub fn siblings(symbols: &[Symbol], i: usize) -> Vec<usize> {
+    let parents = parents(symbols);
+    let Some(&mine) = parents.get(i) else { return Vec::new() };
+    (0..symbols.len()).filter(|&j| parents[j] == mine).collect()
+}
+
+/// Whether a name matches what is typed in a filter, as VS Code's outline filters: the letters typed in their order,
+/// any case, others between them.
+pub fn matches(name: &str, typed: &str) -> bool {
+    let mut name = name.chars().flat_map(char::to_lowercase);
+    typed.chars().flat_map(char::to_lowercase).filter(|c| !c.is_whitespace()).all(|t| name.any(|c| c == t))
+}
+
+/// The rows shown: every symbol but those under a closed one; with a filter, the symbols that match it and those
+/// they are nested in, all open.
+fn rows(symbols: &[Symbol], closed: &HashSet<Name>, filter: &str) -> im::Vector<Row> {
     let mut out = im::Vector::new();
+    if !filter.trim().is_empty() {
+        let parents = parents(symbols);
+        let mut keep = vec![false; symbols.len()];
+        for (i, s) in symbols.iter().enumerate() {
+            if !keep[i] && matches(&s.name, filter) {
+                let mut at = Some(i);
+                while let Some(j) = at.filter(|&j| !keep[j]) {
+                    keep[j] = true;
+                    at = parents[j];
+                }
+            }
+        }
+        let kept: Vec<usize> = (0..symbols.len()).filter(|&i| keep[i]).collect();
+        for (n, &i) in kept.iter().enumerate() {
+            // The ones kept are whole from the top: a symbol's first kept one after it is nested in it, if any is.
+            let parent = kept.get(n + 1).is_some_and(|&next| symbols[next].depth > symbols[i].depth);
+            out.push_back(Row { symbol: symbols[i].clone(), parent, open: true });
+        }
+        return out;
+    }
     // Hidden while deeper than this (the closed symbol's depth).
     let mut hidden: Option<usize> = None;
     for (n, s) in symbols.iter().enumerate() {
@@ -252,29 +350,58 @@ fn rows(symbols: &[Symbol], closed: &HashSet<Name>) -> im::Vector<Row> {
     out
 }
 
-/// The symbol the caret is in: the last one at or before its line.
+/// What Collapse All closes: every symbol others are nested in.
+fn all_parents(symbols: &[Symbol]) -> HashSet<Name> {
+    symbols
+        .windows(2)
+        .filter(|w| w[1].depth > w[0].depth)
+        .map(|w| (w[0].name.clone(), w[0].kind, w[0].depth))
+        .collect()
+}
+
+/// The symbol the caret is in (its line): the last one at or before its line.
 fn current(symbols: &[Symbol], line: usize) -> Option<usize> {
     symbols.iter().take_while(|s| s.line <= line).last().map(|s| s.line)
 }
 
+/// The Outline's own state, kept while its view is built again: the symbols closed, the filter, and how many
+/// Outline views are built (the symbols are found while one is, or while the breadcrumbs show them).
+#[derive(Clone, Copy)]
+struct Outline {
+    closed: RwSignal<HashSet<Name>>,
+    filter: RwSignal<String>,
+    shown: RwSignal<usize>,
+}
+
+impl crate::ext::State for Outline {
+    fn new(ui: Ui) -> Outline {
+        Outline {
+            closed: ui.scope.create_rw_signal(HashSet::new()),
+            filter: ui.scope.create_rw_signal(String::new()),
+            shown: ui.scope.create_rw_signal(0),
+        }
+    }
+}
+
 /// Finds the shown file's symbols again: at once when another file is shown, a moment after the last edit else;
-/// off the window's thread, one file at a time (what was typed meanwhile is read when it is done).
+/// off the window's thread, one file at a time (what was typed meanwhile is read when it is done). Only while an
+/// Outline view is built or the breadcrumbs show the symbols. Made once, at start.
 fn follow(ui: Ui) {
     // Counted at each change (a wait for the typing to stop is for the count it began at), whether a file is being
-    // read, whether more was asked meanwhile, and a count of the reads done. They are the view's: a timer or a read
-    // that ends after the view is gone finds them gone, and does nothing.
-    let generation = create_rw_signal(0u64);
-    let busy = create_rw_signal(false);
-    let wanted = create_rw_signal(false);
-    let finished = create_rw_signal(0u64);
+    // read, whether more was asked meanwhile, and a count of the reads done.
+    let generation = ui.scope.create_rw_signal(0u64);
+    let busy = ui.scope.create_rw_signal(false);
+    let wanted = ui.scope.create_rw_signal(false);
+    let finished = ui.scope.create_rw_signal(0u64);
+    let outline = ui.state::<Outline>();
     let find = move || {
-        match busy.try_get_untracked() {
-            None => return,
-            Some(true) => return wanted.set(true),
-            Some(false) => {}
+        if busy.get_untracked() {
+            return wanted.set(true);
         }
         let Some(tab) = ui.active.get_untracked().and_then(|p| ui.tab(&p)).filter(|t| t.is_file()) else {
-            ui.symbols.set((String::new(), Rc::new(Vec::new())));
+            if ui.symbols.with_untracked(|(p, s)| !p.is_empty() || !s.is_empty()) {
+                ui.symbols.set((String::new(), Rc::new(Vec::new())));
+            }
             return;
         };
         busy.set(true);
@@ -291,12 +418,17 @@ fn follow(ui: Ui) {
         });
         std::thread::spawn(move || done(symbols(&path, &rope.to_string())));
     };
-    create_effect(move |shown: Option<Option<String>>| {
+    ui.scope.create_effect(move |shown: Option<Option<Option<String>>>| {
         let active = ui.active.get();
         ui.edited.track();
+        let want = outline.shown.get() > 0 || crate::editor::breadcrumbs::shows_symbols(ui);
         generation.update(|g| *g += 1);
+        if !want {
+            // Found again once they are wanted.
+            return None;
+        }
         let g = generation.get_untracked();
-        if shown.as_ref() != Some(&active) {
+        if shown.flatten().as_ref() != Some(&active) {
             if ui.symbols.with_untracked(|(p, _)| Some(p) != active.as_ref()) {
                 ui.symbols.set((active.clone().unwrap_or_default(), Rc::new(Vec::new())));
             }
@@ -308,10 +440,10 @@ fn follow(ui: Ui) {
                 }
             });
         }
-        active
+        Some(active)
     });
     // What was asked while the last was being read.
-    create_effect(move |last: Option<u64>| {
+    ui.scope.create_effect(move |last: Option<u64>| {
         let n = finished.get();
         if last.is_some() && wanted.get_untracked() {
             wanted.set(false);
@@ -324,14 +456,16 @@ fn follow(ui: Ui) {
 // The workbench shows it for `View::Outline`.
 pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
-    follow(ui);
-    let closed = create_rw_signal(HashSet::<Name>::new());
+    let o = ui.state::<Outline>();
+    o.shown.update(|n| *n += 1);
+    let (closed, filter) = (o.closed, o.filter);
     // The symbol the caret is in (its line), lit as VS Code's outline follows the caret.
-    let at = floem::reactive::create_memo(move |_| ui.symbols.with(|(_, s)| current(s, ui.caret.get().0)));
+    let at = create_memo(move |_| ui.symbols.with(|(_, s)| current(s, ui.caret.get().0)));
+    let shown = create_memo(move |_| ui.symbols.with(|(_, s)| closed.with(|c| filter.with(|f| rows(s, c, f)))));
     let list = virtual_stack(
         VirtualDirection::Vertical,
         VirtualItemSize::Fixed(Box::new(|| 22.0)),
-        move || ui.symbols.with(|(_, s)| closed.with(|c| rows(s, c))),
+        move || shown.get(),
         |r: &Row| r.clone(),
         move |r: Row| {
             let send = send.clone();
@@ -351,7 +485,8 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             } else {
                 empty().style(|s| s.width(16.0)).into_any()
             };
-            h_stack((
+            let detail = symbol.detail.clone();
+            let row = h_stack((
                 empty().style(move |s| s.width(8.0 * depth as f64)),
                 twistie,
                 icon(kind.icon(), 16.0).style(move |s| s.margin_left(2.0).color(kind.colour(&t.get()))),
@@ -376,33 +511,110 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
                     .selectable(false)
                     .hover(|s| s.background(c.list_hover))
                     .apply_if(here, |s| s.background(c.list_inactive))
+            });
+            // The symbol's signature, as VS Code's outline tells it on hover.
+            tooltip(row, move || {
+                let detail = detail.clone();
+                label(move || detail.clone()).style(move |s| {
+                    let c = t.get();
+                    s.padding_horiz(8.0)
+                        .padding_vert(4.0)
+                        .font_size(12.0)
+                        .max_width(600.0)
+                        .color(c.hover_fg)
+                        .background(c.hover_bg)
+                        .border(1.0)
+                        .border_color(c.hover_border)
+                        .border_radius(3.0)
+                })
             })
+            .style(|s| s.width_full())
         },
     )
     .style(|s| s.flex_col().width_full());
     let none = label(move || {
         if ui.active.with(|a| a.is_none()) {
             "The active editor cannot provide outline information."
+        } else if filter.with(|f| !f.trim().is_empty()) && ui.symbols.with(|(_, s)| !s.is_empty()) {
+            "No symbols match the filter."
         } else {
             "No symbols found in this document."
         }
     })
     .style(move |s| {
-        s.padding_horiz(20.0)
-            .padding_vert(8.0)
-            .font_size(13.0)
-            .color(t.get().desc)
-            .apply_if(ui.symbols.with(|(_, s)| !s.is_empty()), |s| s.hide())
+        let some = shown.with(|r| !r.is_empty());
+        s.padding_horiz(20.0).padding_vert(8.0).font_size(13.0).color(t.get().desc).apply_if(some, |s| s.hide())
     });
-    floem::views::v_stack((none, scroll(list).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).width_full())))
-        .style(|s| s.size_full().min_height(0.0))
+    floem::views::v_stack((
+        filter_box(ui, filter),
+        none,
+        scroll(list).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).width_full()),
+    ))
+    .on_cleanup(move || o.shown.update(|n| *n = n.saturating_sub(1)))
+    .style(|s| s.size_full().min_height(0.0))
 }
 
-/// What it adds to the window's registries, once at start.
-pub fn register(_ui: crate::state::Ui, _send: &crate::state::Send) {}
+/// The box at the Outline's top that filters its symbols by name; Escape empties it.
+fn filter_box(ui: Ui, filter: RwSignal<String>) -> impl IntoView {
+    let t = ui.colors;
+    let focused = create_rw_signal(false);
+    let input = text_input(filter)
+        .placeholder("Filter")
+        .on_event_cont(EventListener::FocusGained, move |_| focused.set(true))
+        .on_event_cont(EventListener::FocusLost, move |_| focused.set(false))
+        .on_event_cont(EventListener::KeyDown, move |e| {
+            if let floem::event::Event::KeyDown(k) = e
+                && k.key.logical_key == Key::Named(NamedKey::Escape)
+                && filter.with_untracked(|f| !f.is_empty())
+            {
+                filter.set(String::new());
+            }
+        })
+        .style(move |s| {
+            let c = t.get();
+            s.flex_grow(1.0_f32)
+                .min_width(0.0)
+                .padding_horiz(4.0)
+                .border(0.0)
+                .background(floem::peniko::Color::TRANSPARENT)
+                .color(c.input_fg)
+                .cursor_color(floem::peniko::Brush::Solid(c.cursor))
+        });
+    container(input).style(move |s| {
+        let c = t.get();
+        s.height(24.0)
+            .margin_horiz(12.0)
+            .margin_vert(4.0)
+            .items_center()
+            .font_size(13.0)
+            .border(1.0)
+            .border_radius(2.0)
+            .border_color(if focused.get() { c.focus } else { c.input_border })
+            .background(c.input_bg)
+    })
+}
+
+/// VS Code's Outline title action.
+pub const COLLAPSE: &str = "outline.collapse";
+
+/// What it adds to the window's registries, once at start: Collapse All in the Outline's title, and the following
+/// of the shown file's symbols.
+pub fn register(ui: Ui, _send: &Send) {
+    use crate::commands::{add, command};
+    use crate::menus::{Menu, item};
+    add(command(COLLAPSE, "Outline", "Collapse All", |ui, _| {
+        let o = ui.state::<Outline>();
+        let all = ui.symbols.with_untracked(|(_, s)| all_parents(s));
+        if o.closed.with_untracked(|c| !all.is_subset(c)) {
+            o.closed.update(|c| c.extend(all));
+        }
+    }));
+    crate::menus::add(Menu::ViewTitle(View::Outline), item(COLLAPSE).icon("collapse-all").group("navigation"));
+    follow(ui);
+}
 
 /// The session's messages that are this part's, taken in; true takes one away from the parts after it.
-pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state::Send) -> bool {
+pub fn take(_ui: Ui, _m: &serde_json::Value, _send: &Send) -> bool {
     false
 }
 
@@ -484,14 +696,50 @@ mod tests {
         let all =
             symbols("cart.py", "class A:\n    def a(self):\n        pass\nclass B:\n    def b(self):\n        pass\n");
         let names =
-            |closed: &HashSet<Name>| rows(&all, closed).iter().map(|r| r.symbol.name.clone()).collect::<Vec<_>>();
+            |closed: &HashSet<Name>| rows(&all, closed, "").iter().map(|r| r.symbol.name.clone()).collect::<Vec<_>>();
         assert_eq!(names(&HashSet::new()), ["A", "a", "B", "b"]);
         let closed = HashSet::from([("A".to_string(), Kind::Class, 0)]);
         assert_eq!(names(&closed), ["A", "B", "b"]);
-        let shown = rows(&all, &closed);
+        let shown = rows(&all, &closed, "");
         assert!(shown[0].parent && !shown[0].open && shown[1].open);
         // The caret's symbol: the last at or before its line.
         assert_eq!(current(&all, 3), Some(2));
         assert_eq!(current(&all, 4), Some(4));
+    }
+
+    #[test]
+    fn a_filter_keeps_the_symbols_that_match_and_those_they_are_in() {
+        let all = symbols(
+            "cart.py",
+            "class Cart:\n    def total(self):\n        pass\n    def add_item(self):\n        pass\nclass Shop:\n    def open(self):\n        pass\n",
+        );
+        let names = |f: &str| {
+            rows(&all, &HashSet::new(), f).iter().map(|r| (r.symbol.name.clone(), r.parent)).collect::<Vec<_>>()
+        };
+        assert_eq!(names("ADI"), [("Cart".to_string(), true), ("add_item".to_string(), false)]);
+        assert_eq!(names("op"), [("Shop".to_string(), true), ("open".to_string(), false)]);
+        assert!(names("zz").is_empty());
+        // A closed symbol is opened while a filter is typed.
+        let closed = HashSet::from([("Cart".to_string(), Kind::Class, 0)]);
+        assert_eq!(rows(&all, &closed, "total").len(), 2);
+        assert!(matches("add_item", "aim") && !matches("add_item", "mia") && matches("x", ""));
+    }
+
+    #[test]
+    fn collapse_all_closes_every_symbol_others_are_in() {
+        let all = symbols("doc.md", "# A\n\n### Deep\n\n# B\n\n## C\n");
+        assert_eq!(parents(&all), [None, Some(0), None, Some(2)], "a heading two levels down is the first's");
+        let closed = all_parents(&all);
+        assert_eq!(closed.len(), 2);
+        let names = rows(&all, &closed, "").iter().map(|r| r.symbol.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names, ["A", "B"]);
+    }
+
+    #[test]
+    fn a_symbols_detail_is_its_line() {
+        let all = symbols("a.rs", "    pub fn total(&self, n: u32) -> u32 {\n        0\n    }\n");
+        assert_eq!(all[0].detail, "pub fn total(&self, n: u32) -> u32");
+        assert_eq!(detail_of("class A:"), "class A");
+        assert_eq!(detail_of(&"x".repeat(300)).chars().count(), 201);
     }
 }
