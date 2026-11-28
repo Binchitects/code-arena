@@ -1091,6 +1091,10 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
     side.start_watching();
     ui.say(&format!("{} {} · {} · {}", ui.bold(ca_core::PRODUCT), ca_core::VERSION, p.agent.model, ui.dim(&p.folder)));
     if let Some((url, open_it)) = &served {
+        // The page's key is in its address: never in the log.
+        if let Some((_, key)) = url.split_once("?k=") {
+            crate::log::hide(key);
+        }
         let kept = keep_address(&app.paths.data, url);
         ui.say(&format!("The IDE: {url}"));
         if let Some(f) = kept {

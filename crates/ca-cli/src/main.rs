@@ -330,6 +330,12 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
         }
         Some(Command::Ide { browser, port, no_open, connect }) => {
             let (opts, resume) = (cli_opts(&cli_common), resume_of(&cli_common));
+            if log::open(&app.paths.data).is_some() {
+                log::on_panic();
+                if let Some(k) = &app.connection.api_key {
+                    log::hide(k.expose());
+                }
+            }
             #[cfg(feature = "native")]
             if !browser && port.is_none() && !no_open && !connect {
                 // The native window has the main thread (the system's windows want it); the session's driver runs on
@@ -343,6 +349,7 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
                     match rt {
                         Ok(rt) => {
                             if let Err(e) = rt.block_on(ide::run(&mut app, args)) {
+                                log::line(&format_error(&e));
                                 eprintln!("{}", format_error(&e));
                             }
                         }
