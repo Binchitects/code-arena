@@ -578,7 +578,8 @@ pub fn workspace_rows(got: &Got, rest: &str) -> Vec<Row> {
         .map(|f| {
             let at = format!("{}:{}", f.path, f.line);
             let detail = if f.container.is_empty() { at } else { format!("{}  {at}", f.container) };
-            let row = Row::new(&f.name, &detail, positions(&f.name, &q), "", Pick::FileAt(f.path.clone(), f.line, f.col));
+            let row =
+                Row::new(&f.name, &detail, positions(&f.name, &q), "", Pick::FileAt(f.path.clone(), f.line, f.col));
             match f.kind {
                 Some(k) => row.kind(k),
                 None => row,
