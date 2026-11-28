@@ -458,11 +458,6 @@ pub fn menu_took_keys() {
     BY_KEYS.with(|b| b.set(true));
 }
 
-/// Whether the title bar menu open now has the keys.
-pub fn menu_by_keys() -> bool {
-    BY_KEYS.with(Cell::get)
-}
-
 /// A title bar menu closed: one opened by its keys gives them back to the editor.
 pub fn menu_closed(ui: Ui) {
     if BY_KEYS.with(|b| b.replace(false)) {
@@ -675,7 +670,7 @@ mod tests {
         let alt_r = || Key::Character("r".into());
         crate::commands::press(ui, &send, &alt_r(), Modifiers::ALT);
         assert_eq!(ui.menu.get_untracked(), Some(crate::menus::RUN));
-        assert!(menu_by_keys());
+        assert!(BY_KEYS.with(Cell::get));
         menu_keys_kept();
         ui.menu.set(None);
         let shown = ui.scope.create_rw_signal(true);
