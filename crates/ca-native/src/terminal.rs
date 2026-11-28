@@ -1099,6 +1099,18 @@ fn close(ui: Ui, send: &Send, id: u64) {
     }
 }
 
+/// Every terminal let go of, as when another folder is opened: their shells were the side's that is gone, so
+/// nothing is sent.
+pub fn forget_all(ui: Ui) {
+    if ui.terms.with_untracked(Vec::is_empty) {
+        return;
+    }
+    EMULATORS.with(|e| e.borrow_mut().clear());
+    ui.terms.set(Vec::new());
+    ui.term.set(State::None);
+    redraw(ui);
+}
+
 /// VS Code's Terminal: Clear, on the terminal shown.
 pub fn clear(ui: Ui) {
     if let Some(id) = shown(ui) {

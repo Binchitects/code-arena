@@ -93,10 +93,13 @@ pub fn broadcasts(items: &Value) -> Vec<Shown> {
 }
 
 /// "Opening <folder>…" covers the window until the session's next `state` (Open Folder, Open Recent call it).
-// Open Folder, to come, calls it.
-#[allow(dead_code)]
 pub fn opening(ui: Ui, folder: &str) {
     set_if_new(ui.state::<Banners>().opening, Some(folder.to_string()));
+}
+
+/// The "Opening <folder>…" cover taken away without a `state`: the folder could not be opened.
+pub fn not_opening(ui: Ui) {
+    set_if_new(ui.state::<Banners>().opening, None);
 }
 
 fn set_if_new<T: PartialEq + 'static>(s: RwSignal<T>, v: T) {
