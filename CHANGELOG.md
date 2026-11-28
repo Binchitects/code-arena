@@ -967,6 +967,17 @@ Sections used:
   '0↓ 1↑'. Clicking it syncs, its icon turning while git works; a branch with no upstream shows a
   Publish cloud. When nothing is left to commit, a 'Sync Changes 1↓ 2↑' or 'Publish Branch' button
   appears under Commit. With git.autofetch on, the remotes are fetched every three minutes.
+- **Keyboard Shortcuts editor.** Preferences: Open Keyboard Shortcuts (Ctrl+K Ctrl+S) lists every
+  command with its keys, its when and its source. Search by words, by keys in quotes, by @source: or
+  @command:, or press Record Keys and the keys themselves.
+- **Change a shortcut where it is listed.** Double-click a row or press Enter, then press one key or
+  a chord of two and Enter. The other commands on those keys are named. The row's menu adds, removes
+  or resets keys, changes the when (checked before it is written) and copies the rule or the
+  command's id.
+- **keybindings.json written as VS Code writes it.** A default is taken away with -command and the
+  new rule is added after it, and the person's own rules are changed in place. The other rules and
+  comments are kept. Rules that do nothing are listed above the table, and Preferences: Open
+  Keyboard Shortcuts (JSON) opens the file.
 
 
 ### :bug: Bugs fixed
