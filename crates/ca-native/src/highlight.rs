@@ -531,6 +531,9 @@ mod tests {
         assert_eq!((mac.foreground.r, mac.foreground.g, mac.foreground.b), (0xDC, 0xDC, 0xAA));
     }
 
+    /// A line's runs and their colours.
+    type Spans = Vec<(std::ops::Range<usize>, u32)>;
+
     /// A file's lines as its grammar colours them under Dark Modern (every line parses): the colour of a piece of a
     /// line, by its first place in it.
     fn coloured(path: &str, text: &str) -> impl Fn(usize, &str) -> u32 {
@@ -538,7 +541,7 @@ mod tests {
         let theme = theme_of(&ca_themes::chosen(&all, "dark-modern", true).json);
         let syntax = syntax_for(path, text.lines().next().unwrap_or("")).unwrap_or_else(|| panic!("{path}"));
         let mut lines = syntect::easy::HighlightLines::new(syntax, &theme);
-        let mut out: Vec<(String, Vec<(std::ops::Range<usize>, u32)>)> = Vec::new();
+        let mut out: Vec<(String, Spans)> = Vec::new();
         for line in text.split_inclusive('\n') {
             let runs = lines.highlight_line(line, &SYNTAXES).unwrap_or_else(|e| panic!("{path}: {line}: {e}"));
             let mut at = 0;
