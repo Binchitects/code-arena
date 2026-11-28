@@ -662,6 +662,17 @@ Sections used:
   click shows Problems. The Problems icon in the activity bar has a badge with the total.
 - **Fix this sends the problems.** The editor's 'Fix this' now sends the problems marked in the
   selected lines along with them.
+- **Extensions from a .vsix.** You can install a VS Code extension from a .vsix file. Code Arena
+  reads it without running any of its code and keeps only the files its themes, icon themes,
+  snippets, languages, grammars, keybindings and configuration defaults name. A package with a name
+  that leads out of it, or with a link in it, is refused whole. A new version replaces the old one
+  and keeps it on or off as it was.
+- **Import from VS Code.** You can see the extensions that VS Code, VSCodium and Insiders installed
+  on this computer, the newest copy of each, and import one. VS Code's own copy is left untouched.
+- **Recommended extensions.** The project's `.vscode/extensions.json` is read, and each
+  recommendation is marked Installed, Built in, Not supported (with what to use instead), On this
+  computer, or Not here. You can also uninstall an extension, or turn it off so its contributions
+  stop applying.
 
 
 ### :bug: Bugs fixed
