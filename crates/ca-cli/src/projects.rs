@@ -253,7 +253,11 @@ pub async fn command(name: &str, rest: &str, p: &mut Prepared) -> String {
 }
 
 /// The session's chat put in this project (its id and name), or in none: what is said of it, or why it could not.
-pub async fn put_in(p: &mut Prepared, sync: &ca_sync::ChatSync, chosen: Option<(&str, &str)>) -> Result<String, String> {
+pub async fn put_in(
+    p: &mut Prepared,
+    sync: &ca_sync::ChatSync,
+    chosen: Option<(&str, &str)>,
+) -> Result<String, String> {
     let Some(chat) = sync.ensure_chat().await else {
         return Err("This session has no chat in Arena yet: say something first.".into());
     };
@@ -261,10 +265,9 @@ pub async fn put_in(p: &mut Prepared, sync: &ca_sync::ChatSync, chosen: Option<(
     let work = take_up(p, true).await;
     Ok(match (chosen, work) {
         (None, _) => "This session is in no project now.".into(),
-        (Some((_, name)), Some(w)) if !w.functions.is_empty() => format!(
-            "This session is in {name} now: the model keeps its goals and tasks ({}).",
-            w.functions.join(", ")
-        ),
+        (Some((_, name)), Some(w)) if !w.functions.is_empty() => {
+            format!("This session is in {name} now: the model keeps its goals and tasks ({}).", w.functions.join(", "))
+        }
         (Some((_, name)), _) => format!("This session is in {name} now."),
     })
 }

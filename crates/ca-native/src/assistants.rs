@@ -193,17 +193,19 @@ pub fn assistant_choices(got: Option<&Assistants>) -> Vec<Choice> {
         enabled: true,
     }];
     for (mine, group) in [(true, "Yours"), (false, "Shared with you")] {
-        out.extend(items.iter().filter(|a| a.mine == mine).map(|a| Choice {
-            id: a.id.clone(),
-            label: a.name.clone(),
-            note: [a.description.as_str(), a.model.as_str()]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" \u{b7} "),
-            group,
-            on: current == Some(a.id.as_str()),
-            enabled: true,
+        out.extend(items.iter().filter(|a| a.mine == mine).map(|a| {
+            Choice {
+                id: a.id.clone(),
+                label: a.name.clone(),
+                note: [a.description.as_str(), a.model.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" \u{b7} "),
+                group,
+                on: current == Some(a.id.as_str()),
+                enabled: true,
+            }
         }));
     }
     if items.is_empty() {
@@ -228,13 +230,11 @@ pub fn project_choices(got: Option<&Projects>) -> Vec<Choice> {
     let mut open: Vec<&Project> = items.iter().filter(|p| p.open() || current == Some(p.id.as_str())).collect();
     open.sort_by_key(|p| !p.mine);
     out.extend(open.into_iter().map(|p| {
-        let notes: Vec<&str> = [
-            (got.suggested.as_deref() == Some(p.id.as_str())).then_some(ITS_REPOSITORY),
-            p.global.then_some("Global"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let notes: Vec<&str> =
+            [(got.suggested.as_deref() == Some(p.id.as_str())).then_some(ITS_REPOSITORY), p.global.then_some("Global")]
+                .into_iter()
+                .flatten()
+                .collect();
         Choice {
             id: p.id.clone(),
             label: p.name.clone(),
@@ -338,11 +338,11 @@ pub fn more(ui: Ui, send: &Send, items: &mut Vec<popup::Item>) {
         return;
     }
     let (a, p) = (send.clone(), send.clone());
-    let assistant =
-        popup::submenu("Assistant", entries(assistant_choices(st.assistants.get_untracked().as_ref()), move |id| {
-            work_as(&a, id)
-        }))
-        .enabled(!ui.running.get_untracked());
+    let assistant = popup::submenu(
+        "Assistant",
+        entries(assistant_choices(st.assistants.get_untracked().as_ref()), move |id| work_as(&a, id)),
+    )
+    .enabled(!ui.running.get_untracked());
     let project = popup::submenu(
         "Project",
         entries(project_choices(st.projects.get_untracked().as_ref()), move |id| put_in(&p, id)),
@@ -400,18 +400,21 @@ pub fn pick_project(ui: Ui, send: &Send) {
         return;
     };
     let go = send.clone();
-    pick(ui, "Put the Session in a Project", "Select the project this session counts to", project_choices(Some(&got)), move |id| {
-        put_in(&go, id)
-    });
+    pick(
+        ui,
+        "Put the Session in a Project",
+        "Select the project this session counts to",
+        project_choices(Some(&got)),
+        move |id| put_in(&go, id),
+    );
     ask_projects(send);
 }
 
 /// The status bar's project item: the project the session's chat counts to.
 fn status_item(ui: Ui, send: Send) -> floem::AnyView {
     let (t, st) = (ui.colors, state(ui));
-    let name = create_memo(move |_| {
-        st.projects.with(|p| p.as_ref().and_then(|p| p.current.as_ref()).map(|(_, n)| n.clone()))
-    });
+    let name =
+        create_memo(move |_| st.projects.with(|p| p.as_ref().and_then(|p| p.current.as_ref()).map(|(_, n)| n.clone())));
     let shown = create_memo(move |_| st.managed.get() && name.with(Option::is_some));
     tooltip(
         h_stack((icon("project", 16.0), label(move || name.get().unwrap_or_default())))

@@ -13,7 +13,9 @@ use floem::IntoView;
 use floem::event::EventListener;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal};
 use floem::style::{CursorStyle, TextOverflow};
-use floem::views::{Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, text_input, v_stack};
+use floem::views::{
+    Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, text_input, v_stack,
+};
 use serde_json::{Value, json};
 
 use crate::assistants::{self, Project, Projects};
@@ -192,11 +194,10 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         scope_tab(t, st.scope, Scope::Global),
         scope_tab(t, st.scope, Scope::All),
     ))
-        .style(|s| s.gap(14.0).padding_horiz(12.0).padding_top(4.0));
+    .style(|s| s.gap(14.0).padding_horiz(12.0).padding_top(4.0));
     let find = find_box(t, st.find);
-    let shown = create_memo(move |_| {
-        got.with(|g| st.scope.with(|s| st.find.with(|f| g.as_ref().map(|g| rows(g, *s, f)))))
-    });
+    let shown =
+        create_memo(move |_| got.with(|g| st.scope.with(|s| st.find.with(|f| g.as_ref().map(|g| rows(g, *s, f))))));
     let body = create_memo(move |_| {
         got.with(|g| {
             let Some(g) = g else { return Body::Waiting };
@@ -207,7 +208,11 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
                 return Body::List;
             }
             let typed = st.find.with(|f| f.trim().to_string());
-            Body::Words(if typed.is_empty() { EMPTY.into() } else { format!("No project has \u{201c}{typed}\u{201d}.") })
+            Body::Words(if typed.is_empty() {
+                EMPTY.into()
+            } else {
+                format!("No project has \u{201c}{typed}\u{201d}.")
+            })
         })
     });
     let main = dyn_container(
@@ -245,7 +250,8 @@ fn scope_tab(t: Theme, scope: RwSignal<Scope>, me: Scope) -> impl IntoView {
         })
         .style(move |s| {
             let c = t.get();
-            let s = s.font_size(11.0).padding_vert(4.0).border_bottom(1.0).cursor(CursorStyle::Pointer).selectable(false);
+            let s =
+                s.font_size(11.0).padding_vert(4.0).border_bottom(1.0).cursor(CursorStyle::Pointer).selectable(false);
             if on.get() {
                 s.color(c.fg).border_color(c.panel_title_border)
             } else {
@@ -295,11 +301,7 @@ fn row(ui: Ui, send: Send, r: Row) -> floem::AnyView {
             if current { bold(s) } else { s }
         }),
         label(move || tags.clone()).style(move |s| {
-            s.font_size(12.0)
-                .color(t.get().desc)
-                .flex_shrink(0.0_f32)
-                .margin_left(4.0)
-                .apply_if(no_tags, |s| s.hide())
+            s.font_size(12.0).color(t.get().desc).flex_shrink(0.0_f32).margin_left(4.0).apply_if(no_tags, |s| s.hide())
         }),
     ))
     .style(|s| s.items_center().gap(6.0).min_width(0.0).height(22.0));

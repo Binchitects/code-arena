@@ -323,17 +323,13 @@ async fn projects_reply(asked: &Asked, scope: &str, query: &str) -> Value {
         return v;
     };
     let chat = asked.sync.as_ref().and_then(|s| s.chat_id());
-    let (rows, open, may, work) = tokio::join!(
-        arena.project_rows(),
-        arena.projects(Some(&asked.key)),
-        arena.may_make(),
-        async {
+    let (rows, open, may, work) =
+        tokio::join!(arena.project_rows(), arena.projects(Some(&asked.key)), arena.may_make(), async {
             match &chat {
                 Some(c) => arena.project_work(c).await.ok().flatten(),
                 None => None,
             }
-        }
-    );
+        });
     // An Arena whose Projects page cannot be read with the key lists those a session may be put in.
     let rows = match (rows, &open) {
         (Ok(rows), _) => Ok(rows),
