@@ -1237,6 +1237,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_editor_opens_reads_the_file_and_writes_what_is_changed() {
+        use floem::reactive::SignalGet;
+        let ui = Ui::new();
+        let told: Rc<std::cell::RefCell<Vec<Value>>> = Rc::default();
+        let send: Send = {
+            let told = told.clone();
+            Rc::new(move |m| told.borrow_mut().push(m))
+        };
+        let last = || told.borrow().last().cloned();
+        let saves = || told.borrow().iter().filter(|m| m["type"] == "save_user").count();
+        crate::settings::register(ui, &send);
+        register(ui, &send);
+        assert!(commands::run(ui, &send, crate::manage::OPEN_KEYBINDINGS));
+        assert_eq!(ui.active.get_untracked().as_deref(), Some(TAB));
+        assert_eq!(last(), Some(json!({"type": "user_file", "name": "keybindings.json"})));
+        // Read: a command given keys is written into the file, its comment kept.
+        take(ui, &json!({"type": "user_file", "name": "keybindings.json", "text": "// mine\n[\n]\n"}), &send);
+        let all = entries(&super::super::rules(), &known(), os());
+        let e = all.iter().find(|e| e.command == OPEN_JSON).expect("the JSON command's row");
+        assert_eq!(e.keys, None);
+        apply(ui, &send, e, Change::Keys(keys("ctrl+alt+k")));
+        let saved = last().expect("saved");
+        assert_eq!(saved["type"], "save_user");
+        assert_eq!(saved["name"], "keybindings.json");
+        assert_eq!(saved["text"], format!("// mine\n[\n    {}\n]\n", written("ctrl+alt+k", OPEN_JSON, "")));
+        // A file that cannot be read is never written into.
+        take(ui, &json!({"type": "user_file", "name": "keybindings.json", "text": "[ {"}), &send);
+        apply(ui, &send, e, Change::Keys(keys("ctrl+alt+j")));
+        assert_eq!(saves(), 1);
+        // A save that failed is said, and the file asked for again.
+        take(ui, &json!({"type": "saved_user", "name": "keybindings.json", "error": "denied"}), &send);
+        assert_eq!(last(), Some(json!({"type": "user_file", "name": "keybindings.json"})));
+        // Another file's messages are not this editor's.
+        take(ui, &json!({"type": "user_file", "name": "settings.json", "text": "{}"}), &send);
+        assert_eq!(ui.state::<Shortcuts>().text.get_untracked().as_deref().map(String::as_str), Some("[ {"));
+    }
+
     fn known_ones() -> Vec<Known> {
         vec![
             ("a.open".into(), "View: Open A".into(), false),
