@@ -673,6 +673,15 @@ Sections used:
   recommendation is marked Installed, Built in, Not supported (with what to use instead), On this
   computer, or Not here. You can also uninstall an extension, or turn it off so its contributions
   stop applying.
+- **Banners under the title bar.** The window now says when its session has stopped (the editor and
+  unsaved text stay), when the agent has no model, and shows Arena's broadcasts (info, warning,
+  critical; newest first). X dismisses one; critical ones stay.
+- **The IDE opens without signing in.** The editor, terminal, git and tasks work with no model;
+  a message to the agent gets a notice saying how to sign in instead of a failed turn.
+- **Arena's settings applied live.** When Arena's models or skills change, the window's model
+  picker and the / menu pick them up within about 30 seconds, without a reload.
+- **A skeleton while the session starts.** The window shows its shape until the first state
+  arrives, instead of an empty workbench.
 
 
 ### :bug: Bugs fixed
