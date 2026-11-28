@@ -362,11 +362,11 @@ fn pick(ui: Ui, title: &str, placeholder: &str, choices: Vec<Choice>, chosen: im
             if c.on { item.icon("check") } else { item }
         })
         .collect();
-    if let Some(said) = choices.iter().find(|c| !c.enabled) {
-        if items.len() <= 1 {
-            toast::info(ui, &said.label);
-            return;
-        }
+    if let Some(said) = choices.iter().find(|c| !c.enabled)
+        && items.len() <= 1
+    {
+        toast::info(ui, &said.label);
+        return;
     }
     let active = choices.iter().find(|c| c.on).map(|c| c.id.clone()).unwrap_or_default();
     quick::pick(title).placeholder(placeholder).items(items).active(&active).open(ui, move |item| {

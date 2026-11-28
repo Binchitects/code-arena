@@ -66,7 +66,7 @@ pub fn shown(p: &Project, scope: Scope, find: &str) -> bool {
 
 /// Cents as dollars: whole ones without cents.
 pub fn money(cents: u64) -> String {
-    if cents % 100 == 0 { format!("${}", cents / 100) } else { format!("${}.{:02}", cents / 100, cents % 100) }
+    if cents.is_multiple_of(100) { format!("${}", cents / 100) } else { format!("${}.{:02}", cents / 100, cents % 100) }
 }
 
 /// What is said after a project's name: global, archived, the person's role.
