@@ -75,6 +75,11 @@ mod tests {
         crate::commands::add(crate::commands::command(OPEN_SETTINGS, "Preferences", "Open Settings", |_, _| {}));
         add(Menu::Manage, item(OPEN_SETTINGS).title("Settings").group("2_configuration").order(1));
         let rows = shown(ui);
-        assert_eq!(rows.iter().filter(|r| r.starts_with("Settings")).collect::<Vec<_>>(), ["Settings"]);
+        // VS Code's default table gives it its key.
+        assert_eq!(
+            rows.iter().filter(|r| r.starts_with("Settings")).collect::<Vec<_>>(),
+            [&format!("Settings {}", crate::commands::keys_of(OPEN_SETTINGS))]
+        );
+        assert!(!crate::commands::keys_of(OPEN_SETTINGS).is_empty());
     }
 }
