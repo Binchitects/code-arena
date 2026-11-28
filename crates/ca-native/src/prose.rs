@@ -328,7 +328,7 @@ fn lay_out(
         if style.bold {
             a = a.weight(Weight::BOLD);
         }
-        if style.italic {
+        if style.italic && *crate::widgets::ITALIC {
             a = a.style(Slant::Italic);
         }
         if style.code {
@@ -889,7 +889,7 @@ pub(crate) fn code_with(
                 if run.bold {
                     a = a.weight(Weight::BOLD);
                 }
-                if run.italic {
+                if run.italic && *crate::widgets::ITALIC {
                     a = a.style(Slant::Italic);
                 }
                 attrs.add_span(run.range.clone(), a);
