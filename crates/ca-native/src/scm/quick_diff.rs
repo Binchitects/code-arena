@@ -573,6 +573,7 @@ mod tests {
         assert_eq!(changes("a\nc\n", "a\nb\nc\n"), vec![ch(Kind::Added, 1, 1)]);
         assert_eq!(changes("a\nb\nc\n", "a\nB\nc\n"), vec![ch(Kind::Modified, 1, 1)]);
         assert_eq!(changes("a\nb\nc\n", "a\nc\n"), vec![ch(Kind::Deleted, 1, 1)]);
+        assert_eq!(changes("# W\n\nA\n", "# W x\n\nb"), vec![ch(Kind::Modified, 0, 1), ch(Kind::Modified, 2, 1)]);
         assert_eq!(
             changes("a\nb\nc\nd\ne\n", "x\na\nc\nD\ne\nf\n"),
             vec![ch(Kind::Added, 0, 1), ch(Kind::Deleted, 2, 1), ch(Kind::Modified, 3, 1), ch(Kind::Added, 5, 1)]
