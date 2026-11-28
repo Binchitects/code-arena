@@ -320,10 +320,12 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         move || body.get(),
         move |b| match b {
             Body::Waiting => empty().into_any(),
-            Body::Empty => container(desc(t, || EMPTY.into())).style(|s| s.padding_horiz(20.0)).into_any(),
+            Body::Empty => container(desc(t, || EMPTY.into()))
+                .style(|s| s.padding_horiz(12.0).width_full().min_width(0.0))
+                .into_any(),
             Body::NoneFound => {
-                container(desc(t, move || format!("No memory has \u{201c}{}\u{201d}.", st.find.get_untracked().trim())))
-                    .style(|s| s.padding_horiz(20.0))
+                container(desc(t, move || format!("No memory has \u{201c}{}\u{201d}.", st.find.get().trim())))
+                    .style(|s| s.padding_horiz(12.0).width_full().min_width(0.0))
                     .into_any()
             }
             Body::List => {
@@ -359,17 +361,26 @@ fn row(ui: Ui, send: Send, r: Row) -> floem::AnyView {
             let pin = if i.pinned { pin.into_any() } else { empty().style(|s| s.width(14.0)).into_any() };
             let text = i.text.clone();
             let kind = (!i.kind.is_empty()).then(|| format!("({})", i.kind)).unwrap_or_default();
+            let no_kind = kind.is_empty();
             let words = h_stack((
                 label(move || text.clone()).style(move |s| {
                     s.font_size(13.0)
+                        .line_height(1.4)
                         .color(t.get().fg)
                         .text_overflow(TextOverflow::Wrap)
                         .min_width(0.0)
-                        .flex_shrink(1.0_f32)
+                        .flex_grow(1.0_f32)
+                        .flex_basis(0.0)
                 }),
-                label(move || kind.clone()).style(move |s| s.font_size(12.0).color(t.get().desc).flex_shrink(0.0_f32)),
+                label(move || kind.clone()).style(move |s| {
+                    s.font_size(12.0)
+                        .line_height(1.5)
+                        .color(t.get().desc)
+                        .flex_shrink(0.0_f32)
+                        .apply_if(no_kind, |s| s.hide())
+                }),
             ))
-            .style(|s| s.gap(6.0).flex_grow(1.0_f32).min_width(0.0).flex_wrap(floem::style::FlexWrap::Wrap));
+            .style(|s| s.gap(6.0).flex_grow(1.0_f32).min_width(0.0));
             let own = i.own;
             let gone = action(t, "close", move || forget(ui, &send, &i));
             let gone = container(floem::views::tooltip(gone, || label(|| "Forget")))
