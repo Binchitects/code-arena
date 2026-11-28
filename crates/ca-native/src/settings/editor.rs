@@ -47,6 +47,8 @@ const KIND: &str = "settings";
 /// VS Code's commands that open the editor on the person's settings and on the project's.
 pub const OPEN_USER: &str = "workbench.action.openGlobalSettings";
 pub const OPEN_WORKSPACE: &str = "workbench.action.openWorkspaceSettings";
+/// Code Arena's own: VS Code's settings on this computer offered, to be brought over into the person's file.
+pub const FROM_VS_CODE: &str = "codeArena.importVSCodeSettings";
 /// The first section, as VS Code's: the settings most change.
 const COMMON: &str = "Commonly Used";
 /// The heading of the agent's own sections.
@@ -923,6 +925,7 @@ fn targets(ui: Ui, send: Send) -> impl IntoView {
                     .color(if on { c.panel_title } else { c.panel_title_inactive })
             })
     };
+    let from_send = send.clone();
     let open_json = container(icon("go-to-file", 16.0))
         .on_click_stop(move |_| open_file(ui, &send, s.target.get_untracked()))
         .style(move |s| {
@@ -937,10 +940,13 @@ fn targets(ui: Ui, send: Send) -> impl IntoView {
                 .hover(|s| s.background(c.toolbar_hover))
         });
     let open_json = floem::views::tooltip(open_json, || label(|| "Open Settings (JSON)"));
+    let from = link(ui, "From VS Code", move || from_send(json!({"type": "vscode_settings"})))
+    .style(move |st| st.margin_right(8.0).font_size(12.0).apply_if(s.target.get() != Target::User, |s| s.hide()));
     h_stack((
         tab(Target::User, "User"),
         tab(Target::Workspace, "Workspace"),
         empty().style(|s| s.flex_grow(1.0_f32)),
+        from,
         open_json,
     ))
     .style(move |s| s.width_full().items_center().margin_top(8.0).border_bottom(1.0).border_color(t.get().panel_border))
@@ -1116,6 +1122,9 @@ pub fn register(_ui: Ui, _send: &Send) {
     commands::add(command(OPEN_WORKSPACE, "Preferences", "Open Workspace Settings", |ui, send| {
         open(ui, send, Target::Workspace, "")
     }));
+    commands::add(command(FROM_VS_CODE, "Preferences", "Bring Over VS Code's Settings", |_ui, send| {
+        send(json!({"type": "vscode_settings"}))
+    }));
 }
 
 /// The session's messages that are this part's, taken in: the schema kept when it is another, and asked for again
@@ -1130,9 +1139,56 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             }
         }
         "settings" if ui.tab(TAB).is_some() => send(json!({"type": "settings_schema"})),
+        "vscode_settings" => offer(ui, m),
+        "vscode_imported" => {
+            let said = match m["error"].as_str() {
+                Some(e) => format!("VS Code's settings were not brought over: {e}"),
+                None => match m["keys"].as_array().map_or(0, Vec::len) {
+                    1 => "Brought over 1 of VS Code's settings into your settings.json.".to_string(),
+                    n => format!("Brought over {n} of VS Code's settings into your settings.json."),
+                },
+            };
+            if m["error"].is_string() {
+                toast::error(ui, &said);
+            } else {
+                toast::info(ui, &said);
+            }
+        }
         _ => {}
     }
     false
+}
+
+/// What VS Code's settings file on this computer holds that Code Arena can take, offered in a notification.
+fn offer(ui: Ui, m: &Value) {
+    let path = m["path"].as_str().unwrap_or("").to_string();
+    if m["found"] != true {
+        toast::info(ui, &format!("No settings of VS Code's were found ({path})."));
+        return;
+    }
+    let keys: Vec<String> = m["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["key"].as_str())
+        .map(str::to_string)
+        .collect();
+    if keys.is_empty() {
+        toast::info(ui, "Your settings.json already has every setting of VS Code's that Code Arena reads.");
+        return;
+    }
+    toast::info_of(&offer_text(&keys))
+        .action("Bring Over", move |_ui, send| send(json!({"type": "vscode_import", "keys": keys})))
+        .sticky()
+        .show_in(ui);
+}
+
+/// The offer's words: how many, and the first few by their keys.
+fn offer_text(keys: &[String]) -> String {
+    let first: Vec<&str> = keys.iter().take(3).map(String::as_str).collect();
+    let more = if keys.len() > 3 { ", …" } else { "" };
+    let n = if keys.len() == 1 { "1 of them".to_string() } else { format!("{} of them", keys.len()) };
+    format!("Bring over VS Code's settings? {n}: {}{more}", first.join(", "))
 }
 
 #[cfg(test)]
@@ -1331,5 +1387,24 @@ mod tests {
         told.borrow_mut().clear();
         take(ui, &json!({"type": "settings", "values": {}}), &send);
         assert!(told.borrow().is_empty());
+    }
+
+    #[test]
+    fn vs_codes_settings_are_offered_and_brought_over_on_the_word() {
+        let (ui, send, told) = window();
+        assert!(commands::run(ui, &send, FROM_VS_CODE));
+        assert_eq!(told.borrow().last(), Some(&json!({"type": "vscode_settings"})));
+        let keys: Vec<String> = ["editor.fontSize", "editor.tabSize", "files.autoSave", "editor.wordWrap"].map(String::from).into();
+        assert_eq!(
+            offer_text(&keys),
+            "Bring over VS Code's settings? 4 of them: editor.fontSize, editor.tabSize, files.autoSave, …"
+        );
+        assert_eq!(offer_text(&keys[..1]), "Bring over VS Code's settings? 1 of them: editor.fontSize");
+        let entries: Vec<Value> = keys.iter().map(|k| json!({"key": k, "value": 1})).collect();
+        let was = toast::count(ui);
+        take(ui, &json!({"type": "vscode_settings", "found": true, "path": "/home/me/.config/Code/User/settings.json", "entries": entries}), &send);
+        take(ui, &json!({"type": "vscode_settings", "found": false, "path": "/home/me/.config/Code/User/settings.json", "entries": []}), &send);
+        take(ui, &json!({"type": "vscode_imported", "keys": ["editor.fontSize"]}), &send);
+        assert_eq!(toast::count(ui), was + 3);
     }
 }
