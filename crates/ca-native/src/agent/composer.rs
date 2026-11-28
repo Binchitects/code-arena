@@ -496,7 +496,7 @@ fn key_in_box(ui: Ui, send: &Send, map: &KeypressMap, editor: &Editor, press: &K
     }
     match own_key(map, editor, press, mods) {
         CommandExecuted::No => {
-            if !composing && crate::keys_hook::editor(key, mods) {
+            if !composing && crate::keys_hook::editor(ui, key, mods) {
                 crate::workbench::key(ui, send, key, mods);
             }
             false

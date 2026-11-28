@@ -733,7 +733,7 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
     let text = editor_view(sig, |_| true).style(|s| s.absolute().cursor(CursorStyle::Text));
     let id = text.id();
     ed.editor_view_id.set(Some(id));
-    let text = text
+    let text = crate::keymap::tracked(text, crate::keymap::Focus::Editor)
         .on_event_cont(EventListener::FocusGained, move |_| sig.with_untracked(|e| e.editor_view_focused.notify()))
         .on_event_cont(EventListener::FocusLost, move |_| sig.with_untracked(|e| e.editor_view_focus_lost.notify()))
         .on_event_cont(EventListener::PointerDown, move |event| {

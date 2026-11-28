@@ -59,6 +59,7 @@ use serde_json::Value;
 
 use crate::colors::Colors;
 use crate::icons::icon;
+use crate::keymap::TakesKeys;
 use crate::layers::{self, Place};
 use crate::state::{Send, Ui};
 use crate::widgets::UI_FONT;
@@ -815,6 +816,7 @@ fn field(ui: Ui, serial: u64) -> AnyView {
         })
         .on_event_cont(EventListener::FocusGained, move |_| got())
         .on_event_cont(EventListener::FocusLost, move |_| lost())
+        .takes_keys(crate::keymap::Focus::Input)
         .style(move |s| s.width_full().height(24.0).color(t.get().input_fg))
         .into_any()
     } else {
@@ -833,6 +835,7 @@ fn field(ui: Ui, serial: u64) -> AnyView {
         })
         .on_event_cont(EventListener::FocusGained, move |_| got())
         .on_event_cont(EventListener::FocusLost, move |_| lost())
+        .takes_keys(crate::keymap::Focus::Input)
         .style(move |s| {
             let c = t.get();
             let s = s

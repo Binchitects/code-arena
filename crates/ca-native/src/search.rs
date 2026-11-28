@@ -325,7 +325,7 @@ fn boxed(
 /// A text input as the boxes draw it.
 fn input(ui: Ui, text: RwSignal<String>, hint: &'static str, focused: RwSignal<bool>) -> floem::views::TextInput {
     let t = ui.colors;
-    text_input(text)
+    crate::keymap::tracked(text_input(text), crate::keymap::Focus::Input)
         .placeholder(hint)
         .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true))
         .on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false))

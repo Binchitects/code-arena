@@ -296,7 +296,7 @@ fn user_editor(ui: Ui, send: Send, tab: &Tab) -> AnyView {
             // Not the editor's: the workbench's keys work while it has the focus.
             None => {
                 if let KeyInput::Keyboard(key, _) = &press.key
-                    && crate::keys_hook::editor(key, mods)
+                    && crate::keys_hook::editor(ui, key, mods)
                 {
                     crate::workbench::key(ui, &send, key, mods);
                 }

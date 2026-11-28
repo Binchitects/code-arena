@@ -510,7 +510,7 @@ pub(super) fn tabs(ui: Ui, group: Shown) -> impl IntoView {
                         })
                     }
                 };
-                let keys = |id: &str| commands::find(id).map(|c| c.shown_keys().to_string()).unwrap_or_default();
+                let keys = commands::keys_of;
                 popup::open(
                     ui,
                     popup::At::under(more_id),

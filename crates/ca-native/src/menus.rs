@@ -220,7 +220,7 @@ fn rows_where(ui: Ui, menu: Menu, keep: impl Fn(&str) -> bool) -> Vec<Row> {
             Some(c) if !c.offered(ui) => continue,
             Some(c) => (
                 if item.title.is_empty() { c.title.clone() } else { item.title.clone() },
-                if item.keys.is_empty() { c.shown_keys().to_string() } else { item.keys.clone() },
+                if item.keys.is_empty() { crate::commands::keys_of(&c.id) } else { item.keys.clone() },
                 c.may_run(ui).then(|| c.id.clone()),
             ),
             // No such command (yet): shown dimmed when it has a title of its own, else left out.
