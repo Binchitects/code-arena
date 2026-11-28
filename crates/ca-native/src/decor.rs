@@ -93,6 +93,9 @@ pub enum Phantom {
     EndOfLine(Option<Severity>),
     /// At its column, as an inline completion is (`editorGhostText.foreground`), the caret before it.
     Ghost,
+    /// After the line's end with no gap of its own, as a CodeLens's commands (`editorCodeLens.foreground`): the owner
+    /// finds a click on it with `Editor::line_col_of_point_with_phantom`.
+    Lens,
 }
 
 /// A range's look; what is none is left as it is.
@@ -240,6 +243,7 @@ pub fn merge<'a>(owners: impl IntoIterator<Item = &'a [Mark]>, c: &Colors) -> Me
                         Phantom::EndOfLine(Some(s)) => squiggle_color(*s, c),
                         Phantom::EndOfLine(None) => c.desc,
                         Phantom::Ghost => c.ghost_text,
+                        Phantom::Lens => c.code_lens,
                     };
                     m.lines.entry(*line).or_default().texts.push((*col, text.clone(), *at, on_editor(color, c)));
                 }
@@ -450,6 +454,7 @@ pub fn phantoms(path: &str, line: usize, len: usize) -> Vec<PhantomText> {
                 Phantom::Inline => (PhantomTextKind::InlayHint, (*col).min(len), text.clone(), None),
                 // VS Code leaves a gap after the line's text.
                 Phantom::EndOfLine(_) => (PhantomTextKind::Diagnostic, len, format!("    {text}"), None),
+                Phantom::Lens => (PhantomTextKind::Diagnostic, len, text.clone(), None),
                 Phantom::Ghost => {
                     (PhantomTextKind::Completion, (*col).min(len), text.clone(), Some(CursorAffinity::Backward))
                 }
