@@ -23,7 +23,7 @@ use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, NamedKey};
 use floem::kurbo::{Point, Rect};
 use floem::reactive::{
-    RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal,
+    Memo, RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal,
 };
 use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, stack, v_stack};
@@ -868,8 +868,9 @@ fn dropped(ui: Ui, from: u64, path: &str, to: Drop) {
 }
 
 /// What is drawn over the editor groups: the question asked before a tab with changes not saved closes, and while
-/// a tab is dragged, where it would go (editorGroup.dropBackground).
-pub(super) fn close_question(ui: Ui) -> impl IntoView {
+/// a tab is dragged, where it would go (editorGroup.dropBackground). Drawn in each window with editor groups, and
+/// shown in the one whose group has the keys (`here`).
+pub(super) fn close_question(ui: Ui, here: Memo<bool>) -> impl IntoView {
     let st = state(ui);
     let t = ui.colors;
     let shade = create_memo(move |_| st.drag.with(|d| d.as_ref().and_then(|d| d.aim.as_ref().map(|a| a.1))));
@@ -890,7 +891,7 @@ pub(super) fn close_question(ui: Ui) -> impl IntoView {
     });
     let busy = move || ui.closing.with(|c| c.is_some()) || st.drag.with(|d| d.is_some());
     stack((question(ui), over.style(|s| s.hide()), drawn))
-        .style(move |s| s.absolute().inset(0.0).z_index(30).apply_if(!busy(), |s| s.hide()))
+        .style(move |s| s.absolute().inset(0.0).z_index(30).apply_if(!busy() || !here.get(), |s| s.hide()))
 }
 
 /// Asked before a tab with changes not saved closes, as VS Code asks: Save (it closes once saved), Don't Save,

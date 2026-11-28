@@ -10,7 +10,7 @@ use crate::state::Ui;
 /// VS Code's empty editor: the welcome when its group is the only one, else what a tab can be put here by.
 pub(super) fn watermark(ui: Ui) -> impl IntoView {
     let t = ui.colors;
-    let only = create_memo(move |_| super::groups::groups(ui).model.with(|m| m.groups.len() <= 1));
+    let only = create_memo(move |_| super::groups::groups(ui).model.with(|m| m.main_len() <= 1));
     dyn_container(
         move || only.get(),
         move |only| {

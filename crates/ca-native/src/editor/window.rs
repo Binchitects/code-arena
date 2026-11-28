@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use floem::event::{Event, EventListener};
 use floem::reactive::{SignalGet, SignalWith, create_memo};
-use floem::views::{Decorators, empty, h_stack, label, tooltip, v_stack};
+use floem::views::{Decorators, empty, h_stack, label, stack, tooltip, v_stack};
 use floem::window::WindowId;
 use serde_json::Value;
 
@@ -62,7 +62,7 @@ pub fn register(ui: Ui, send: &Send) {
     );
     // A window whose group went (its last tab closed, or the groups joined) closes.
     let g = groups::groups(ui);
-    let ids = create_memo(move |_| g.model.with(|m| m.apart.clone()));
+    let ids = ui.scope.create_memo(move |_| g.model.with(|m| m.apart.clone()));
     ui.scope.create_effect(move |_| {
         let ids = ids.get();
         let gone: Vec<WindowId> = WINDOWS.with(|w| {
@@ -103,15 +103,17 @@ fn move_back(ui: Ui, id: u64) {
 fn open(ui: Ui, id: u64) {
     let Some(send) = SEND.with(|s| s.borrow().clone()) else { return };
     let g = groups::groups(ui);
-    let title = create_memo(move |_| {
-        let shown = g.model.with(|m| m.group(id).and_then(|g| g.active.clone()));
-        shown.map(|p| p.rsplit('/').next().unwrap_or(&p).to_string()).unwrap_or_default()
-    });
     let config = floem::window::WindowConfig::default().title("Code Arena").size((900.0, 640.0));
     floem::new_window(
         move |wid| {
             WINDOWS.with(|w| w.borrow_mut().insert(id, wid));
             let t = ui.colors;
+            // The file it shows, by its name.
+            let title = create_memo(move |_| {
+                let shown = g.model.with(|m| m.group(id).and_then(|g| g.active.clone()));
+                shown.map(|p| p.rsplit('/').next().unwrap_or(&p).to_string()).unwrap_or_default()
+            });
+            let here = create_memo(move |_| g.model.with(|m| m.focused == id));
             let bar = h_stack((
                 label(move || title.get()).style(move |s| s.padding_left(12.0).color(t.get().side_fg)),
                 empty().style(|s| s.flex_grow(1.0_f32)),
@@ -132,7 +134,8 @@ fn open(ui: Ui, id: u64) {
             let keys = send.clone();
             let body = super::group_view(ui, groups::shown_of(ui, id))
                 .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
-            v_stack((bar, body))
+            let over = super::tabs::close_question(ui, here);
+            stack((v_stack((bar, body)).style(|s| s.size_full()), over))
                 .window_title(move || {
                     let name = title.get();
                     if name.is_empty() { "Code Arena".to_string() } else { format!("{name} — Code Arena") }
@@ -159,6 +162,7 @@ fn open(ui: Ui, id: u64) {
                         .font_size(13.0)
                         .color(c.fg)
                         .background(c.editor_bg)
+                        .apply(crate::workbench::hovers(&c))
                 })
         },
         Some(config),
@@ -172,6 +176,9 @@ fn got_focus(ui: Ui, id: u64) {
         BACK.with(|b| *b.borrow_mut() = focused);
     }
     groups::focus(ui, id);
+    // Its editor has the keys (when it was focused already, as when the window was just made, nothing else gives
+    // them).
+    groups::give_keys_back(ui);
 }
 
 /// Another window come to the front: the keys back in the IDE's group they were in (a file opened from the

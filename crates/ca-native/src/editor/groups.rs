@@ -826,7 +826,8 @@ pub fn area(ui: Ui) -> impl IntoView {
             let s = s.size_full().min_width(0.0).min_height(0.0);
             if vertical.get() { s.flex_col() } else { s.flex_row() }
         });
-    stack((row, super::tabs::close_question(ui))).style(|s| s.size_full().min_width(0.0).min_height(0.0))
+    let here = floem::reactive::create_memo(move |_| g.model.with(|m| !m.is_apart(m.focused)));
+    stack((row, super::tabs::close_question(ui, here))).style(|s| s.size_full().min_width(0.0).min_height(0.0))
 }
 
 /// What a group's parts are drawn from: its own tabs, the tab it shows, whether it has the keys.
