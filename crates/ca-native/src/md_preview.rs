@@ -296,7 +296,8 @@ pub fn open_to_side(ui: Ui, send: &Send, file: &str) {
         }
     }
     groups::open_to_side(ui, &id, send);
-    if made && groups::focused(ui) != from {
+    // One preview's view at a time: it leaves the group it was in.
+    if groups::focused(ui) != from {
         groups::change(ui, |m, _| m.drop_tab(from, &id));
     }
 }
@@ -399,9 +400,11 @@ fn view(ui: Ui, send: Send, file: &str) -> AnyView {
     let blocks = create_memo(move |_| e.blocks.get());
     let content = prose::document(ui, blocks, doc).style(|s| s.width_full().padding_horiz(26.0).padding_vert(16.0));
     e.content.set(Some(content.id()));
+    // Back where it was left (not where a heading's link last took it).
     let back = e.top.get_untracked();
-    if back > 0.0 {
-        e.goto.set(Some(Point::new(0.0, back)));
+    let goto = (back > 0.0).then(|| Point::new(0.0, back));
+    if e.goto.get_untracked() != goto {
+        e.goto.set(goto);
     }
     scroll(content)
         .scroll_to(move || e.goto.get())
@@ -606,6 +609,18 @@ mod tests {
         assert_eq!(m.groups[1].tabs, ["preview:docs/README.md".to_string()]);
         assert_eq!(ui.active.get_untracked().as_deref(), Some("preview:docs/README.md"));
         assert!(kinds::kept(ui).contains(&"preview:docs/README.md".to_string()), "kept for the next start");
+        // Asked again from the file's group, it is moved, not shown twice.
+        groups::focus(ui, m.groups[0].id);
+        assert!(commands::run(ui, &send, TO_SIDE));
+        let m = groups::groups(ui).model.get_untracked();
+        assert_eq!((m.groups[0].tabs.len(), m.groups[1].tabs.len()), (2, 1), "{m:?}");
+        // A Markdown file linked from the preview opens in the preview's group, though the keys are elsewhere.
+        groups::focus(ui, m.groups[0].id);
+        let e = entry(ui, "docs/README.md");
+        go(ui, &send, "docs/README.md", e, &target("docs", "guide.md").expect("a file"));
+        let m = groups::groups(ui).model.get_untracked();
+        assert_eq!(m.groups[1].active.as_deref(), Some("preview:docs/guide.md"));
+        assert!(!m.groups[0].tabs.contains(&"preview:docs/guide.md".to_string()));
     }
 
     #[test]
