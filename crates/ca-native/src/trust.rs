@@ -31,8 +31,7 @@ and nothing of theirs runs.";
 const YES: &str = "Yes, I trust the authors";
 const NO: &str = "No, I don't trust the authors";
 const RESTRICTED: &str = "Restricted Mode";
-const BANNER: &str =
-    "Restricted Mode is intended for safe code browsing. Trust this folder to enable all features.";
+const BANNER: &str = "Restricted Mode is intended for safe code browsing. Trust this folder to enable all features.";
 const REFUSED: &str = "This feature is disabled in Restricted Mode.";
 
 /// This part's state in a window.
@@ -143,7 +142,7 @@ fn refused(ui: Ui, m: &Value) {
     let text = m["error"].as_str().filter(|e| !e.is_empty()).unwrap_or(REFUSED);
     let id = toast::warning_of(text)
         .action("Trust", |_, send| send(json!({"type": "trust_set", "trusted": true})))
-        .action("Manage", |ui, send| manage(ui, send))
+        .action("Manage", manage)
         .source("Workspace Trust")
         .show_in(ui);
     me.refusal.set(Some(id));
@@ -172,7 +171,11 @@ fn banner(ui: Ui, send: Send) -> floem::AnyView {
     let link = |words: &'static str| {
         label(move || words.to_string()).style(move |s| {
             let c = t.get();
-            s.font_size(12.0).margin_left(10.0).cursor(CursorStyle::Pointer).color(c.banner_fg).hover(|s| s.color(c.banner_icon))
+            s.font_size(12.0)
+                .margin_left(10.0)
+                .cursor(CursorStyle::Pointer)
+                .color(c.banner_fg)
+                .hover(|s| s.color(c.banner_icon))
         })
     };
     let x = container(icon("close", 16.0)).on_click_stop(move |_| me.banner_closed.set(true)).style(move |s| {
@@ -188,9 +191,8 @@ fn banner(ui: Ui, send: Send) -> floem::AnyView {
     });
     h_stack((
         icon("shield", 16.0).style(move |s| s.flex_shrink(0.0_f32).margin_right(6.0).color(t.get().banner_icon)),
-        label(|| BANNER.to_string()).style(|s| {
-            s.flex_shrink(1.0_f32).min_width(0.0).font_size(12.0).text_overflow(TextOverflow::Ellipsis)
-        }),
+        label(|| BANNER.to_string())
+            .style(|s| s.flex_shrink(1.0_f32).min_width(0.0).font_size(12.0).text_overflow(TextOverflow::Ellipsis)),
         link("Manage").on_click_stop(move |_| manage(ui, &send)),
         container(floem::views::empty()).style(|s| s.flex_grow(1.0_f32)),
         x,

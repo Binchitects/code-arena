@@ -81,7 +81,10 @@ pub fn on_revoke(kept: &Kept, area: &'static str, stop: impl Fn(&Shared) + Send 
 
 /// What the areas gave [`on_revoke`].
 #[derive(Default)]
-struct Stops(Mutex<Vec<(&'static str, Arc<dyn Fn(&Shared) + Send + Sync>)>>);
+struct Stops(Mutex<Vec<(&'static str, Stop)>>);
+
+/// What an area stops.
+type Stop = Arc<dyn Fn(&Shared) + Send + Sync>;
 
 fn revoked(sh: &Shared) {
     let all: Vec<_> =
