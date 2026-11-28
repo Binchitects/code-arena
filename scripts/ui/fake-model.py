@@ -7,7 +7,7 @@
 # The last user message decides: "delegate" starts two sub-agents (each thinks, reads src/main.rs and reports),
 # "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a command that needs an approval
 # in ask mode, "picture" runs a command that makes a picture in .code-arena/media/,
-# "think" thinks for some seconds before it answers (with its usage),
+# "persian" answers in right-to-left and mixed text, "think" thinks for some seconds before it answers (with its usage),
 # anything else streams a Markdown answer with a code block. A tool's
 # result is answered with a short line, so each turn ends.
 import http.server
@@ -60,6 +60,22 @@ fn main() {
 ```"""
 
 # Asked with "diagram" in the message: a Mermaid diagram, and one that does not parse.
+# Right-to-left and mixed text, by the word "persian".
+PERSIAN = """این تابع **ورودی** را می‌خواند و `parse` را صدا می‌زند.
+
+- First, the `parse` call
+- سپس خطا
+
+1. یک
+2. two
+
+> نکته: it retries
+
+```ts
+// توضیح: one
+const x = 1
+```"""
+
 DIAGRAM = """How it flows:
 
 ```mermaid
@@ -160,7 +176,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ev({"content": "I'll look at the folder first."})
             call("run_shell", {"command": "ls -la"})
         else:
-            answer = TABLES if "table" in text else DIAGRAM if "diagram" in text else ANSWER
+            answer = (
+                TABLES if "table" in text else DIAGRAM if "diagram" in text else PERSIAN if "persian" in text else ANSWER
+            )
             for word in answer.split(" "):
                 ev({"content": word + " "})
                 time.sleep(0.005)
