@@ -190,7 +190,10 @@ fn keep(ui: Ui, id: u64, kept: bool) {
 
 /// A quiet bubble's time up: it goes, unless a reply is being written in it, when it waits as long again.
 fn fade(ui: Ui, id: u64) {
-    if ui.state::<Notices>().kept.with_untracked(|k| k.contains(&id)) {
+    let s = ui.state::<Notices>();
+    if !s.list.with_untracked(|l| l.iter().any(|n| n.id == id)) {
+        keep(ui, id, false);
+    } else if s.kept.with_untracked(|k| k.contains(&id)) {
         floem::action::exec_after(QUIET, move |_| fade(ui, id));
     } else {
         drop_notice(ui, id);
