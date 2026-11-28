@@ -68,6 +68,24 @@ pub fn sync_of(sh: &Shared) -> Value {
     })
 }
 
+/// The standing as `state` and `status` tell it: what the watch tells next is compared with it, so a change after
+/// them is told too.
+pub fn told(sh: &Shared) -> Value {
+    let now = sync_of(sh);
+    keep_told(&sh.kept.of::<Kept>(), &now);
+    now
+}
+
+/// Keeps the standing told; true when it is another than the one told before.
+fn keep_told(kept: &Kept, now: &Value) -> bool {
+    let mut told = lock(&kept.told);
+    let changed = *told != *now;
+    if changed {
+        told.clone_from(now);
+    }
+    changed
+}
+
 /// Whether a chat's words hold every word asked (none asked: every chat).
 pub fn matches(c: &ChatItem, words: &str) -> bool {
     let hay = format!("{} {}", c.title, c.origin_place.as_deref().unwrap_or("")).to_lowercase();
@@ -107,7 +125,12 @@ async fn account(sh: &Shared) -> Option<String> {
     if kept.asked_account.swap(true, Ordering::Relaxed) {
         return None;
     }
-    let me = tokio::time::timeout(Duration::from_secs(15), arena.me()).await.ok()?.ok()?;
+    let asked = tokio::time::timeout(Duration::from_secs(15), arena.me()).await;
+    let Ok(Ok(me)) = asked else {
+        // Asked again next time.
+        kept.asked_account.store(false, Ordering::Relaxed);
+        return None;
+    };
     let name = me.display_name.filter(|n| !n.trim().is_empty()).unwrap_or(me.user_name);
     *lock(&kept.account) = Some(name.clone());
     Some(name)
@@ -339,15 +362,7 @@ pub fn start(sh: &Shared) {
 fn look(sh: &Shared) {
     let kept = sh.kept.of::<Kept>();
     let now = sync_of(sh);
-    let changed = {
-        let mut told = lock(&kept.told);
-        let changed = *told != now;
-        if changed {
-            told.clone_from(&now);
-        }
-        changed
-    };
-    if changed {
+    if keep_told(&kept, &now) {
         send(&sh.out, json!({"type": "session_sync", "session": sh.session, "sync": now}));
     }
     if !kept.turn.load(Ordering::Relaxed) {
@@ -437,6 +452,16 @@ mod tests {
         assert!(kept_in(&s, "/w", "chat-1"));
         assert!(!kept_in(&s, "/x", "chat-1"));
         assert!(!kept_in(&s, "/w", "chat-2"));
+    }
+
+    #[test]
+    fn a_standing_is_told_again_only_when_it_is_another_than_the_last_one_said() {
+        let kept = Kept::default();
+        let one = json!({"waiting": 1});
+        // `status` said it after the turn: the watch then tells only what changes after.
+        assert!(keep_told(&kept, &one));
+        assert!(!keep_told(&kept, &one));
+        assert!(keep_told(&kept, &json!({"waiting": 0})));
     }
 
     #[test]

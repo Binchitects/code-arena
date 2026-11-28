@@ -50,11 +50,11 @@ impl Area for Here {
     }
 
     fn state(sh: &Shared, _p: Option<&session::Prepared>, v: &mut Value) {
-        v["sync"] = arena::sync_of(sh);
+        v["sync"] = arena::told(sh);
     }
 
     fn status(sh: &Shared, _p: Option<&session::Prepared>, v: &mut Value) {
-        v["sync"] = arena::sync_of(sh);
+        v["sync"] = arena::told(sh);
     }
 
     async fn before_turn(ctx: &mut Ctx<'_>, _message: &str) {

@@ -336,8 +336,11 @@ pub fn section(ui: Ui, send: Send) -> AnyView {
             |o| icon(if o { "chevron-down" } else { "chevron-right" }, 16.0),
         ))
         .style(|s| s.flex_shrink(0.0_f32)),
-        label(move || st.account.with(|a| heading(a.as_deref())).to_uppercase())
-            .style(|s| bold(caps(s)).flex_grow(1.0_f32).min_width(0.0).text_ellipsis()),
+        label(move || {
+            let who = st.account.get().or_else(|| st.sync.with(|s| s.as_ref().and_then(|s| s.account.clone())));
+            heading(who.as_deref()).to_uppercase()
+        })
+        .style(|s| bold(caps(s)).flex_grow(1.0_f32).min_width(0.0).text_ellipsis()),
         container(acts).style(move |s| s.flex_shrink(0.0_f32).apply_if(!over.get() || !st.open.get(), |s| s.hide())),
     ))
     .on_click_stop(move |_| st.open.update(|o| *o = !*o))
@@ -491,9 +494,9 @@ pub fn mark(ui: Ui) -> impl IntoView {
     let trouble = create_memo(move |_| glyph.get() == "warning");
     let body = h_stack((
         dyn_container(move || glyph.get(), |g| icon(g, 14.0)),
-        // In step is the cloud alone (its words on hover), so that the view's tabs keep their room.
+        // In step and N to send are their icon alone (the words on hover), so that the view's tabs keep their room.
         label(move || now.with(|m| m.as_ref().map(|m| m.1.clone()).unwrap_or_default()))
-            .style(move |s| s.apply_if(glyph.get() == "cloud", |s| s.hide())),
+            .style(move |s| s.apply_if(matches!(glyph.get(), "cloud" | "cloud-upload"), |s| s.hide())),
     ))
     .on_click_stop(move |_| ui.reveal(View::Sessions))
     .style(move |s| {
