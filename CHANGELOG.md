@@ -1011,6 +1011,11 @@ Sections used:
   ('.../explain-module').
 - **The Extensions view's "No extensions found" message wraps.** A search with no result no longer
   runs off the side bar's right edge.
+- **A guest that refuses the password asks again.** When a VM's guest refused the user and password
+  typed in the sign-in form, the form closed and the agent was told you did not sign in. It now
+  opens again and says the guest refused, with the user filled in.
+- **The status bar's spinners stand still with reduced motion.** With workbench.reduceMotion on, the
+  model item's spinner and the jobs item's spinner no longer turn.
 
 ## v0.5.0 (2026-11-26)
 
