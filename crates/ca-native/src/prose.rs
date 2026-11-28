@@ -597,7 +597,8 @@ fn table(ui: Ui, now: Memo<Option<Rc<Block>>>) -> impl IntoView {
         crate::icons::icon("search", 14.0).style(move |s| s.color(t.get().desc)),
         text_input(filter).placeholder("Filter rows").style(move |s| {
             let c = t.get();
-            let s = s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).font_size(12.0).background(c.input_bg);
+            let s =
+                s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).font_size(12.0).border(0.0).background(c.input_bg);
             crate::widgets::steady_input(s.color(c.input_fg), c.input_bg, None)
         }),
     ))
