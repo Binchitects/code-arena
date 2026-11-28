@@ -70,6 +70,12 @@ fn signed_out(sh: &Shared) -> bool {
     sh.edition == ca_settings::Edition::None
 }
 
+/// The session has no model to ask: none was found, or there is nothing to ask one of (a model named by `--model`,
+/// the settings or a session taken up is no model when no Arena and no provider is there to answer).
+fn modelless(model: &str, edition: ca_settings::Edition) -> bool {
+    model.is_empty() || edition == ca_settings::Edition::None
+}
+
 impl Area for Here {
     const MESSAGES: &'static [(&'static str, Rule)] =
         &[("broadcasts", Rule::Turn), ("broadcast_dismiss", Rule::Turn), ("_arena_settings", Rule::Latest)];
@@ -174,7 +180,8 @@ impl Area for Here {
     /// left to the areas that run them.
     async fn command(ctx: &mut Ctx<'_>, sent: &mut Sent) {
         let text = sent.shown.trim_start();
-        if sent.done || !ctx.p.agent.model.is_empty() || text.starts_with('/') || text.starts_with('!') {
+        if sent.done || !modelless(&ctx.p.agent.model, ctx.sh.edition) || text.starts_with('/') || text.starts_with('!')
+        {
             return;
         }
         ctx.sh.say(no_model_text(signed_out(ctx.sh)));
@@ -183,7 +190,7 @@ impl Area for Here {
 
     fn state(sh: &Shared, p: Option<&crate::session::Prepared>, v: &mut Value) {
         let model = p.map_or(sh.was.model.as_str(), |p| p.agent.model.as_str());
-        v["no_model"] = json!(model.is_empty());
+        v["no_model"] = json!(modelless(model, sh.edition));
         v["signed_out"] = json!(signed_out(sh));
         v["broadcasts"] = json!(*lock(&sh.kept.of::<Kept>().list));
     }
@@ -214,6 +221,15 @@ mod tests {
             json!({"type": "broadcasts", "items": [{"id": "a", "level": "warning", "text": "about a"}], "key": 7})
         );
         assert!(listed(&[], Some(&Value::Null)).get("key").is_none());
+    }
+
+    #[test]
+    fn a_session_has_no_model_without_one_or_without_anything_to_ask() {
+        use ca_settings::Edition;
+        assert!(modelless("", Edition::Managed));
+        assert!(modelless("qwen", Edition::None), "a model named in the settings, signed out");
+        assert!(!modelless("qwen", Edition::Managed));
+        assert!(!modelless("gpt", Edition::Standalone));
     }
 
     #[test]
