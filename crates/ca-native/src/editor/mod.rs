@@ -251,6 +251,11 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                             return CommandExecuted::Yes;
                         }
                     }
+                    if let KeyInput::Keyboard(key, _) = &press.key
+                        && crate::layout_commands::zen_escape(ui, key, mods)
+                    {
+                        return CommandExecuted::Yes;
+                    }
                     if keys::editor_key(ui, press, mods) {
                         return CommandExecuted::Yes;
                     }

@@ -53,6 +53,8 @@ thread_local! {
     static BY_KEYS: Cell<bool> = const { Cell::new(false) };
     /// How far into the Konami code the keys typed are.
     static TYPED: Cell<usize> = const { Cell::new(0) };
+    /// The key before was Escape, pressed in Zen mode (a second one leaves it).
+    static ESCAPED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// What was shown before Zen mode, given back when it ends.
@@ -284,6 +286,24 @@ fn focus_side_bar(ui: Ui) {
     if let Some(v) = shown.or(Some(View::Files)) {
         ui.reveal(v);
     }
+}
+
+/// Escape twice in Zen mode leaves it, as VS Code's Escape Escape (from the editor too); true when this key did.
+/// It is not a chord of the registry, so an Escape outside Zen is not held waiting for a second.
+pub fn zen_escape(ui: Ui, key: &Key, m: Modifiers) -> bool {
+    let escape = matches!(key, Key::Named(NamedKey::Escape)) && m.is_empty();
+    if !escape || !in_zen(ui) {
+        if !matches!(key, Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super)) {
+            ESCAPED.with(|e| e.set(false));
+        }
+        return false;
+    }
+    if ESCAPED.with(|e| e.replace(false)) {
+        toggle_zen(ui);
+        return true;
+    }
+    ESCAPED.with(|e| e.set(true));
+    false
 }
 
 /// A key that came to the window with no box to take it: one more of the Konami code, or the code begun again.
@@ -632,6 +652,21 @@ mod tests {
         toggle_zen(ui);
         assert_eq!(ui.hidden.get_untracked(), before);
         assert!(bars_shown(ui) && title_bar_shown(ui));
+    }
+
+    #[test]
+    fn escape_twice_leaves_zen_mode_and_one_escape_or_escapes_outside_it_do_not() {
+        let ui = Ui::new();
+        let esc = Key::Named(NamedKey::Escape);
+        assert!(!zen_escape(ui, &esc, Modifiers::empty()) && !zen_escape(ui, &esc, Modifiers::empty()));
+        toggle_zen(ui);
+        assert!(!zen_escape(ui, &esc, Modifiers::empty()));
+        // Another key between the two starts again.
+        assert!(!zen_escape(ui, &Key::Character("a".into()), Modifiers::empty()));
+        assert!(!zen_escape(ui, &esc, Modifiers::empty()));
+        assert!(in_zen(ui));
+        assert!(zen_escape(ui, &esc, Modifiers::empty()));
+        assert!(!in_zen(ui));
     }
 
     #[test]

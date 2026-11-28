@@ -223,6 +223,9 @@ fn register_menus() {
 /// none, closes what is open over the window.
 pub(crate) fn key(ui: Ui, send: &Send, key: &Key, m: Modifiers) {
     crate::layout_commands::key_seen(ui, key, m);
+    if crate::layout_commands::zen_escape(ui, key, m) {
+        return;
+    }
     // An editing command's key does nothing where no editor has the keys (the editor runs it itself).
     if crate::editor::editing::editor_only(key, m) {
         return;
@@ -393,7 +396,7 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
                                     s.background(c.menu_selected).color(c.menu_selected_fg)
                                 })
                         } else {
-                            s.color(c.menu_fg.multiply_alpha(0.4))
+                            s.color(crate::widgets::mix(c.menu_fg, c.menu_bg, 0.6))
                         }
                     })
                     .into_any()
@@ -416,7 +419,28 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
                     .font_size(13.0)
                     .selectable(false)
             });
-            let layer = stack((empty().on_click_stop(move |_| ui.menu.set(None)).style(|s| s.size_full()), items))
+            // Over the window while the menu is open, as VS Code's menu bar: a click on another menu's title opens
+            // that one, the pointer going onto one switches to it, a click on its own title or anywhere else closes
+            // it.
+            let catcher = empty()
+                .on_event_stop(EventListener::PointerDown, move |e| {
+                    let Event::PointerDown(p) = e else { return };
+                    let open = ui.menu.get_untracked();
+                    match title_under(p.pos.x, p.pos.y) {
+                        Some(m) if open != Some(m) => ui.menu.set(Some(m)),
+                        _ => ui.menu.set(None),
+                    }
+                })
+                .on_event_cont(EventListener::PointerMove, move |e| {
+                    if let Event::PointerMove(p) = e
+                        && let Some(m) = title_under(p.pos.x, p.pos.y)
+                        && ui.menu.get_untracked().is_some_and(|open| open != m)
+                    {
+                        ui.menu.set(Some(m));
+                    }
+                })
+                .style(|s| s.size_full());
+            let layer = stack((catcher, items))
                 .keyboard_navigable()
                 .on_event_stop(EventListener::KeyDown, move |e| {
                     let Event::KeyDown(k) = e else { return };
@@ -450,6 +474,25 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
     .style(move |s| {
         s.position(Position::Absolute).inset(0.0).apply_if(ui.menu.with(|m| m.is_none()), |s| s.hide()).z_index(100)
     })
+}
+
+/// The title bar menu whose title is at `x`, `y` across the window (none: no title is there). A title spans from
+/// where it is laid out to where the next begins; the last, its text and padding.
+fn title_under(x: f64, y: f64) -> Option<usize> {
+    let starts: Vec<Option<f64>> = (0..MENUS.len()).map(crate::layout_commands::title_x).collect();
+    title_at_point(&starts, x, y)
+}
+
+fn title_at_point(starts: &[Option<f64>], x: f64, y: f64) -> Option<usize> {
+    if !(0.0..30.0).contains(&y) {
+        return None;
+    }
+    let n = starts.iter().rposition(|s| s.is_some_and(|s| s <= x))?;
+    let end = match starts.get(n + 1).copied().flatten() {
+        Some(next) => next,
+        None => starts[n]? + MENUS[n].len() as f64 * 7.4 + 16.0,
+    };
+    (x < end).then_some(n)
 }
 
 /// The window's edges: it has no frame of the system's, so it is resized by these (each a strip of its own, so the
@@ -549,4 +592,21 @@ fn status_bar(ui: Ui, send: Send) -> impl IntoView {
             .color(c.status_fg)
             .selectable(false)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_title_under_the_pointer_spans_to_the_next_and_the_last_to_its_text() {
+        let starts =
+            [Some(40.0), Some(80.0), Some(120.0), Some(200.0), Some(240.0), Some(280.0), Some(320.0), Some(390.0)];
+        assert_eq!(title_at_point(&starts, 85.0, 15.0), Some(1));
+        assert_eq!(title_at_point(&starts, 39.0, 15.0), None);
+        assert_eq!(title_at_point(&starts, 400.0, 15.0), Some(7));
+        assert_eq!(title_at_point(&starts, 460.0, 15.0), None, "past Help");
+        assert_eq!(title_at_point(&starts, 85.0, 200.0), None, "below the title bar");
+        assert_eq!(title_at_point(&[None; 8], 85.0, 15.0), None, "not laid out yet");
+    }
 }
