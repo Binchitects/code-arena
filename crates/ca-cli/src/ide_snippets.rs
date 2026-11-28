@@ -161,11 +161,14 @@ fn make(config: &Path, root: &Path, name: &str) -> Value {
     }
 }
 
+/// Each file's path and stamp, as at a look.
+type Stamps = Vec<(String, (u64, u64))>;
+
 /// What the files were at the last look, and which looking is the current one.
 #[derive(Default)]
-struct Live(Mutex<(u64, Vec<(String, (u64, u64))>)>);
+struct Live(Mutex<(u64, Stamps)>);
 
-fn stamps(found: &[Found]) -> Vec<(String, (u64, u64))> {
+fn stamps(found: &[Found]) -> Stamps {
     found.iter().map(|f| (f.path.clone(), f.stamp)).collect()
 }
 

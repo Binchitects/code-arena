@@ -3,6 +3,9 @@
 //! `${TM_SELECTED_TEXT:default}`) and transforms (`${TM_FILENAME/(.*)\\..+$/$1/}`, `${1/(.*)/${1:/upcase}/}`). What
 //! does not read as one of them is its text (`$` alone, `${` not closed). Nothing here knows the window.
 
+// A stop's places are a list of ranges, often of one.
+#![allow(clippy::single_range_in_vec_init)]
+
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -213,7 +216,7 @@ impl Reader {
     }
 
     /// Text up to an unescaped `/` (taken), with `\/` read as `/`; other escapes are kept for the regex.
-    fn to_slash(&mut self, keep_escapes: bool) -> Option<String> {
+    fn until_slash(&mut self, keep_escapes: bool) -> Option<String> {
         let mut out = String::new();
         loop {
             let c = self.peek()?;
@@ -237,7 +240,7 @@ impl Reader {
 
     /// `regex/format/flags}` after the first `/`, the `}` taken.
     fn transform(&mut self) -> Option<Transform> {
-        let regex = self.to_slash(true)?;
+        let regex = self.until_slash(true)?;
         let mut format = Vec::new();
         let mut text = String::new();
         loop {

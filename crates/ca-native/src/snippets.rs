@@ -12,6 +12,9 @@
 //! - Snippets: Insert Snippet and Surround With Snippet (only those that take `$TM_SELECTED_TEXT` or `$SELECTION`)
 //!   pick one for the file's language; Snippets: Configure Snippets makes or opens a snippets file (`snippet_new`).
 
+// A stop's places are a list of ranges, often of one.
+#![allow(clippy::single_range_in_vec_init)]
+
 mod body;
 mod list;
 
