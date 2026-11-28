@@ -434,6 +434,55 @@ mod tests {
     }
 
     #[test]
+    fn each_repository_has_its_changes_its_message_and_its_files_named_from_its_top() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let ui = Ui::new();
+        let sent: Rc<RefCell<Vec<Value>>> = Rc::default();
+        let into = sent.clone();
+        let send: Send = Rc::new(move |m| into.borrow_mut().push(m));
+        super::super::register(ui, &send);
+        let list = json!({"type": "git_repositories", "repo": "", "items": [{"path": "", "name": "p"},
+            {"path": "lib", "name": "lib"}]});
+        take(ui, &list, &send);
+        assert!(many(ui));
+        assert!(sent.borrow().iter().any(|m| m["type"] == "git_status" && m["repo"] == "lib"));
+        let top = json!({"type": "git_status", "repo": "", "root": "/p", "branch": "main", "total": 1,
+            "files": [{"path": "a.rs", "x": " ", "y": "M", "changed": true}]});
+        let lib = json!({"type": "git_status", "repo": "lib", "root": "/p/lib", "branch": "dev", "total": 2,
+            "files": [{"path": "src/b.rs", "x": " ", "y": "M", "changed": true},
+                      {"path": "c.rs", "x": "?", "y": "?", "untracked": true}]});
+        super::super::take(ui, &top, &send);
+        super::super::take(ui, &lib, &send);
+        let scm = ui.state::<Scm>();
+        // The project's own is picked: its changes are shown, the other's are kept.
+        assert_eq!(scm.status.with_untracked(|s| s.as_ref().map(|s| s.files.len())), Some(1));
+        assert_eq!(crate::badges::count(ui, crate::layout::View::Scm).get_untracked(), 3);
+        scm.message.set("top message".into());
+        select(ui, &send, "lib");
+        assert_eq!(scm.message.get_untracked(), "");
+        assert_eq!(ui.branch.get_untracked(), "dev");
+        let files = scm.status.with_untracked(|s| s.as_ref().map(|s| s.files.clone())).unwrap_or_default();
+        assert_eq!(files[0].path, "lib/src/b.rs");
+        // Staged in its own repository, named from its top.
+        sent.borrow_mut().clear();
+        super::super::stage(ui, &send, &files);
+        assert_eq!(*sent.borrow(), [json!({"type": "git_stage", "repo": "lib", "paths": ["src/b.rs", "c.rs"]})]);
+        scm.message.set("lib message".into());
+        sent.borrow_mut().clear();
+        assert!(super::super::commit(ui, &send, false));
+        assert_eq!(sent.borrow()[0]["repo"], "lib");
+        select(ui, &send, "");
+        assert_eq!(scm.message.get_untracked(), "top message");
+        select(ui, &send, "lib");
+        assert_eq!(scm.message.get_untracked(), "lib message");
+        // A repository gone from the list: the first is picked.
+        take(ui, &json!({"type": "git_repositories", "repo": "", "items": [{"path": "", "name": "p"}]}), &send);
+        assert_eq!(selected(ui), "");
+        assert!(!many(ui));
+    }
+
+    #[test]
     fn a_row_says_branch_sync_and_count() {
         let s = Status { branch: Some("main".into()), upstream: Some("o/main".into()), ahead: 2, total: 3, ..Status::default() };
         assert_eq!(line_of(Some(&s)), Line { branch: "main".into(), sync: "2↑".into(), total: 3 });
