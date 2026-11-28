@@ -1006,7 +1006,8 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         "git_failed" => {
             toast::error(ui, m["error"].as_str().unwrap_or("git failed"));
         }
-        "git_shown" => {
+        // The index's text asked by quick diff is its own (`quick_diff.rs`).
+        "git_shown" if m["key"] != quick_diff::OWNER => {
             let path = m["path"].as_str().unwrap_or("");
             let key = shown_key(m["rev"].as_str().unwrap_or(""), m["working"].as_bool().unwrap_or(false), path);
             let shown = Shown::of(m);
