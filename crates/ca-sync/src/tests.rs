@@ -614,3 +614,23 @@ async fn a_first_turn_makes_the_chat_and_holds_it() {
     assert_eq!(made["title"], "what files are here?");
     assert!(reqs.iter().any(|r| r.url.path().ends_with("/turn")), "the first turn holds the chat");
 }
+
+#[tokio::test]
+async fn a_rating_goes_to_the_answer_arena_has_and_not_from_a_chat_kept_here() {
+    let (server, _) = arena().await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let id = session(&store.lock().expect("store"));
+    let (sync, _) = sync(&server, &store, &id);
+    assert_eq!(sync.push().await, Pushed::Done);
+    let down = json!({"up": false, "reason": "wrong"});
+    Mock::given(method("PUT"))
+        .and(path(format!("/api/code-arena/chats/chat-1/messages/a{id}:3/feedback")))
+        .and(wiremock::matchers::body_json(&down))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"up": false})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    sync.rate(3, Some(&down)).await.expect("rated");
+    sync.set_on(false);
+    assert!(sync.rate(3, None).await.expect_err("kept here").contains("kept here only"));
+}

@@ -57,6 +57,7 @@ CREATE TABLE messages (
   arena TEXT,
   details TEXT,
   usage TEXT,
+  rating TEXT,
   PRIMARY KEY (session, seq)
 ) WITHOUT ROWID;
 CREATE INDEX messages_by_turn ON messages(session, turn);
@@ -119,6 +120,8 @@ ALTER TABLE messages ADD COLUMN details TEXT;
 const ADDED: &[(&str, &str, &str)] = &[
     // What an answer's turn used, on its last message: `{prompt, cached, completion, ms, model, cost?}`.
     ("messages", "usage", "TEXT"),
+    // The person's rating of an answer, on its last message: `{up, reason?, comment?, share?}`.
+    ("messages", "rating", "TEXT"),
 ];
 
 /// Adds to the store the columns of `ADDED` it lacks.
@@ -421,7 +424,7 @@ impl Store {
         let new = self.create(&s.folder, &s.model, &s.mode)?;
         let tx = self.db.unchecked_transaction()?;
         tx.execute(
-            "INSERT INTO messages (session, seq, turn, role, body, at, details, usage) SELECT ?2, seq, turn, role, body, at, details, usage FROM messages WHERE session = ?1 AND seq < ?3",
+            "INSERT INTO messages (session, seq, turn, role, body, at, details, usage, rating) SELECT ?2, seq, turn, role, body, at, details, usage, rating FROM messages WHERE session = ?1 AND seq < ?3",
             params![id, new, cut],
         )?;
         tx.execute(
@@ -472,6 +475,30 @@ impl Store {
         for row in rows {
             let (seq, usage) = row?;
             out.insert(seq, serde_json::from_str(&usage)?);
+        }
+        Ok(out)
+    }
+
+    /// The person's rating of the answer kept as message `seq` (`{up, reason?, comment?, share?}`; none: taken
+    /// back), shown again after a reload. Only a message of the model's takes one.
+    pub fn set_rating(&self, id: &str, seq: i64, rating: Option<&serde_json::Value>) -> Result<()> {
+        self.db.execute(
+            "UPDATE messages SET rating = ?3 WHERE session = ?1 AND seq = ?2 AND role = 'assistant'",
+            params![id, seq, rating.map(|r| r.to_string())],
+        )?;
+        Ok(())
+    }
+
+    /// The ratings of the answers of messages `from` on, by the place of the message each is kept on.
+    pub fn ratings(&self, id: &str, from: i64) -> Result<std::collections::HashMap<i64, serde_json::Value>> {
+        let mut q = self
+            .db
+            .prepare("SELECT seq, rating FROM messages WHERE session = ?1 AND seq >= ?2 AND rating IS NOT NULL")?;
+        let rows = q.query_map(params![id, from], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (seq, rating) = row?;
+            out.insert(seq, serde_json::from_str(&rating)?);
         }
         Ok(out)
     }
@@ -825,6 +852,22 @@ mod tests {
         s.append(id, &a, false).expect("call");
         s.append(id, &Message::tool(format!("c{n}"), "result"), false).expect("result");
         s.append(id, &Message::assistant(format!("answer {n}")), false).expect("answer");
+    }
+
+    #[test]
+    fn an_answers_rating_is_kept_taken_back_and_forks_with_it() {
+        let s = Store::in_memory().expect("store");
+        let id = s.create("/w", "m", "ask").expect("create");
+        turn(&s, &id, 1);
+        let down = serde_json::json!({"up": false, "reason": "wrong"});
+        s.set_rating(&id, 3, Some(&down)).expect("rate");
+        // The person's message takes none.
+        s.set_rating(&id, 0, Some(&down)).expect("rate");
+        assert_eq!(s.ratings(&id, 0).expect("ratings").into_iter().collect::<Vec<_>>(), [(3, down.clone())]);
+        let fork = s.fork(&id, None).expect("fork");
+        assert_eq!(s.ratings(&fork, 0).expect("ratings")[&3], down);
+        s.set_rating(&id, 3, None).expect("take back");
+        assert!(s.ratings(&id, 0).expect("ratings").is_empty());
     }
 
     #[test]
