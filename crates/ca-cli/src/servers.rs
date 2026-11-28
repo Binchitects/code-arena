@@ -56,6 +56,10 @@ pub struct Server {
     pub prefixed: bool,
     pub trusted: bool,
     pub state: Arc<Mutex<State>>,
+    /// When it is tried again by itself, while it is not connected and will be.
+    pub next_try: Arc<Mutex<Option<std::time::SystemTime>>>,
+    /// Wakes its connecting to try again now (the IDE's Try again).
+    pub wake: Arc<tokio::sync::Notify>,
     conn: Arc<tokio::sync::Mutex<Option<Client>>>,
 }
 
@@ -70,6 +74,8 @@ impl Server {
             prefixed,
             trusted,
             state: Arc::new(Mutex::new(State::Connecting)),
+            next_try: Arc::new(Mutex::new(None)),
+            wake: Arc::new(tokio::sync::Notify::new()),
             conn: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
@@ -82,6 +88,35 @@ impl Server {
 
     pub fn state(&self) -> State {
         self.state.lock().map(|s| s.clone()).unwrap_or(State::Connecting)
+    }
+
+    /// When it is tried again by itself; none when it is not.
+    pub fn next_try(&self) -> Option<std::time::SystemTime> {
+        self.next_try.lock().ok().and_then(|t| *t)
+    }
+
+    fn set_next(&self, t: Option<std::time::SystemTime>) {
+        if let Ok(mut g) = self.next_try.lock() {
+            *g = t;
+        }
+    }
+
+    /// Tries it again now, when it is not connected; true when it was waiting to.
+    pub fn retry(&self) -> bool {
+        if matches!(self.state(), State::Connected { .. } | State::Connecting) {
+            return false;
+        }
+        self.wake.notify_one();
+        true
+    }
+
+    /// Where it is reached, for the faces: an address without what may be secret in it (its user, password and
+    /// query), or the command alone (never its arguments or environment).
+    pub fn shown_url(&self) -> String {
+        match &self.spec {
+            Spec::Http { url, .. } => plain_url(url),
+            Spec::Stdio(s) => s.command.clone(),
+        }
     }
 
     /// Connects (again) and lists the tools.
@@ -352,27 +387,34 @@ pub async fn start(
                         let note = (instructions.is_some() || !listed.is_empty())
                             .then(|| deferred_note(&s, &listed, instructions.as_deref()));
                         let _ = tx.send(Joined { tools: sent, deferred: listed, note });
-                        let _ = settled_tx.send(());
-                        return;
-                    }
-                    Err(e @ McpError::NotThere { .. }) => {
-                        s.set(State::Unavailable(e.to_string()));
-                        let _ = settled_tx.send(());
-                        return;
-                    }
-                    Err(e @ McpError::Refused { .. }) => {
-                        s.set(State::Failed(e.to_string()));
-                        let _ = settled_tx.send(());
+                        if first_try {
+                            let _ = settled_tx.send(());
+                        }
                         return;
                     }
                     Err(e) => {
-                        s.set(State::Failed(format!("{e} (trying again in {} s)", delay.as_secs())));
+                        // A server that is not there or refused is tried again only when asked; the rest by
+                        // themselves, each wait longer, and sooner when asked.
+                        let by_itself = !matches!(e, McpError::NotThere { .. } | McpError::Refused { .. });
+                        s.set(match e {
+                            McpError::NotThere { .. } => State::Unavailable(e.to_string()),
+                            _ => State::Failed(e.to_string()),
+                        });
                         if first_try {
                             first_try = false;
                             let _ = settled_tx.send(());
                         }
-                        tokio::time::sleep(delay).await;
-                        delay = (delay * 2).min(Duration::from_secs(300));
+                        if by_itself {
+                            s.set_next(Some(std::time::SystemTime::now() + delay));
+                            tokio::select! {
+                                _ = tokio::time::sleep(delay) => delay = (delay * 2).min(Duration::from_secs(300)),
+                                _ = s.wake.notified() => {}
+                            }
+                        } else {
+                            s.wake.notified().await;
+                        }
+                        s.set_next(None);
+                        s.set(State::Connecting);
                     }
                 }
             }
@@ -448,9 +490,37 @@ pub fn describe(servers: &Servers) -> Vec<String> {
                 State::Connecting => "connecting".to_string(),
                 State::Connected { tools } => format!("connected, {tools} tools"),
                 State::Unavailable(w) => format!("not available here ({w})"),
-                State::Failed(w) => format!("not connected: {w}"),
+                State::Failed(w) => match s.next_try().and_then(|t| t.duration_since(std::time::SystemTime::now()).ok()) {
+                    Some(d) => format!("not connected: {w} (trying again in {} s)", d.as_secs() + 1),
+                    None => format!("not connected: {w}"),
+                },
             };
             format!("{:<14} {state}", s.title)
         })
         .collect()
+}
+
+/// An address without its user, password, query and fragment: what the faces may show of it.
+pub fn plain_url(url: &str) -> String {
+    let url = url.split(['?', '#']).next().unwrap_or("");
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let (host, path) = rest.split_once('/').map(|(h, p)| (h, format!("/{p}"))).unwrap_or((rest, String::new()));
+            let host = host.rsplit_once('@').map(|(_, h)| h).unwrap_or(host);
+            format!("{scheme}://{host}{path}")
+        }
+        None => url.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod plain_tests {
+    use super::plain_url;
+
+    #[test]
+    fn an_address_is_shown_without_its_user_or_query() {
+        assert_eq!(plain_url("https://me:pw@host.test:8080/mcp?token=x#a"), "https://host.test:8080/mcp");
+        assert_eq!(plain_url("http://host.test"), "http://host.test");
+        assert_eq!(plain_url("https://host.test/a@b/c"), "https://host.test/a@b/c");
+    }
 }
