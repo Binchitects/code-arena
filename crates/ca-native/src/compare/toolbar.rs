@@ -237,7 +237,12 @@ pub fn register(_ui: Ui, _send: &Send) {
         command(SWAP, "Compare", "Swap Left and Right Side", |ui, send| {
             let Some(e) = super::shown(ui) else { return };
             ui.close_now(&e.path);
-            super::open(ui, send, e.right.source.clone(), e.left.source.clone());
+            // A side not the file's own keeps the text it has (a revision's, the clipboard's as it was then).
+            let text = |h: &super::Half| {
+                (!h.editable).then(|| floem::views::editor::text::Document::text(&*h.doc).to_string())
+            };
+            let texts = (text(&e.right), text(&e.left));
+            super::open_with(ui, send, e.right.source.clone(), e.left.source.clone(), texts);
         })
         .when(is_compare),
     );

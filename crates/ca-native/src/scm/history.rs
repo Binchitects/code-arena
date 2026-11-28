@@ -340,7 +340,7 @@ fn revision_rows(refs: &[super::branches::Ref], commits: &[Commit], now: u64) ->
     use super::branches::Kind;
     let mut rows = vec![
         quick::item("HEAD", "HEAD").icon("git-commit").description("Last commit"),
-        quick::item("", "Index").icon("git-commit").description("Staged changes"),
+        quick::item("index", "Index").icon("git-commit").description("Staged changes"),
     ];
     for r in refs {
         let (glyph, group) = match r.kind {
@@ -369,6 +369,7 @@ fn pick_revision(ui: Ui, send: &Send, path: String, commits: Vec<Commit>, refs: 
                 Some(name) => Source::Rev(name.to_string(), path.clone()),
                 None => match commits.iter().find(|c| c.hash == item.id) {
                     Some(c) => Source::Rev(c.hash.clone(), c.path_at.clone().unwrap_or_else(|| path.clone())),
+                    None if item.id == "index" => Source::Rev(String::new(), path.clone()),
                     None => Source::Rev(item.id.clone(), path.clone()),
                 },
             };
@@ -548,18 +549,15 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
                 toggle(ui, &toggling, hash);
             }
         })
-        .on_open(move |id| match row_of(id) {
-            Some(Row::Commit(hash)) => toggle(ui, &opening, hash),
-            Some(Row::File(hash, path)) => {
-                let file = me.files.with_untracked(|f| {
-                    f.get(hash).and_then(|f| f.files.iter().find(|x| x.path == path).cloned().map(|x| (f.root, x)))
-                });
-                if let Some((root, f)) = file {
-                    let (l, r) = sides_of(hash, root, &f);
-                    open_revs(ui, &opening, l, r);
-                }
+        .on_open(move |id| {
+            let Some(Row::File(hash, path)) = row_of(id) else { return };
+            let file = me.files.with_untracked(|f| {
+                f.get(hash).and_then(|f| f.files.iter().find(|x| x.path == path).cloned().map(|x| (f.root, x)))
+            });
+            if let Some((root, f)) = file {
+                let (l, r) = sides_of(hash, root, &f);
+                open_revs(ui, &opening, l, r);
             }
-            _ => {}
         })
         .view()
         .style(move |s| {
@@ -716,7 +714,7 @@ mod tests {
         let commits = commits_of(&json!({"items": [commit("abc9", "Fix")]}));
         let rows = revision_rows(&refs, &commits, 1000);
         let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, ["HEAD", "", "ref:main", "ref:v1", "abc9"]);
+        assert_eq!(ids, ["HEAD", "index", "ref:main", "ref:v1", "abc9"]);
         assert_eq!(rows[1].label, "Index");
         assert_eq!(rows[2].description, "01234567");
         assert_eq!(rows[4].description, "abc · Ann · now");
@@ -747,5 +745,46 @@ mod tests {
         assert_eq!(e.left.doc.text().to_string(), "one\n");
         assert_eq!(e.right.doc.text().to_string(), "one\ntwo\n");
         assert!(!e.right.editable);
+        crate::compare::toolbar::register(ui, &send);
+        ui.active.set(Some(path.clone()));
+        crate::commands::run(ui, &send, crate::compare::toolbar::SWAP);
+        let swapped = compare::entry(&compare::path_of(&r, &l)).expect("swapped");
+        assert_eq!(swapped.left.doc.text().to_string(), "one\ntwo\n", "a swap keeps the revisions' texts");
+        assert_eq!(swapped.right.doc.text().to_string(), "one\n");
+    }
+
+    #[test]
+    fn a_revision_is_compared_with_the_files_editor_and_a_files_history_is_picked_from() {
+        let ui = Ui::new();
+        let sent = Rc::new(std::cell::RefCell::new(Vec::<Value>::new()));
+        let kept = sent.clone();
+        let send: Send = Rc::new(move |v: Value| kept.borrow_mut().push(v));
+        crate::compare::register(ui, &send);
+        ui.take(&json!({"type": "file", "path": "a.rs", "text": "now\n", "modified": 1}), &send);
+        let (l, r) = (Source::Rev("HEAD".into(), "a.rs".into()), Source::Live("a.rs".into()));
+        open_revs(ui, &send, l.clone(), r.clone());
+        let key = sent.borrow().last().map(|m| m["key"].clone()).expect("asked");
+        take(
+            ui,
+            &json!({"type": "git_shown", "path": "a.rs", "rev": "HEAD", "exists": true, "text": "then\n",
+            "key": key}),
+            &send,
+        );
+        let e = compare::entry(&compare::path_of(&l, &r)).expect("the compare");
+        assert_eq!(e.left.doc.text().to_string(), "then\n");
+        assert!(e.right.editable, "the file's side is its editor's");
+        let n = next(state(ui));
+        assert!(!quick::is_open(ui));
+        let log = json!({"type": "git_log", "path": "a.rs", "key": format!("history.file.{}", n - 1),
+            "items": [commit("abc9", "Fix")]});
+        take(ui, &log, &send);
+        assert!(!quick::is_open(ui), "an older request's reply is dropped");
+        take(
+            ui,
+            &json!({"type": "git_log", "path": "a.rs", "key": format!("history.file.{n}"),
+            "items": [commit("abc9", "Fix")]}),
+            &send,
+        );
+        assert!(quick::is_open(ui), "the file's commits are picked from");
     }
 }
