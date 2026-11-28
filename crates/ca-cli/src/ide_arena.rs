@@ -243,19 +243,29 @@ async fn chosen_assistant(ctx: &mut Ctx<'_>, words: &str) -> Result<Option<Strin
         .ok_or_else(|| format!("No assistant {words}: /assistant lists them."))
 }
 
-/// The session works as this assistant (by its id), or as Code Arena's own: what is said of it.
+/// The session works as this assistant (by its id), or as Code Arena's own: what is said of it. The faces are told
+/// the model and thinking it works with now (`status`).
 async fn set_assistant(ctx: &mut Ctx<'_>, id: Option<&str>) -> Result<String, String> {
     let Some(sync) = ctx.p.sync.clone() else { return Err(SIGNED_OUT_ASSISTANTS.into()) };
     let working = ctx.sh.kept.of::<Working>();
     let session = ctx.p.session.clone();
-    let Some(id) = id else {
-        working.set(&session, None);
-        return Ok(crate::projects::own_again(ctx.p));
+    let said = match id {
+        None => {
+            working.set(&session, None);
+            crate::projects::own_again(ctx.p)
+        }
+        Some(id) => {
+            let list = sync.arena().assistants().await.map_err(|e| format!("Arena did not list them: {e}"))?;
+            let chosen = list.iter().find(|a| a.id == id).ok_or("That assistant is not among yours any more.")?;
+            let said = crate::projects::work_as(ctx.p, &sync, chosen);
+            working.set(&session, Some(chosen));
+            if let Ok(store) = ctx.p.store.lock() {
+                let _ = store.set_model(&ctx.p.session, &ctx.p.agent.model, ctx.p.agent.policy.mode.name());
+            }
+            said
+        }
     };
-    let list = sync.arena().assistants().await.map_err(|e| format!("Arena did not list them: {e}"))?;
-    let chosen = list.iter().find(|a| a.id == id).ok_or("That assistant is not among yours any more.")?;
-    let said = crate::projects::work_as(ctx.p, &sync, chosen);
-    working.set(&session, Some(chosen));
+    send(&ctx.sh.out, crate::ide::status(ctx.p, ctx.sh));
     Ok(said)
 }
 

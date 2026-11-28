@@ -3,8 +3,8 @@
 //! which the Projects view (`projects_view.rs`) draws from too.
 //!
 //! The Assistant submenu has "None: Code Arena's own" and then the person's own assistants and those shared with
-//! them, each with its description and model, a dot by the one the session works as; it is dimmed while a turn
-//! runs. The Project submenu has "In no project" and the projects the session may be put in, a dot by the one its
+//! them, each with its description and model, a check by the one the session works as; it is dimmed while a turn
+//! runs. The Project submenu has "In no project" and the projects the session may be put in, a check by the one its
 //! chat counts to and "its repository's" by the one this folder's repository is in. Until Arena has answered a
 //! submenu says "Asking Arena…", and while nothing is signed in it says how to. What the session says of a choice is
 //! a corner bubble.
@@ -161,6 +161,17 @@ pub fn projects_of(m: &Value) -> Projects {
     }
 }
 
+/// What is kept of a `projects` reply: the whole of one that lists them all, as this window asks; of one another
+/// face asked for a scope or words, all but its list (the session's project, the repository's, what may be made).
+pub fn merged(was: Option<Projects>, m: &Value) -> Projects {
+    let got = projects_of(m);
+    let whole = m["scope"].as_str().is_none_or(|s| s == "all") && m["query"].as_str().is_none_or(str::is_empty);
+    match was {
+        Some(was) if !whole => Projects { items: was.items, ..got },
+        _ => got,
+    }
+}
+
 /// A row of a submenu or a pick: a choice (by its id, "" for none), or words alone (dimmed, not a choice).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Choice {
@@ -314,7 +325,7 @@ fn entries(choices: Vec<Choice>, chosen: impl Fn(&str) + Clone + 'static) -> Vec
         // A menu is as wide as its widest row: long words (Arena's problem) are cut, the pick says them whole.
         let mut e = popup::entry(&short(&c.label, 60), move || go(&id)).keys(&short(&c.note, 48)).enabled(c.enabled);
         if c.enabled {
-            e = e.radio(c.on);
+            e = e.checked(c.on);
         }
         out.push(e.into());
     }
@@ -470,7 +481,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             true
         }
         "projects" => {
-            let got = projects_of(m);
+            let got = merged(st.projects.get_untracked(), m);
             if st.projects.with_untracked(|p| p.as_ref() != Some(&got)) {
                 st.projects.set(Some(got));
             }
@@ -543,6 +554,16 @@ mod tests {
         let got = projects_of(&json!({"items": [{"id": "p", "name": "P", "spent": 12.5, "budget": 0}]}));
         let p = &got.items.expect("items")[0];
         assert_eq!((p.spent, p.budget), (1250, None));
+    }
+
+    #[test]
+    fn a_list_another_face_narrowed_keeps_this_windows_whole_list() {
+        let all = merged(None, &json!({"scope": "all", "query": "", "items": [{"id": "a"}, {"id": "b"}]}));
+        let narrowed =
+            json!({"scope": "mine", "query": "", "items": [{"id": "a"}], "current": {"id": "a", "name": "A"}});
+        let kept = merged(Some(all), &narrowed);
+        assert_eq!(kept.items.map(|i| i.len()), Some(2));
+        assert_eq!(kept.current, Some(("a".into(), "A".into())));
     }
 
     #[test]
