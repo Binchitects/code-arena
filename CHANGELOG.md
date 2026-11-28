@@ -953,6 +953,20 @@ Sections used:
 - **Folder actions on changed files.** In a tree, a folder row has its group's actions for every
   file under it: Stage, Unstage and Discard in Source Control, and Accept and Revert in Agent
   changes. Revert asks once for the whole folder.
+- **Branches in Source Control.** Checkout to... (from the palette or the status bar's branch item)
+  lists your branches, remote branches and tags, and can create a new branch or create one from
+  another ref. Create, Rename and Delete Branch check the name as you type. Deleting a branch that
+  is not merged asks 'Delete anyway?'. Undo Last Commit stages its changes again and puts its
+  message back in the box.
+- **Pull, Push, Fetch and Sync.** The view's … menu has Pull, Pull (Rebase), Push, Push (Force with
+  Lease), Publish Branch, Fetch, Fetch From All Remotes, Sync, Commit & Push and Commit & Sync. Sync
+  asks first while git.confirmSync is on ('OK, Don't Ask Again' turns it off) and rebases while
+  git.rebaseWhenSync is on. A branch with no upstream is published. Git's errors appear as toasts in
+  git's own words, and a fetch, pull, push or sync is stopped after 10 minutes.
+- **Sync in the status bar.** The status bar shows the branch (with '*' while there are changes) and
+  '0↓ 1↑'. Clicking it syncs, its icon turning while git works; a branch with no upstream shows a
+  Publish cloud. When nothing is left to commit, a 'Sync Changes 1↓ 2↑' or 'Publish Branch' button
+  appears under Commit. With git.autofetch on, the remotes are fetched every three minutes.
 
 
 ### :bug: Bugs fixed
