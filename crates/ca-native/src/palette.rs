@@ -33,6 +33,10 @@ pub enum Mode {
     Files,
     Commands,
     Themes,
+    /// ":", "@" and "?" typed first (`quick_modes`).
+    Line,
+    Symbols,
+    Help,
 }
 
 /// The most rows ranked and drawn.
@@ -264,6 +268,14 @@ impl Files {
 #[derive(Clone)]
 pub enum Pick {
     File(String),
+    /// A file opened at a line and a column (from 1).
+    FileAt(String, usize, usize),
+    /// A line and a column of the file shown.
+    Line(usize, usize),
+    /// A mode's prefix typed ("?" lists them).
+    Prefix(String),
+    /// A row that only says something.
+    Nothing,
     /// A command, by its id.
     Command(String),
     Theme(String),
@@ -278,6 +290,12 @@ pub struct Row {
     pub lit: Vec<Range<usize>>,
     pub keys: String,
     pub pick: Pick,
+    /// The group it heads, said at its right ("recently used"); empty: it heads none.
+    pub group: String,
+    /// A line over it: the group it heads is not the first.
+    pub line: bool,
+    /// A symbol's kind, drawn as its icon before the name.
+    pub kind: Option<crate::outline::Kind>,
     /// What tells it from another row drawn in its place.
     pub(crate) key: u64,
 }
@@ -287,9 +305,40 @@ const BETWEEN: &str = "  ";
 
 impl Row {
     pub(crate) fn new(name: &str, detail: &str, lit: Vec<Range<usize>>, keys: &str, pick: Pick) -> Row {
+        let mut row = Row {
+            name: name.into(),
+            detail: detail.into(),
+            lit,
+            keys: keys.into(),
+            pick,
+            group: String::new(),
+            line: false,
+            kind: None,
+            key: 0,
+        };
+        row.rekey();
+        row
+    }
+
+    fn rekey(&mut self) {
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (name, detail, &lit, keys).hash(&mut h);
-        Row { name: name.into(), detail: detail.into(), lit, keys: keys.into(), pick, key: h.finish() }
+        (&self.name, &self.detail, &self.lit, &self.keys, &self.group, self.line, self.kind).hash(&mut h);
+        self.key = h.finish();
+    }
+
+    /// The row heading a group: its name at the right, a line over it when another group is before it.
+    pub fn heading(mut self, group: &str, line: bool) -> Row {
+        self.group = group.into();
+        self.line = line;
+        self.rekey();
+        self
+    }
+
+    /// The row of a symbol: its kind's icon before the name.
+    pub fn kind(mut self, kind: crate::outline::Kind) -> Row {
+        self.kind = Some(kind);
+        self.rekey();
+        self
     }
 
     /// The row as one text: the name, then the folder.
@@ -298,7 +347,9 @@ impl Row {
     }
 }
 
-/// The files' rows for what was typed: the best fifty, the file's name then its folder.
+/// The files' rows for what was typed: the best fifty, the file's name then its folder (none opened before:
+/// Quick Open's own are `quick_modes::file_rows`).
+#[cfg(test)]
 pub fn file_rows(files: &Files, text: &str) -> Vec<Row> {
     let q = Query::of(text);
     files.rank(&q, MOST).into_iter().map(|i| path_row(&files.paths[i], &q)).collect()
@@ -328,19 +379,11 @@ pub fn path_row(path: &str, q: &Query) -> Row {
     Row::new(name, dir, lit, "", Pick::File(path.to_string()))
 }
 
-/// The commands' rows for what was typed after the ">": all of them in their order, or the ones that match.
+/// The commands' rows for what was typed after the ">", none run before (the palette's own are
+/// `quick_modes::command_rows`).
+#[cfg(test)]
 pub fn command_rows(all: &[Rc<Command>], text: &str) -> Vec<Row> {
-    let q = Query::of(text);
-    let names: Vec<String> = all.iter().map(|c| c.label()).collect();
-    let labels = Files::of(names.iter().map(String::as_str), false);
-    labels
-        .rank(&q, MOST)
-        .into_iter()
-        .map(|i| {
-            let (c, label) = (&all[i], &labels.paths[i]);
-            Row::new(label, "", positions(label, &q), c.shown_keys(), Pick::Command(c.id.clone()))
-        })
-        .collect()
+    crate::quick_modes::command_rows(all, text, &[])
 }
 
 /// The themes' rows, and the row to begin on: the theme in force when nothing is typed.
@@ -356,13 +399,13 @@ pub fn theme_rows(all: &[ca_themes::Theme], text: &str, current: &str) -> (Vec<R
     (rows, if q.is_empty() { at } else { 0 })
 }
 
-/// What the quick input shows now: the themes, or the commands once ">" begins what is typed, else the files.
+/// What the quick input shows now: the themes, or the mode what is typed begins with (">" the commands, ":" a
+/// line, "@" a symbol, "?" the modes), else the files.
 pub fn shown(ui: Ui) -> Option<Mode> {
     let opened = ui.quick.get()?;
     Some(match opened {
         Mode::Themes => Mode::Themes,
-        _ if ui.quick_text.with(|t| t.starts_with('>')) => Mode::Commands,
-        _ => Mode::Files,
+        _ => ui.quick_text.with(|t| crate::quick_modes::mode_of(t)),
     })
 }
 
@@ -370,9 +413,21 @@ pub fn shown(ui: Ui) -> Option<Mode> {
 pub fn refresh(ui: Ui) {
     let Some(mode) = shown(ui) else { return };
     let text = ui.quick_text.get();
+    let rest = crate::quick_modes::rest_of(&text, mode);
+    let recent = crate::quick_modes::recent(ui);
     let (rows, at) = match mode {
-        Mode::Files => (ui.quick_files.with(|f| file_rows(f, &text)), 0),
-        Mode::Commands => (command_rows(&commands(ui), &text[1..]), 0),
+        Mode::Files => (recent.files.with(|r| ui.quick_files.with(|f| crate::quick_modes::file_rows(f, &text, r))), 0),
+        Mode::Commands => (recent.commands.with(|r| crate::quick_modes::command_rows(&commands(ui), rest, r)), 0),
+        Mode::Line => (crate::quick_modes::line_rows(rest, ui.caret.get(), crate::quick_modes::lines_shown(ui)), 0),
+        Mode::Symbols => {
+            let rows = match crate::quick_modes::symbols_shown(ui) {
+                None => crate::quick_modes::symbol_rows(None, rest),
+                Some(None) => Vec::new(),
+                Some(Some(s)) => crate::quick_modes::symbol_rows(Some(&s), rest),
+            };
+            (rows, 0)
+        }
+        Mode::Help => (crate::quick_modes::help_rows(rest), 0),
         Mode::Themes => {
             let was = ui.quick_theme.get_untracked().unwrap_or_else(|| ui.choice.get_untracked());
             ui.themes.with(|all| theme_rows(all, &text, &ca_themes::chosen(all, &was, true).id))
@@ -407,6 +462,11 @@ pub fn open(ui: Ui, send: &Send, mode: Mode) {
     back(ui);
     ui.menu.set(None);
     ui.context.set(None);
+    // "@" typed in any mode reads the file's symbols again (it may have been edited since).
+    crate::quick_modes::forget_symbols(ui);
+    if ui.quick.get_untracked().is_none() {
+        crate::quick_modes::opened(ui);
+    }
     match mode {
         Mode::Files => {
             // Listed again each time (files come and go); the list had before is ranked meanwhile.
@@ -414,6 +474,9 @@ pub fn open(ui: Ui, send: &Send, mode: Mode) {
             ui.quick_text.set(String::new());
         }
         Mode::Commands => ui.quick_text.set(">".into()),
+        Mode::Line => ui.quick_text.set(":".into()),
+        Mode::Symbols => ui.quick_text.set("@".into()),
+        Mode::Help => ui.quick_text.set("?".into()),
         Mode::Themes => {
             ui.quick_theme.set(Some(ui.choice.get_untracked()));
             ui.quick_text.set(String::new());
@@ -439,16 +502,40 @@ pub fn close(ui: Ui) {
     }
 }
 
-/// The row chosen: its file opened, its command run, its theme kept.
+/// The row chosen: its file opened, its command run, its theme kept, its line gone to, its mode typed.
 pub fn accept(ui: Ui, send: &Send, at: usize) {
+    accept_in(ui, send, at, false);
+}
+
+/// The row chosen, a file to the side (Ctrl+Enter) when `side`.
+pub fn accept_in(ui: Ui, send: &Send, at: usize, side: bool) {
     let Some(pick) = ui.quick_rows.with_untracked(|r| r.get(at).map(|r| r.pick.clone())) else { return };
     match pick {
+        Pick::File(path) | Pick::FileAt(path, ..) if side => {
+            close(ui);
+            crate::editor::groups::open_to_side(ui, &path, send);
+        }
         Pick::File(path) => {
             close(ui);
             ui.open(&path, send);
         }
+        Pick::FileAt(path, line, col) => {
+            close(ui);
+            crate::quick_modes::open_at(ui, send, &path, line, col);
+        }
+        Pick::Line(line, col) => {
+            close(ui);
+            if let Some(path) = ui.active.get_untracked() {
+                crate::quick_modes::open_at(ui, send, &path, line, col);
+            }
+        }
+        Pick::Prefix(prefix) => ui.quick_text.set(prefix),
+        Pick::Nothing => {}
         Pick::Command(id) => {
             close(ui);
+            crate::quick_modes::ran(ui, send, &id);
+            // The keys back where they were (the editor), then the command: one that gives them to a view keeps them.
+            crate::quick_modes::give_back(ui);
             crate::commands::run(ui, send, &id);
         }
         Pick::Theme(id) => {
@@ -518,8 +605,25 @@ fn row_view(ui: Ui, send: Send, i: usize, row: Row) -> impl IntoView {
     let t = ui.colors;
     let selected: Memo<bool> = create_memo(move |_| ui.quick_at.get() == i);
     let keys = keys_view(t, &row.keys);
+    let (group, line, heads) = (row.group.clone(), row.line, !row.group.is_empty());
+    let mark: AnyView = match row.kind {
+        Some(k) => crate::icons::icon(k.icon(), 16.0)
+            .style(move |s| s.margin_right(6.0).flex_shrink(0.0_f32).color(k.colour(&t.get())))
+            .into_any(),
+        None => empty().into_any(),
+    };
+    // The group's name at the right of the row heading it, as VS Code's quick pick.
+    let heading = label(move || group.clone()).style(move |s| {
+        let c = t.get();
+        s.font_size(12.0)
+            .padding_left(10.0)
+            .flex_shrink(0.0_f32)
+            .color(if selected.get() { c.quick_focus_fg } else { c.picker_group_fg })
+            .apply_if(!heads, |s| s.hide())
+    });
     let text = rich_text(move || layout_of(&row, &t.get(), selected.get())).style(|s| s.flex_shrink(0.0_f32));
-    h_stack((clip(text).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height(ROW)), keys))
+    let text = clip(text).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height(ROW));
+    h_stack((mark, text, keys, heading))
         // On the press, not the release: a press takes the input's focus, which closes the widget.
         .on_event_stop(EventListener::PointerDown, move |_| accept(ui, &send, i))
         .style(move |s| {
@@ -533,7 +637,8 @@ fn row_view(ui: Ui, send: Send, i: usize, row: Row) -> impl IntoView {
                 .border_radius(3.0)
                 .cursor(CursorStyle::Pointer)
                 .selectable(false)
-                .color(c.quick_fg);
+                .color(c.quick_fg)
+                .apply_if(line, |s| s.border_top(1.0).border_color(c.picker_group_border));
             if selected.get() { s.background(c.quick_focus_bg) } else { s.hover(|s| s.background(c.list_hover)) }
         })
 }
@@ -553,7 +658,10 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             match &k.key.logical_key {
                 Key::Named(NamedKey::ArrowDown) => step(ui, 1),
                 Key::Named(NamedKey::ArrowUp) => step(ui, -1),
-                Key::Named(NamedKey::Enter) => accept(ui, &keys, ui.quick_at.get_untracked()),
+                // Ctrl+Enter: the file opened to the side.
+                Key::Named(NamedKey::Enter) => {
+                    accept_in(ui, &keys, ui.quick_at.get_untracked(), m.contains(Modifiers::CONTROL))
+                }
                 Key::Character(c) if m.contains(Modifiers::CONTROL) && c.eq_ignore_ascii_case("p") => {
                     open(ui, &keys, if m.contains(Modifiers::SHIFT) { Mode::Commands } else { Mode::Files })
                 }
@@ -592,7 +700,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
 
     let hint = label(move || match ui.quick.get() {
         Some(Mode::Themes) => "Select Color Theme (Up/Down Keys to Preview)",
-        _ => "Search files by name (type > to run a command)",
+        _ => "Search files by name (append : to go to line or @ to go to symbol)",
     })
     .style(move |s| {
         s.position(Position::Absolute)
@@ -652,7 +760,19 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
                 .apply_if(n == 0, |s| s.hide())
         });
 
-    let widget = v_stack((field, none, list))
+    // The session lists so many files and no more: said under them.
+    let more = label(|| "The folder has more files than are listed here.").style(move |s| {
+        let c = t.get();
+        s.height(ROW)
+            .margin_bottom(6.0)
+            .padding_horiz(12.0)
+            .items_center()
+            .font_size(12.0)
+            .selectable(false)
+            .color(c.desc)
+            .apply_if(shown(ui) != Some(Mode::Files) || !ui.quick_files.with(|f| f.more), |s| s.hide())
+    });
+    let widget = v_stack((field, none, list, more))
         // A press in the box (not on a row, not in the input) leaves the input its focus.
         .on_event_stop(EventListener::PointerDown, move |_| input_id.request_focus())
         .style(move |s| {
@@ -887,12 +1007,13 @@ mod tests {
         assert!(ui.view_shown(View::Files));
         run(">show search");
         assert!(ui.view_shown(View::Search));
+        // Before the agent's changes: once those have run, they come first for "show agent" (run last, and a match).
+        run(">show agent");
+        assert!(ui.view_shown(View::Agent));
         run(">agent's changes");
         assert!(ui.view_shown(View::Changes));
         run(">focus terminal");
         assert!(ui.view_shown(View::Terminal));
-        run(">show agent");
-        assert!(ui.view_shown(View::Agent));
         assert!(said.borrow().is_empty(), "these commands ask nothing of the session");
         crate::commands::add(
             crate::commands::command("test.added", "Test", "Added", |ui, _| ui.message.set("added".into()))
@@ -1016,13 +1137,15 @@ mod tests {
         println!("the same list known for the same: {:?}", from.elapsed());
         assert!(!files.holds(paths.iter().skip(1).map(String::as_str), false));
         let mut worst = Duration::ZERO;
+        let recent: Vec<String> = paths.iter().step_by(1000).take(crate::quick_modes::RECENT_FILES).cloned().collect();
         for text in
             ["s", "st", "state", "stateeditor", "src/state", "editor42.ts", "crates layout render 499", "zzzz", "e"]
         {
             let mut took: Vec<Duration> = (0..9)
                 .map(|_| {
                     let from = Instant::now();
-                    let rows = file_rows(&files, text);
+                    // As Quick Open ranks them: the files opened last too.
+                    let rows = crate::quick_modes::file_rows(&files, text, &recent);
                     let took = from.elapsed();
                     assert!(rows.len() <= MOST);
                     took
