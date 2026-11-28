@@ -53,7 +53,8 @@ pub fn expand(context: &Value, ws: &ca_workspace::Workspace) -> (String, Vec<Val
         let shown = ws.display(&real);
         let block = match &text {
             Some(text) => {
-                let numbered: String = text.lines().enumerate().map(|(i, l)| format!("{:>6}\t{l}\n", start + i)).collect();
+                let numbered: String =
+                    text.lines().enumerate().map(|(i, l)| format!("{:>6}\t{l}\n", start + i)).collect();
                 let numbered = ca_tools::text::cut_middle(&numbered, MOST_TEXT);
                 format!("\n\n<file path=\"{shown}\" unsaved=\"true\">\n{numbered}</file>")
             }

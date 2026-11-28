@@ -13,12 +13,12 @@
 
 use std::cell::RefCell;
 
+use floem::IntoView;
 use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_memo};
 use floem::style::{CursorStyle, FlexWrap};
 use floem::views::editor::core::buffer::rope_text::{RopeText, RopeTextRef};
 use floem::views::editor::core::cursor::CursorMode;
 use floem::views::{Decorators, dyn_stack, h_stack, label, tooltip};
-use floem::IntoView;
 use serde_json::{Value, json};
 
 use super::slots::{self, Slot};
@@ -228,17 +228,15 @@ fn chips(ui: Ui, send: Send) -> impl IntoView {
         }
         let chip = current(ui)?;
         let taken = me.list.with(|l| {
-            l.iter().any(|c| c.piece.path == chip.piece.path && (c.piece.start, c.piece.end) == (chip.piece.start, chip.piece.end))
+            l.iter().any(|c| {
+                c.piece.path == chip.piece.path && (c.piece.start, c.piece.end) == (chip.piece.start, chip.piece.end)
+            })
         });
         (!taken).then(|| (chip.piece.path.clone(), chip.piece.start, chip.piece.end, chip.unsaved))
     });
     let open = send.clone();
-    let row = dyn_stack(
-        move || me.list.get(),
-        |c| c.id,
-        move |c| chip_view(ui, &open, c).into_any(),
-    )
-    .style(|s| s.gap(4.0).flex_wrap(FlexWrap::Wrap).min_width(0.0));
+    let row = dyn_stack(move || me.list.get(), |c| c.id, move |c| chip_view(ui, &open, c).into_any())
+        .style(|s| s.gap(4.0).flex_wrap(FlexWrap::Wrap).min_width(0.0));
     let offered = label(move || {
         offer.get().map_or(String::new(), |(path, start, end, unsaved)| {
             let chip = Chip { id: 0, piece: Piece { path, start, end, text: String::new() }, unsaved };
@@ -288,10 +286,12 @@ fn chip_view(ui: Ui, send: &Send, chip: Chip) -> impl IntoView {
             let c = t.get();
             s.border_radius(3.0).cursor(CursorStyle::Pointer).hover(|s| s.background(c.toolbar_hover))
         });
-    let close = tooltip(close, move || label({
-        let out = out.clone();
-        move || out.clone()
-    }));
+    let close = tooltip(close, move || {
+        label({
+            let out = out.clone();
+            move || out.clone()
+        })
+    });
     h_stack((
         icon("file", 14.0),
         label(move || words.clone())
