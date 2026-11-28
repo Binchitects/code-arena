@@ -22,11 +22,15 @@ use crate::state::{Send, Ui};
 
 pub(super) fn view(ui: Ui, answer: Answer, send: Send) -> impl IntoView {
     let Answer { text, tools, .. } = answer;
-    v_stack((
-        super::tools::list(ui, send, tools).style(move |s| s.apply_if(tools.with(|t| t.is_empty()), |s| s.hide())),
-        crate::prose::answer(ui, text),
-    ))
-    .style(|s| s.gap(8.0).width_full())
+    // Words selected in it may be quoted in a reply (`quotes.rs`).
+    super::quotes::around(ui, send.clone(), answer, move |quoting| {
+        v_stack((
+            super::tools::list(ui, send, tools).style(move |s| s.apply_if(tools.with(|t| t.is_empty()), |s| s.hide())),
+            crate::prose::answer_quoting(ui, text, Some(quoting)),
+        ))
+        .style(|s| s.gap(8.0).width_full())
+        .into_any()
+    })
 }
 
 /// What it adds to the window's registries, once at start: the thinking over an answer, the footer under it.

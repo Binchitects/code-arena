@@ -288,7 +288,7 @@ fn sent_here(ui: Ui) -> Vec<String> {
 }
 
 /// The box's text as it is now.
-fn text(ui: Ui) -> String {
+pub(crate) fn text(ui: Ui) -> String {
     match ui.state::<Composer>().live.get_untracked() {
         Some(editor) => editor.text().to_string(),
         None => ui.draft.get_untracked(),

@@ -21,6 +21,7 @@
 //!   it (`compact` in `state` and `status`), and that changed from the window (`compact_at`).
 //! - `pieces.rs`: the lines of files a message is sent with (its `context`), read for the model and named in its
 //!   `files`.
+//! - `quotes.rs`: a message that quotes part of an answer (`send{quote}`): the quote put first for the model.
 //! - `rewind.rs`: what going back to a question would do (`rewind_preview`), and a question asked again.
 
 use serde_json::Value;
@@ -35,6 +36,7 @@ mod mentions;
 pub mod pickers;
 mod pieces;
 pub mod queue;
+pub mod quotes;
 pub mod replay;
 pub mod rewind;
 
@@ -89,6 +91,7 @@ impl Area for Here {
     fn shape(sh: &Shared, sent: &mut Sent) {
         pieces::sent(sh, sent);
         history::sent(sh, sent);
+        quotes::sent(sh, sent);
     }
 
     async fn before_turn(ctx: &mut Ctx<'_>, message: &str) {

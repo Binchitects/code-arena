@@ -35,11 +35,34 @@ static MONO: LazyLock<Vec<FamilyOwned>> = LazyLock::new(|| FamilyOwned::parse_li
 
 /// An answer's text, drawn from its Markdown as it is written.
 pub fn answer(ui: Ui, text: RwSignal<String>) -> impl IntoView {
+    answer_quoting(ui, text, None)
+}
+
+/// A selection made in an answer's words, as it is offered to be quoted: the text selected, the view of the block
+/// it is in, and where it is in that view.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Picked {
+    pub text: String,
+    pub view: floem::ViewId,
+    pub rect: Rect,
+}
+
+/// What an answer's words tell of a selection made in them: `picked` is told each one made, and none when it is
+/// gone; `held` says whether a press is on what was offered for it (its toolbar), so the selection stays though the
+/// words lose the keys.
+#[derive(Clone)]
+pub struct Quoting {
+    pub picked: Rc<dyn Fn(Option<Picked>)>,
+    pub held: Rc<dyn Fn() -> bool>,
+}
+
+/// An answer's text whose selections are told to `quoting` (an answer of the chat, to reply quoting a part of it).
+pub fn answer_quoting(ui: Ui, text: RwSignal<String>, quoting: Option<Quoting>) -> impl IntoView {
     let blocks = create_memo(move |_| text.with(|t| parse(t).into_iter().map(Rc::new).collect::<Vec<_>>()));
     dyn_stack(
         move || blocks.get().into_iter().enumerate().collect::<Vec<_>>(),
         |(n, b): &(usize, Rc<Block>)| (*n, shape(b)),
-        move |(n, b): (usize, Rc<Block>)| block(ui, n, &b, blocks),
+        move |(n, b): (usize, Rc<Block>)| block(ui, n, &b, blocks, quoting.clone()),
     )
     .style(move |s| s.flex_col().width_full().min_width(0.0).apply_if(blocks.with(|b| b.is_empty()), |s| s.hide()))
 }
@@ -59,7 +82,7 @@ fn shape(b: &Block) -> u64 {
     h.finish()
 }
 
-fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyView {
+fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>, q: Option<Quoting>) -> AnyView {
     let t = ui.colors;
     // The block as it is now: only a change to it lays it out again.
     let now = create_memo(move |_| blocks.with(|b| b.get(n).cloned()));
@@ -74,7 +97,7 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyVi
     // The space over a block (none over an answer's first).
     let over = move |px: f64| if n == 0 { 0.0 } else { px };
     match first {
-        Block::Paragraph(_) => prose(ui, words, 13.0, false).style(move |s| s.margin_top(over(8.0))).into_any(),
+        Block::Paragraph(_) => prose(ui, words, 13.0, false, q).style(move |s| s.margin_top(over(8.0))).into_any(),
         Block::Heading(level, _) => {
             let size = match level {
                 1 => 20.0,
@@ -82,7 +105,7 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyVi
                 3 => 14.0,
                 _ => 13.0,
             };
-            prose(ui, words, size, true).style(move |s| s.margin_top(over(16.0))).into_any()
+            prose(ui, words, size, true, q).style(move |s| s.margin_top(over(16.0))).into_any()
         }
         Block::Item { depth, marker, .. } => {
             let (depth, marker) = (*depth as f64, marker.clone());
@@ -95,12 +118,12 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyVi
                         .color(t.get().fg)
                         .selectable(false)
                 }),
-                prose(ui, words, 13.0, false).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0)),
+                prose(ui, words, 13.0, false, q).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0)),
             ))
             .style(move |s| s.width_full().min_width(0.0).padding_left(depth * 20.0).margin_top(over(4.0)))
             .into_any()
         }
-        Block::Quote(_) => container(prose(ui, words, 13.0, false))
+        Block::Quote(_) => container(prose(ui, words, 13.0, false, q))
             .style(move |s| {
                 s.width_full()
                     .min_width(0.0)
@@ -120,7 +143,7 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyVi
             };
             code(ui, lang, name, text).style(move |s| s.margin_top(over(8.0))).into_any()
         }
-        Block::Table { .. } => table(ui, now).style(move |s| s.margin_top(over(8.0))).into_any(),
+        Block::Table { .. } => table(ui, now, q).style(move |s| s.margin_top(over(8.0))).into_any(),
         Block::Rule => empty()
             .style(move |s| {
                 s.height(1.0).width_full().margin_top(over(12.0)).margin_bottom(4.0).background(t.get().widget_border)
@@ -257,7 +280,7 @@ fn lay_out(
 /// A block's text with its runs: wrapped to its width, the backgrounds of its inline code drawn under it. Its links
 /// open with a click (a citation of a file in the editor, an address in the browser); a drag selects its text, and
 /// Ctrl+C copies what is selected.
-fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool) -> impl IntoView {
+fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool, q: Option<Quoting>) -> impl IntoView {
     let t = ui.colors;
     let laid = create_rw_signal(Laid::default());
     // The width the text is wrapped to, as it was laid out last.
@@ -297,6 +320,22 @@ fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool) -
         .style(|s| s.width_full().min_width(0.0));
     let view = stack((marks, selection, text));
     let id = view.id();
+    // A selection told to the answer it is in (none: it is gone).
+    let held = q.as_ref().map(|q| q.held.clone());
+    let tell = move |chose: Option<(usize, usize)>| {
+        let Some(q) = &q else { return };
+        let picked = chose.filter(|(a, b)| a != b).and_then(|(a, b)| {
+            let range = a.min(b)..a.max(b);
+            laid.with_untracked(|l| {
+                let text = l.text.get(range.clone())?.to_string();
+                let rect = rects(&l.layout, &[range], 0.0).into_iter().reduce(|a, b| a.union(b))?;
+                Some(Picked { text, view: id, rect })
+            })
+        });
+        (q.picked)(picked);
+    };
+    let tell = Rc::new(tell);
+    let (on_down, on_up, on_lost, on_all) = (tell.clone(), tell.clone(), tell.clone(), tell);
     view.keyboard_navigable()
         .on_event(EventListener::PointerDown, move |e| {
             let Event::PointerDown(p) = e else { return EventPropagation::Continue };
@@ -308,6 +347,7 @@ fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool) -
             let (at, _) = laid.with_untracked(|l| offset(&l.layout, p.pos.x, p.pos.y));
             pressed.set(Some(at));
             selected.set(Some((at, at)));
+            on_down(None);
             EventPropagation::Stop
         })
         .on_event_cont(EventListener::PointerMove, move |e| {
@@ -335,12 +375,19 @@ fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool) -
                 if let Some(to) = inside.then(|| laid.with_untracked(|l| link_at(&l.links, at).cloned())).flatten() {
                     citations::open(ui, &to);
                 }
+            } else {
+                on_up(Some((from, at)));
             }
             EventPropagation::Stop
         })
         .on_event_cont(EventListener::FocusLost, move |_| {
+            // A press on the selection's toolbar keeps it.
+            if held.as_ref().is_some_and(|held| held()) {
+                return;
+            }
             if selected.get_untracked().is_some() {
                 selected.set(None);
+                on_lost(None);
             }
         })
         .on_event(EventListener::KeyDown, move |e| {
@@ -357,7 +404,9 @@ fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool) -
                     return EventPropagation::Stop;
                 }
             } else if command && letter("a") {
-                selected.set(Some((0, laid.with_untracked(|l| l.text.len()))));
+                let all = (0, laid.with_untracked(|l| l.text.len()));
+                selected.set(Some(all));
+                on_all(Some(all));
                 return EventPropagation::Stop;
             }
             EventPropagation::Continue
@@ -508,7 +557,7 @@ fn measure(text: &Text, bold: bool, c: &crate::colors::Colors) -> f64 {
 /// A table as VS Code's chat draws one: its cells in bordered columns as wide as their widest text (to a limit, past
 /// which they wrap), the header's text in bold. A header's click sorts by its column (up, down, then as written),
 /// and a long table has a box to filter its rows. It scrolls across when it is wider than the answer.
-fn table(ui: Ui, now: Memo<Option<Rc<Block>>>) -> impl IntoView {
+fn table(ui: Ui, now: Memo<Option<Rc<Block>>>, q: Option<Quoting>) -> impl IntoView {
     let t = ui.colors;
     let parts = create_memo(move |_| match now.get().as_deref() {
         Some(Block::Table { head, rows, .. }) => (Rc::new(head.clone()), Rc::new(rows.clone())),
@@ -582,7 +631,7 @@ fn table(ui: Ui, now: Memo<Option<Rc<Block>>>) -> impl IntoView {
             let row = (0..cells.len())
                 .map(|c| {
                     let words = cells[c].clone();
-                    container(prose(ui, move || words.clone(), 13.0, false)).style(move |s| cell_style(s, c))
+                    container(prose(ui, move || words.clone(), 13.0, false, q.clone())).style(move |s| cell_style(s, c))
                 })
                 .collect::<Vec<_>>();
             floem::views::h_stack_from_iter(row).style(move |s| s.border_left(1.0).border_color(t.get().widget_border))
