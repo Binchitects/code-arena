@@ -33,6 +33,7 @@ pub const MESSAGES: &[(&str, Rule)] = &[
     ("stop", Rule::Turn),
     ("skip", Rule::Turn),
     ("stop_job", Rule::Turn),
+    ("job_output", Rule::Turn),
     ("themes", Rule::Turn),
     ("keep_view_state", Rule::Turn),
     ("older", Rule::Turn),
@@ -87,7 +88,11 @@ pub(crate) fn tasks(sh: &Shared) -> Value {
         .map(|j| j.list())
         .unwrap_or_default()
         .into_iter()
-        .map(|j| json!({"id": j.id, "command": j.command, "running": j.running, "exit": j.exit, "background": j.background}))
+        .map(|j| {
+            let status = if j.running { "running" } else if j.stopped { "stopped" } else { "ended" };
+            json!({"id": j.id, "command": j.command, "running": j.running, "exit": j.exit, "background": j.background,
+                   "status": status, "started_ms": j.started_ms, "ended_ms": j.ended_ms})
+        })
         .collect();
     let mut v = json!({
         "type": "tasks",
@@ -791,6 +796,63 @@ struct Wires {
     /// From the driver itself (an area's background work: `Shared::post`).
     own: mpsc::UnboundedReceiver<Value>,
     pending: Pending,
+    jobs: JobWires,
+}
+
+/// The session's jobs as the loop hears them: those with no time limit that ended (the model carries on from
+/// them) and every job's end (the bars are told). Heard again when the session has other jobs.
+struct JobWires {
+    of: Option<Arc<ca_tools::jobs::Jobs>>,
+    ended: mpsc::UnboundedReceiver<ca_tools::jobs::Ended>,
+    ends: mpsc::UnboundedReceiver<u32>,
+}
+
+impl JobWires {
+    fn new(jobs: &Option<Arc<ca_tools::jobs::Jobs>>) -> Self {
+        let mut w = JobWires { of: None, ended: mpsc::unbounded_channel().1, ends: mpsc::unbounded_channel().1 };
+        w.follow(jobs);
+        w
+    }
+
+    /// Listens to the session's jobs, when they are others than those listened to.
+    fn follow(&mut self, jobs: &Option<Arc<ca_tools::jobs::Jobs>>) {
+        let same = match (&self.of, jobs) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+        if same {
+            return;
+        }
+        self.of = jobs.clone();
+        if let Some(j) = jobs {
+            (self.ended, self.ends) = (j.listen(), j.ends());
+        }
+    }
+}
+
+/// A job with no time limit ended: the bars are told, the thread says so ("Job 2 ended with exit code 0."), and
+/// the model carries on from it in a turn of its own, unless the person stopped it (Stop is their word).
+fn job_ended(sh: &Shared, said_next: &mut Option<String>, j: &ca_tools::jobs::Ended) {
+    send(&sh.out, tasks(sh));
+    ide_ext::say(&sh.out, &format!("Job {} {}.", j.id, crate::chat::job_end(j)));
+    if j.stopped {
+        return;
+    }
+    let note = crate::chat::job_words(j);
+    *said_next = Some(match said_next.take() {
+        Some(before) => format!("{before}\n\n{note}"),
+        None => note,
+    });
+}
+
+/// The last `n` lines of a job's output, for the jobs bar.
+fn last_lines(text: &str, n: usize) -> &str {
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    match body.rmatch_indices('\n').nth(n.saturating_sub(1)) {
+        Some((at, _)) if n > 0 => &text[at + 1..],
+        _ if n == 0 => "",
+        _ => text,
+    }
 }
 
 /// Who started a turn.
@@ -833,6 +895,12 @@ fn own_shared(sh: &Shared, m: &Value) -> bool {
                 j.stop(m["id"].as_u64().unwrap_or(0) as u32);
             }
             send(&sh.out, tasks(sh));
+        }
+        // The end of a job's output, its last 200 lines, for the bar that shows it open.
+        "job_output" => {
+            let id = m["id"].as_u64().unwrap_or(0);
+            let text = sh.jobs.as_ref().and_then(|j| j.output(id as u32, 64_000)).unwrap_or_default();
+            send(&sh.out, json!({"type": "job_output", "id": id, "text": last_lines(&text, 200)}));
         }
         "keep_view_state" => {
             if let Err(e) = keep_view_state(&sh.paths.data, sh.workspace.root(), &m["state"]) {
@@ -1026,7 +1094,8 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             _ => (vec![p.agent.model.clone()], Vec::new()),
         };
     let (post, own) = mpsc::unbounded_channel();
-    let mut w = Wires { from_page, own, pending };
+    let jobs = JobWires::new(&p.agent.ctx.jobs);
+    let mut w = Wires { from_page, own, pending, jobs };
     let mut drv = Driver {
         out: out.clone(),
         post,
@@ -1042,6 +1111,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
     let mut sh = Shared::of(&p, app, &drv, &side);
     ide_ext::start(&sh);
     loop {
+        w.jobs.follow(&p.agent.ctx.jobs);
         // What waited for a turn to end comes first, in the order it was asked; then what the session runs next
         // by itself; then what the faces say.
         let msg = if let Some(m) = drv.later.next() {
@@ -1063,6 +1133,14 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                     None => break,
                 },
                 Some(m) = w.own.recv() => m,
+                Some(j) = w.jobs.ended.recv() => {
+                    job_ended(&sh, &mut p.said_next, &j);
+                    continue;
+                }
+                Some(_) = w.jobs.ends.recv() => {
+                    send(&out, tasks(&sh));
+                    continue;
+                }
             }
         };
         if side.handle(&msg) {
@@ -1296,6 +1374,11 @@ async fn turn(
                 }
                 Some(m) = w.own.recv() => m,
                 () = replay.next(), if !replay.closed => continue,
+                // A job's end: the bars are told now; one with no time limit is carried on from after the turn.
+                Some(_) = w.jobs.ends.recv() => {
+                    send(&out, tasks(sh));
+                    continue;
+                }
             };
             // `state{running: true}` with the thread before the turn, then the turn so far, in one go: every face
             // draws its thread again from them (those that saw the turn as well, so none shows it twice).
@@ -1522,6 +1605,15 @@ mod tests {
         chain_ends(&end(true, None), &mut said);
         assert_eq!(next_turn(&mut said, &inbox), Some(("no, the other file".into(), How::Late)));
         assert_eq!(next_turn(&mut said, &inbox), None, "the session says nothing more by itself");
+    }
+
+    #[test]
+    fn a_jobs_output_is_shown_by_its_last_lines() {
+        assert_eq!(last_lines("a\nb\nc\n", 2), "b\nc\n");
+        assert_eq!(last_lines("a\nb\nc", 2), "b\nc");
+        assert_eq!(last_lines("a\nb\n", 5), "a\nb\n");
+        assert_eq!(last_lines("", 200), "");
+        assert_eq!(last_lines("a\nb", 0), "");
     }
 
     #[test]
