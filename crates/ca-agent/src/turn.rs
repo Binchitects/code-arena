@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::context::{self, Window};
 use crate::mend::{self, Mended};
-use crate::policy::{Answer, Approver, Decision, Policy};
+use crate::policy::{self, Answer, Approver, Decision, Policy, Question};
 
 /// What the model reads of one tool result; the middle of a longer one is cut.
 const RESULT_CHARS: usize = 16_000;
@@ -1058,20 +1058,48 @@ impl Agent {
                         (Decision::Run, Some("ask")) => Decision::Ask,
                         (d, _) => d,
                     };
+                    let forced = pre.permission.as_deref() == Some("ask");
+                    // Laya reads a command that is not refused; 60% or more asks whatever the mode.
+                    let risk = match decision {
+                        Decision::Refuse(_) => None,
+                        _ => self.policy.risk(&m.name, &subject).await,
+                    };
+                    let laya_asks = decision == Decision::Run && risk.is_some_and(|r| r.asks());
+                    let decision = policy::weigh(decision, risk.as_ref());
                     let allowed = match decision {
                         Decision::Run => Ok(()),
                         Decision::Refuse(why) => Err(why),
                         Decision::Ask => {
                             events.tool_waiting(&said);
-                            match Self::ask(self.hooks.clone(), self.approver.clone(), &m.name, &subject).await {
+                            // A question that would come back anyway offers no "always".
+                            let always = policy::always_text(&m.name, kind, &subject)
+                                .filter(|_| !forced && !risk.is_some_and(|r| r.asks()));
+                            let title = policy::title(&m.name, kind);
+                            let (timeless, background, _) = policy::waits(&subject);
+                            let q = Question {
+                                tool: &m.name,
+                                subject: &subject,
+                                title: &title,
+                                arguments: &m.args,
+                                always: always.as_deref(),
+                                risk,
+                                timeless,
+                                background,
+                            };
+                            match Self::ask(self.hooks.clone(), self.approver.clone(), &q).await {
                                 Some(Answer::Yes) => Ok(()),
-                                Some(Answer::Always) => {
+                                Some(Answer::Always) if always.is_some() => {
                                     self.policy.remember(&m.name, kind, &subject);
                                     Ok(())
                                 }
+                                Some(Answer::Always) => Ok(()),
                                 Some(Answer::No) => {
                                     Err(format!("{SAID_NO}: ask what they would like instead, or find another way."))
                                 }
+                                None if laya_asks => Err(format!(
+                                    "This run cannot ask, and Laya reads this command as risky ({}): it was not run. Say what you would have done, or find a safer way.",
+                                    risk.map(|r| r.line()).unwrap_or_default()
+                                )),
                                 None => Err(format!(
                                     "This run cannot ask, and {} asks in {} mode: it was not run. Say what you would have done; the person can run again with --mode auto-edit (edits) or --mode yolo (commands too).",
                                     m.name,
@@ -1106,22 +1134,17 @@ impl Agent {
     }
 
     /// The person asked about a call (their Notification hooks told first).
-    async fn ask(
-        hooks: Arc<crate::hooks::Hooks>,
-        approver: Arc<dyn Approver>,
-        name: &str,
-        subject: &str,
-    ) -> Option<Answer> {
+    async fn ask(hooks: Arc<crate::hooks::Hooks>, approver: Arc<dyn Approver>, q: &Question<'_>) -> Option<Answer> {
         if hooks.has("Notification") {
             let _ = hooks
                 .run(
                     "Notification",
                     "",
-                    serde_json::json!({"message": format!("Code Arena asks to run {name}: {subject}")}),
+                    serde_json::json!({"message": format!("Code Arena asks to run {}: {}", q.tool, q.subject)}),
                 )
                 .await;
         }
-        approver.ask(name, subject).await
+        approver.ask(q).await
     }
 
     async fn pre_tool(

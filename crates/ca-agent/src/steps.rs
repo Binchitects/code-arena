@@ -13,7 +13,7 @@ use ca_tools::plan::{BLOCKED, DOING, DONE, PROPOSED, Plan, Step};
 use ca_tools::{Context, Kind, Output, Tool};
 use serde_json::{Value, json};
 
-use crate::policy::{Answer, Approver, Mode};
+use crate::policy::{Answer, Approver, Mode, Question};
 use crate::task::{Crew, TaskTool};
 
 pub const MOST_AT_ONCE: usize = 4;
@@ -27,7 +27,8 @@ struct OnlyItsCheck(Option<String>);
 
 #[async_trait::async_trait]
 impl Approver for OnlyItsCheck {
-    async fn ask(&self, tool: &str, subject: &str) -> Option<Answer> {
+    async fn ask(&self, q: &Question<'_>) -> Option<Answer> {
+        let (tool, subject) = (q.tool, q.subject);
         let same = |a: &str, b: &str| {
             a.split_whitespace().collect::<Vec<_>>() == b.trim_matches('`').split_whitespace().collect::<Vec<_>>()
         };

@@ -2,6 +2,7 @@
 //! "always" to in this session.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use ca_tools::Kind;
 use serde_json::Value;
@@ -201,10 +202,29 @@ pub enum Answer {
     Always,
 }
 
+/// The question before a call: what it is, how it is put to the person, and what "always" would spare them.
+#[derive(Debug, Clone, Copy)]
+pub struct Question<'a> {
+    pub tool: &'a str,
+    /// As the tool names it; a command keeps its `[no time limit] ` or `[in the background] `.
+    pub subject: &'a str,
+    /// "Run this command?", "Allow TOOL to change this file?", "Allow TOOL to run with these arguments?".
+    pub title: &'a str,
+    pub arguments: &'a Value,
+    /// "Always for this session: no more questions …"; `None` when the call asks every time.
+    pub always: Option<&'a str>,
+    /// Laya's reading of a command, when there was one.
+    pub risk: Option<Risk>,
+    /// A command with no time limit.
+    pub timeless: bool,
+    /// A command left running in the background.
+    pub background: bool,
+}
+
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
     /// Asks whether a call may run; `None` when nobody can be asked.
-    async fn ask(&self, tool: &str, subject: &str) -> Option<Answer>;
+    async fn ask(&self, q: &Question<'_>) -> Option<Answer>;
 }
 
 /// A run that cannot ask (`-p`): what would ask is refused, with a reason the model passes on.
@@ -212,22 +232,109 @@ pub struct NoAsking;
 
 #[async_trait::async_trait]
 impl Approver for NoAsking {
-    async fn ask(&self, _tool: &str, _subject: &str) -> Option<Answer> {
+    async fn ask(&self, _q: &Question<'_>) -> Option<Answer> {
         None
     }
 }
 
-/// The mode and rules of one session, with what was said "always" to.
+/// Laya's reading of a command, each from 0 to 1: how likely it destroys something, reaches outside the
+/// workspace, and uses the network.
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct Risk {
+    #[serde(default)]
+    pub destructive: f64,
+    #[serde(default)]
+    pub outside: f64,
+    #[serde(default)]
+    pub network: f64,
+}
+
+/// From this likelihood on, a command asks whatever the mode and the rules say.
+pub const RISKY: f64 = 0.6;
+
+impl Risk {
+    /// Whether it asks even in yolo mode and past a kept allow rule.
+    pub fn asks(&self) -> bool {
+        self.destructive >= RISKY || self.outside >= RISKY || self.network >= RISKY
+    }
+
+    /// "Laya: destructive 96%, outside the workspace 93%, network 3%".
+    pub fn line(&self) -> String {
+        let pc = |v: f64| (v.clamp(0.0, 1.0) * 100.0).round() as u32;
+        format!(
+            "Laya: destructive {}%, outside the workspace {}%, network {}%",
+            pc(self.destructive),
+            pc(self.outside),
+            pc(self.network)
+        )
+    }
+}
+
+/// Laya, which reads a command before it runs (Arena's, when the server has it).
+#[async_trait::async_trait]
+pub trait CommandCheck: Send + Sync {
+    /// `None` when there is no reading: no Laya on the server, no answer in time, or no server.
+    async fn check(&self, command: &str) -> Option<Risk>;
+}
+
+/// A decision with Laya's reading: a command that would run asks when any likelihood is 60% or more. A question
+/// or a refusal is never taken away.
+pub fn weigh(decision: Decision, risk: Option<&Risk>) -> Decision {
+    match decision {
+        Decision::Run if risk.is_some_and(Risk::asks) => Decision::Ask,
+        d => d,
+    }
+}
+
+/// How a command waits, from its subject: (no time limit, in the background), and the command itself.
+pub fn waits(subject: &str) -> (bool, bool, &str) {
+    if let Some(rest) = subject.strip_prefix("[no time limit] ") {
+        (true, false, rest)
+    } else if let Some(rest) = subject.strip_prefix("[in the background] ") {
+        (false, true, rest)
+    } else {
+        (false, false, subject)
+    }
+}
+
+/// The question's first line, by what the call does.
+pub fn title(tool: &str, kind: Kind) -> String {
+    match (tool, kind) {
+        ("run_shell", _) => "Run this command?".into(),
+        ("stop_command", _) => "Stop this command?".into(),
+        (_, Kind::Edit) => format!("Allow {tool} to change this file?"),
+        _ => format!("Allow {tool} to run with these arguments?"),
+    }
+}
+
+/// Laya, as a session's policy holds it.
+#[derive(Clone)]
+pub struct Laya(pub Arc<dyn CommandCheck>);
+
+impl std::fmt::Debug for Laya {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Laya")
+    }
+}
+
+/// The mode and rules of one session, with what was said "always" to, and Laya when the server has it.
 #[derive(Debug, Clone)]
 pub struct Policy {
     pub mode: Mode,
     pub rules: Rules,
     always: HashSet<String>,
+    pub laya: Option<Laya>,
 }
 
 impl Policy {
     pub fn new(mode: Mode, rules: Rules) -> Self {
-        Self { mode, rules, always: HashSet::new() }
+        Self { mode, rules, always: HashSet::new(), laya: None }
+    }
+
+    /// Laya's reading of a command; none for other tools, or with no Laya.
+    pub async fn risk(&self, tool: &str, subject: &str) -> Option<Risk> {
+        let laya = self.laya.as_ref().filter(|_| tool == "run_shell")?;
+        laya.0.check(waits(subject).2).await
     }
 
     pub fn decide(&self, tool: &str, kind: Kind, subject: &str) -> Decision {
@@ -272,13 +379,30 @@ impl Policy {
     }
 }
 
+/// What "always" would spare the person, in the words of the question: "Always for this session: no more
+/// questions about file edits."; `None` for a call that asks every time.
+pub fn always_text(tool: &str, kind: Kind, subject: &str) -> Option<String> {
+    if tool == "stop_command" {
+        return None;
+    }
+    let what = match kind {
+        Kind::Edit => "about file edits".to_string(),
+        Kind::Shell if tool == "run_shell" => format!("for commands that start with `{}`", first_words(subject)),
+        _ => format!("for {tool}"),
+    };
+    Some(format!("Always for this session: no more questions {what}."))
+}
+
+/// A command's first two words, past how it waits.
+fn first_words(subject: &str) -> String {
+    let (_, _, command) = waits(subject);
+    command.split_whitespace().take(2).collect::<Vec<_>>().join(" ")
+}
+
 fn always_key(tool: &str, kind: Kind, subject: &str) -> String {
     match kind {
         Kind::Edit => "edit".into(),
-        Kind::Shell if tool == "run_shell" => {
-            let words: Vec<&str> = subject.split_whitespace().take(2).collect();
-            format!("run_shell:{}", words.join(" "))
-        }
+        Kind::Shell if tool == "run_shell" => format!("run_shell:{}", first_words(subject)),
         _ => tool.to_string(),
     }
 }
@@ -332,6 +456,49 @@ mod tests {
         assert_eq!(p.decide("run_shell", Kind::Shell, "npm publish"), Decision::Ask);
         p.remember("edit_file", Kind::Edit, "a.rs");
         assert_eq!(p.decide("write_file", Kind::Edit, "b.rs"), Decision::Run);
+    }
+
+    #[test]
+    fn sixty_percent_asks_even_in_yolo() {
+        let p = Policy::new(Mode::Yolo, Rules::from_setting(&json!({"allow": ["run_shell(rm *)"]})));
+        let risky = Risk { destructive: 0.6, outside: 0.1, network: 0.0 };
+        let calm = Risk { destructive: 0.59, outside: 0.2, network: 0.03 };
+        let run = p.decide("run_shell", Kind::Shell, "rm -rf ../x");
+        assert_eq!(weigh(run.clone(), Some(&risky)), Decision::Ask);
+        assert_eq!(weigh(run.clone(), Some(&calm)), Decision::Run);
+        assert_eq!(weigh(run, None), Decision::Run, "no Laya: as before");
+        let refused = Decision::Refuse("no".into());
+        assert_eq!(weigh(refused.clone(), Some(&risky)), refused, "a refusal stays one");
+        assert_eq!(weigh(Decision::Ask, Some(&calm)), Decision::Ask, "a question is never taken away");
+    }
+
+    #[test]
+    fn laya_says_each_likelihood() {
+        let r = Risk { destructive: 0.96, outside: 0.931, network: 0.03 };
+        assert_eq!(r.line(), "Laya: destructive 96%, outside the workspace 93%, network 3%");
+        assert!(r.asks());
+        let r: Risk = serde_json::from_value(json!({"destructive": 0.1, "network": 0.7})).unwrap();
+        assert!(r.asks());
+    }
+
+    #[test]
+    fn always_says_what_it_spares_and_how_a_command_waits_is_no_part_of_it() {
+        let mut p = Policy::new(Mode::Ask, Rules::default());
+        p.remember("run_shell", Kind::Shell, "[no time limit] npm test");
+        assert_eq!(p.decide("run_shell", Kind::Shell, "npm test -- a"), Decision::Run);
+        assert_eq!(p.decide("run_shell", Kind::Shell, "[no time limit] cargo build"), Decision::Ask);
+        assert_eq!(
+            always_text("run_shell", Kind::Shell, "[in the background] npm run dev").as_deref(),
+            Some("Always for this session: no more questions for commands that start with `npm run`.")
+        );
+        assert_eq!(
+            always_text("edit_file", Kind::Edit, "a.rs").as_deref(),
+            Some("Always for this session: no more questions about file edits.")
+        );
+        assert_eq!(always_text("stop_command", Kind::Shell, "job 1"), None);
+        assert_eq!(waits("[no time limit] make"), (true, false, "make"));
+        assert_eq!(waits("[in the background] npm run dev"), (false, true, "npm run dev"));
+        assert_eq!(title("run_shell", Kind::Shell), "Run this command?");
     }
 
     #[test]
