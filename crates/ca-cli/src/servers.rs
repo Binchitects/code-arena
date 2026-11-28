@@ -112,6 +112,14 @@ impl Server {
 
     /// Where it is reached, for the faces: an address without what may be secret in it (its user, password and
     /// query), or the command alone (never its arguments or environment).
+    /// Why it is not connected, without what may be secret in an address the error names.
+    pub fn shown_error(&self, text: &str) -> String {
+        match &self.spec {
+            Spec::Http { url, .. } => plain_error(Some(url), text),
+            Spec::Stdio(_) => plain_error(None, text),
+        }
+    }
+
     pub fn shown_url(&self) -> String {
         match &self.spec {
             Spec::Http { url, .. } => plain_url(url),
@@ -502,6 +510,35 @@ pub fn describe(servers: &Servers) -> Vec<String> {
         .collect()
 }
 
+/// What a server's error says, without what may be secret in an address it names (the user, password and query):
+/// its own address shown plain, and any other written as one.
+pub fn plain_error(url: Option<&str>, text: &str) -> String {
+    let text = match url {
+        Some(u) if !u.is_empty() => text.replace(u, &plain_url(u)),
+        _ => text.to_string(),
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        if word.contains("://") {
+            out.push_str(&plain_url(word));
+        } else {
+            out.push_str(word);
+        }
+        word.clear();
+    };
+    for c in text.chars() {
+        if c.is_whitespace() || matches!(c, '(' | ')' | '"' | '\'' | '<' | '>' | ',') {
+            flush(&mut word, &mut out);
+            out.push(c);
+        } else {
+            word.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
 /// An address without its user, password, query and fragment: what the faces may show of it.
 pub fn plain_url(url: &str) -> String {
     let url = url.split(['?', '#']).next().unwrap_or("");
@@ -524,5 +561,16 @@ mod plain_tests {
         assert_eq!(plain_url("https://me:pw@host.test:8080/mcp?token=x#a"), "https://host.test:8080/mcp");
         assert_eq!(plain_url("http://host.test"), "http://host.test");
         assert_eq!(plain_url("https://host.test/a@b/c"), "https://host.test/a@b/c");
+    }
+
+    #[test]
+    fn an_error_names_addresses_without_their_secrets() {
+        let url = "https://me:pw@host.test/mcp?token=fake";
+        assert_eq!(super::plain_error(Some(url), &format!("{url} answered 500")), "https://host.test/mcp answered 500");
+        assert_eq!(
+            super::plain_error(None, "error sending request for url (http://u:p@h.test/x?k=fake): refused"),
+            "error sending request for url (http://h.test/x): refused"
+        );
+        assert_eq!(super::plain_error(None, "demo could not start: not found"), "demo could not start: not found");
     }
 }

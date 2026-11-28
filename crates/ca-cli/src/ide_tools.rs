@@ -55,7 +55,11 @@ impl Area for Here {
                 for s in sh.servers.iter().filter(|s| name.is_none_or(|n| n == s.name)) {
                     s.retry();
                 }
-                send(&sh.out, servers_message(&sh.servers, &m["key"]));
+                let mut v = servers_message(&sh.servers, &m["key"]);
+                if let Some(n) = name {
+                    v["name"] = json!(n);
+                }
+                send(&sh.out, v);
             }
             _ => return false,
         }
@@ -69,7 +73,7 @@ impl Area for Here {
         let group = m["group"].as_str().unwrap_or("").to_string();
         let on = m["on"].as_bool().unwrap_or(true);
         let asked = json!({"type": "tools_set", "key": group});
-        ctx.p.agent.take_joined();
+        joined(ctx);
         let rows = rows_of(ctx.p);
         let had = rows.iter().any(|r| r.group == group) || ctx.sh.servers.iter().any(|s| s.name == group);
         if !had {
@@ -98,12 +102,14 @@ impl Area for Here {
 
     async fn before_turn(ctx: &mut Ctx<'_>, _message: &str) {
         // What joined since is taken in first, so that a group turned off keeps its late tools off too.
-        ctx.p.agent.take_joined();
+        joined(ctx);
         apply_off(ctx.p, &ctx.sh.kept.of::<Off>().of(&ctx.sh.session));
         keep(ctx.sh, ctx.p);
     }
 
     async fn after_turn(ctx: &mut Ctx<'_>, _end: &TurnEnd) {
+        // A server that joined during the turn brought its tools back even when its group was turned off.
+        apply_off(ctx.p, &ctx.sh.kept.of::<Off>().of(&ctx.sh.session));
         keep(ctx.sh, ctx.p);
     }
 
@@ -116,6 +122,15 @@ impl Area for Here {
     fn status(sh: &Shared, p: Option<&Prepared>, _v: &mut Value) {
         if let Some(p) = p {
             keep(sh, p);
+        }
+    }
+}
+
+/// Takes in the tools of servers that connected since, and says so in the thread as a turn's step does.
+fn joined(ctx: &mut Ctx<'_>) {
+    for n in ctx.p.agent.take_joined() {
+        if n > 0 {
+            crate::ide_ext::say(&ctx.sh.out, &format!("{n} tools joined."));
         }
     }
 }
@@ -301,7 +316,12 @@ fn servers_items(servers: &Servers) -> Vec<Value> {
         .iter()
         .map(|s| {
             let next = s.next_try().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64);
-            server_item(&s.name, &s.title, &s.shown_url(), &s.state(), next)
+            let state = match s.state() {
+                State::Unavailable(e) => State::Unavailable(s.shown_error(&e)),
+                State::Failed(e) => State::Failed(s.shown_error(&e)),
+                other => other,
+            };
+            server_item(&s.name, &s.title, &s.shown_url(), &state, next)
         })
         .collect()
 }
