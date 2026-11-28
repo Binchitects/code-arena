@@ -583,6 +583,9 @@ impl crate::ext::State for Shortcuts {
 pub fn open(ui: Ui, send: &Send) {
     kinds::open(ui, TAB);
     send(json!({"type": "user_file", "name": super::FILE}));
+    // The search has the keys, as VS Code's (the tab's view, when it is built, asks the same).
+    let s = ui.state::<Shortcuts>();
+    focus(if s.recording.get_untracked() { s.recorder } else { s.input });
 }
 
 fn focus(id: RwSignal<Option<ViewId>>) {
@@ -732,7 +735,10 @@ fn row_view(ui: Ui, send: Send, e: Entry, odd: bool) -> AnyView {
     let picked = move || s.selected.with(|p| p.as_ref().is_some_and(|p| p.uid == uid && p.command == command));
     let p2 = picked.clone();
     // The row's action, kept in its place (the columns level with the header's) and drawn only on the row picked.
-    let action = container(icon(if e.keys.is_some() { "edit" } else { "add" }, 16.0))
+    let p4 = picked.clone();
+    let pencil = icon(if e.keys.is_some() { "edit" } else { "add" }, 16.0)
+        .style(move |s| s.color(t.get().icon).apply_if(!p4(), |s| s.hide()));
+    let action = container(pencil)
         .on_click_stop({
             let e = e.clone();
             move |_| {
@@ -746,7 +752,7 @@ fn row_view(ui: Ui, send: Send, e: Entry, odd: bool) -> AnyView {
                 .height_full()
                 .items_center()
                 .justify_center()
-                .apply_if(!p2(), |s| s.color(Color::TRANSPARENT))
+                .cursor(if p2() { CursorStyle::Pointer } else { CursorStyle::Default })
         });
     let known = e.known();
     let (name, id) = (e.name().to_string(), e.command.clone());
@@ -911,13 +917,14 @@ fn search_box(ui: Ui, count: Memo<usize>) -> impl IntoView {
     let s = ui.state::<Shortcuts>();
     let input = text_input(s.search)
         .placeholder("Type to search in keybindings")
-        .on_event_cont(EventListener::KeyDown, move |e| {
-            let Event::KeyDown(k) = e else { return };
+        .on_event(EventListener::KeyDown, move |e| {
+            let Event::KeyDown(k) = e else { return EventPropagation::Continue };
             match &k.key.logical_key {
                 Key::Named(NamedKey::Escape) if s.search.with_untracked(|t| !t.is_empty()) => s.search.set(String::new()),
                 Key::Named(NamedKey::ArrowDown) => focus(s.table),
                 _ => {}
             }
+            EventPropagation::Continue
         })
         .style(move |st| {
             let c = t.get();
