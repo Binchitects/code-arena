@@ -300,6 +300,9 @@ impl Asked {
             r["missing"] = json!(true);
             return r;
         };
+        // One at a time: a session opened again asks for all its diagrams at once, each a browser of its own.
+        static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
         match self.draw(&drawer, timeout) {
             Ok(svg) => reply("svg", json!(svg)),
             Err(e) => reply("error", json!(e)),

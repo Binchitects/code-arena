@@ -90,9 +90,9 @@ fn key_of(kind: &str, source: &str, dark: bool, background: [u8; 3]) -> String {
     format!("{kind}-{:016x}", h.finish())
 }
 
-/// The theme a diagram is drawn for now: dark or not, and the background it is laid on.
+/// The theme a diagram is drawn for now (not tracked): dark or not, and the background it is laid on.
 fn theme(ui: Ui) -> (bool, [u8; 3]) {
-    ui.colors.with(|c| (c.dark, [c.editor_bg.r, c.editor_bg.g, c.editor_bg.b]))
+    ui.colors.with_untracked(|c| (c.dark, [c.editor_bg.r, c.editor_bg.g, c.editor_bg.b]))
 }
 
 /// A diagram's drawing, asked of the driver the first time it is wanted.
@@ -144,7 +144,7 @@ pub fn block(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static
         if !closed.get() {
             return None;
         }
-        theme(ui);
+        ui.colors.with(|_| ());
         Some(source.with(|s| drawing(ui, kind, s)).get())
     });
     let over = create_memo(move |_| shown.with(|s| over_of(s.as_ref(), showing_code.get())));
