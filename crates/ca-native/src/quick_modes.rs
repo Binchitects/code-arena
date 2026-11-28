@@ -833,7 +833,10 @@ mod tests {
         register(ui, &send);
         crate::palette::open(ui, &send, Mode::WorkspaceSymbols);
         assert_eq!(crate::palette::shown(ui), Some(Mode::WorkspaceSymbols));
-        assert_eq!(names(&workspace_rows(&workspace(ui).got.get_untracked(), "")), ["Type the name of a symbol to open it."]);
+        assert_eq!(
+            names(&workspace_rows(&workspace(ui).got.get_untracked(), "")),
+            ["Type the name of a symbol to open it."]
+        );
         ui.quick_text.set("#rta".into());
         // Not asked until the typing stops (the timer is the window's own); nothing sent yet.
         assert!(sent.borrow().iter().all(|m| m["type"] != "symbols"));

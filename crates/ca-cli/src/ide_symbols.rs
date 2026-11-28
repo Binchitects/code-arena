@@ -229,7 +229,11 @@ fn initials(name: &str) -> String {
 pub fn is_test(path: &str) -> bool {
     let lower = path.to_lowercase();
     let file = lower.rsplit('/').next().unwrap_or("");
-    if lower.split('/').rev().skip(1).any(|d| matches!(d, "test" | "tests" | "spec" | "specs" | "__tests__" | "testing"))
+    if lower
+        .split('/')
+        .rev()
+        .skip(1)
+        .any(|d| matches!(d, "test" | "tests" | "spec" | "specs" | "__tests__" | "testing"))
     {
         return true;
     }
