@@ -490,7 +490,10 @@ impl Side {
         match m["type"].as_str().unwrap_or("") {
             "ls" => send(&self.out, self.ls(path)),
             "open" => send(&self.out, self.open(path)),
-            "save" => send(&self.out, self.save(path, m["text"].as_str().unwrap_or(""))),
+            "save" => send(
+                &self.out,
+                self.save(path, m["text"].as_str().unwrap_or(""), m["modified"].as_u64(), m["force"] == true),
+            ),
             "create" => self.answer(self.create(path, m["dir"] == true)),
             "rename" => self.answer(self.rename(path, m["to"].as_str().unwrap_or(""))),
             "delete" => self.answer(self.delete(path)),
@@ -653,16 +656,23 @@ impl Side {
         json!({"type": "file", "path": self.shown(&real), "text": text, "modified": modified(&meta)})
     }
 
-    fn save(&self, path: &str, text: &str) -> Value {
+    /// A file written with the text given. With `modified` (when the page read it), a file changed on disk since
+    /// is left as it is and the reply says so (error "changed", with when it changed), unless `force`; a file gone
+    /// from disk is made again.
+    fn save(&self, path: &str, text: &str, read_at: Option<u64>, force: bool) -> Value {
         let fail = |e: &str| json!({"type": "saved", "path": path, "error": e});
         let real = match self.real(path) {
             Ok(r) => r,
             Err(e) => return fail(&e),
         };
-        if let Ok(meta) = std::fs::metadata(&real)
-            && !meta.is_file()
-        {
-            return fail("not a plain file");
+        if let Ok(meta) = std::fs::metadata(&real) {
+            if !meta.is_file() {
+                return fail("not a plain file");
+            }
+            let now = modified(&meta);
+            if !force && read_at.is_some_and(|at| at != now) {
+                return json!({"type": "saved", "path": self.shown(&real), "error": "changed", "modified": now});
+            }
         }
         // A file saved into a folder not made yet (a code block saved from the chat as new/dir/a.rs): its folders
         // are made first, all inside the project as the path was checked.
@@ -1539,7 +1549,7 @@ mod tests {
         assert!(s.open("/etc/passwd")["error"].as_str().is_some_and(|e| e.contains("inside the project")));
         assert!(s.open("../outside.txt")["error"].is_string());
         assert!(s.open("src")["error"].as_str().is_some_and(|e| e.contains("not a plain file")));
-        assert!(s.save("src/new.rs", "// new\n")["error"].is_null());
+        assert!(s.save("src/new.rs", "// new\n", None, false)["error"].is_null());
         assert_eq!(std::fs::read_to_string(d.path().join("src/new.rs")).expect("saved"), "// new\n");
         #[cfg(unix)]
         {
@@ -1752,6 +1762,40 @@ mod tests {
             out.push(serde_json::from_str(&t).expect("json"));
         }
         out
+    }
+
+    #[test]
+    fn a_save_over_a_file_changed_on_disk_since_it_was_read_is_refused_unless_forced() {
+        let (d, s, mut rx) = side();
+        let file = d.path().join("src/main.rs");
+        let read_at = crate::ide_files::modified(&std::fs::metadata(&file).expect("m"));
+        // Read when it is now: saved.
+        s.handle(&json!({"type": "save", "path": "src/main.rs", "text": "one\n", "modified": read_at}));
+        let got = drain(&mut rx);
+        let saved = got.iter().find(|v| v["type"] == "saved").expect("saved");
+        assert!(saved["error"].is_null(), "{saved:?}");
+        let now = saved["modified"].as_u64().expect("stamp");
+        // Changed by another program since (a modified time far from the one read).
+        let later = std::fs::metadata(&file).expect("m").modified().expect("t") + std::time::Duration::from_secs(5);
+        std::fs::write(&file, "theirs\n").expect("w");
+        std::fs::File::options().write(true).open(&file).expect("f").set_modified(later).expect("touch");
+        s.handle(&json!({"type": "save", "path": "src/main.rs", "text": "mine\n", "modified": now}));
+        let got = drain(&mut rx);
+        let saved = got.iter().find(|v| v["type"] == "saved").expect("saved");
+        assert_eq!(saved["error"], "changed");
+        assert_eq!(saved["path"], "src/main.rs");
+        assert!(saved["modified"].as_u64().is_some_and(|m| m != now), "{saved:?}");
+        assert_eq!(std::fs::read_to_string(&file).expect("r"), "theirs\n", "left as it is");
+        // Overwrite: forced.
+        s.handle(&json!({"type": "save", "path": "src/main.rs", "text": "mine\n", "modified": now, "force": true}));
+        assert!(drain(&mut rx).iter().any(|v| v["type"] == "saved" && v["error"].is_null()));
+        assert_eq!(std::fs::read_to_string(&file).expect("r"), "mine\n");
+        // Gone from disk: made again; with no time read, as before.
+        std::fs::remove_file(&file).expect("rm");
+        s.handle(&json!({"type": "save", "path": "src/main.rs", "text": "again\n", "modified": now}));
+        assert!(drain(&mut rx).iter().any(|v| v["type"] == "saved" && v["error"].is_null()));
+        s.handle(&json!({"type": "save", "path": "src/main.rs", "text": "plain\n"}));
+        assert!(drain(&mut rx).iter().any(|v| v["type"] == "saved" && v["error"].is_null()));
     }
 
     #[test]
