@@ -144,6 +144,13 @@ impl crate::ext::State for Pickers {
     }
 }
 
+/// Whether the model chosen calls tools, as the gateway described it (one it did not describe does). Tracked: a view
+/// that reads it follows the model.
+pub fn calls_tools(ui: Ui) -> bool {
+    let model = ui.model.get();
+    ui.state::<Pickers>().infos.with(|all| all.iter().find(|m| m.id == model).is_none_or(|m| m.tools))
+}
+
 /// How a row's name is drawn: the mode that lets everything run in red, the read-only one in the accent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Tone {

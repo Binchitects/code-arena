@@ -338,15 +338,24 @@ impl Agent {
 
     /// Takes in the tools of servers that connected since the last step.
     fn take_joins(&mut self, events: &mut dyn Events) {
-        let Some(rx) = self.joins.as_mut() else { return };
+        for n in self.take_joined() {
+            if n > 0 {
+                events.notice(&format!("{n} tools joined."));
+            }
+        }
+    }
+
+    /// Takes in the tools of servers that connected since they were last taken in (between turns too, so that what
+    /// is listed of them is what the model has): how many each server brought.
+    pub fn take_joined(&mut self) -> Vec<usize> {
+        let Some(rx) = self.joins.as_mut() else { return Vec::new() };
         let mut joined = Vec::new();
         while let Ok(j) = rx.try_recv() {
             joined.push(j);
         }
+        let mut counts = Vec::new();
         for j in joined {
-            if !j.tools.is_empty() || !j.deferred.is_empty() {
-                events.notice(&format!("{} tools joined.", j.tools.len() + j.deferred.len()));
-            }
+            counts.push(j.tools.len() + j.deferred.len());
             self.tools.extend(j.tools);
             self.deferred.extend(j.deferred);
             if let Some(n) = j.note {
@@ -354,6 +363,7 @@ impl Agent {
                 self.note(n);
             }
         }
+        counts
     }
 
     fn tool(&self, name: &str) -> Option<Arc<dyn Tool>> {

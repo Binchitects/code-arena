@@ -1821,6 +1821,24 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
         (no["at"].as_u64(), no["error"].as_str()),
         (Some(19), Some("The threshold is from 20% to 95% of the window."))
     );
+    // The tools by group, with the key asked; Code Arena's own is always on, and a group not there is refused.
+    page.send(Message::text(json!({"type": "tools", "key": 3}).to_string())).await.expect("send");
+    let tools = until(&mut page, "tools").await;
+    assert_eq!(tools["key"], 3, "{tools}");
+    let own = &tools["groups"][0];
+    assert_eq!((own["id"].as_str(), own["locked"].as_bool()), (Some("Code Arena's own"), Some(true)), "{tools}");
+    assert!(own["functions"].as_array().is_some_and(|f| f.iter().any(|n| n == "read_file")), "{tools}");
+    let off = json!({"type": "tools_set", "group": "Code Arena's own", "on": false, "key": "Code Arena's own"});
+    page.send(Message::text(off.to_string())).await.expect("send");
+    let no = until(&mut page, "refused").await;
+    assert_eq!((no["of"].as_str(), no["key"].as_str()), (Some("tools_set"), Some("Code Arena's own")), "{no}");
+    let gone = json!({"type": "tools_set", "group": "nowhere", "on": false, "key": "nowhere"});
+    page.send(Message::text(gone.to_string())).await.expect("send");
+    let no = until(&mut page, "refused").await;
+    assert_eq!((no["key"].as_str(), no["reason"].as_str()), (Some("nowhere"), Some("No tool group nowhere.")), "{no}");
+    page.send(Message::text(json!({"type": "servers", "key": 4}).to_string())).await.expect("send");
+    let servers = until(&mut page, "servers").await;
+    assert_eq!(servers["key"], 4, "{servers}");
     // The answer as the session kept it: its thinking, and what its turn used, for its footer after a reload.
     page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
     let st = until(&mut page, "state").await;
