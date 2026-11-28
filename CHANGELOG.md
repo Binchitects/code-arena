@@ -644,6 +644,11 @@ Sections used:
 - **Sub-agent lines in the thread.** A task call is now one line: its status, its description,
   'Working…' or its report's first line, its time, tokens and model. Clicking it opens the sub-agent
   in Tasks. Calls in a row are grouped as '3 sub-agents · 2 working'.
+- **Quick diff in the gutter.** While you type, bars beside the line numbers show the lines changed
+  since git's index: green for added, blue for modified and a red triangle where lines were deleted.
+  The same marks show on the overview ruler. They are read again after a save, a stage or a commit.
+  `scm.diffDecorations` (all/gutter/overview/none) picks where they are drawn. Alt+F3 / Shift+Alt+F3
+  (and Alt+F5 / Shift+Alt+F5 outside a compare) go to the next or previous change.
 
 
 ### :bug: Bugs fixed
