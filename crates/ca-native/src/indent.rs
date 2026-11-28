@@ -20,11 +20,11 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use floem::IntoView;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith};
 use floem::views::editor::core::editor::EditType;
 use floem::views::editor::text::Styling;
 use floem::views::{Decorators, label};
-use floem::IntoView;
 use serde_json::Value;
 
 use crate::editor::editing::{Change, Sel};
@@ -58,13 +58,6 @@ pub enum Eol {
 }
 
 impl Eol {
-    pub fn text(self) -> &'static str {
-        match self {
-            Eol::Lf => "\n",
-            Eol::CrLf => "\r\n",
-        }
-    }
-
     pub fn label(self) -> &'static str {
         match self {
             Eol::Lf => "LF",
@@ -225,8 +218,11 @@ pub fn convert(text: &str, sels: &[Sel], spaces: bool, size: usize) -> Option<Ch
         let lead_len = line.len() - line.trim_start_matches([' ', '\t']).len();
         let lead = &line[..lead_len];
         let width = columns(lead, size);
-        let want =
-            if spaces { " ".repeat(width) } else { format!("{}{}", "\t".repeat(width / size), " ".repeat(width % size)) };
+        let want = if spaces {
+            " ".repeat(width)
+        } else {
+            format!("{}{}", "\t".repeat(width / size), " ".repeat(width % size))
+        };
         // A line of nothing but spaces and tabs is left as it is, as VS Code does.
         let blank = line.trim_end_matches(['\n', '\r']).len() == lead_len;
         if !blank && want != lead {
@@ -363,7 +359,8 @@ fn opened(ui: Ui, path: &str, text: &str) {
 /// The settings changed: a file whose indentation settings are others is worked out again, what was picked for it
 /// gone.
 fn settings_changed(ui: Ui) {
-    let all: Vec<(String, Doc)> = ui.state::<Docs>().docs.with_untracked(|d| d.iter().map(|(p, d)| (p.clone(), *d)).collect());
+    let all: Vec<(String, Doc)> =
+        ui.state::<Docs>().docs.with_untracked(|d| d.iter().map(|(p, d)| (p.clone(), *d)).collect());
     for (path, d) in all {
         let now = said(ui, &path);
         if now != d.said {
@@ -510,9 +507,7 @@ fn set_eol(ui: Ui, path: &str, to: Eol) {
 fn pick_encoding(ui: Ui) {
     quick::pick("Select File Encoding")
         .placeholder("Select Action")
-        .items(vec![
-            quick::item("utf8", "UTF-8").description("utf8").detail("Only UTF-8 is read and written"),
-        ])
+        .items(vec![quick::item("utf8", "UTF-8").description("utf8").detail("Only UTF-8 is read and written")])
         .active("utf8")
         .open(ui, |_| {});
 }
@@ -613,7 +608,10 @@ mod tests {
         assert_eq!(resolve("x\ny\n", Said { spaces: false, ..SAID }), Indent { spaces: false, size: 4 });
         // Not detected: the settings, whatever the lines show.
         assert_eq!(resolve("x\n\ty\n", Said { detect: false, ..SAID }), Indent { spaces: true, size: 4 });
-        assert_eq!((Indent { spaces: true, size: 4 }.label(), Indent { spaces: false, size: 8 }.label()), ("Spaces: 4".into(), "Tab Size: 8".into()));
+        assert_eq!(
+            (Indent { spaces: true, size: 4 }.label(), Indent { spaces: false, size: 8 }.label()),
+            ("Spaces: 4".into(), "Tab Size: 8".into())
+        );
     }
 
     #[test]
@@ -694,9 +692,7 @@ mod tests {
         choose(ui, path, Indent { spaces: false, size: 8 });
         ui.take(&json!({"type": "file", "path": path, "text": "if a:\n  b\n", "modified": 2}), &send);
         assert_eq!((indent(ui, path), eol(ui, path)), (Indent { spaces: false, size: 8 }, Eol::Lf));
-        let settings = |values: Value| {
-            json!({"type": "settings", "values": values, "by_lang": {}, "sources": {}, "problems": [], "files": {}})
-        };
+        let settings = |values: Value| json!({"type": "settings", "values": values, "by_lang": {}, "sources": {}, "problems": [], "files": {}});
         ui.take(&settings(json!({"editor.fontSize": 15})), &send);
         assert_eq!(indent(ui, path).size, 8);
         // Its indentation's settings changed: worked out again from them.
