@@ -772,6 +772,8 @@ impl Agent {
         if let Some(u) = pre.updated_input {
             args = u;
         }
+        // The person's fixed arguments and defaults, as a direct call has them.
+        args = tool.given(args);
         let subject = tool.subject(&args);
         let said = Call { id: call_id, name, subject: &subject, arguments: &args };
         if let Err(why) = self.allow(tool.kind(), &said, pre.permission.as_deref(), events).await {
