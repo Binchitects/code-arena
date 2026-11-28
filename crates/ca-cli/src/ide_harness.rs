@@ -53,11 +53,14 @@ impl Area for Here {
     fn shared(sh: &Shared, m: &Value) -> bool {
         let key = &m["key"];
         match kind(m) {
-            "hooks" => send(&sh.out, keyed(hooks_reply(&sh.was.hooks, &sh.paths.data, sh.workspace.root(), &agents(sh)), key)),
+            "hooks" => {
+                send(&sh.out, keyed(hooks_reply(&sh.was.hooks, &sh.paths.data, sh.workspace.root(), &agents(sh)), key))
+            }
             "permissions" => send(&sh.out, keyed(permissions_reply(&sh.was.rules), key)),
             "sandbox" => send(&sh.out, keyed(sandbox_reply(sh.was.sandbox.as_deref()), key)),
             "output_styles" => {
-                let current = sh.settings.string(&ca_settings::schema::OUTPUT_STYLE).unwrap_or_else(|| "default".into());
+                let current =
+                    sh.settings.string(&ca_settings::schema::OUTPUT_STYLE).unwrap_or_else(|| "default".into());
                 send(&sh.out, keyed(styles_reply(&sh.sources, &current), key));
             }
             "plugins" => {
@@ -82,8 +85,14 @@ impl Area for Here {
             "hooks_trust" => {
                 let said = trust_hooks(ctx).await;
                 send(&ctx.sh.out, notice("hooks_trust", said));
-                let hooks: Vec<_> =
-                    ctx.p.agent.hooks.list.iter().map(|h| (h.event.clone(), h.command.clone(), h.from.clone())).collect();
+                let hooks: Vec<_> = ctx
+                    .p
+                    .agent
+                    .hooks
+                    .list
+                    .iter()
+                    .map(|h| (h.event.clone(), h.command.clone(), h.from.clone()))
+                    .collect();
                 let root = ctx.p.agent.ctx.workspace.root().to_path_buf();
                 send(&ctx.sh.out, hooks_reply(&hooks, &ctx.app.paths.data, &root, &ctx.app.agents()));
             }
@@ -145,7 +154,12 @@ fn hook(event: &str, command: &str, from: &str) -> Value {
 }
 
 /// The `hooks` reply: the hooks that run, and the project's own while they are not trusted.
-fn hooks_reply(running: &[(String, String, String)], data: &Path, root: &Path, agents: &ca_core::compat::Agents) -> Value {
+fn hooks_reply(
+    running: &[(String, String, String)],
+    data: &Path,
+    root: &Path,
+    agents: &ca_core::compat::Agents,
+) -> Value {
     let items: Vec<Value> = running.iter().map(|(e, c, f)| hook(e, c, f)).collect();
     let project = crate::session::project_hooks(root, agents);
     let has = project.as_object().is_some_and(|o| !o.is_empty());

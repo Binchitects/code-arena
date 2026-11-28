@@ -44,7 +44,8 @@ const DOCTOR_TAB: &str = "harness:doctor";
 /// The messages this view asks for, each time it asks again.
 const ASKED: [&str; 5] = ["hooks", "permissions", "sandbox", "plugins", "output_styles"];
 /// The requests whose notices are this view's.
-const OURS: [&str; 6] = ["hooks_trust", "permission_set", "plugin_set", "plugin_install", "plugin_remove", "output_style_set"];
+const OURS: [&str; 6] =
+    ["hooks_trust", "permission_set", "plugin_set", "plugin_install", "plugin_remove", "output_style_set"];
 
 /// A hook, as the session listed it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -381,6 +382,8 @@ fn two_lines(t: Theme, top: String, under: String, dim: bool) -> impl IntoView {
                 .line_height(1.4)
                 .color(if dim { c.desc } else { c.fg })
                 .text_overflow(TextOverflow::Wrap)
+                .width_full()
+                .max_width_full()
                 .min_width(0.0)
         }),
         label(move || under.clone()).style(move |s| {
@@ -388,6 +391,8 @@ fn two_lines(t: Theme, top: String, under: String, dim: bool) -> impl IntoView {
                 .line_height(1.4)
                 .color(t.get().desc)
                 .text_overflow(TextOverflow::Wrap)
+                .width_full()
+                .max_width_full()
                 .min_width(0.0)
                 .apply_if(no_under, |s| s.hide())
         }),
@@ -396,7 +401,12 @@ fn two_lines(t: Theme, top: String, under: String, dim: bool) -> impl IntoView {
 }
 
 /// A row with an action at its end shown while the pointer is on it.
-fn row(t: Theme, lead: impl IntoView + 'static, body: impl IntoView + 'static, end: Option<floem::AnyView>) -> floem::AnyView {
+fn row(
+    t: Theme,
+    lead: impl IntoView + 'static,
+    body: impl IntoView + 'static,
+    end: Option<floem::AnyView>,
+) -> floem::AnyView {
     let over = create_rw_signal(false);
     let end = match end {
         Some(e) => container(e).style(move |s| s.flex_shrink(0.0_f32).apply_if(!over.get(), |s| s.hide())).into_any(),
@@ -408,6 +418,7 @@ fn row(t: Theme, lead: impl IntoView + 'static, body: impl IntoView + 'static, e
         .style(move |s| {
             s.gap(6.0)
                 .width_full()
+                .min_width(0.0)
                 .min_height(22.0)
                 .padding_left(20.0)
                 .padding_right(8.0)
@@ -428,7 +439,12 @@ fn lead(t: Theme, name: &'static str, warn: bool) -> impl IntoView {
 
 fn hook_row(t: Theme, h: &Hook, waiting: bool) -> floem::AnyView {
     let top = format!("{}: {}", h.event, h.command);
-    row(t, lead(t, if waiting { "workspace-untrusted" } else { "symbol-event" }, waiting), two_lines(t, top, h.from.clone(), waiting), None)
+    row(
+        t,
+        lead(t, if waiting { "workspace-untrusted" } else { "symbol-event" }, waiting),
+        two_lines(t, top, h.from.clone(), waiting),
+        None,
+    )
 }
 
 /// The Hooks section.
@@ -467,12 +483,13 @@ fn hooks_body(ui: Ui, send: Send) -> floem::AnyView {
             v_stack_from(rows)
         },
     )
+    .style(|s| s.width_full().min_width(0.0))
     .into_any()
 }
 
 /// Views one under the other.
 fn v_stack_from(rows: Vec<floem::AnyView>) -> floem::AnyView {
-    floem::views::stack_from_iter(rows).style(|s| s.flex_col().width_full()).into_any()
+    floem::views::stack_from_iter(rows).style(|s| s.flex_col().width_full().min_width(0.0)).into_any()
 }
 
 /// A text box of the view.
@@ -514,7 +531,8 @@ fn perms_body(ui: Ui, send: Send) -> floem::AnyView {
         button(t, "Deny", false, move || add_rule(ui, &d, false)),
     ))
     .style(|s| s.gap(6.0));
-    let top = v_stack((typed, buttons)).style(|s| s.gap(6.0).width_full().padding_left(20.0).padding_right(12.0).padding_vert(4.0));
+    let top = v_stack((typed, buttons))
+        .style(|s| s.gap(6.0).width_full().padding_left(20.0).padding_right(12.0).padding_vert(4.0));
     let got = create_memo(move |_| st.perms.get().unwrap_or_default());
     let list = dyn_stack(
         move || got.get(),
@@ -525,7 +543,12 @@ fn perms_body(ui: Ui, send: Send) -> floem::AnyView {
             let gone = action(t, "close", move || send(json!({"type": "permission_set", "rule": rule, "allow": null})));
             let gone = floem::views::tooltip(gone, || label(|| "Remove for This Session")).into_any();
             let under = if p.allow { "Allowed without asking" } else { "Refused in every mode" };
-            row(t, lead(t, if p.allow { "pass" } else { "circle-slash" }, false), two_lines(t, p.rule, under.into(), false), Some(gone))
+            row(
+                t,
+                lead(t, if p.allow { "pass" } else { "circle-slash" }, false),
+                two_lines(t, p.rule, under.into(), false),
+                Some(gone),
+            )
         },
     )
     .style(|s| s.flex_col().width_full());
@@ -562,6 +585,7 @@ fn sandbox_body(ui: Ui) -> floem::AnyView {
                                     .padding_left(42.0)
                                     .padding_right(12.0)
                                     .text_overflow(TextOverflow::Wrap)
+                                    .max_width_full()
                                     .min_width(0.0)
                             })
                             .into_any(),
@@ -571,6 +595,7 @@ fn sandbox_body(ui: Ui) -> floem::AnyView {
             }
         },
     )
+    .style(|s| s.width_full().min_width(0.0))
     .into_any()
 }
 
@@ -594,18 +619,23 @@ fn plugins_body(ui: Ui, send: Send) -> floem::AnyView {
             let tick = floem::views::tooltip(tick, move || label(move || if on { "Disable" } else { "Enable" }));
             let gone = action(t, "trash", move || remove_plugin(ui, &gone_send, &gone_name));
             let gone = floem::views::tooltip(gone, || label(|| "Remove")).into_any();
-            let top = if p.description.is_empty() { p.name.clone() } else { format!("{} \u{2014} {}", p.name, p.description) };
+            let top = if p.description.is_empty() {
+                p.name.clone()
+            } else {
+                format!("{} \u{2014} {}", p.name, p.description)
+            };
             row(t, tick, two_lines(t, top, plugin_detail(&p), !p.on), Some(gone))
         },
     )
     .style(|s| s.flex_col().width_full());
-    let none = desc(t, || "No plugins yet. A plugin bundles commands, sub-agents, skills, hooks and MCP servers.".into())
-        .style(move |s| {
-            s.padding_left(20.0)
-                .padding_right(12.0)
-                .padding_vert(3.0)
-                .apply_if(st.plugins.with(|p| p.as_ref().is_none_or(|p| !p.is_empty())), |s| s.hide())
-        });
+    let none =
+        desc(t, || "No plugins yet. A plugin bundles commands, sub-agents, skills, hooks and MCP servers.".into())
+            .style(move |s| {
+                s.padding_left(20.0)
+                    .padding_right(12.0)
+                    .padding_vert(3.0)
+                    .apply_if(st.plugins.with(|p| p.as_ref().is_none_or(|p| !p.is_empty())), |s| s.hide())
+            });
     v_stack((none, list, add)).style(|s| s.width_full()).into_any()
 }
 
@@ -619,7 +649,8 @@ fn styles_body(ui: Ui, send: Send) -> floem::AnyView {
         move |s: Style| {
             let send = send.clone();
             let (name, current) = (s.name.clone(), s.current);
-            let under = if s.from.is_empty() { s.description.clone() } else { format!("{} ({})", s.description, s.from) };
+            let under =
+                if s.from.is_empty() { s.description.clone() } else { format!("{} ({})", s.description, s.from) };
             let dot = lead(t, if current { "circle-filled" } else { "circle" }, false);
             container(row(t, dot, two_lines(t, s.name, under, false), None))
                 .on_click_stop(move |_| {
@@ -644,12 +675,15 @@ fn header(ui: Ui, part: Part, at: usize) -> impl IntoView {
         Part::Plugins => st.plugins.with(|p| p.as_ref().map(Vec::len)),
         Part::Sandbox | Part::Styles => None,
     });
-    let warn = create_memo(move |_| part == Part::Hooks && st.hooks.with(|h| h.as_ref().is_some_and(|h| !h.waiting.is_empty())));
+    let warn = create_memo(move |_| {
+        part == Part::Hooks && st.hooks.with(|h| h.as_ref().is_some_and(|h| !h.waiting.is_empty()))
+    });
     let chevron = dyn_container(move || folded.get(), |f| icon(if f { "chevron-right" } else { "chevron-down" }, 16.0));
     h_stack((
         chevron.style(move |s| s.color(t.get().icon)),
         label(move || part.title().to_uppercase()).style(move |s| bold(caps(s)).margin_left(2.0)),
-        label(move || count.get().map(|n| format!(" ({n})")).unwrap_or_default()).style(move |s| caps(s).color(t.get().desc)),
+        label(move || count.get().map(|n| format!(" ({n})")).unwrap_or_default())
+            .style(move |s| caps(s).color(t.get().desc)),
         empty().style(|s| s.flex_grow(1.0_f32)),
         lead(t, "warning", true).style(move |s| s.margin_right(8.0).apply_if(!warn.get(), |s| s.hide())),
     ))
@@ -685,9 +719,9 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
                 Part::Styles => styles_body(ui, send.clone()),
             };
             let folded = create_memo(move |_| st.folded.with(|f| f[at]));
-            let body =
-                container(body).style(move |s| s.width_full().padding_bottom(6.0).apply_if(folded.get(), |s| s.hide()));
-            v_stack((header(ui, part, at), body)).style(|s| s.width_full()).into_any()
+            let body = container(body)
+                .style(move |s| s.width_full().min_width(0.0).padding_bottom(6.0).apply_if(folded.get(), |s| s.hide()));
+            v_stack((header(ui, part, at), body)).style(|s| s.width_full().min_width(0.0)).into_any()
         })
         .collect();
     scroll(v_stack_from(sections).style(|s| s.padding_bottom(10.0)))
@@ -705,10 +739,13 @@ fn doctor_view(ui: Ui, send: Send, _tab: &Tab) -> floem::AnyView {
     let top = h_stack((
         label(|| "Doctor").style(move |s| bold(s).font_size(13.0)),
         empty().style(|s| s.flex_grow(1.0_f32)),
-        floem::views::tooltip(action(t, "refresh", move || {
-            state(ui).doctor.set(None);
-            again(json!({"type": "doctor"}));
-        }), || label(|| "Run Again")),
+        floem::views::tooltip(
+            action(t, "refresh", move || {
+                state(ui).doctor.set(None);
+                again(json!({"type": "doctor"}));
+            }),
+            || label(|| "Run Again"),
+        ),
     ))
     .style(|s| s.width_full().items_center().padding_bottom(8.0));
     let words = label(move || st.doctor.get().unwrap_or_else(|| "Running Doctor\u{2026}".into())).style(move |s| {
@@ -790,28 +827,52 @@ mod tests {
 
     #[test]
     fn the_hooks_are_read_with_the_project_s_waiting_ones() {
-        let h = hooks_of(&json!({"type": "hooks", "items": [{"event": "Stop", "command": "say done", "from": "your settings.json"}],
-            "trusted": false, "waiting": [{"event": "PostToolUse", "command": "cargo fmt", "from": "the project's .code-arena/settings.json"}]}));
-        assert_eq!(h.items[0], Hook { event: "Stop".into(), command: "say done".into(), from: "your settings.json".into() });
+        let h = hooks_of(
+            &json!({"type": "hooks", "items": [{"event": "Stop", "command": "say done", "from": "your settings.json"}],
+            "trusted": false, "waiting": [{"event": "PostToolUse", "command": "cargo fmt", "from": "the project's .code-arena/settings.json"}]}),
+        );
+        assert_eq!(
+            h.items[0],
+            Hook { event: "Stop".into(), command: "say done".into(), from: "your settings.json".into() }
+        );
         assert_eq!((h.trusted, h.waiting.len()), (Some(false), 1));
         assert_eq!(hooks_of(&json!({"type": "hooks", "items": [], "trusted": null, "waiting": []})).trusted, None);
     }
 
     #[test]
     fn the_rules_the_sandbox_and_the_styles_are_read() {
-        let p = perms_of(&json!({"rules": [{"rule": "read_file", "allow": true}, {"rule": "run_shell(rm*)", "allow": false}]}));
-        assert_eq!(p, [Perm { rule: "read_file".into(), allow: true }, Perm { rule: "run_shell(rm*)".into(), allow: false }]);
-        assert_eq!(sandbox_of(&json!({"on": true, "text": ["a", "b"]})), (true, vec!["a".to_string(), "b".to_string()]));
-        let s = styles_of(&json!({"current": "Learning", "items": [{"name": "default", "description": "d", "from": "built in"},
-            {"name": "learning", "description": "l", "from": "built in"}]}));
+        let p = perms_of(
+            &json!({"rules": [{"rule": "read_file", "allow": true}, {"rule": "run_shell(rm*)", "allow": false}]}),
+        );
+        assert_eq!(
+            p,
+            [Perm { rule: "read_file".into(), allow: true }, Perm { rule: "run_shell(rm*)".into(), allow: false }]
+        );
+        assert_eq!(
+            sandbox_of(&json!({"on": true, "text": ["a", "b"]})),
+            (true, vec!["a".to_string(), "b".to_string()])
+        );
+        let s = styles_of(
+            &json!({"current": "Learning", "items": [{"name": "default", "description": "d", "from": "built in"},
+            {"name": "learning", "description": "l", "from": "built in"}]}),
+        );
         assert_eq!(s.iter().map(|s| s.current).collect::<Vec<_>>(), [false, true]);
     }
 
     #[test]
     fn a_plugin_says_its_version_what_it_holds_and_who_enabled_it() {
-        let p = plugins_of(&json!({"items": [{"name": "fmt", "version": "1.2", "description": "Formats", "parts": ["hooks", "skills"], "on": true, "yours": false}]}));
+        let p = plugins_of(
+            &json!({"items": [{"name": "fmt", "version": "1.2", "description": "Formats", "parts": ["hooks", "skills"], "on": true, "yours": false}]}),
+        );
         assert_eq!(plugin_detail(&p[0]), "v1.2 \u{b7} hooks, skills \u{b7} enabled by the project");
-        let bare = Plugin { name: "x".into(), version: String::new(), description: String::new(), parts: vec![], on: false, yours: false };
+        let bare = Plugin {
+            name: "x".into(),
+            version: String::new(),
+            description: String::new(),
+            parts: vec![],
+            on: false,
+            yours: false,
+        };
         assert_eq!(plugin_detail(&bare), "nothing Code Arena reads");
     }
 
