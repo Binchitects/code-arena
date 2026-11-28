@@ -27,7 +27,7 @@ use crate::icons::icon;
 use crate::layout::View;
 use crate::media::Picture;
 use crate::state::{Send, Ui};
-use crate::widgets::{Theme, bold, caps, dialog, quick, toast};
+use crate::widgets::{Theme, action, bold, caps, dialog, quick, toast};
 
 /// Whether the view is in the window.
 pub const READY: bool = true;
@@ -41,7 +41,7 @@ pub const SHOW_RECOMMENDED: &str = "workbench.extensions.action.showRecommendedE
 pub const MORE: &str = "codeArena.extensions.more";
 
 /// The search box's words, as VS Code's.
-const SEARCH_HINT: &str = "Search Extensions in Marketplace";
+const SEARCH_HINT: &str = "Search Extensions";
 
 /// A path the driver reads: inside the project, from / or from ~/.
 const PATH_RULE: &str = "inside the project, or from / or ~/";
@@ -787,17 +787,19 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
             let flip = send.clone();
             let toggle = switch(t, on, busy, move || enable(ui, &flip, &id, !on));
             let (gone, ext) = (send.clone(), e.clone());
-            let remove = small_button(t, "Uninstall", false, move || {
-                if !busy {
-                    uninstall(ui, &gone, &ext)
-                }
-            });
+            let remove = tooltip(
+                action(t, "trash", move || {
+                    if !busy {
+                        uninstall(ui, &gone, &ext)
+                    }
+                }),
+                || label(|| "Uninstall"),
+            );
             let unused = !e.unused.is_empty();
             let warn = tooltip(
-                h_stack((icon("warning", 14.0), label(|| "Not used here").style(|s| s.font_size(12.0))))
-                    .style(move |s| s.items_center().gap(3.0).color(t.get().warning).flex_shrink(0.0_f32)),
+                icon("warning", 14.0).style(move |s| s.color(t.get().warning).flex_shrink(0.0_f32)),
                 {
-                    let all = e.unused.join("\n");
+                    let all = format!("Not used here:\n{}", e.unused.join("\n"));
                     move || {
                         let all = all.clone();
                         label(move || all.clone())
