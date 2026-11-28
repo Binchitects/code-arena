@@ -373,9 +373,27 @@ fn accept(e: &Editor, pick: impl Fn(&[Conflict]) -> Vec<Conflict>, choice: Choic
         return true;
     }
     let edits: Vec<(usize, usize, String)> = chosen.iter().map(|c| resolve(&text, c, choice)).collect();
-    let mut edits = edits.iter().map(|(a, z, by)| (Selection::region(*a, *z), by.as_str()));
-    e.doc().edit(&mut edits, EditType::Other);
+    let caret = caret_after(e.cursor.with_untracked(|c| c.offset()), &edits);
+    let mut each = edits.iter().map(|(a, z, by)| (Selection::region(*a, *z), by.as_str()));
+    e.doc().edit(&mut each, EditType::Other);
+    e.cursor.update(|c| c.set_insert(Selection::caret(caret)));
     true
+}
+
+/// Where a caret is after edits (in order, apart): moved by what changed before it, and to the start of a region it
+/// was in.
+pub fn caret_after(caret: usize, edits: &[(usize, usize, String)]) -> usize {
+    let mut shift: isize = 0;
+    for (a, z, by) in edits {
+        if caret < *a {
+            break;
+        }
+        if caret < *z {
+            return a.saturating_add_signed(shift);
+        }
+        shift += by.len() as isize - (z - a) as isize;
+    }
+    caret.saturating_add_signed(shift)
 }
 
 /// The conflict at the caret accepted (said when there is none).
@@ -566,6 +584,16 @@ mod tests {
         let empty = "<<<<<<< HEAD\n=======\ntheirs\n>>>>>>> topic\n";
         assert_eq!(applied(empty, Choice::Current), "");
         assert_eq!(applied(empty, Choice::Both), "theirs\n");
+    }
+
+    #[test]
+    fn the_caret_follows_the_edits() {
+        let edits = vec![(2, 10, "ab".to_string()), (20, 30, String::new())];
+        assert_eq!(caret_after(1, &edits), 1);
+        assert_eq!(caret_after(5, &edits), 2);
+        assert_eq!(caret_after(12, &edits), 6);
+        assert_eq!(caret_after(25, &edits), 14);
+        assert_eq!(caret_after(31, &edits), 15);
     }
 
     #[test]
