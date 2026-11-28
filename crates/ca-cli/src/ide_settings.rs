@@ -119,9 +119,9 @@ pub fn message(s: &Settings, files: &Files) -> Value {
     })
 }
 
-/// Where one of the person's own files is, by its name: `settings.json`, `keybindings.json`, or `snippets/NAME`
-/// (one file of the snippets folder, `NAME.json` or `NAME.code-snippets`). Nothing else in the settings folder is
-/// read or written through here: the Arena's key is kept there too.
+/// Where one of the person's own files is, by its name: `settings.json`, `keybindings.json`, `snippets/NAME` (one
+/// file of the snippets folder, `NAME.json` or `NAME.code-snippets`), or `skills/NAME/SKILL.md` (a skill of theirs).
+/// Nothing else in the settings folder is read or written through here: the Arena's key is kept there too.
 pub fn user_path(config: &Path, name: &str) -> Result<PathBuf, String> {
     if matches!(name, "settings.json" | "keybindings.json") {
         return Ok(config.join(name));
@@ -131,6 +131,12 @@ pub fn user_path(config: &Path, name: &str) -> Result<PathBuf, String> {
             && n.chars().all(|c| c.is_alphanumeric() || " ._+#-".contains(c))
             && [".json", ".code-snippets"].iter().any(|end| n.len() > end.len() && n.ends_with(end))
     };
+    // A skill of yours on this computer, as the Skills view opens it: only its SKILL.md.
+    if let Some(dir) = name.strip_prefix("skills/").and_then(|n| n.strip_suffix("/SKILL.md"))
+        && ca_agent::library::good_skill_name(dir)
+    {
+        return Ok(config.join("skills").join(dir).join("SKILL.md"));
+    }
     match name.strip_prefix("snippets/") {
         Some(n) if plain(n) => Ok(config.join("snippets").join(n)),
         _ => Err(format!("{name} is not a file of yours that is opened here")),
@@ -482,6 +488,7 @@ mod tests {
             user_path(config, "snippets/my own.code-snippets"),
             Ok(config.join("snippets/my own.code-snippets"))
         );
+        assert_eq!(user_path(config, "skills/tests/SKILL.md"), Ok(config.join("skills/tests/SKILL.md")));
         for no in [
             "",
             "credentials.json",
@@ -495,6 +502,10 @@ mod tests {
             "snippets/notes.txt",
             "snippets\\x.json",
             "ARENA.md",
+            "skills/../SKILL.md",
+            "skills/Up/SKILL.md",
+            "skills/a/notes.md",
+            "skills/a/b/SKILL.md",
         ] {
             assert!(user_path(config, no).is_err(), "{no:?} is no file of the person's");
             assert!(read_user(config, no)["error"].is_string() && read_user(config, no).get("text").is_none());

@@ -308,8 +308,8 @@ impl Associations {
 /// extension (the longest that is one), its first line; Plain Text when none says.
 /// The first line is asked for only when nothing before it says.
 pub fn detect(associations: &Associations, path: &str, first_line: impl FnOnce() -> String) -> &'static str {
-    if path.starts_with("user:") {
-        // The person's settings, keybindings and snippets: JSON with comments.
+    if path.starts_with("user:") && !path.ends_with(".md") {
+        // The person's settings, keybindings and snippets: JSON with comments (a skill of theirs is Markdown).
         return "jsonc";
     }
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
@@ -590,6 +590,7 @@ mod tests {
         assert_eq!(found(".vscode/settings.json", ""), "jsonc");
         assert_eq!(found("package.json", ""), "json");
         assert_eq!(found("user:keybindings.json", ""), "jsonc");
+        assert_eq!(found("user:skills/tests/SKILL.md", ""), "markdown");
         assert_eq!(found("lib/a.h", ""), "cpp");
         assert_eq!(found(".gitignore", ""), "ignore");
         assert_eq!(found("bin/tool", "#!/usr/bin/env python3"), "python");
