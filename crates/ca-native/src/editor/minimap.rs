@@ -135,18 +135,25 @@ pub struct Pin {
 }
 
 /// The scopes the sticky scroll pins, (first line, last line) by their first line: with the outline's symbols
-/// (their lines from 0, their depth), those regions that start at a symbol's line, and for a symbol with no region
-/// (a heading) the lines to the next symbol as deep or less; with none, every region.
-pub fn scopes(regions: &[(usize, usize)], symbols: Option<&[(usize, usize)]>, last: usize) -> Vec<(usize, usize)> {
+/// (their lines from 0, a heading's depth), those regions that start at a symbol's line, and for a heading the
+/// lines to the next heading as deep or less; a symbol of one line (a constant, a type) none. With no symbols,
+/// every region.
+pub fn scopes(
+    regions: &[(usize, usize)],
+    symbols: Option<&[(usize, Option<usize>)]>,
+    last: usize,
+) -> Vec<(usize, usize)> {
     let Some(symbols) = symbols.filter(|s| !s.is_empty()) else { return regions.to_vec() };
     let mut out: Vec<(usize, usize)> = symbols
         .iter()
         .enumerate()
-        .filter_map(|(i, &(line, depth))| {
+        .filter_map(|(i, &(line, heading))| {
             if let Some(r) = regions.iter().find(|r| r.0 == line) {
                 return Some(*r);
             }
-            let end = symbols[i + 1..].iter().find(|s| s.1 <= depth).map_or(last, |s| s.0.saturating_sub(1));
+            let depth = heading?;
+            let next = symbols[i + 1..].iter().find(|s| s.1.is_some_and(|d| d <= depth));
+            let end = next.map_or(last, |s| s.0.saturating_sub(1));
             (end > line).then_some((line, end))
         })
         .collect();
@@ -201,7 +208,7 @@ fn with_closer(
 }
 
 /// Symbols by their line (from 0) and depth.
-type Lines = Rc<Vec<(usize, usize)>>;
+type Lines = Rc<Vec<(usize, Option<usize>)>>;
 
 // ==== The room under the minimap ====
 
@@ -229,6 +236,11 @@ fn room_of(editor: &Editor) -> RwSignal<f64> {
 /// made that much wider, so its end can be scrolled out from under it, and the caret is kept left of it.
 pub fn room(editor: &Editor) -> f64 {
     room_of(editor).try_get().unwrap_or(0.0)
+}
+
+/// As [`room`], not followed: where the caret is kept visible, which must not scroll to it when the room changes.
+pub fn room_now(editor: &Editor) -> f64 {
+    room_of(editor).try_get_untracked().unwrap_or(0.0)
 }
 
 // ==== The views ====
@@ -263,10 +275,10 @@ pub fn around(ui: Ui, view: impl IntoView + 'static, editor: &Editor, colours: R
     let chars = create_memo(move |_| crate::settings::flag(ui, "editor.minimap.renderCharacters", Some(lang.get())));
     let left = create_memo(move |_| crate::settings::text(ui, "editor.minimap.side", Some(lang.get())) == "left");
     let sticky_on = create_memo(move |_| crate::settings::flag(ui, "editor.stickyScroll.enabled", Some(lang.get())));
-    // Its width, by the width of the text beside it.
-    let (viewport, cw_colours, eid) = (editor.viewport, colours.clone(), editor.id());
+    // Its width, by the width of the text beside it (measured again when the editor's style, its font, changes).
+    let (es, cw_colours, eid) = (editor.es, colours.clone(), editor.id());
     let char_width = create_memo(move |_| {
-        viewport.track();
+        es.track();
         let family = cw_colours.font_family(eid, 0);
         let attrs = Attrs::new().family(&family).font_size(cw_colours.font_size(eid, 0) as f32);
         let mut layout = TextLayout::new();
@@ -555,7 +567,8 @@ fn sticky(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, on: Memo<bo
     let symbols = create_memo(move |before: Option<&Option<Lines>>| {
         ui.symbols.with(|(p, s)| {
             if *p == at {
-                Some(Rc::new(s.iter().map(|s| (s.line.saturating_sub(1), s.depth)).collect()))
+                let heading = |s: &crate::outline::Symbol| (s.kind == crate::outline::Kind::Heading).then_some(s.depth);
+                Some(Rc::new(s.iter().map(|s| (s.line.saturating_sub(1), heading(s))).collect()))
             } else {
                 before.cloned().flatten()
             }
@@ -786,9 +799,12 @@ mod tests {
     fn the_scopes_are_the_symbols_regions_and_a_headings_lines() {
         let regions = [(0, 9), (1, 3), (5, 8)];
         assert_eq!(scopes(&regions, None, 20), regions.to_vec());
-        // Symbols at 0 and 5 (a region each), a heading at 12 to the next as deep at 15.
-        let symbols = [(0, 0), (5, 1), (12, 0), (15, 0)];
-        assert_eq!(scopes(&regions, Some(&symbols), 20), vec![(0, 9), (5, 8), (12, 14), (15, 20)]);
+        // Symbols at 0 and 5 (a region each), a heading at 12 to the next as deep at 15, a deeper one at 13 between.
+        let symbols = [(0, None), (5, None), (12, Some(1)), (13, Some(2)), (15, Some(1))];
+        assert_eq!(scopes(&regions, Some(&symbols), 20), vec![(0, 9), (5, 8), (12, 14), (13, 14), (15, 20)]);
+        // A symbol of one line (a constant at 3, with no region) is not pinned, however far the next one is.
+        let symbols = [(0, None), (3, None), (8, None)];
+        assert_eq!(scopes(&[(0, 1), (8, 12)], Some(&symbols), 20), vec![(0, 1), (8, 12)]);
     }
 
     /// The lines of an editor scrolled to `top` (a line of 20 px), as the screen's lines say them.

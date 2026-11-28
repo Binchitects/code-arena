@@ -820,7 +820,7 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
         };
         let rect = Rect::from_origin_size((x, row as f64 * height), (width, height)).inflate(10.0, 1.0);
         // Kept left of a minimap at the right.
-        let rect = Rect { x1: rect.x1 + super::minimap::room(&editor), ..rect };
+        let rect = Rect { x1: rect.x1 + super::minimap::room_now(&editor), ..rect };
         let vp = viewport.get_untracked();
         let near = [(vp.y0 - rect.y0), (vp.y1 - rect.y0), (vp.y0 - rect.y1), (vp.y1 - rect.y1)].map(f64::abs);
         let smallest = near.iter().copied().fold(f64::MAX, f64::min);
