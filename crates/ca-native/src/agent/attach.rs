@@ -309,10 +309,7 @@ fn chip(ui: Ui, u: Upload) -> impl IntoView {
     let x = tooltip(
         container(icon("close", 12.0)).on_click_stop(move |_| remove(ui, &key)).style(move |s| {
             let c = t.get();
-            s.position(Position::Absolute)
-                .inset_top(3.0)
-                .inset_right(3.0)
-                .width(18.0)
+            s.width(18.0)
                 .height(18.0)
                 .items_center()
                 .justify_center()
@@ -326,7 +323,9 @@ fn chip(ui: Ui, u: Upload) -> impl IntoView {
             let name = name.clone();
             label(move || format!("Remove {name}"))
         },
-    );
+    )
+    // Placed on the hover box itself: a box of no size laid out in the row would get no clicks for what it holds.
+    .style(|s| s.position(Position::Absolute).inset_top(3.0).inset_right(3.0));
     container((body, bar, x)).style(move |s| {
         let c = t.get();
         s.position(Position::Relative)
