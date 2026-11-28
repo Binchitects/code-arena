@@ -742,6 +742,15 @@ Sections used:
 - **Line endings in the status bar.** 'LF' / 'CRLF' shows the ending most of a file's lines have, or
   `files.eol` for a new file (auto = the system's). A click picks another, and the file is saved
   with every line ending that way. The UTF-8 item says only UTF-8 is read and written.
+- **Language mode detection.** A file's language is found as in VS Code: by `files.associations` (a
+  pattern with a `/` against the path, else against the name), then the file's name, then its
+  extension, then its first line (`#!/usr/bin/env python3`, `<?php`). Settings in a `[lang]` block
+  apply to it, and the status bar names it as VS Code does (TypeScript, Shell Script, JSON with
+  Comments).
+- **Change Language Mode.** Click the status bar's language or press Ctrl+K M to pick another
+  language for the file, or Auto Detect. The file is coloured again at once, and the choice lasts
+  until its tab closes. "Configure '<lang>' language based settings..." adds an empty `[lang]` block
+  to your settings.json and opens it.
 
 
 ### :bug: Bugs fixed
