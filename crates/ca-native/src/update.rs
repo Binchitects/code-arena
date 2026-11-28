@@ -103,9 +103,7 @@ pub fn next(now: &Phase, m: &Value) -> Option<Phase> {
             }
             _ => None,
         },
-        "update_done" => {
-            Some(Phase::Installed { version: s("version"), program: s("program"), said: s("said") })
-        }
+        "update_done" => Some(Phase::Installed { version: s("version"), program: s("program"), said: s("said") }),
         _ => None,
     };
     next.filter(|n| n != now)
@@ -172,12 +170,14 @@ pub fn register(_ui: Ui, _send: &Send) {
         let item = h_stack((
             dyn_container(
                 move || kind.get(),
-                |k| match k {
-                    2 => icon("cloud-download", 16.0),
-                    3 => icon("debug-restart", 16.0),
-                    _ => icon("arrow-circle-up", 16.0),
-                }
-                .into_any(),
+                |k| {
+                    match k {
+                        2 => icon("cloud-download", 16.0),
+                        3 => icon("debug-restart", 16.0),
+                        _ => icon("arrow-circle-up", 16.0),
+                    }
+                    .into_any()
+                },
             ),
             label(move || text.get()),
         ))
@@ -205,10 +205,10 @@ fn tell(ui: Ui, m: &Value, now: &Phase) {
                 me.told.set(version.clone());
                 toast::show(
                     ui,
-                    toast::info_of(said).source("Code Arena").action("Update Now", |_, send| install(send)).action(
-                        "Later",
-                        |_, _| {},
-                    ),
+                    toast::info_of(said)
+                        .source("Code Arena")
+                        .action("Update Now", |_, send| install(send))
+                        .action("Later", |_, _| {}),
                 );
             } else if m["asked"].as_bool() == Some(true) && !matches!(now, Phase::Available { .. }) {
                 match m["error"].as_str() {

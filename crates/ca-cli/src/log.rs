@@ -226,8 +226,11 @@ mod tests {
             log.line(&format!("line {i} with some words to fill it"));
         }
         let names: Vec<String> = {
-            let mut n: Vec<String> =
-                std::fs::read_dir(dir.path()).expect("dir").flatten().map(|e| e.file_name().to_string_lossy().into()).collect();
+            let mut n: Vec<String> = std::fs::read_dir(dir.path())
+                .expect("dir")
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into())
+                .collect();
             n.sort();
             n
         };

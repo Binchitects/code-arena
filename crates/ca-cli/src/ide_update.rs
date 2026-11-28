@@ -18,8 +18,8 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use rustls_pki_types::pem::PemObject;
@@ -395,7 +395,8 @@ async fn fetch(
     to: &Path,
     mut progress: impl FnMut(u8),
 ) -> Result<(u64, String), String> {
-    let mut file = std::fs::File::create(to).map_err(|e| format!("The download could not be written ({e}): nothing changed."))?;
+    let mut file =
+        std::fs::File::create(to).map_err(|e| format!("The download could not be written ({e}): nothing changed."))?;
     let (mut hash, mut length, mut failed) = (Sha256::new(), 0u64, None);
     progress(0);
     let whole = arena
@@ -576,8 +577,14 @@ mod tests {
         if signed {
             builds["signature"] = json!({});
         }
-        Mock::given(method("GET")).and(path(ca_arena::downloads::ROOT)).respond_with(ResponseTemplate::new(200).set_body_json(builds)).mount(&server).await;
-        for (name, body) in [("linux-x64", BUILD), ("SHA256SUMS", SUMS), ("SHA256SUMS.sig", sig), ("code-signing.crt", CERT)] {
+        Mock::given(method("GET"))
+            .and(path(ca_arena::downloads::ROOT))
+            .respond_with(ResponseTemplate::new(200).set_body_json(builds))
+            .mount(&server)
+            .await;
+        for (name, body) in
+            [("linux-x64", BUILD), ("SHA256SUMS", SUMS), ("SHA256SUMS.sig", sig), ("code-signing.crt", CERT)]
+        {
             Mock::given(method("GET"))
                 .and(path(format!("{}/{name}", ca_arena::downloads::ROOT)))
                 .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
