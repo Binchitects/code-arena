@@ -302,7 +302,10 @@ mod tests {
     #[test]
     fn the_answer_carries_its_id() {
         let a = answer(4, " tester ", "fake-pass", true);
-        assert_eq!((a["type"].as_str(), a["id"].as_u64(), a["user"].as_str()), (Some("vm_login_answer"), Some(4), Some("tester")));
+        assert_eq!(
+            (a["type"].as_str(), a["id"].as_u64(), a["user"].as_str()),
+            (Some("vm_login_answer"), Some(4), Some("tester"))
+        );
         assert_eq!(cancelled(4), json!({"type": "vm_login_answer", "id": 4, "cancel": true}));
     }
 }

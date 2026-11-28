@@ -16,10 +16,19 @@ use crate::{Context, Kind, Output, Tool, arg_str};
 
 /// What reaches into the guest.
 enum Op<'a> {
-    Run { os: Os, command: &'a str },
+    Run {
+        os: Os,
+        command: &'a str,
+    },
     /// `to` is the folder the file goes into, on the other side.
-    Copy { to_guest: bool, from: &'a str, to: &'a str },
-    Screen { file: &'a Path },
+    Copy {
+        to_guest: bool,
+        from: &'a str,
+        to: &'a str,
+    },
+    Screen {
+        file: &'a Path,
+    },
 }
 
 /// One machine as a call works on it: its hypervisor, its name, and the guest's sign-in once the guest took it.
@@ -94,8 +103,12 @@ impl Vm {
             (Op::Run { os, command }, Hypervisor::VMware) => self.vmware_run(user, password, *os, command).await,
             (Op::Run { os, command }, Hypervisor::Libvirt) => libvirt::run(vm, *os, command, self.limit).await,
             (Op::Run { command, .. }, Hypervisor::HyperV) => {
-                self.call(hyperv::run(vm, g.unwrap_or(&Guest { user: String::new(), password: String::new() }), command))
-                    .await
+                self.call(hyperv::run(
+                    vm,
+                    g.unwrap_or(&Guest { user: String::new(), password: String::new() }),
+                    command,
+                ))
+                .await
             }
             (Op::Copy { to_guest, from, to }, Hypervisor::VirtualBox) => match secret() {
                 Ok(f) => self.call(vbox::copy(vm, user, f.path(), *to_guest, from, to)).await,
@@ -134,7 +147,8 @@ impl Vm {
             return r;
         }
         let here = std::env::temp_dir().join(format!("code-arena-vm-out-{}-{}.txt", std::process::id(), stamp()));
-        let back = self.call(vmware::copy(vm, user, password, false, vmware::out_file(os), &here.to_string_lossy())).await;
+        let back =
+            self.call(vmware::copy(vm, user, password, false, vmware::out_file(os), &here.to_string_lossy())).await;
         let out = std::fs::read(&here).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
         let _ = std::fs::remove_file(&here);
         let _ = self.call(vmware::delete_in_guest(vm, user, password, vmware::out_file(os))).await;
@@ -396,7 +410,8 @@ impl Tool for VmScreenshot {
     fn def(&self) -> ToolDef {
         ToolDef {
             name: "vm_screenshot".into(),
-            description: "Saves a running virtual machine's screen as a picture in .code-arena/vm, and says where.".into(),
+            description: "Saves a running virtual machine's screen as a picture in .code-arena/vm, and says where."
+                .into(),
             parameters: schema(json!({}), &[]),
         }
     }
@@ -584,7 +599,11 @@ impl Tool for VmTest {
         if !snap.is_empty() && args["keep"] != true {
             let _ = vm.call(power_call(vm.hv, &vm.name, Power::Off)).await;
             let r = vm.call(snapshot_call(vm.hv, &vm.name, &Snap::Restore(snap.clone()))).await;
-            steps.push(if r.ok() { format!("Back at snapshot {snap}.") } else { format!("Not back at {snap}: {}", r.why()) });
+            steps.push(if r.ok() {
+                format!("Back at snapshot {snap}.")
+            } else {
+                format!("Not back at {snap}: {}", r.why())
+            });
         }
         let ok = result.is_ok();
         if let Err(e) = result {

@@ -179,7 +179,10 @@ mod tests {
     #[test]
     fn an_answer_is_read_and_a_cancel_is_none() {
         let a = answer_of(&json!({"id": 1, "user": " tester ", "password": "fake-pass", "save": true}));
-        assert_eq!(a.as_ref().map(|s| (s.guest.user.as_str(), s.guest.password.as_str(), s.save)), Some(("tester", "fake-pass", true)));
+        assert_eq!(
+            a.as_ref().map(|s| (s.guest.user.as_str(), s.guest.password.as_str(), s.save)),
+            Some(("tester", "fake-pass", true))
+        );
         assert!(answer_of(&json!({"id": 1, "cancel": true, "user": "x"})).is_none());
         assert!(answer_of(&json!({"id": 1, "user": ""})).is_none());
     }

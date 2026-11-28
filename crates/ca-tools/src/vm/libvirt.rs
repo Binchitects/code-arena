@@ -73,7 +73,8 @@ pub fn returned(r: &Ran) -> Result<Value, String> {
     if !r.ok() {
         return Err(r.why());
     }
-    let v: Value = serde_json::from_str(r.out.trim()).map_err(|e| format!("The guest agent said what is not JSON: {e}"))?;
+    let v: Value =
+        serde_json::from_str(r.out.trim()).map_err(|e| format!("The guest agent said what is not JSON: {e}"))?;
     Ok(v["return"].clone())
 }
 
@@ -95,11 +96,9 @@ pub fn finished(status: &Value) -> Option<Ran> {
 /// A command run in the guest through the agent, waited for until `limit`.
 pub async fn run(vm: &str, os: Os, command: &str, limit: Duration) -> Ran {
     let (shell, flag) = os.shell();
-    let started = exec(
-        &agent(vm, "guest-exec", json!({"path": shell, "arg": [flag, command], "capture-output": true})),
-        limit,
-    )
-    .await;
+    let started =
+        exec(&agent(vm, "guest-exec", json!({"path": shell, "arg": [flag, command], "capture-output": true})), limit)
+            .await;
     let pid = match returned(&started) {
         Ok(v) => v["pid"].as_i64().unwrap_or(-1),
         Err(e) => return Ran { code: None, out: String::new(), err: e },

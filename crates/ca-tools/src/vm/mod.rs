@@ -31,7 +31,8 @@ pub enum Hypervisor {
 }
 
 impl Hypervisor {
-    pub const ALL: [Hypervisor; 4] = [Hypervisor::VirtualBox, Hypervisor::VMware, Hypervisor::Libvirt, Hypervisor::HyperV];
+    pub const ALL: [Hypervisor; 4] =
+        [Hypervisor::VirtualBox, Hypervisor::VMware, Hypervisor::Libvirt, Hypervisor::HyperV];
 
     /// Its name as the tools' `hypervisor` argument and the driver's messages say it.
     pub fn id(self) -> &'static str {

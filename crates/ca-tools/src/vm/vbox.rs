@@ -105,7 +105,8 @@ mod tests {
         assert_eq!(m.len(), 2);
         assert_eq!((m[0].name.as_str(), m[0].state.as_str()), ("test-vm", "running"));
         assert_eq!((m[1].name.as_str(), m[1].state.as_str()), ("Win 11 \"dev\"", "off"));
-        let snaps = "SnapshotName=\"clean\"\nSnapshotUUID=\"x\"\nSnapshotName-1=\"after\"\nCurrentSnapshotName=\"after\"\n";
+        let snaps =
+            "SnapshotName=\"clean\"\nSnapshotUUID=\"x\"\nSnapshotName-1=\"after\"\nCurrentSnapshotName=\"after\"\n";
         assert_eq!(snapshot_names(snaps), ["clean", "after"]);
     }
 

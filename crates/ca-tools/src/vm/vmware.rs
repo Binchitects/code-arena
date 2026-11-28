@@ -58,7 +58,11 @@ pub fn snapshot(vmx: &str, s: &Snap) -> Call {
 
 /// The snapshots in what `listSnapshots` says ("Total snapshots: N", then a name a line).
 pub fn snapshot_names(said: &str) -> Vec<String> {
-    said.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("Total snapshots")).map(String::from).collect()
+    said.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("Total snapshots"))
+        .map(String::from)
+        .collect()
 }
 
 pub fn screenshot(vmx: &str, user: &str, password: &str, file: &Path) -> Call {

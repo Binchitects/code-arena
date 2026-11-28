@@ -114,13 +114,13 @@ impl Keyring {
         match self {
             Keyring::Secret => Call::new("secret-tool", &["lookup", "service", SERVICE, "vm", key]),
             Keyring::Keychain => Call::new("security", &["find-generic-password", "-s", SERVICE, "-a", key, "-w"]),
-            Keyring::Vault => Call::new("powershell", &["-NoProfile", "-NonInteractive", "-Command", "-"]).input(
-                format!(
+            Keyring::Vault => {
+                Call::new("powershell", &["-NoProfile", "-NonInteractive", "-Command", "-"]).input(format!(
                     "{VAULT}$c = $v.Retrieve({}, {}); $c.RetrievePassword(); [Console]::Out.Write($c.Password)\n",
                     ps_quote(SERVICE),
                     ps_quote(key)
-                ),
-            ),
+                ))
+            }
         }
     }
 
@@ -137,14 +137,14 @@ impl Keyring {
             Keyring::Keychain => {
                 Call::new("security", &["add-generic-password", "-U", "-s", SERVICE, "-a", key, "-w", &secret])
             }
-            Keyring::Vault => Call::new("powershell", &["-NoProfile", "-NonInteractive", "-Command", "-"]).input(
-                format!(
+            Keyring::Vault => {
+                Call::new("powershell", &["-NoProfile", "-NonInteractive", "-Command", "-"]).input(format!(
                     "{VAULT}$v.Add((New-Object Windows.Security.Credentials.PasswordCredential({}, {}, {})))\n",
                     ps_quote(SERVICE),
                     ps_quote(key),
                     ps_quote(&secret)
-                ),
-            ),
+                ))
+            }
         }
     }
 }
