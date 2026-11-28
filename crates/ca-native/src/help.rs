@@ -160,7 +160,7 @@ fn sheet(ui: Ui, st: Help) -> impl IntoView {
     let facts = st.facts.get_untracked();
     let head = v_stack((
         h_stack((
-            label(|| "Help").style(move |s| caps(s).color(t.get().desc).flex_grow(1.0_f32)),
+            label(|| "HELP").style(move |s| caps(s).color(t.get().desc).flex_grow(1.0_f32)),
             action(t, "close", move || close(ui)),
         ))
         .style(|s| s.items_center()),
