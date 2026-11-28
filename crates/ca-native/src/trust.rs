@@ -296,4 +296,17 @@ mod tests {
         take(ui, &json!({"type": "trust", "folder": "/w/repo", "trusted": false, "asked": false}), &send);
         assert!(!dialog::is_open(ui), "asked once a window");
     }
+
+    #[test]
+    fn a_refusal_shows_one_toast_that_trusting_takes_away() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let refusal =
+            json!({"type": "format", "kind": "not_trusted", "error": "Formatting is off in Restricted Mode."});
+        take(ui, &refusal, &send);
+        take(ui, &refusal, &send);
+        assert_eq!(toast::count(ui), 1, "a second refusal replaces the first toast");
+        take(ui, &json!({"type": "trust", "folder": "/w/repo", "trusted": true, "asked": true}), &send);
+        assert_eq!(toast::count(ui), 0, "trusting the folder takes the toast away");
+    }
 }
