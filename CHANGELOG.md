@@ -602,6 +602,17 @@ Sections used:
   Zoom with + / − / 0, Ctrl+wheel or the bar's buttons, go through the call's other pictures with
   the arrows or the arrow keys, open it in the system's viewer, or Save As to a path in the project.
   Escape closes the viewer.
+- **Attach files to a message.** The chat's paperclip (the system's file dialog), a file dropped on
+  the box, or files copied in a file manager and pasted with Ctrl+V go up to Arena at once. Each is
+  a chip over the box: a picture as itself, another file by its name with 'Uploading N%' and a bar,
+  then its size (', cut to fit'), or what went wrong ('Larger than 20 MB.'). Its X takes it away.
+- **The model reads what is attached.** A document's text goes after your words between `<uploaded>`
+  markers, and a picture goes as an image part to a model that sees. Otherwise the box says 'MODEL
+  cannot see images: it gets their names only.' The message waits for every upload, files alone are
+  sent as 'Look at these files.', at most ten go with one message, and there is no paperclip without
+  Arena.
+- **A question shows its files.** Under the bubble: pictures as small pictures, other files as chips
+  with their size, kept with the session.
 
 
 ### :bug: Bugs fixed
