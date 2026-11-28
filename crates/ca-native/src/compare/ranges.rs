@@ -261,7 +261,7 @@ pub fn register(_ui: Ui, _send: &Send) {
         (STAGE, "Git", "Stage Selected Ranges", &["Ctrl+K Ctrl+Alt+S"][..], Act::Stage),
         (UNSTAGE, "Git", "Unstage Selected Ranges", &["Ctrl+K Ctrl+N", "Ctrl+K Ctrl+Alt+N"][..], Act::Unstage),
         (REVERT, "Git", "Revert Selected Ranges", &["Ctrl+K Ctrl+R"][..], Act::Revert),
-        (ACCEPT, "Code Arena", "Accept the Agent's Selected Changes", &["Ctrl+K Ctrl+Alt+A"][..], Act::Accept),
+        (ACCEPT, "Changes", "Accept the Agent's Selected Changes", &["Ctrl+K Ctrl+Alt+A"][..], Act::Accept),
     ] {
         let mut c = command(id, category, title, move |ui, send| act(ui, send, what)).when(move |ui| can(ui, what));
         for k in keys {

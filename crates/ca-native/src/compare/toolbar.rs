@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use floem::reactive::{Memo, SignalGet, SignalUpdate};
-use floem::views::{Decorators, empty, h_stack, label};
+use floem::views::{Decorators, empty, h_stack, h_stack_from_iter, label};
 use floem::{AnyView, IntoView};
 use serde_json::{Value, json};
 
@@ -104,6 +104,19 @@ pub fn bar(ui: Ui, send: Send, e: Rc<Entry>, inline: Memo<bool>) -> impl IntoVie
         }
         None => empty().into_any(),
     };
+    // Stage, Unstage, Revert or Accept the lines chosen, by what the two sides are.
+    use super::ranges::{self, Act};
+    let picks: Vec<AnyView> = [
+        (Act::Stage, ranges::STAGE, "add", "Stage Selected Ranges (Ctrl+K Ctrl+Alt+S)"),
+        (Act::Unstage, ranges::UNSTAGE, "remove", "Unstage Selected Ranges (Ctrl+K Ctrl+N)"),
+        (Act::Revert, ranges::REVERT, "discard", "Revert Selected Ranges (Ctrl+K Ctrl+R)"),
+        (Act::Accept, ranges::ACCEPT, "check-all", "Accept the Agent's Selected Changes (Ctrl+K Ctrl+Alt+A)"),
+    ]
+    .into_iter()
+    .filter(|(act, ..)| ranges::file_for(*act, &e.left.source, &e.right.source, e.right.editable).is_some())
+    .map(|(_, id, icon, text)| tip(action(t, icon, run(id)), text))
+    .collect();
+    let picks = h_stack_from_iter(picks).style(|s| s.gap(2.0));
     let file = e.live().or(Some(&e.right)).and_then(|h| h.source.file().map(str::to_string));
     let opener = match file {
         Some(f) => {
@@ -143,6 +156,7 @@ pub fn bar(ui: Ui, send: Send, e: Rc<Entry>, inline: Memo<bool>) -> impl IntoVie
             "Show Whitespace Differences",
         ),
         tip(action(t, "arrow-swap", run(SWAP)), "Swap Left and Right Side"),
+        picks,
         opener,
         agent,
     ))
