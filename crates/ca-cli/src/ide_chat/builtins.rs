@@ -448,7 +448,8 @@ mod tests {
     fn every_command_of_the_terminals_help_is_answered_here_or_by_its_own_area() {
         for c in BUILTINS {
             let r = route(c.name);
-            let owned = matches!(c.name, "/clear" | "/new");
+            // ide_sessions's, and ide_goal's where the goal stands.
+            let owned = matches!(c.name, "/clear" | "/new" | "/goal");
             assert_eq!(r == Route::Leave, owned, "{} routes to {r:?}", c.name);
         }
         assert_eq!(route("/fix-tests now"), Route::Leave, "a command of the library's");
@@ -519,7 +520,7 @@ mod tests {
     #[test]
     fn what_is_spent_is_the_sessions_own() {
         let s = Spent::default();
-        s.add("a", ca_llm::Usage { prompt: 10, cached: 2, completion: 3, ..Default::default() });
+        s.add("a", ca_llm::Usage { prompt: 10, cached: 2, completion: 3 });
         s.add("a", ca_llm::Usage { prompt: 5, ..Default::default() });
         assert_eq!(s.of("a").prompt, 15);
         assert_eq!(s.of("b").prompt, 0);
