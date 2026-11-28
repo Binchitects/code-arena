@@ -786,11 +786,13 @@ pub fn line(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>, n: usize) -> impl In
     });
     let words = create_memo(move |_| {
         let s = status.get();
-        me.with(|m| match s.as_str() {
+        let said = me.with(|m| match s.as_str() {
             "working" => "Working…".to_string(),
             "done" => first_line(report_of(&m.text)),
             _ => first_line(&m.text),
-        })
+        });
+        // A call that said nothing (one not run) says where it stands.
+        if said.is_empty() { status_word(&s).to_string() } else { said }
     });
     let facts = create_memo(move |_| {
         st.spin.with(|_| ());

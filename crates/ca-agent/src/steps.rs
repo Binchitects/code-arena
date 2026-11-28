@@ -86,8 +86,11 @@ async fn research(crew: &Crew, plan: &Plan, step: &Step, ctx: &Context) -> Ran {
     let mut c = crew.clone();
     c.policy.mode = Mode::Plan;
     c.approver = Arc::new(crate::policy::NoAsking);
+    // Each step's sub-agent is told of by an id of its own, not by the call that runs the steps.
+    let mut ctx = ctx.clone();
+    ctx.call = ctx.call.map(|c| format!("{c}-step-{}", step.number));
     let o = TaskTool::new(Arc::new(Mutex::new(Some(c))))
-        .run(json!({"description": format!("step {}", step.number), "prompt": prompt(plan, step, None)}), ctx)
+        .run(json!({"description": format!("step {}", step.number), "prompt": prompt(plan, step, None)}), &ctx)
         .await;
     if o.is_error {
         (false, format!("Its sub-agent could not finish: {}", o.text), String::new())

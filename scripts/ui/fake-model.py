@@ -4,7 +4,7 @@
 #
 #   python3 scripts/ui/fake-model.py 18733
 #
-# The last user message decides: "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a
+# The last user message decides: "delegate" starts two sub-agents (each thinks, reads src/main.rs and reports), "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a
 # command that needs an approval in ask mode, "think" thinks for some seconds before it answers (with its usage),
 # anything else streams a Markdown answer with a code block. A tool's
 # result is answered with a short line, so each turn ends.
