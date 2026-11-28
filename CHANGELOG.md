@@ -865,6 +865,8 @@ Sections used:
   'Nothing here draws diagrams…' wrap with normal line spacing instead of lines pressed together.
 - **The Problems view's empty message fits the side bar.** 'No problems have been detected in the
   workspace.' wraps in a narrow side bar instead of being cut off.
+- **Ctrl+, opens Settings.** Ctrl+, and the gear's Settings row open your settings.json, and the row now
+  shows Ctrl+, as its key. Before, Ctrl+, did nothing and the row showed no key.
 
 ## v0.5.0 (2026-11-26)
 
