@@ -473,6 +473,7 @@ fn corner(ui: Ui, send: Send) -> AnyView {
                 .inset_bottom(30.0)
                 .width(WIDTH)
                 .max_width((ui.window.get().0 - 16.0).max(100.0))
+                .font_family(crate::widgets::UI_FONT.clone())
                 .font_size(13.0)
                 .apply_if(nothing, |st| st.hide())
         })
