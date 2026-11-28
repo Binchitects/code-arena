@@ -35,6 +35,14 @@
 //!   (empty when a side has none).
 //! - `git_merge_complete{repo, path, anyway}` → the file staged and `git_done{repo, of, path}`, then `git_status`;
 //!   while it still has conflict markers (and `anyway` is not true), `git_failed{repo, of, path, error: "markers"}`.
+//! - `git_log{repo, path?, limit?, key}` → `git_log{repo, path, key, items, error}`: the latest commits first (at
+//!   most `limit`, 15 when not said, 200 at most), each `{hash, short, subject, author, at}` (`at` in seconds); with
+//!   `path`, only the commits that changed the file, followed through its renames, each also with `status` (git's
+//!   letter), `path_at` (its name in that commit) and `from` (its name before, when renamed). A repository with no
+//!   commit yet lists none.
+//! - `git_commit_files{repo, hash, key}` → `git_commit_files{repo, key, hash, parents, subject, author, at, files,
+//!   truncated, error}`: a commit and the files it changed against its first parent (a first commit's are all
+//!   added), each `{path, status, from}`; at most 2000 (`truncated` says there were more).
 //!
 //! Once a face has asked a repository's status it is told again by itself whenever git's own files change (the
 //! index, HEAD, its log): a commit, a checkout or staging made in a terminal. The faces ask again after a file is
@@ -90,6 +98,8 @@ impl Area for Here {
         ("git_undo_commit", Rule::Side),
         ("git_merge_info", Rule::Side),
         ("git_merge_complete", Rule::Side),
+        ("git_log", Rule::Side),
+        ("git_commit_files", Rule::Side),
     ];
 
     fn start(sh: &Shared) {
@@ -863,8 +873,142 @@ fn answer(
             v["key"] = m["key"].clone();
             send(out, v);
         }
+        "git_log" => {
+            let path = m["path"].as_str().unwrap_or("");
+            let limit = m["limit"].as_u64().map_or(15, |n| n.clamp(1, 200) as usize);
+            let mut v = log(dir, path, limit);
+            v["type"] = json!("git_log");
+            v["repo"] = json!(repo);
+            v["path"] = json!(path);
+            v["key"] = m["key"].clone();
+            send(out, v);
+        }
+        "git_commit_files" => {
+            let hash = m["hash"].as_str().unwrap_or("");
+            let mut v = commit_files(dir, hash);
+            v["type"] = json!("git_commit_files");
+            v["repo"] = json!(repo);
+            v["key"] = m["key"].clone();
+            if v["hash"].is_null() {
+                v["hash"] = json!(hash);
+            }
+            send(out, v);
+        }
         _ => remote_answer(of, m, repo, dir, out, kept),
     }
+}
+
+/// Where a commit's header fields are told apart, and where each commit of a log begins.
+const FIELD: char = '\x1f';
+const RECORD: char = '\x1e';
+
+/// A commit's header as `git_log` says it, from git's `%H%x1f%h%x1f%an%x1f%at%x1f%s`.
+fn head_of(text: &str) -> Option<Value> {
+    let f: Vec<&str> = text.splitn(5, FIELD).collect();
+    let [hash, short, author, at, subject] = f[..] else { return None };
+    Some(json!({"hash": hash, "short": short, "author": author, "at": at.trim().parse::<u64>().unwrap_or(0),
+        "subject": subject}))
+}
+
+/// A name-status list as git writes it with `-z` (`M\0a.rs\0R100\0old.rs\0new.rs\0`): each file's letter, its path
+/// and, renamed or copied, where it was.
+fn name_status(text: &str) -> Vec<(char, String, Option<String>)> {
+    let mut words = text.split('\0').map(|w| w.trim_start_matches('\n')).filter(|w| !w.is_empty());
+    let mut out = Vec::new();
+    while let Some(how) = words.next() {
+        let letter = how.chars().next().unwrap_or('M');
+        let Some(first) = words.next() else { break };
+        if matches!(letter, 'R' | 'C') {
+            let Some(second) = words.next() else { break };
+            out.push((letter, second.to_string(), Some(first.to_string())));
+        } else {
+            out.push((letter, first.to_string(), None));
+        }
+    }
+    out
+}
+
+/// The latest commits, or those of one file followed through its renames, as `git_log` says them.
+fn log(dir: &Path, path: &str, limit: usize) -> Value {
+    let prefix = match where_is(dir) {
+        Ok(Some((_, prefix, _))) => prefix,
+        Ok(None) => return json!({"items": [], "error": "the folder has no git repository"}),
+        Err(e) => return json!({"items": [], "error": e}),
+    };
+    if !path.is_empty() && !path_ok(path) {
+        return json!({"items": [], "error": format!("{path} is not a path inside the project")});
+    }
+    if !has_head(dir) {
+        return json!({"items": []});
+    }
+    let n = format!("-n{limit}");
+    let file = format!("./{}", path.trim_start_matches("./"));
+    let mut args = vec!["log", "-z", n.as_str(), "--format=%x1e%H%x1f%h%x1f%an%x1f%at%x1f%s"];
+    if !path.is_empty() {
+        args.extend(["--follow", "-M", "--name-status", "--", file.as_str()]);
+    }
+    let said = match git(dir, &args, None) {
+        Ok(o) => String::from_utf8_lossy(&o).into_owned(),
+        Err(e) => return json!({"items": [], "error": e}),
+    };
+    let items: Vec<Value> = said
+        .split(RECORD)
+        .filter(|r| !r.is_empty())
+        .filter_map(|r| {
+            let (head, files) = r.split_once('\0').unwrap_or((r, ""));
+            let mut v = head_of(head)?;
+            if !path.is_empty()
+                && let Some((letter, at, from)) = name_status(files).into_iter().next()
+            {
+                v["status"] = json!(letter.to_string());
+                v["path_at"] = json!(from_project(&prefix, &at));
+                v["from"] = json!(from.map(|f| from_project(&prefix, &f)));
+            }
+            Some(v)
+        })
+        .collect();
+    json!({"items": items})
+}
+
+/// A commit and the files it changed against its first parent, as `git_commit_files` says them.
+fn commit_files(dir: &Path, hash: &str) -> Value {
+    if hash.is_empty() || hash.starts_with('-') || hash.contains([':', ' ', '\0']) {
+        return json!({"files": [], "error": "not a commit git takes"});
+    }
+    let prefix = match where_is(dir) {
+        Ok(Some((_, prefix, _))) => prefix,
+        Ok(None) => return json!({"files": [], "error": "the folder has no git repository"}),
+        Err(e) => return json!({"files": [], "error": e}),
+    };
+    let commit = format!("{hash}^{{commit}}");
+    let head = match git(dir, &["log", "-1", "--format=%H%x1f%P%x1f%an%x1f%at%x1f%s", &commit, "--"], None) {
+        Ok(o) => String::from_utf8_lossy(&o).trim_end_matches('\n').to_string(),
+        Err(e) => return json!({"files": [], "error": e}),
+    };
+    let f: Vec<&str> = head.splitn(5, FIELD).collect();
+    let [full, parents, author, at, subject] = f[..] else {
+        return json!({"files": [], "error": "git said no commit"});
+    };
+    let parents: Vec<&str> = parents.split_whitespace().collect();
+    let args: Vec<&str> = match parents.first() {
+        Some(first) => vec!["diff-tree", "-r", "-M", "-z", "--name-status", "--no-commit-id", first, full],
+        None => vec!["diff-tree", "--root", "-r", "-M", "-z", "--name-status", "--no-commit-id", full],
+    };
+    let listed = match git(dir, &args, None) {
+        Ok(o) => name_status(&String::from_utf8_lossy(&o)),
+        Err(e) => return json!({"files": [], "error": e}),
+    };
+    let truncated = listed.len() > MOST_FILES;
+    let files: Vec<Value> = listed
+        .into_iter()
+        .take(MOST_FILES)
+        .map(|(letter, path, from)| {
+            json!({"path": from_project(&prefix, &path), "status": letter.to_string(),
+                "from": from.map(|f| from_project(&prefix, &f))})
+        })
+        .collect();
+    json!({"hash": full, "parents": parents, "subject": subject, "author": author,
+        "at": at.trim().parse::<u64>().unwrap_or(0), "files": files, "truncated": truncated})
 }
 
 /// The longest a fetch, pull, push or sync may take before it is stopped.
@@ -1529,5 +1673,81 @@ mod tests {
         assert_eq!(info["kind"], "cherry-pick", "{info}");
         assert_eq!(info["incoming"]["subject"], "Shout two");
         assert_eq!(info["current"]["name"], "main");
+    }
+
+    fn committed(p: &Path, message: &str) {
+        git(p, &["add", "-A"], None).expect("add");
+        git(p, &["commit", "-qm", message], None).expect("commit");
+    }
+
+    #[test]
+    fn the_log_lists_the_latest_commits_and_follows_a_file_through_its_rename() {
+        let Some(d) = repo() else { return };
+        let p = d.path();
+        let none = answered(p, json!({"type": "git_log", "repo": "", "key": "k"}));
+        assert_eq!(none[0]["items"], json!([]), "no commit yet lists none: {}", none[0]);
+        assert!(none[0]["error"].is_null());
+        std::fs::write(p.join("a.txt"), "one\n").expect("write");
+        committed(p, "First");
+        std::fs::write(p.join("a.txt"), "one\ntwo\n").expect("write");
+        std::fs::write(p.join("b.txt"), "b\n").expect("write");
+        committed(p, "Second: with a colon");
+        git(p, &["mv", "a.txt", "c.txt"], None).expect("mv");
+        committed(p, "Rename");
+        let v = &answered(p, json!({"type": "git_log", "repo": "", "limit": 2, "key": "last"}))[0];
+        assert_eq!(v["key"], "last");
+        let items = v["items"].as_array().expect("items");
+        let subjects: Vec<&str> = items.iter().filter_map(|i| i["subject"].as_str()).collect();
+        assert_eq!(subjects, ["Rename", "Second: with a colon"]);
+        assert_eq!(items[0]["author"], "Test");
+        assert!(items[0]["at"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(items[0]["hash"].as_str().map(str::len), Some(40));
+        assert!(items[0]["status"].is_null(), "the whole log says no file's letter");
+        let v = &answered(p, json!({"type": "git_log", "repo": "", "path": "c.txt", "key": "f"}))[0];
+        let items = v["items"].as_array().expect("items");
+        assert_eq!(items.len(), 3, "the file's commits before its rename too: {v}");
+        assert_eq!((items[0]["status"].as_str(), items[0]["path_at"].as_str()), (Some("R"), Some("c.txt")));
+        assert_eq!(items[0]["from"], "a.txt");
+        assert_eq!((items[1]["status"].as_str(), items[1]["path_at"].as_str()), (Some("M"), Some("a.txt")));
+        assert_eq!(items[2]["status"], "A");
+        assert!(items[2]["from"].is_null());
+        assert_eq!(v["path"], "c.txt");
+        let out = &answered(p, json!({"type": "git_log", "repo": "", "path": "../x", "key": "f"}))[0];
+        assert!(out["error"].is_string());
+    }
+
+    #[test]
+    fn a_commits_files_are_told_against_its_first_parent_and_a_first_commits_are_all_added() {
+        let Some(d) = repo() else { return };
+        let p = d.path();
+        std::fs::write(p.join("a.txt"), "one\n").expect("write");
+        std::fs::write(p.join("gone.txt"), "x\n").expect("write");
+        committed(p, "First");
+        let first = String::from_utf8_lossy(&git(p, &["rev-parse", "HEAD"], None).expect("rev")).trim().to_string();
+        let v = &answered(p, json!({"type": "git_commit_files", "repo": "", "hash": first, "key": "k"}))[0];
+        assert_eq!(v["parents"], json!([]));
+        let added = json!([{"path": "a.txt", "status": "A", "from": null}, {"path": "gone.txt", "status": "A", "from": null}]);
+        assert_eq!(v["files"], added, "{v}");
+        git(p, &["mv", "a.txt", "b.txt"], None).expect("mv");
+        git(p, &["rm", "-q", "gone.txt"], None).expect("rm");
+        committed(p, "Move");
+        git(p, &["checkout", "-qb", "side"], None).expect("side");
+        std::fs::write(p.join("side.txt"), "s\n").expect("write");
+        committed(p, "Side");
+        git(p, &["checkout", "-q", "main"], None).expect("main");
+        std::fs::write(p.join("main.txt"), "m\n").expect("write");
+        committed(p, "Main");
+        git(p, &["merge", "-q", "--no-edit", "side"], None).expect("merge");
+        let v = &answered(p, json!({"type": "git_commit_files", "repo": "", "hash": "HEAD~2", "key": "k"}))[0];
+        assert_eq!(v["subject"], "Move");
+        let moved = json!([{"path": "b.txt", "status": "R", "from": "a.txt"}, {"path": "gone.txt", "status": "D", "from": null}]);
+        assert_eq!(v["files"], moved, "{v}");
+        let merge = &answered(p, json!({"type": "git_commit_files", "repo": "", "hash": "HEAD", "key": "k"}))[0];
+        assert_eq!(merge["parents"].as_array().map(Vec::len), Some(2));
+        assert_eq!(merge["files"], json!([{"path": "side.txt", "status": "A", "from": null}]), "{merge}");
+        assert_eq!(merge["truncated"], false);
+        assert_eq!(merge["key"], "k");
+        let bad = &answered(p, json!({"type": "git_commit_files", "repo": "", "hash": "--all", "key": "k"}))[0];
+        assert!(bad["error"].is_string());
     }
 }
