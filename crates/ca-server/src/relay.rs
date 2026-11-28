@@ -199,13 +199,21 @@ pub fn head_branch(head: &str) -> Option<String> {
     head.trim().strip_prefix("ref: refs/heads/").map(str::to_string).filter(|b| !b.is_empty())
 }
 
-/// The folder's project and branch, from the git repository it is in (its own `.git` or a parent's).
+/// The folder's project and branch, from the git repository it is in (its own `.git` or a parent's; a worktree's
+/// `.git` file leads to its own HEAD and to the shared config).
 pub fn git_facts(folder: &Path) -> (Option<String>, Option<String>) {
-    let Some(root) = folder.ancestors().find(|d| d.join(".git").is_dir()) else {
+    let Some(dot) = folder.ancestors().map(|d| d.join(".git")).find(|g| g.exists()) else {
         return (None, None);
     };
-    let git = root.join(".git");
-    let project = std::fs::read_to_string(git.join("config")).ok().as_deref().and_then(origin_project);
+    let git = match std::fs::read_to_string(&dot) {
+        Ok(text) => match text.trim().strip_prefix("gitdir:") {
+            Some(dir) => dot.parent().unwrap_or(folder).join(dir.trim()),
+            None => return (None, None),
+        },
+        Err(_) => dot,
+    };
+    let common = std::fs::read_to_string(git.join("commondir")).map_or_else(|_| git.clone(), |c| git.join(c.trim()));
+    let project = std::fs::read_to_string(common.join("config")).ok().as_deref().and_then(origin_project);
     let branch = std::fs::read_to_string(git.join("HEAD")).ok().as_deref().and_then(head_branch);
     (project, branch)
 }
@@ -224,8 +232,9 @@ pub async fn run(dial: Dial, local: Local, say: Say) -> Ended {
         if let Ok(v) = HeaderValue::from_str(&format!("Bearer {}", dial.key)) {
             request.headers_mut().insert(AUTHORIZATION, v);
         }
-        let config = WebSocketConfig::default().max_message_size(Some(MOST_MESSAGE));
-        match tokio_tungstenite::connect_async_with_config(request, Some(config), true).await {
+        // A page's message travels escaped inside a frame, so the tunnel takes tungstenite's own, larger, limits;
+        // each page message is held to the server's own on its way in.
+        match tokio_tungstenite::connect_async_with_config(request, Some(WebSocketConfig::default()), true).await {
             Ok((ws, _)) => {
                 wait = dial.least;
                 say(&format!(
@@ -283,6 +292,9 @@ struct Joined {
     carry: JoinHandle<()>,
 }
 
+/// How often a quiet connection is asked whether it is still there (a ping); one quiet for twice as long is lost.
+const KEEP_ALIVE: Duration = Duration::from_secs(30);
+
 /// The frames from Arena until the connection ends; Arena's close reason, if it gave one. The streams opened end with
 /// it, each said `bye` to the session.
 async fn serve<S>(ws: WebSocketStream<S>, local: &Local) -> Option<String>
@@ -290,17 +302,32 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let (mut sink, mut stream) = ws.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
     let writer = tokio::spawn(async move {
-        while let Some(text) = rx.recv().await {
-            if sink.send(Message::text(text)).await.is_err() {
+        while let Some(m) = rx.recv().await {
+            if sink.send(m).await.is_err() {
                 break;
             }
         }
     });
     let mut joined: HashMap<i64, Joined> = HashMap::new();
     let mut why = None;
-    while let Some(Ok(m)) = stream.next().await {
+    let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + KEEP_ALIVE, KEEP_ALIVE);
+    let mut heard = tokio::time::Instant::now();
+    loop {
+        let m = tokio::select! {
+            m = stream.next() => m,
+            _ = ticks.tick() => {
+                // A link gone without a word (a machine asleep, another network) is dialled again too.
+                if heard.elapsed() > KEEP_ALIVE * 2 {
+                    break;
+                }
+                let _ = tx.send(Message::Ping(Default::default()));
+                continue;
+            }
+        };
+        let Some(Ok(m)) = m else { break };
+        heard = tokio::time::Instant::now();
         match m {
             Message::Text(t) => {
                 let Ok(frame) = serde_json::from_str::<Value>(t.as_str()) else { continue };
@@ -333,11 +360,11 @@ fn frame_in(
     frame: &Value,
     id: i64,
     local: &Local,
-    tx: &mpsc::UnboundedSender<String>,
+    tx: &mpsc::UnboundedSender<Message>,
     joined: &mut HashMap<i64, Joined>,
 ) {
     let send = |v: Value| {
-        let _ = tx.send(v.to_string());
+        let _ = tx.send(Message::text(v.to_string()));
     };
     match frame["t"].as_str().unwrap_or("") {
         "req" => {
@@ -363,11 +390,11 @@ fn frame_in(
                         // Too far behind: the page asks for the whole state again.
                         Err(broadcast::error::RecvError::Lagged(_)) => json!({"type": "behind"}).to_string(),
                         Err(broadcast::error::RecvError::Closed) => {
-                            let _ = tx.send(json!({"t": "wsc", "id": id}).to_string());
+                            let _ = tx.send(Message::text(json!({"t": "wsc", "id": id}).to_string()));
                             break;
                         }
                     };
-                    if tx.send(json!({"t": "wsd", "id": id, "x": text}).to_string()).is_err() {
+                    if tx.send(Message::text(json!({"t": "wsd", "id": id, "x": text}).to_string())).is_err() {
                         break;
                     }
                 }
@@ -453,6 +480,24 @@ mod tests {
         assert_eq!(origin_project("[core]\n"), None);
         assert_eq!(head_branch("ref: refs/heads/feature/x\n").as_deref(), Some("feature/x"));
         assert_eq!(head_branch("0123abcd\n"), None);
+    }
+
+    #[test]
+    fn a_worktree_finds_its_own_branch_and_the_shared_origin() {
+        let dir = std::env::temp_dir().join(format!("ca-relay-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let common = dir.join("main/.git");
+        let own = common.join("worktrees/w");
+        std::fs::create_dir_all(&own).expect("dirs");
+        std::fs::create_dir_all(dir.join("w/src")).expect("dirs");
+        std::fs::write(common.join("config"), "[remote \"origin\"]\n\turl = git@h:acme/app.git\n").expect("w");
+        std::fs::write(common.join("HEAD"), "ref: refs/heads/main\n").expect("w");
+        std::fs::write(own.join("HEAD"), "ref: refs/heads/topic\n").expect("w");
+        std::fs::write(own.join("commondir"), "../..\n").expect("w");
+        std::fs::write(dir.join("w/.git"), format!("gitdir: {}\n", own.display())).expect("w");
+        assert_eq!(git_facts(&dir.join("w/src")), (Some("acme/app".into()), Some("topic".into())));
+        assert_eq!(git_facts(&dir.join("main")).1.as_deref(), Some("main"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A fake Arena: each connection's address and Authorization, and its WebSocket to drive.
@@ -545,6 +590,18 @@ mod tests {
         assert_eq!((p, v["text"].as_str()), (page, Some("hi")));
         // Without a type: not passed on.
         ws.send(Message::text(json!({"t": "wsd", "id": 3, "x": "[1]"}).to_string())).await.expect("send");
+        // A page's message near the server's limit, escaped twice on the wire, still goes through; one over it is
+        // dropped and the stream goes on.
+        let near = json!({"type": "save", "text": "\"".repeat(MOST_MESSAGE / 2 - 40)}).to_string();
+        assert!(near.len() <= MOST_MESSAGE);
+        ws.send(Message::text(json!({"t": "wsd", "id": 3, "x": near}).to_string())).await.expect("send");
+        assert_eq!(from_page(&mut s).await.1["type"], "save");
+        let over = json!({"type": "save", "text": "x".repeat(MOST_MESSAGE)}).to_string();
+        ws.send(Message::text(json!({"t": "wsd", "id": 3, "x": over}).to_string())).await.expect("send");
+        ws.send(Message::text(json!({"t": "wsd", "id": 3, "x": r#"{"type":"after"}"#}).to_string()))
+            .await
+            .expect("send");
+        assert_eq!(from_page(&mut s).await.1["type"], "after");
         s.to_pages.send(r#"{"type":"state"}"#.into()).expect("sent");
         assert_eq!(frame(&mut ws).await, json!({"t": "wsd", "id": 3, "x": r#"{"type":"state"}"#}));
 

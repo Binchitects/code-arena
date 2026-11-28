@@ -2480,7 +2480,7 @@ async fn ide_connect_dials_code_studio_with_the_folder_kept() {
     .expect("settings");
     let folder = tempfile::tempdir().expect("folder");
     let out = code_arena(home.path()).args(["ide", "--connect", "-C"]).arg(folder.path()).output().expect("runs");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("code-arena login"), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Code Studio is Arena's: sign in first"), "{out:?}");
 
     let gateway = MockServer::start().await;
     let arena = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
