@@ -1024,6 +1024,10 @@ Sections used:
   language and put it in at the caret or around the selection. Configure Snippets opens an existing
   snippets file, or makes a new global, folder or language file that starts with a commented
   example.
+- **Go to Symbol in Workspace.** Ctrl+T (or Ctrl+Alt+Shift+O, or '#' in Quick Open, or Go > Go to
+  Symbol in Workspace...) finds the project's functions, classes, types and headings by name or
+  initials ('rta' finds RunToolsAsync), each with its kind, its container and its path:line; Enter
+  opens it at that line.
 
 
 ### :bug: Bugs fixed
