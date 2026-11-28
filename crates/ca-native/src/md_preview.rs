@@ -313,8 +313,8 @@ fn preview_shown(ui: Ui) -> Option<String> {
     kinds::split(&path).filter(|(k, _)| *k == KIND).map(|(_, rest)| rest.to_string())
 }
 
-/// What a click on a preview's link does.
-fn go(ui: Ui, send: &Send, e: Entry, to: &Target) {
+/// What a click on a link of `file`'s preview does.
+fn go(ui: Ui, send: &Send, file: &str, e: Entry, to: &Target) {
     match to {
         Target::Heading(name) => {
             let blocks = e.blocks.get_untracked();
@@ -328,6 +328,8 @@ fn go(ui: Ui, send: &Send, e: Entry, to: &Target) {
             e.goto.set(Some(Point::new(0.0, y.max(0.0))));
         }
         Target::File(r) if is_markdown(&r.path) && r.line.is_none() => {
+            // In the group of the preview clicked.
+            groups::focus(ui, groups::holder(ui, &tab_of(file)));
             entry(ui, &r.path);
             kinds::open(ui, &tab_of(&r.path));
         }
@@ -382,11 +384,11 @@ fn view(ui: Ui, send: Send, file: &str) -> AnyView {
     let e = entry(ui, file);
     follow(ui, &send, file, e);
     let folder = folder_of(file).to_string();
-    let (to, pics) = (send.clone(), send.clone());
+    let (to, pics, here) = (send.clone(), send.clone(), file.to_string());
     let picture_folder = folder.clone();
     let doc = Doc {
         target: Box::new(move |href| target(&folder, href)),
-        follow: Box::new(move |link| go(ui, &to, e, link)),
+        follow: Box::new(move |link| go(ui, &to, &here, e, link)),
         picture: Box::new(move |src, alt| picture(ui, &pics, &picture_folder, src, alt)),
         placed: Box::new(move |n, id| {
             e.views.update(|v| {
