@@ -373,6 +373,12 @@ pub struct Was {
     pub thinking: String,
     /// The window: `{used, size, compact_at}`.
     pub context: Value,
+    /// The hooks that run: (event, command, where it was declared).
+    pub hooks: Vec<(String, String, String)>,
+    /// The permission rules as written: (allowed, refused).
+    pub rules: (Vec<String>, Vec<String>),
+    /// What the sandbox lets commands do (none: there is no sandbox).
+    pub sandbox: Option<Vec<String>>,
 }
 
 impl Shared {
@@ -414,6 +420,15 @@ impl Shared {
                 mode: p.agent.policy.mode.name().to_string(),
                 thinking: crate::ide::thinking_name(&p.agent.thinking),
                 context: json!({"used": p.agent.context_used(), "size": w.size, "compact_at": w.compact_at}),
+                hooks: p
+                    .agent
+                    .hooks
+                    .list
+                    .iter()
+                    .map(|h| (h.event.clone(), h.command.clone(), h.from.clone()))
+                    .collect(),
+                rules: p.agent.policy.rules.written(),
+                sandbox: p.agent.ctx.sandbox.as_ref().map(|s| s.describe()),
             },
         }
     }

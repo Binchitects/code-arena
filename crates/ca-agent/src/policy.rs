@@ -165,6 +165,17 @@ impl Rules {
         (self.allow.iter().map(w).collect(), self.deny.iter().map(w).collect())
     }
 
+    /// A rule taken away, for this session, from both lists, as it is written (`run_shell(npm test*)`): whether
+    /// there was one.
+    pub fn forget(&mut self, rule: &str) -> bool {
+        let Some(gone) = Rule::parse(rule) else { return false };
+        let same = |r: &Rule| r.tool == gone.tool && r.pattern == gone.pattern;
+        let before = self.allow.len() + self.deny.len();
+        self.allow.retain(|r| !same(r));
+        self.deny.retain(|r| !same(r));
+        self.allow.len() + self.deny.len() != before
+    }
+
     /// A rule kept for this session only (a trusted server's tools: `mcp__name__*`).
     pub fn allow(&mut self, rule: &str) {
         if let Some(r) = Rule::parse(rule) {

@@ -128,6 +128,92 @@ fn is_url(s: &str) -> bool {
     s.starts_with("https://") || s.starts_with("http://") || s.starts_with("git@") || s.starts_with("ssh://")
 }
 
+/// Whether a name can be a plugin's folder: letters, digits, `-` and `_` only.
+pub fn is_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// What a plugin's folder holds that Code Arena reads: commands, sub-agents, skills, hooks, MCP servers.
+pub fn parts(root: &Path) -> Vec<&'static str> {
+    let mut parts = Vec::new();
+    for (d, what) in [("commands", "commands"), ("agents", "sub-agents"), ("skills", "skills")] {
+        if root.join(d).is_dir() {
+            parts.push(what);
+        }
+    }
+    if root.join("hooks/hooks.json").is_file() {
+        parts.push("hooks");
+    }
+    if root.join(".mcp.json").is_file() {
+        parts.push("MCP servers");
+    }
+    parts
+}
+
+/// Installs a plugin from a folder or a git repository (cloned, its `.git` left out): the plugin installed, and
+/// what it holds that Code Arena reads.
+pub fn install(data: &Path, src: &str, agents: &Agents) -> anyhow::Result<(Plugin, Vec<&'static str>)> {
+    let clone = dir(data).join(format!(".clone-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&clone);
+    struct Gone(PathBuf);
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _gone = Gone(clone.clone());
+    let from: PathBuf = if is_url(src) {
+        std::fs::create_dir_all(dir(data))?;
+        let to = clone.clone();
+        let ok = std::process::Command::new("git")
+            .args(["clone", "--depth", "1", "--quiet", src])
+            .arg(&to)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::null())
+            .status()
+            .context("git could not start")?
+            .success();
+        if !ok {
+            bail!("git could not clone {src}");
+        }
+        to
+    } else {
+        std::fs::canonicalize(src).with_context(|| format!("the folder {src}"))?
+    };
+    let p = read(&from, agents)
+        .ok_or_else(|| anyhow::anyhow!("{src} has no name: its .code-arena-plugin/plugin.json says none"))?;
+    if !is_name(&p.name) {
+        bail!("the plugin's name {:?} cannot be a folder's", p.name);
+    }
+    let to = dir(data).join(&p.name);
+    let _ = std::fs::remove_dir_all(&to);
+    copy_tree(&from, &to)?;
+    let parts = parts(&to);
+    Ok((Plugin { root: to, ..p }, parts))
+}
+
+/// Removes an installed plugin: the names enabled without it.
+pub fn remove(data: &Path, name: &str, enabled_now: &[String]) -> anyhow::Result<Vec<String>> {
+    let to = dir(data).join(name);
+    if !is_name(name) || !to.is_dir() {
+        bail!("no plugin {name}");
+    }
+    std::fs::remove_dir_all(&to)?;
+    Ok(enabled_now.iter().filter(|n| *n != name).cloned().collect())
+}
+
+/// The names enabled once `name` is turned on or off. Only an installed plugin is turned on.
+pub fn turned(data: &Path, name: &str, on: bool, enabled_now: &[String]) -> anyhow::Result<Vec<String>> {
+    let mut names: Vec<String> = enabled_now.iter().filter(|n| *n != name).cloned().collect();
+    if on {
+        if !is_name(name) || !dir(data).join(name).is_dir() {
+            bail!("no plugin {name} is installed: code-arena plugin list");
+        }
+        names.push(name.to_string());
+    }
+    Ok(names)
+}
+
 /// `code-arena plugin …`.
 pub fn command(
     data: &Path,
@@ -157,52 +243,7 @@ pub fn command(
             Ok(0)
         }
         ["install", src] => {
-            let clone = dir(data).join(format!(".clone-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&clone);
-            struct Gone(PathBuf);
-            impl Drop for Gone {
-                fn drop(&mut self) {
-                    let _ = std::fs::remove_dir_all(&self.0);
-                }
-            }
-            let _gone = Gone(clone.clone());
-            let from: PathBuf = if is_url(src) {
-                std::fs::create_dir_all(dir(data))?;
-                let to = clone.clone();
-                let ok = std::process::Command::new("git")
-                    .args(["clone", "--depth", "1", "--quiet", src])
-                    .arg(&to)
-                    .env("GIT_TERMINAL_PROMPT", "0")
-                    .status()
-                    .context("git could not start")?
-                    .success();
-                if !ok {
-                    bail!("git could not clone {src}");
-                }
-                to
-            } else {
-                std::fs::canonicalize(src).with_context(|| format!("the folder {src}"))?
-            };
-            let p = read(&from, agents)
-                .ok_or_else(|| anyhow::anyhow!("{src} has no name: its .code-arena-plugin/plugin.json says none"))?;
-            if !p.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-                bail!("the plugin's name {:?} cannot be a folder's", p.name);
-            }
-            let to = dir(data).join(&p.name);
-            let _ = std::fs::remove_dir_all(&to);
-            copy_tree(&from, &to)?;
-            let mut parts = Vec::new();
-            for (d, what) in [("commands", "commands"), ("agents", "sub-agents"), ("skills", "skills")] {
-                if to.join(d).is_dir() {
-                    parts.push(what);
-                }
-            }
-            if to.join("hooks/hooks.json").is_file() {
-                parts.push("hooks");
-            }
-            if to.join(".mcp.json").is_file() {
-                parts.push("MCP servers");
-            }
+            let (p, parts) = install(data, src, agents)?;
             println!(
                 "Installed {} ({}). It is used once enabled: code-arena plugin enable {}",
                 p.name,
@@ -212,31 +253,19 @@ pub fn command(
             Ok(0)
         }
         ["remove", name] => {
-            let to = dir(data).join(name);
-            if !to.is_dir() {
-                bail!("no plugin {name}");
-            }
-            std::fs::remove_dir_all(&to)?;
-            keep_enabled(enabled_now.iter().filter(|n| n != name).cloned().collect())?;
+            keep_enabled(remove(data, name, enabled_now)?)?;
             println!("Removed {name}.");
             Ok(0)
         }
         ["enable", name] => {
-            if !dir(data).join(name).is_dir() {
-                bail!("no plugin {name} is installed: code-arena plugin list");
-            }
-            let mut names = enabled_now.to_vec();
-            if !names.iter().any(|n| n == name) {
-                names.push(name.to_string());
-            }
-            keep_enabled(names)?;
+            keep_enabled(turned(data, name, true, enabled_now)?)?;
             println!(
                 "{name} is enabled for you (a project enables its own in .code-arena/settings.json, \"plugins.enabled\")."
             );
             Ok(0)
         }
         ["disable", name] => {
-            keep_enabled(enabled_now.iter().filter(|n| n != name).cloned().collect())?;
+            keep_enabled(turned(data, name, false, enabled_now)?)?;
             println!("{name} is disabled.");
             Ok(0)
         }
