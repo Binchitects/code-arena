@@ -36,6 +36,9 @@ use crate::complete::{self, Item, Kind};
 use crate::state::{Send, Ui};
 use crate::widgets::quick;
 
+/// How the status bar's message about a snippets file not read begins.
+const NOT_READ: &str = "Could not read the snippets of";
+
 /// A snippets file the session said: where it is from, its path (`snippets/NAME`, `.vscode/NAME.code-snippets`),
 /// and its language (a person's `NAME.json`'s).
 #[derive(Clone, Debug)]
@@ -500,21 +503,31 @@ fn read_all(ui: Ui, m: &Value) {
         .unwrap_or_default();
     FILES.with(|f| *f.borrow_mut() = Rc::new(files));
     let given = m["files"].clone();
+    let problems: Vec<String> = m["problems"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|p| format!("{NOT_READ} {}: {}", p["path"].as_str().unwrap_or(""), p["error"].as_str().unwrap_or("")))
+        .collect();
     let done = floem::ext_event::create_ext_action(ui.scope, move |(all, bad): (Vec<Snippet>, Vec<String>)| {
         ALL.with(|a| *a.borrow_mut() = Rc::new(all));
-        if let Some(first) = bad.first() {
-            ui.message.set(first.clone());
+        // A file not read is said; once all are read again, what was said of one is taken away.
+        let shown = ui.message.get_untracked();
+        match bad.first() {
+            Some(first) if *first != shown => ui.message.set(first.clone()),
+            None if shown.starts_with(NOT_READ) => ui.message.set(String::new()),
+            _ => {}
         }
     });
     std::thread::spawn(move || {
         let mut all = Vec::new();
-        let mut bad = Vec::new();
+        let mut bad = problems;
         for f in given.as_array().into_iter().flatten() {
             let path = f["path"].as_str().unwrap_or("");
             let source = Source::of(f["source"].as_str().unwrap_or(""));
             match list::read(f["text"].as_str().unwrap_or(""), f["language"].as_str(), source) {
                 Ok(s) => all.extend(s),
-                Err(e) => bad.push(format!("Could not read the snippets of {path}: {e}")),
+                Err(e) => bad.push(format!("{NOT_READ} {path}: {e}")),
             }
         }
         done((all, bad));
