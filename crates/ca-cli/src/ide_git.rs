@@ -18,6 +18,15 @@
 //!   too_large}`: `rev` empty is the index, else a revision (`HEAD`); `working` reads the file in the working tree
 //!   instead; `key`, when given, is said back.
 //! - `git_init{repo}` → a repository made there, then `git_status`.
+//! - `git_branches{repo, key}` → `git_branches{repo, key, items, remotes, error}`: each of `items` (the latest
+//!   commit first) is `{name, kind: local|remote|tag, current, hash, upstream, ahead, behind, subject}`.
+//! - `git_switch{repo, name, kind}`, `git_branch_create{repo, name, from?}`, `git_branch_rename{repo, from?, to}`,
+//!   `git_branch_delete{repo, name, force}`, `git_fetch{repo, all, auto}`, `git_pull{repo, rebase}`,
+//!   `git_push{repo, force, remote?}` (a branch with no upstream is published), `git_sync{repo, rebase}` (a pull,
+//!   then a push) and `git_undo_commit{repo}` → `git_done{repo, key, op, ok, error}` then `git_status`. A delete
+//!   refused because the branch is not merged says `unmerged`; a publish, `published` (the remote); an undo, the
+//!   commit's `message`; an automatic fetch, `auto` (one is skipped, and says `skipped`, while another fetch, pull or push runs). A
+//!   fetch, pull, push or sync is stopped after ten minutes; a fetch or a push does not hold staging up.
 //!
 //! Once a face has asked a repository's status it is told again by itself whenever git's own files change (the
 //! index, HEAD, its log): a commit, a checkout or staging made in a terminal. The faces ask again after a file is
@@ -61,6 +70,16 @@ impl Area for Here {
         ("git_commit", Rule::Side),
         ("git_show", Rule::Side),
         ("git_init", Rule::Side),
+        ("git_branches", Rule::Side),
+        ("git_switch", Rule::Side),
+        ("git_branch_create", Rule::Side),
+        ("git_branch_rename", Rule::Side),
+        ("git_branch_delete", Rule::Side),
+        ("git_fetch", Rule::Side),
+        ("git_pull", Rule::Side),
+        ("git_push", Rule::Side),
+        ("git_sync", Rule::Side),
+        ("git_undo_commit", Rule::Side),
     ];
 
     fn start(sh: &Shared) {
@@ -93,7 +112,7 @@ impl Area for Here {
             Err(e) => {
                 send(
                     &out,
-                    json!({"type": if of == "git_status" { "git_status" } else { "git_failed" }, "repo": repo, "of": of, "error": e}),
+                    json!({"type": if of == "git_status" { "git_status" } else { "git_failed" }, "repo": repo, "of": of, "error": e, "key": m["key"]}),
                 );
                 return true;
             }
@@ -102,7 +121,24 @@ impl Area for Here {
         let me = kept.me.lock().ok().and_then(|w| w.upgrade());
         let (m, of) = (m.clone(), of.to_string());
         later(move || {
-            let _one = kept.lock.lock();
+            // One fetch, pull, push or sync at a time, waited for before the index's lock (never while holding it);
+            // an automatic fetch never waits, and says it was skipped.
+            let network = matches!(of.as_str(), "git_fetch" | "git_pull" | "git_push" | "git_sync");
+            let _net = match (network, m["auto"].as_bool().unwrap_or(false)) {
+                (false, _) => None,
+                (true, false) => kept.network.lock().ok(),
+                (true, true) => match kept.network.try_lock() {
+                    Ok(g) => Some(g),
+                    Err(_) => {
+                        let skipped = json!({"type": "git_done", "repo": repo, "op": of, "ok": true, "auto": true,
+                            "skipped": true, "key": m["key"]});
+                        send(&out, skipped);
+                        return;
+                    }
+                },
+            };
+            // A fetch or a push leaves the index alone: it keeps neither staging nor the status waiting.
+            let _one = (!matches!(of.as_str(), "git_fetch" | "git_push")).then(|| kept.lock.lock());
             answer(&of, &m, &repo, &dir, &out, &kept, me.as_deref());
         });
         true
@@ -124,6 +160,8 @@ fn later(work: impl FnOnce() + Send + 'static) {
 #[derive(Default)]
 pub(crate) struct Git {
     lock: Mutex<()>,
+    /// One fetch, pull, push or sync at a time.
+    network: Mutex<()>,
     me: Mutex<Weak<Side>>,
     watching: AtomicBool,
     asked: Mutex<HashMap<String, Asked>>,
@@ -200,6 +238,16 @@ pub(crate) fn scrub(text: &str) -> String {
 /// Git run in a folder as every request here runs it: never asking for a password, never paging, ssh in batch
 /// mode, without the Arena key; `input` is given on its standard input. Ok: what it wrote; Err: what it said, scrubbed.
 pub(crate) fn git(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let mut child = spawn(dir, args, input.is_some())?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        let _ = stdin.write_all(input);
+    }
+    let o = child.wait_with_output().map_err(|e| format!("git could not be run: {e}"))?;
+    said_of(o.status.success(), o.stdout, &o.stderr)
+}
+
+/// Git started as [`git`] runs it, its output piped.
+fn spawn(dir: &Path, args: &[&str], input: bool) -> Result<std::process::Child, String> {
     let mut c = Command::new("git");
     c.arg("-C")
         .arg(dir)
@@ -209,23 +257,22 @@ pub(crate) fn git(dir: &Path, args: &[&str], input: Option<&[u8]>) -> Result<Vec
         .env("GIT_PAGER", "cat")
         .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
         .env_remove("ARENA_API_KEY")
-        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdin(if input { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = c.spawn().map_err(|e| match e.kind() {
+    c.spawn().map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => "git was not found: install it to use source control".to_string(),
         _ => format!("git could not be run: {e}"),
-    })?;
-    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
-        let _ = stdin.write_all(input);
+    })
+}
+
+/// What a finished git gives: what it wrote, or what it said first (not the usage it may print after), scrubbed.
+fn said_of(ok: bool, stdout: Vec<u8>, stderr: &[u8]) -> Result<Vec<u8>, String> {
+    if ok {
+        return Ok(stdout);
     }
-    let o = child.wait_with_output().map_err(|e| format!("git could not be run: {e}"))?;
-    if o.status.success() {
-        return Ok(o.stdout);
-    }
-    let said = String::from_utf8_lossy(&o.stderr);
-    let said = if said.trim().is_empty() { String::from_utf8_lossy(&o.stdout) } else { said };
-    // What it says first, not the usage it may print after.
+    let said = String::from_utf8_lossy(stderr);
+    let said = if said.trim().is_empty() { String::from_utf8_lossy(&stdout) } else { said };
     let first: Vec<&str> = said.trim().lines().take(6).collect();
     Err(scrub(&first.join("\n")))
 }
@@ -646,8 +693,262 @@ fn answer(
             }
             push_status(kept, out, repo, dir);
         }
-        _ => {}
+        "git_branches" => {
+            let mut v = branches(dir);
+            v["type"] = json!("git_branches");
+            v["repo"] = json!(repo);
+            v["key"] = m["key"].clone();
+            send(out, v);
+        }
+        _ => remote_answer(of, m, repo, dir, out, kept),
     }
+}
+
+/// The longest a fetch, pull, push or sync may take before it is stopped.
+const MOST_NETWORK: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Git as [`git`] runs it, stopped once it has taken `limit`. What it writes is read beside it; a git stopped is
+/// not waited for further (what it started, ssh, may keep its output open).
+pub(crate) fn git_for(dir: &Path, args: &[&str], limit: std::time::Duration) -> Result<Vec<u8>, String> {
+    fn read(pipe: Option<impl std::io::Read + std::marker::Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut b = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut b);
+            }
+            b
+        })
+    }
+    let mut child = spawn(dir, args, false)?;
+    let stdout = read(child.stdout.take());
+    let stderr = read(child.stderr.take());
+    let end = std::time::Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(done)) => {
+                let (o, e) = (stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default());
+                return said_of(done.success(), o, &e);
+            }
+            Ok(None) if std::time::Instant::now() >= end => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let minutes = limit.as_secs().div_ceil(60);
+                return Err(format!("git {} took longer than {minutes} minutes and was stopped", args[0]));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(e) => return Err(format!("git could not be run: {e}")),
+        }
+    }
+}
+
+/// A name the window gives (a branch, a remote, a revision) that git cannot take for an option.
+fn name_ok(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('-') && !name.contains(['\0', '\n', ' '])
+}
+
+/// The repository's branches, remote branches and tags, the latest commit first, and its remotes, as
+/// `git_branches` says them: `items` of `{name, kind: local|remote|tag, current, hash, upstream, ahead, behind,
+/// subject}`, `remotes`, `error`.
+pub(crate) fn branches(dir: &Path) -> Value {
+    let format = "--format=%(HEAD)%00%(refname)%00%(objectname:short)%00%(upstream:short)%00\
+                  %(upstream:track,nobracket)%00%(subject)";
+    let refs = ["for-each-ref", "--sort=-committerdate", format, "refs/heads", "refs/remotes", "refs/tags"];
+    let out = match git(dir, &refs, None) {
+        Ok(o) => o,
+        Err(e) => return json!({"items": [], "remotes": [], "error": e}),
+    };
+    let text = String::from_utf8_lossy(&out);
+    let items: Vec<Value> = text.lines().filter_map(branch_line).take(MOST_FILES).collect();
+    json!({"items": items, "remotes": remotes(dir).unwrap_or_default()})
+}
+
+/// One line of `for-each-ref` as an item of `git_branches` (none: a remote's HEAD, or a line it cannot read).
+fn branch_line(line: &str) -> Option<Value> {
+    let f: Vec<&str> = line.split('\0').collect();
+    let [head, refname, hash, upstream, track, subject] = f[..] else { return None };
+    let (kind, name) = if let Some(n) = refname.strip_prefix("refs/heads/") {
+        ("local", n)
+    } else if let Some(n) = refname.strip_prefix("refs/remotes/") {
+        ("remote", n)
+    } else {
+        ("tag", refname.strip_prefix("refs/tags/")?)
+    };
+    if kind == "remote" && (name.ends_with("/HEAD") || !name.contains('/')) {
+        return None;
+    }
+    let count = |word: &str| {
+        track.split(", ").find_map(|p| p.strip_prefix(word)).and_then(|n| n.trim().parse::<u64>().ok()).unwrap_or(0)
+    };
+    Some(json!({
+        "name": name, "kind": kind, "current": head == "*", "hash": hash,
+        "upstream": (!upstream.is_empty()).then_some(upstream), "ahead": count("ahead "), "behind": count("behind "),
+        "subject": subject,
+    }))
+}
+
+/// The repository's remotes, by name.
+fn remotes(dir: &Path) -> Result<Vec<String>, String> {
+    git(dir, &["remote"], None)
+        .map(|o| String::from_utf8_lossy(&o).lines().map(str::to_string).filter(|r| !r.is_empty()).collect())
+}
+
+/// The branch checked out (none: detached), and its upstream.
+fn current(dir: &Path) -> (Option<String>, Option<String>) {
+    let text = |args: &[&str]| {
+        git(dir, args, None).ok().map(|o| String::from_utf8_lossy(&o).trim().to_string()).filter(|n| !n.is_empty())
+    };
+    (
+        text(&["symbolic-ref", "--quiet", "--short", "HEAD"]),
+        text(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]),
+    )
+}
+
+/// Where a branch without an upstream is published: the remote asked for, else the only one, else `origin`.
+fn remote_for(dir: &Path, asked: Option<&str>) -> Result<String, String> {
+    let remotes = remotes(dir)?;
+    if let Some(a) = asked.filter(|a| !a.is_empty()) {
+        return if remotes.iter().any(|r| r == a) {
+            Ok(a.to_string())
+        } else {
+            Err(format!("There is no remote '{a}'."))
+        };
+    }
+    match remotes.as_slice() {
+        [] => Err("Your repository has no remotes configured to publish to.".into()),
+        [only] => Ok(only.clone()),
+        many if many.iter().any(|r| r == "origin") => Ok("origin".into()),
+        _ => Err("Your repository has several remotes: pick the one to publish to.".into()),
+    }
+}
+
+/// Checks out a branch: a local one; a remote one through its local branch, made to track it when there is none;
+/// a tag or a commit, detached.
+pub(crate) fn switch(dir: &Path, name: &str, kind: &str) -> Result<(), String> {
+    if !name_ok(name) {
+        return Err(format!("'{name}' is not a valid name."));
+    }
+    match kind {
+        "local" => git(dir, &["switch", "--quiet", name], None).map(drop),
+        "remote" => {
+            let local = name.split_once('/').map(|(_, l)| l).unwrap_or(name);
+            let exists = git(dir, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{local}")], None).is_ok();
+            if exists {
+                git(dir, &["switch", "--quiet", local], None).map(drop)
+            } else {
+                git(dir, &["switch", "--quiet", "--track", name], None).map(drop)
+            }
+        }
+        _ => git(dir, &["switch", "--quiet", "--detach", name], None).map(drop),
+    }
+}
+
+/// Puts the last commit back: its changes staged again, its message given back. The first commit too.
+pub(crate) fn undo_commit(dir: &Path) -> Result<String, String> {
+    let message = git(dir, &["log", "-1", "--format=%B"], None)
+        .map_err(|_| "There is no commit to undo.".to_string())
+        .map(|o| String::from_utf8_lossy(&o).trim().to_string())?;
+    if git(dir, &["rev-parse", "--verify", "--quiet", "HEAD~1"], None).is_ok() {
+        git(dir, &["reset", "--soft", "HEAD~1"], None)?;
+    } else {
+        git(dir, &["update-ref", "-d", "HEAD"], None)?;
+    }
+    Ok(message)
+}
+
+/// Pushes the branch checked out: to its upstream, or published to a remote when it has none (Ok: the remote it
+/// was published to).
+pub(crate) fn push(dir: &Path, force: bool, remote: Option<&str>) -> Result<Option<String>, String> {
+    let (Some(branch), upstream) = current(dir) else {
+        return Err("Not on a branch: check one out to push it.".into());
+    };
+    let mut args = vec!["push", "--quiet"];
+    if force {
+        args.push("--force-with-lease");
+    }
+    if upstream.is_some() {
+        return git_for(dir, &args, MOST_NETWORK).map(|_| None);
+    }
+    let to = remote_for(dir, remote)?;
+    args.extend(["--set-upstream", to.as_str(), branch.as_str()]);
+    git_for(dir, &args, MOST_NETWORK).map(|_| Some(to.clone()))
+}
+
+/// Pulls into the branch checked out, merging or (`rebase`) rebasing.
+pub(crate) fn pull(dir: &Path, rebase: bool) -> Result<(), String> {
+    let args: &[&str] = if rebase { &["pull", "--quiet", "--rebase"] } else { &["pull", "--quiet"] };
+    git_for(dir, args, MOST_NETWORK).map(drop)
+}
+
+/// A branch, fetch, pull, push or sync request answered, on git's thread: `git_done{repo, key, op, ok, error}`
+/// (with `unmerged`, `message` or `published` where they are said), then the status.
+fn remote_answer(of: &str, m: &Value, repo: &str, dir: &Path, out: &broadcast::Sender<String>, kept: &Git) {
+    let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
+    let b = |k: &str| m[k].as_bool().unwrap_or(false);
+    let mut more = serde_json::Map::new();
+    let valid = |n: &str| if name_ok(n) { Ok(()) } else { Err(format!("'{n}' is not a valid branch name.")) };
+    let done: Result<(), String> = match of {
+        "git_switch" => switch(dir, &s("name"), m["kind"].as_str().unwrap_or("local")),
+        "git_branch_create" => {
+            let (name, from) = (s("name"), s("from"));
+            valid(&name).and_then(|_| {
+                if from.is_empty() {
+                    git(dir, &["switch", "--quiet", "-c", &name], None).map(drop)
+                } else {
+                    valid(&from).and_then(|_| git(dir, &["switch", "--quiet", "-c", &name, &from], None).map(drop))
+                }
+            })
+        }
+        "git_branch_rename" => {
+            let (from, to) = (s("from"), s("to"));
+            valid(&to).and_then(|_| {
+                if from.is_empty() {
+                    git(dir, &["branch", "-m", &to], None).map(drop)
+                } else {
+                    valid(&from).and_then(|_| git(dir, &["branch", "-m", &from, &to], None).map(drop))
+                }
+            })
+        }
+        "git_branch_delete" => {
+            let name = s("name");
+            let done =
+                valid(&name).and_then(|_| git(dir, &["branch", if b("force") { "-D" } else { "-d" }, &name], None));
+            if done.as_ref().is_err_and(|e| e.contains("not fully merged")) {
+                more.insert("unmerged".into(), json!(true));
+            }
+            done.map(drop)
+        }
+        "git_fetch" => {
+            let args: &[&str] = if b("all") { &["fetch", "--quiet", "--all"] } else { &["fetch", "--quiet"] };
+            git_for(dir, args, MOST_NETWORK).map(drop)
+        }
+        "git_pull" => pull(dir, b("rebase")),
+        "git_push" | "git_sync" => {
+            let pulled = if of == "git_sync" { pull(dir, b("rebase")) } else { Ok(()) };
+            pulled.and_then(|_| push(dir, b("force"), m["remote"].as_str())).map(|to| {
+                if let Some(to) = to {
+                    more.insert("published".into(), json!(to));
+                }
+            })
+        }
+        "git_undo_commit" => undo_commit(dir).map(|message| {
+            more.insert("message".into(), json!(message));
+        }),
+        _ => return,
+    };
+    let mut v = json!({"type": "git_done", "repo": repo, "op": of, "ok": done.is_ok(), "key": m["key"]});
+    if let Err(e) = done {
+        v["error"] = json!(e);
+    }
+    if b("auto") {
+        v["auto"] = json!(true);
+    }
+    for (k, val) in more {
+        v[k] = val;
+    }
+    send(out, v);
+    // A fetch or a push ran without the index's lock: the status is read under it.
+    let _one = matches!(of, "git_fetch" | "git_push").then(|| kept.lock.lock());
+    push_status(kept, out, repo, dir);
 }
 
 #[cfg(test)]
@@ -853,5 +1154,143 @@ mod tests {
         look(&kept, &out);
         let told: Value = serde_json::from_str(&rx.try_recv().expect("told")).expect("json");
         assert_eq!(told["files"][0]["path"], "x.txt");
+    }
+
+    /// A repository with one commit, cloned from a bare one beside it (`origin`); the bare one's folder too.
+    fn cloned() -> Option<(tempfile::TempDir, PathBuf, PathBuf)> {
+        let d = repo()?;
+        std::fs::write(d.path().join("a.txt"), "a\n").expect("w");
+        commit(d.path(), "First", true, false).expect("commit");
+        let bare = d.path().join("origin.git");
+        let clone = d.path().join("work");
+        let top = d.path().to_path_buf();
+        git(&top, &["clone", "--quiet", "--bare", ".", "origin.git"], None).expect("bare");
+        git(&top, &["clone", "--quiet", "origin.git", "work"], None).expect("clone");
+        for args in [&["config", "user.name", "Test"][..], &["config", "user.email", "t@example.com"]] {
+            git(&clone, args, None).expect("config");
+        }
+        Some((d, bare, clone))
+    }
+
+    fn done_of(said: &[Value]) -> &Value {
+        said.iter().find(|m| m["type"] == "git_done").expect("git_done")
+    }
+
+    fn answered(dir: &Path, m: Value) -> Vec<Value> {
+        let (out, mut rx) = broadcast::channel(64);
+        let kept = Git::default();
+        let of = m["type"].as_str().unwrap_or("").to_string();
+        answer(&of, &m, "", dir, &out, &kept, None);
+        let mut said = Vec::new();
+        while let Ok(t) = rx.try_recv() {
+            said.push(serde_json::from_str(&t).expect("json"));
+        }
+        said
+    }
+
+    #[test]
+    fn a_line_of_the_branches_says_its_kind_upstream_and_how_far_apart() {
+        let v = branch_line("*\0refs/heads/main\0abc1234\0origin/main\0ahead 2, behind 1\0Fix it").expect("one");
+        assert_eq!(
+            (v["name"].as_str(), v["kind"].as_str(), v["current"].as_bool()),
+            (Some("main"), Some("local"), Some(true))
+        );
+        assert_eq!(
+            (v["upstream"].as_str(), v["ahead"].as_u64(), v["behind"].as_u64()),
+            (Some("origin/main"), Some(2), Some(1))
+        );
+        let v = branch_line(" \0refs/remotes/origin/dev\0abc\0\0\0Dev").expect("remote");
+        assert_eq!(
+            (v["name"].as_str(), v["kind"].as_str(), v["upstream"].is_null()),
+            (Some("origin/dev"), Some("remote"), true)
+        );
+        assert!(branch_line(" \0refs/remotes/origin/HEAD\0abc\0\0\0x").is_none());
+        assert_eq!(branch_line(" \0refs/tags/v1\0abc\0\0\0x").expect("tag")["kind"], "tag");
+        assert!(!name_ok("-f") && !name_ok("") && !name_ok("a b") && name_ok("feature/x"));
+    }
+
+    #[test]
+    fn a_git_that_takes_too_long_is_stopped() {
+        let Some(d) = repo() else { return };
+        // `git var` answers at once; a limit of nothing stops even it, or lets it finish: either says so plainly.
+        match git_for(d.path(), &["var", "GIT_EDITOR"], std::time::Duration::ZERO) {
+            Ok(_) => {}
+            Err(e) => assert!(e.contains("took longer than 0 minutes"), "{e}"),
+        }
+        assert!(git_for(d.path(), &["status"], MOST_NETWORK).is_ok());
+    }
+
+    #[test]
+    fn branches_are_made_renamed_switched_and_deleted_and_an_unmerged_one_is_said() {
+        let Some((_d, _bare, dir)) = cloned() else { return };
+        let said = answered(&dir, json!({"type": "git_branch_create", "name": "dev", "key": "k1"}));
+        assert_eq!((done_of(&said)["ok"].as_bool(), done_of(&said)["key"].as_str()), (Some(true), Some("k1")));
+        assert_eq!(current(&dir).0.as_deref(), Some("dev"));
+        std::fs::write(dir.join("b.txt"), "b\n").expect("w");
+        commit(&dir, "On dev", true, false).expect("commit");
+        answered(&dir, json!({"type": "git_branch_rename", "to": "feature"}));
+        assert_eq!(current(&dir).0.as_deref(), Some("feature"));
+        let said = answered(&dir, json!({"type": "git_switch", "name": "main", "kind": "local"}));
+        assert_eq!(done_of(&said)["ok"], true);
+        assert_eq!(said.last().expect("status")["type"], "git_status");
+        let said = answered(&dir, json!({"type": "git_branch_delete", "name": "feature", "force": false}));
+        assert_eq!((done_of(&said)["ok"].as_bool(), done_of(&said)["unmerged"].as_bool()), (Some(false), Some(true)));
+        let said = answered(&dir, json!({"type": "git_branch_delete", "name": "feature", "force": true}));
+        assert_eq!(done_of(&said)["ok"], true);
+        let said = answered(&dir, json!({"type": "git_branch_create", "name": "-D"}));
+        assert_eq!(done_of(&said)["ok"], false);
+        let listed = branches(&dir);
+        let names: Vec<&str> =
+            listed["items"].as_array().expect("items").iter().filter_map(|i| i["name"].as_str()).collect();
+        assert!(names.contains(&"main") && names.contains(&"origin/main"), "{names:?}");
+        assert_eq!(listed["remotes"], json!(["origin"]));
+    }
+
+    #[test]
+    fn a_branch_is_published_pushed_fetched_pulled_and_its_last_commit_undone() {
+        let Some((d, bare, dir)) = cloned() else { return };
+        answered(&dir, json!({"type": "git_branch_create", "name": "dev"}));
+        let said = answered(&dir, json!({"type": "git_push", "force": false}));
+        assert_eq!(
+            (done_of(&said)["ok"].as_bool(), done_of(&said)["published"].as_str()),
+            (Some(true), Some("origin"))
+        );
+        assert_eq!(current(&dir).1.as_deref(), Some("origin/dev"));
+        std::fs::write(dir.join("c.txt"), "c\n").expect("w");
+        commit(&dir, "Third", true, false).expect("commit");
+        let said = answered(&dir, json!({"type": "git_sync", "rebase": false}));
+        assert_eq!(done_of(&said)["ok"], true, "{said:?}");
+        assert!(git(&bare, &["rev-parse", "--verify", "--quiet", "refs/heads/dev"], None).is_ok());
+        // Another clone pushes; this one fetches (behind 1), then pulls.
+        let other = d.path().join("other");
+        git(d.path(), &["clone", "--quiet", "-b", "dev", "origin.git", "other"], None).expect("clone");
+        std::fs::write(other.join("d.txt"), "d\n").expect("w");
+        git(&other, &["add", "."], None).expect("add");
+        git(&other, &["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-qm", "Fourth"], None)
+            .expect("c");
+        git(&other, &["push", "--quiet"], None).expect("push");
+        let said = answered(&dir, json!({"type": "git_fetch", "all": true, "auto": true}));
+        assert_eq!((done_of(&said)["ok"].as_bool(), done_of(&said)["auto"].as_bool()), (Some(true), Some(true)));
+        assert_eq!(said.last().expect("status")["behind"], 1);
+        let said = answered(&dir, json!({"type": "git_pull", "rebase": true}));
+        assert_eq!(done_of(&said)["ok"], true, "{said:?}");
+        assert!(dir.join("d.txt").exists());
+        let said = answered(&dir, json!({"type": "git_undo_commit"}));
+        assert_eq!((done_of(&said)["ok"].as_bool(), done_of(&said)["message"].as_str()), (Some(true), Some("Fourth")));
+        assert!(
+            git(&dir, &["diff", "--cached", "--name-only"], None).map(|o| o.starts_with(b"d.txt")).unwrap_or(false)
+        );
+    }
+
+    #[test]
+    fn the_first_commit_is_undone_too_and_a_push_with_no_remote_says_why() {
+        let Some(d) = repo() else { return };
+        std::fs::write(d.path().join("a.txt"), "a\n").expect("w");
+        commit(d.path(), "Only", true, false).expect("commit");
+        assert_eq!(undo_commit(d.path()).as_deref(), Ok("Only"));
+        assert!(!has_head(d.path()));
+        commit(d.path(), "Again", true, false).expect("commit");
+        let said = answered(d.path(), json!({"type": "git_push", "force": false}));
+        assert_eq!(done_of(&said)["error"], "Your repository has no remotes configured to publish to.");
     }
 }
