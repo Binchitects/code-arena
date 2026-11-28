@@ -110,6 +110,7 @@ colors! {
     problem_error: ["editorError.foreground"], "#F14C4C", "#E51400";
     problem_info: ["editorInfo.foreground"], "#3794FF", "#1A85FF";
     problem_hint: ["editorHint.foreground"], "#EEEEEEB3", "#6C6C6C";
+    light_bulb: ["editorLightBulb.foreground"], "#FFCC00", "#DDB100";
     code_lens: ["editorCodeLens.foreground"], "#999999", "#919191";
     ghost_text: ["editorGhostText.foreground"], "#FFFFFF56", "#00000077";
     inlay_fg: ["editorInlayHint.foreground"], "#969696", "#969696";
