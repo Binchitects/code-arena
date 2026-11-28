@@ -798,6 +798,13 @@ Sections used:
   it, the folder is in Restricted Mode: a banner and a "Restricted Mode" status bar item say so.
   **Workspaces: Manage Workspace Trust** asks again or takes the trust back. The answer is kept on
   this computer, and a feature refused for an untrusted folder shows a toast with Trust.
+- **Merge conflicts in the editor.** A file with <<<<<<< / ||||||| / ======= / >>>>>>> markers shows
+  the current change in green, the incoming change in blue and the common ancestor in grey. Each
+  marker line says which side it is, with marks in the overview ruler. Click Accept Current Change,
+  Accept Incoming Change or Accept Both Changes after the conflict's first line, or use the Merge
+  Conflict commands (Accept Current, Incoming or Both, Accept All Current, Incoming or Both, Next
+  and Previous Conflict). Each accept is undone with one Ctrl+Z. merge-conflict.decorators.enabled
+  and merge-conflict.codeLens.enabled turn the colours and the lens off.
 
 
 ### :bug: Bugs fixed
