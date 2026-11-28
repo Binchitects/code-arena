@@ -73,6 +73,8 @@ pub struct Context {
     pub plan: Arc<plan::PlanBook>,
     /// The mode is plan: a plan made now is proposed, for the person's review.
     pub planning: bool,
+    /// The id of the call this run answers, when the turn says it (a sub-agent's progress is told by it).
+    pub call: Option<String>,
 }
 
 impl Context {
@@ -94,6 +96,7 @@ impl Context {
             sandbox: None,
             plan: Arc::new(plan::PlanBook::default()),
             planning: false,
+            call: None,
         }
     }
 }

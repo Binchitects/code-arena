@@ -2,8 +2,14 @@
 //! person wrote, or a general one), which works in a context of its own (its instructions, model and tools) and
 //! reports back; its report is the call's result. Several calls in one answer run at once (four at most). Its calls ask
 //! as the session's do; it has no `task` of its own (no sub-agent of a sub-agent) and not the session's plan.
+//!
+//! While it works, the crew's `watch` (when there is one, and the turn said the call's id) is told how it goes, by
+//! [`SubEvent`]: `Started` once, a `Step` for each piece of its work (its thinking and words gathered, told at most
+//! every [`SAY_EVERY`] and whenever a call or a step begins or ends), `Ended` once, even when its turn is dropped.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use ca_llm::{Gateway, Thinking, ToolDef};
 use ca_tools::{Context, Kind, Output, Tool};
@@ -33,6 +39,110 @@ pub struct Crew {
     pub window: Window,
     /// What a sub-agent's steps show the person (a line each).
     pub say: Arc<dyn Fn(String) + Send + Sync>,
+    /// Who is told how each sub-agent goes (the IDE's Tasks view), when someone is.
+    pub watch: Option<Watch>,
+}
+
+/// Who is told how a sub-agent goes.
+pub type Watch = Arc<dyn Fn(SubEvent) + Send + Sync>;
+
+/// How often a sub-agent's thinking and words are told while they stream.
+pub const SAY_EVERY: Duration = Duration::from_millis(300);
+
+/// How a sub-agent goes, each told with the id of the `task` call it answers.
+#[derive(Debug, Clone)]
+pub enum SubEvent {
+    Started(Begun),
+    Step { call: String, work: Work },
+    Ended { call: String, end: End },
+}
+
+/// A sub-agent as it began.
+#[derive(Debug, Clone)]
+pub struct Begun {
+    pub call: String,
+    /// Its agent's name ("sub-agent": a general one).
+    pub name: String,
+    pub description: String,
+    /// What it was asked, whole.
+    pub prompt: String,
+    pub tools: Vec<String>,
+    pub model: String,
+    /// One of its tools changes files or runs commands.
+    pub edits: bool,
+    /// Asked, it stops where it is.
+    pub stop: Arc<Stop>,
+}
+
+/// A piece of a sub-agent's work.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Work {
+    /// Its thinking since the last piece.
+    Thinking(String),
+    /// Its words since the last piece.
+    Text(String),
+    Notice(String),
+    ToolStart { id: String, name: String, subject: String },
+    ToolEnd { id: String, ok: bool, text: String, ms: u64 },
+    /// A step ended, its window this full.
+    StepEnd { tokens: u64 },
+}
+
+/// How a sub-agent ended.
+#[derive(Debug, Clone, PartialEq)]
+pub struct End {
+    /// "done", "failed" or "stopped".
+    pub status: &'static str,
+    /// Its last words (empty: it said none, or it did not finish).
+    pub report: String,
+    pub error: Option<String>,
+}
+
+/// A sub-agent's stop: asked once, its turn ends where it is.
+#[derive(Debug, Default)]
+pub struct Stop {
+    asked: AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl Stop {
+    pub fn ask(&self) {
+        self.asked.store(true, Ordering::SeqCst);
+        self.notify.notify_one();
+    }
+
+    pub fn asked(&self) -> bool {
+        self.asked.load(Ordering::SeqCst)
+    }
+
+    /// Comes back once it is asked (at once when it was).
+    async fn wait(&self) {
+        if !self.asked() {
+            self.notify.notified().await;
+        }
+    }
+}
+
+/// The most of a call's result a step tells.
+const TOLD_RESULT: usize = 2000;
+
+/// Tells the watcher a sub-agent ended, once: when its run ends, or when it is dropped (its turn was stopped).
+struct Ending {
+    watch: Option<(Watch, String)>,
+}
+
+impl Ending {
+    fn end(&mut self, end: End) {
+        if let Some((w, call)) = self.watch.take() {
+            w(SubEvent::Ended { call, end });
+        }
+    }
+}
+
+impl Drop for Ending {
+    fn drop(&mut self) {
+        self.end(End { status: "stopped", report: String::new(), error: Some("The turn was stopped.".into()) });
+    }
 }
 
 pub struct TaskTool {
@@ -46,19 +156,98 @@ impl TaskTool {
     }
 }
 
-/// A sub-agent's steps, shown to the person as lines of their own.
+/// A sub-agent's steps, shown to the person as lines of their own and told to the watcher.
 struct Steps {
     name: String,
     say: Arc<dyn Fn(String) + Send + Sync>,
+    watch: Option<(Watch, String)>,
+    thinking: String,
+    text: String,
+    told: Instant,
+    tokens: u64,
+}
+
+impl Steps {
+    fn tell(&self, work: Work) {
+        if let Some((w, call)) = &self.watch {
+            w(SubEvent::Step { call: call.clone(), work });
+        }
+    }
+
+    /// What it thought and said since the last piece, told.
+    fn flush(&mut self) {
+        self.told = Instant::now();
+        if !self.thinking.is_empty() {
+            let t = std::mem::take(&mut self.thinking);
+            self.tell(Work::Thinking(t));
+        }
+        if !self.text.is_empty() {
+            let t = std::mem::take(&mut self.text);
+            self.tell(Work::Text(t));
+        }
+    }
+
+    fn streamed(&mut self) {
+        if self.told.elapsed() >= SAY_EVERY {
+            self.flush();
+        }
+    }
 }
 
 impl Events for Steps {
+    fn text(&mut self, delta: &str) {
+        if self.watch.is_some() {
+            if !self.thinking.is_empty() {
+                self.flush();
+            }
+            self.text.push_str(delta);
+            self.streamed();
+        }
+    }
+    fn reasoning(&mut self, delta: &str) {
+        if self.watch.is_some() {
+            if !self.text.is_empty() {
+                self.flush();
+            }
+            self.thinking.push_str(delta);
+            self.streamed();
+        }
+    }
     fn notice(&mut self, t: &str) {
         (self.say)(format!("  ↳ {}: {t}", self.name));
+        self.flush();
+        self.tell(Work::Notice(t.to_string()));
     }
-    fn tool_end(&mut self, call: &Call<'_>, o: &Output, _took: std::time::Duration) {
+    fn tool_start(&mut self, call: &Call<'_>) {
+        self.flush();
+        self.tell(Work::ToolStart { id: call.id.into(), name: call.name.into(), subject: call.subject.into() });
+    }
+    fn tool_end(&mut self, call: &Call<'_>, o: &Output, took: Duration) {
         let s: String = call.subject.lines().next().unwrap_or("").chars().take(80).collect();
         (self.say)(format!("  ↳ {}: ● {} {s}{}", self.name, call.name, if o.is_error { " (failed)" } else { "" }));
+        self.flush();
+        let text = told(&o.text);
+        self.tell(Work::ToolEnd { id: call.id.into(), ok: !o.is_error, text, ms: took.as_millis() as u64 });
+    }
+    fn tool_not_run(&mut self, call: &Call<'_>, why: &str, _denied: bool) {
+        self.flush();
+        self.tell(Work::ToolStart { id: call.id.into(), name: call.name.into(), subject: call.subject.into() });
+        self.tell(Work::ToolEnd { id: call.id.into(), ok: false, text: told(why), ms: 0 });
+    }
+    fn step_window(&mut self, used: u64, _size: u64, _compact_at: Option<u64>) {
+        self.tokens = used;
+    }
+    fn step_end(&mut self) {
+        self.flush();
+        self.tell(Work::StepEnd { tokens: self.tokens });
+    }
+}
+
+/// A result as a step tells it: its start.
+fn told(text: &str) -> String {
+    match text.char_indices().nth(TOLD_RESULT) {
+        Some((i, _)) => format!("{}…", &text[..i]),
+        None => text.to_string(),
     }
 }
 
@@ -99,7 +288,8 @@ impl Tool for TaskTool {
             None => d.to_string(),
         }
     }
-    async fn run(&self, args: Value, _ctx: &Context) -> Output {
+    async fn run(&self, args: Value, ctx: &Context) -> Output {
+        let answers = ctx_call(ctx);
         let Some(crew) = self.crew.lock().ok().and_then(|c| c.clone()) else {
             return Output::error("Sub-agents are not set up in this run.");
         };
@@ -173,8 +363,34 @@ impl Tool for TaskTool {
             hooks: crew.hooks.clone(),
         };
         (crew.say)(format!("  ↳ {name} starts: {description}"));
-        let mut events = Steps { name: name.clone(), say: crew.say.clone() };
-        let mut result = sub.turn(&prompt, &mut events).await;
+        let watch = crew.watch.clone().zip(answers);
+        let stop = Arc::new(Stop::default());
+        if let Some((w, call)) = &watch {
+            w(SubEvent::Started(Begun {
+                call: call.clone(),
+                name: name.clone(),
+                description: description.clone(),
+                prompt: prompt.clone(),
+                tools: sub.tools.iter().map(|t| t.def().name).collect(),
+                model: sub.model.clone(),
+                edits: sub.tools.iter().any(|t| t.kind() != Kind::Read),
+                stop: stop.clone(),
+            }));
+        }
+        let mut ending = Ending { watch: watch.clone() };
+        let mut events = Steps {
+            name: name.clone(),
+            say: crew.say.clone(),
+            watch,
+            thinking: String::new(),
+            text: String::new(),
+            told: Instant::now(),
+            tokens: 0,
+        };
+        let mut result = tokio::select! {
+            r = sub.turn(&prompt, &mut events) => r,
+            _ = stop.wait() => return stopped(&name, &mut events, &mut ending),
+        };
         // A SubagentStop hook may send it on, once.
         if let Ok(out) = &result
             && crew.hooks.has("SubagentStop")
@@ -186,17 +402,21 @@ impl Tool for TaskTool {
             if let Some(why) = said.block {
                 (crew.say)(format!("  ↳ {name}: a SubagentStop hook sends it on: {why}"));
                 let before = out.clone();
-                result = sub
-                    .turn(
-                        &format!("(Code Arena: a hook of the person's says the task is not done: {why})"),
-                        &mut events,
-                    )
-                    .await;
+                let again = format!("(Code Arena: a hook of the person's says the task is not done: {why})");
+                result = tokio::select! {
+                    r = sub.turn(&again, &mut events) => r,
+                    _ = stop.wait() => return stopped(&name, &mut events, &mut ending),
+                };
                 if let Ok(o) = &mut result {
                     o.steps += before.steps;
                     o.usage.add(before.usage);
                 }
             }
+        }
+        events.flush();
+        match &result {
+            Ok(out) => ending.end(End { status: "done", report: out.answer.trim().to_string(), error: None }),
+            Err(e) => ending.end(End { status: "failed", report: String::new(), error: Some(e.to_string()) }),
         }
         match result {
             Ok(out) => {
@@ -213,4 +433,16 @@ impl Tool for TaskTool {
             Err(e) => Output::error(format!("{name} could not finish: {e}")),
         }
     }
+}
+
+/// The call a run answers, as the turn said it.
+fn ctx_call(ctx: &Context) -> Option<String> {
+    ctx.call.clone().filter(|c| !c.is_empty())
+}
+
+/// A sub-agent the person stopped: what it did so far is told, and the model hears it was stopped.
+fn stopped(name: &str, events: &mut Steps, ending: &mut Ending) -> Output {
+    events.flush();
+    ending.end(End { status: "stopped", report: String::new(), error: Some("Stopped by you.".into()) });
+    Output::error(format!("The person stopped {name} before it reported."))
 }

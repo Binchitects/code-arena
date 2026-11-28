@@ -110,6 +110,8 @@ pub fn keep_window(app: &App, p: &Prepared) {
 /// The sub-agents' starting point, as the session is now (its model, mode, tools and instructions).
 pub fn refresh_crew(p: &mut Prepared, ui: crate::ui::Ui) {
     let a = &p.agent;
+    // Who watches the sub-agents (the IDE's Tasks view) stays as it was.
+    let watch = p.crew.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.watch.clone()));
     let crew = ca_agent::task::Crew {
         gateway: a.gateway.clone(),
         model: a.model.clone(),
@@ -124,6 +126,7 @@ pub fn refresh_crew(p: &mut Prepared, ui: crate::ui::Ui) {
         max_steps: a.max_steps,
         window: a.window.clone(),
         say: Arc::new(move |line| ui.say(&ui.dim(&line))),
+        watch,
     };
     if let Ok(mut c) = p.crew.lock() {
         *c = Some(crew);
