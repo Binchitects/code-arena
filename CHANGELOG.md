@@ -892,6 +892,9 @@ Sections used:
   workspace.' wraps in a narrow side bar instead of being cut off.
 - **Ctrl+, opens Settings.** Ctrl+, and the gear's Settings row open your settings.json, and the row now
   shows Ctrl+, as its key. Before, Ctrl+, did nothing and the row showed no key.
+- **Typing works again after Change Language Mode and the indentation, line-ending and encoding
+  pickers.** Closing one of these pickers now puts the cursor back in the editor, as VS Code does,
+  so you can type into the file straight away.
 
 ## v0.5.0 (2026-11-26)
 
