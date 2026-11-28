@@ -45,6 +45,23 @@ fn main() {
 }
 ```"""
 
+# Asked with "diagram" in the message: a Mermaid diagram, and one that does not parse.
+DIAGRAM = """How it flows:
+
+```mermaid
+graph TD
+  A[Start] --> B{Is it?}
+  B -->|Yes| C[OK]
+  B -->|No| D[Find out]
+```
+
+And one written wrong:
+
+```mermaid
+graph TD
+  A -->
+```"""
+
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -108,7 +125,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             ev({"content": "I'll look at the folder first."})
             call("run_shell", {"command": "ls -la"})
         else:
-            answer = TABLES if "table" in text else ANSWER
+            answer = TABLES if "table" in text else DIAGRAM if "diagram" in text else ANSWER
             for word in answer.split(" "):
                 ev({"content": word + " "})
                 time.sleep(0.005)
