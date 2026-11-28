@@ -935,6 +935,16 @@ Sections used:
 - **Send Feedback.** Send Feedback... is in the Accounts menu, the Manage menu and the palette. You
   say whether it is an idea, a problem, praise or something else, and Arena's admins get it and may
   answer you there.
+- **Open Folder.** File: Open Folder... (Ctrl+K Ctrl+O), the welcome's button or the Explorer's
+  "..." menu lists a folder as VS Code's simple dialog does: Open <folder>, "..", its folders (Enter
+  goes in), the folders opened before, and "Go to <path>" for a whole path typed (/, ~/, C:\). The
+  window then works on that folder in a new session (the last one stays in Sessions). Its tabs, tree
+  and terminals are made again, and the folder's own layout comes back. Changes not saved are asked
+  about first.
+- **Open Recent.** Ctrl+R lists the folders opened before (ten, then More...). Clear Recently
+  Opened... forgets them.
+- **Welcome.** An empty window says "No file is open" and offers Open Folder... above its keys. An
+  empty second group says "Drag a tab here, or open a file."
 
 
 ### :bug: Bugs fixed
