@@ -10,6 +10,9 @@ use serde_json::Value;
 pub enum Source {
     User,
     Workspace,
+    /// An installed extension's (`snippets::bring`).
+    #[allow(dead_code)] // Brought by the part that applies extensions' contributions.
+    Extension,
 }
 
 impl Source {
@@ -22,6 +25,7 @@ impl Source {
         match self {
             Source::User => "User Snippet",
             Source::Workspace => "Workspace Snippet",
+            Source::Extension => "Extension Snippets",
         }
     }
 }

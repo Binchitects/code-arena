@@ -15,13 +15,13 @@
 // A stop's places are a list of ranges, often of one.
 #![allow(clippy::single_range_in_vec_init)]
 
-mod body;
-mod list;
+pub mod body;
+pub mod list;
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith};
@@ -31,10 +31,11 @@ use floem::views::editor::core::cursor::CursorMode;
 use floem::views::editor::core::editor::EditType;
 use floem::views::editor::core::selection::{SelRegion, Selection};
 use floem::views::editor::core::xi_rope::delta::Transformer;
+use floem::views::editor::text_document::TextDocument;
 use serde_json::{Value, json};
 
 use self::body::{Fill, Stop};
-use self::list::{Snippet, Source};
+pub use self::list::{Snippet, Source};
 use crate::complete::{self, Item, Kind};
 use crate::state::{Send, Ui};
 use crate::widgets::quick;
@@ -66,10 +67,35 @@ thread_local! {
     static FILES: RefCell<Rc<Vec<File>>> = RefCell::new(Rc::new(Vec::new()));
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
     /// The documents whose edits move a session's stops (a document's hook is added once).
-    static HOOKED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static HOOKED: RefCell<Vec<Weak<TextDocument>>> = const { RefCell::new(Vec::new()) };
+    /// The snippets other parts bring (an extension's), by the part's id.
+    static BROUGHT: RefCell<Vec<Brought>> = const { RefCell::new(Vec::new()) };
     static ASKED: Cell<bool> = const { Cell::new(false) };
     /// The snippets file asked to be made, opened when the session says it is there.
     static MAKING: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Snippets a part brought, by its id.
+type Brought = (&'static str, Rc<Vec<Snippet>>);
+
+/// Every snippet: the files' (the person's and the project's), then those other parts brought.
+fn every() -> Vec<Rc<Vec<Snippet>>> {
+    let mut all = vec![ALL.with(|a| a.borrow().clone())];
+    BROUGHT.with(|b| all.extend(b.borrow().iter().map(|(_, l)| l.clone())));
+    all
+}
+
+/// Snippets another part brings (an installed extension's, `Source::Extension`), suggested and inserted as the
+/// files' are; the same `owner` again takes the place of what it brought before (an empty list takes it away).
+#[allow(dead_code)] // For the part that applies extensions' contributions.
+pub fn bring(owner: &'static str, snippets: Vec<Snippet>) {
+    BROUGHT.with(|b| {
+        let mut b = b.borrow_mut();
+        b.retain(|(o, _)| *o != owner);
+        if !snippets.is_empty() {
+            b.push((owner, Rc::new(snippets)));
+        }
+    });
 }
 
 /// The stops' places moved by an edit: `map(offset, after)` is where an offset is after it (`after`: an insertion
@@ -100,8 +126,7 @@ fn selection_of(stop: &Stop) -> Selection {
 }
 
 /// The edits filling in a stop's transformed mirrors from what was typed in it.
-fn derived_edits(stop: &Stop, text: &str) -> Vec<(Range<usize>, String)> {
-    let typed = stop.ranges.first().and_then(|r| text.get(r.clone())).unwrap_or("");
+fn derived_edits(stop: &Stop, typed: &str) -> Vec<(Range<usize>, String)> {
     stop.derived.iter().map(|(r, t)| (r.clone(), body::apply(t, typed))).collect()
 }
 
@@ -126,7 +151,16 @@ fn leave() {
 fn hook(ui: Ui, path: &str) -> Option<usize> {
     let doc = ui.tab(path)?.doc;
     let id = Rc::as_ptr(&doc) as usize;
-    if HOOKED.with(|h| h.borrow_mut().insert(id)) {
+    let new = HOOKED.with(|h| {
+        let mut h = h.borrow_mut();
+        h.retain(|d| d.strong_count() > 0);
+        let new = !h.iter().any(|d| d.as_ptr() == Rc::as_ptr(&doc));
+        if new {
+            h.push(Rc::downgrade(&doc));
+        }
+        new
+    });
+    if new {
         doc.add_on_update(move |u| {
             SESSION.with(|s| {
                 // An edit made while the session is read elsewhere is the session's own: it was taken already.
@@ -220,14 +254,14 @@ fn variables(ui: Ui, path: &str, editor: &Editor, at: usize, selected: &str) -> 
     v
 }
 
-/// A snippet's body put in place of `range` of a file's editor, its first tab stop selected.
-fn insert(ui: Ui, path: &str, editor: &Editor, range: Range<usize>, body_text: &str) {
+/// A snippet's body put in place of `range` of a file's editor (`selected`: the selection it takes, for
+/// `$TM_SELECTED_TEXT`; empty when it takes the place of a word typed), its first tab stop selected. A language
+/// server's snippet suggestion is put in with it too.
+pub fn insert(ui: Ui, path: &str, editor: &Editor, range: Range<usize>, body_text: &str, selected: &str) {
     if editor.cursor.try_get_untracked().is_none() {
         return;
     }
-    let text = editor.doc().text();
-    let selected = text.slice_to_cow(range.clone()).to_string();
-    let vars = variables(ui, path, editor, range.start, &selected);
+    let vars = variables(ui, path, editor, range.start, selected);
     let line = editor.offset_to_line_col(range.start).0;
     let line_text = editor.rope_text().line_content(line).to_string();
     let indent: String = line_text.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
@@ -260,8 +294,13 @@ fn jump(ui: Ui, by: isize) -> bool {
     let Some((editor, edits)) = SESSION.with(|s| {
         let s = s.borrow();
         let s = s.as_ref()?;
-        let text = s.editor.doc().text().to_string();
-        Some((s.editor.clone(), derived_edits(&s.stops[s.at], &text)))
+        let stop = &s.stops[s.at];
+        // Only what was typed in the stop is read, and only when it has transformed mirrors.
+        let edits = match stop.ranges.first() {
+            Some(r) if !stop.derived.is_empty() => derived_edits(stop, &s.editor.doc().text().slice_to_cow(r.clone())),
+            _ => Vec::new(),
+        };
+        Some((s.editor.clone(), edits))
     }) else {
         return false;
     };
@@ -348,19 +387,21 @@ fn suggestions(ui: Ui, ask: &complete::Ask) -> Vec<Item> {
         return Vec::new();
     }
     let lang = crate::language::now(ui, ask.path);
-    let all = ALL.with(|a| a.borrow().clone());
+    let all = every();
     let mut out = Vec::new();
-    for s in all.iter().filter(|s| list::applies(s, lang, ask.path)) {
+    for s in all.iter().flat_map(|l| l.iter()).filter(|s| list::applies(s, lang, ask.path)) {
         let docs = format!("```{lang}\n{}\n```", body::plain(&s.body));
         for prefix in &s.prefixes {
             let (ui, path, body_text) = (ui, ask.path.to_string(), s.body.clone());
-            let detail =
-                format!("{} ({})", if s.description.is_empty() { &s.name } else { &s.description }, s.source.label());
+            let detail = match s.source {
+                Source::Extension => s.name.clone(),
+                from => format!("{} ({})", s.name, from.label()),
+            };
             out.push(
                 Item::new(prefix.clone(), Kind::Snippet)
                     .detail(detail)
                     .docs(docs.clone())
-                    .on_accept(move |editor, range| insert(ui, &path, editor, range, &body_text)),
+                    .on_accept(move |editor, range| insert(ui, &path, editor, range, &body_text, "")),
             );
         }
     }
@@ -374,9 +415,10 @@ fn for_shown(ui: Ui, surround: bool) -> Option<(String, Editor, Range<usize>, Ve
         return None;
     };
     let lang = crate::language::now(ui, &path);
-    let all = ALL.with(|a| a.borrow().clone());
+    let all = every();
     let list: Vec<Snippet> = all
         .iter()
+        .flat_map(|l| l.iter())
         .filter(|s| list::applies(s, lang, &path) && (!surround || body::takes_selection(&s.body)))
         .cloned()
         .collect();
@@ -412,7 +454,8 @@ fn pick(ui: Ui, surround: bool) {
     let title = if surround { "Surround With Snippet" } else { "Insert Snippet" };
     quick::pick(title).placeholder("Select a snippet").items(items).back_to_editor(ui).open(ui, move |item| {
         let Some(s) = item.and_then(|i| i.id.parse::<usize>().ok()).and_then(|i| list.get(i)) else { return };
-        insert(ui, &path, &editor, range, &s.body);
+        let selected = editor.doc().text().slice_to_cow(range.clone()).to_string();
+        insert(ui, &path, &editor, range, &s.body, &selected);
     });
 }
 
@@ -446,18 +489,15 @@ fn make(send: &Send, name: String) {
 /// a language's own file.
 fn configure(ui: Ui, send: &Send) {
     let files = FILES.with(|f| f.borrow().clone());
-    let folder = ui.folder.get_untracked();
-    let folder = folder.rsplit('/').next().unwrap_or("").to_string();
     let mut items = vec![
-        quick::item("global", "New Global Snippets file...").description("for every project"),
-        quick::item("project", &format!("New Snippets file for '{folder}'..."))
-            .description(".vscode/NAME.code-snippets"),
+        quick::item("global", "New Global Snippets file…").description("for every project"),
+        quick::item("project", "New Snippets file for this folder…").description(".vscode/NAME.code-snippets"),
     ];
     for f in files.iter() {
         let name = f.path.rsplit('/').next().unwrap_or(&f.path);
         let description = match f.source {
             Source::User => "User".to_string(),
-            Source::Workspace => f.path.clone(),
+            Source::Workspace | Source::Extension => f.path.clone(),
         };
         items.push(quick::item(&format!("f:{}", f.path), name).description(&description).group("existing snippets"));
     }
@@ -482,7 +522,7 @@ fn configure(ui: Ui, send: &Send) {
             }
             let global = item.id == "global";
             let title = if global { "New Global Snippets file" } else { "New Snippets file for this folder" };
-            quick::input(title).placeholder("Type snippet file name").validate(bad_name).open(ui, move |typed| {
+            quick::input(title).placeholder("Type the snippets file name").validate(bad_name).open(ui, move |typed| {
                 let Some(typed) = typed else { return };
                 let typed = typed.trim();
                 let base = typed.strip_suffix(".code-snippets").unwrap_or(typed);
@@ -646,10 +686,9 @@ mod tests {
         let var = |_: &str| None;
         let e = body::expand("${1:a} ${1/(.*)/${1:/upcase}/}", &Fill { var: &var, indent: "", tab: "\t" });
         let mut first = e.stops[0].clone();
-        let text = "word A";
         first.ranges = vec![0..4];
         first.derived[0].0 = 5..6;
-        assert_eq!(derived_edits(&first, text), [(5..6, "WORD".to_string())]);
+        assert_eq!(derived_edits(&first, "word"), [(5..6, "WORD".to_string())]);
         let sel = selection_of(&stop(1, vec![1..2, 4..6]));
         assert_eq!(sel.regions().iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(), [(1, 2), (4, 6)]);
     }

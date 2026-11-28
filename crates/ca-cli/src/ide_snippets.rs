@@ -98,31 +98,24 @@ fn message(found: &[Found]) -> Value {
     json!({"type": "snippets", "files": files, "problems": problems})
 }
 
-/// A new snippets file's text, as VS Code starts one: its example in a comment (a language's file has no scope).
+/// A new snippets file's text, as the old Code Arena starts one: its example in a comment (a language's file has
+/// no scope).
 pub fn template(scoped: bool) -> String {
-    let mut t = String::from("{\n");
+    let mut t = String::from(
+        "{\n\t// Each snippet has a name, its prefix (typed, it is suggested), its body (a line, or lines) and a \
+         description.\n\t// $1, $2 are where Tab goes, ${1:label} with a placeholder, $0 the end; $TM_FILENAME and the \
+         others are filled in.",
+    );
     if scoped {
-        t.push_str(
-            "\t// Place your global snippets here. Each snippet is defined under a snippet name and has a scope, prefix, \
-             body and\n\t// description. Add comma separated ids of the languages where the snippet is applicable in the \
-             scope field. If scope\n\t// is left empty or omitted, the snippet gets applied to all languages. The prefix \
-             is what is\n\t// used to trigger the snippet and the body will be expanded and inserted. Possible \
-             variables are:\n\t// $1, $2 for tab stops, $0 for the final cursor position, and ${1:label}, ${2:another} \
-             for placeholders.\n\t// Placeholders with the same ids are connected.\n\t// Example:\n\t// \"Print to \
-             console\": {\n\t// \t\"scope\": \"javascript,typescript\",\n",
-        );
-    } else {
-        t.push_str(
-            "\t// Place your snippets here. Each snippet is defined under a snippet name and has a prefix, body and\n\t// \
-             description. The prefix is what is used to trigger the snippet and the body will be expanded and \
-             inserted. Possible variables are:\n\t// $1, $2 for tab stops, $0 for the final cursor position, and \
-             ${1:label}, ${2:another} for placeholders. Placeholders with the\n\t// same ids are connected.\n\t// \
-             Example:\n\t// \"Print to console\": {\n",
-        );
+        t.push_str("\n\t// \"scope\" names its languages (none: all), \"include\" and \"exclude\" its files (globs).");
+    }
+    t.push_str("\n\t// \"Print to console\": {\n");
+    if scoped {
+        t.push_str("\t// \t\"scope\": \"javascript,typescript\",\n");
     }
     t.push_str(
-        "\t// \t\"prefix\": \"log\",\n\t// \t\"body\": [\n\t// \t\t\"console.log('$1');\",\n\t// \t\t\"$2\"\n\t// \t],\n\t// \
-         \t\"description\": \"Log output to console\"\n\t// }\n}\n",
+        "\t// \t\"prefix\": \"log\",\n\t// \t\"body\": [\n\t// \t\t\"console.log('$1');\",\n\t// \t\t\"$2\"\n\t// \
+         \t],\n\t// \t\"description\": \"Log output to console\"\n\t// }\n}\n",
     );
     t
 }
