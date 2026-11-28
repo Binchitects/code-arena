@@ -462,6 +462,11 @@ pub fn open(ui: Ui, send: &Send, mode: Mode) {
     back(ui);
     ui.menu.set(None);
     ui.context.set(None);
+    // "@" typed in any mode reads the file's symbols again (it may have been edited since).
+    crate::quick_modes::forget_symbols(ui);
+    if ui.quick.get_untracked().is_none() {
+        crate::quick_modes::opened(ui);
+    }
     match mode {
         Mode::Files => {
             // Listed again each time (files come and go); the list had before is ranked meanwhile.
@@ -470,10 +475,7 @@ pub fn open(ui: Ui, send: &Send, mode: Mode) {
         }
         Mode::Commands => ui.quick_text.set(">".into()),
         Mode::Line => ui.quick_text.set(":".into()),
-        Mode::Symbols => {
-            crate::quick_modes::forget_symbols(ui);
-            ui.quick_text.set("@".into());
-        }
+        Mode::Symbols => ui.quick_text.set("@".into()),
         Mode::Help => ui.quick_text.set("?".into()),
         Mode::Themes => {
             ui.quick_theme.set(Some(ui.choice.get_untracked()));
@@ -532,7 +534,8 @@ pub fn accept_in(ui: Ui, send: &Send, at: usize, side: bool) {
         Pick::Command(id) => {
             close(ui);
             crate::quick_modes::ran(ui, send, &id);
-            // After the close: the input lets the keys go first, so a command that gives them to a view keeps them.
+            // The keys back where they were (the editor), then the command: one that gives them to a view keeps them.
+            crate::quick_modes::give_back(ui);
             crate::commands::run(ui, send, &id);
         }
         Pick::Theme(id) => {
@@ -1129,13 +1132,15 @@ mod tests {
         println!("the same list known for the same: {:?}", from.elapsed());
         assert!(!files.holds(paths.iter().skip(1).map(String::as_str), false));
         let mut worst = Duration::ZERO;
+        let recent: Vec<String> = paths.iter().step_by(1000).take(crate::quick_modes::RECENT_FILES).cloned().collect();
         for text in
             ["s", "st", "state", "stateeditor", "src/state", "editor42.ts", "crates layout render 499", "zzzz", "e"]
         {
             let mut took: Vec<Duration> = (0..9)
                 .map(|_| {
                     let from = Instant::now();
-                    let rows = file_rows(&files, text);
+                    // As Quick Open ranks them: the files opened last too.
+                    let rows = crate::quick_modes::file_rows(&files, text, &recent);
                     let took = from.elapsed();
                     assert!(rows.len() <= MOST);
                     took

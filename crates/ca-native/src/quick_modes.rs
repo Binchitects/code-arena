@@ -307,6 +307,9 @@ pub struct Recent {
     pub commands: RwSignal<Vec<String>>,
     /// The symbols asked for, by the file they are of (read off the window's thread once per file shown).
     asked: RwSignal<Option<String>>,
+    /// The editor drawn has the keys now, and had them when the box was opened (they go back to it after a command).
+    editor_keys: RwSignal<bool>,
+    pub back_to_editor: RwSignal<bool>,
     restored: RwSignal<bool>,
 }
 
@@ -317,6 +320,8 @@ impl crate::ext::State for Recent {
             files: s.create_rw_signal(Vec::new()),
             commands: s.create_rw_signal(Vec::new()),
             asked: s.create_rw_signal(None),
+            editor_keys: s.create_rw_signal(false),
+            back_to_editor: s.create_rw_signal(false),
             restored: s.create_rw_signal(false),
         }
     }
@@ -324,6 +329,22 @@ impl crate::ext::State for Recent {
 
 pub fn recent(ui: Ui) -> Recent {
     ui.state::<Recent>()
+}
+
+/// The box opened: whether the keys go back to the editor drawn after a command (they were in it).
+pub fn opened(ui: Ui) {
+    let st = recent(ui);
+    st.back_to_editor.set(st.editor_keys.get_untracked());
+}
+
+/// The keys given back to the editor drawn, when they were in it as the box was opened.
+pub fn give_back(ui: Ui) {
+    let st = recent(ui);
+    if st.back_to_editor.get_untracked()
+        && let Some(id) = ui.live.with_untracked(|l| l.as_ref().and_then(|(_, e)| e.editor_view_id.get_untracked()))
+    {
+        id.request_focus();
+    }
 }
 
 /// A command run from the palette: first among those run last, and kept.
@@ -382,8 +403,11 @@ pub fn put_caret(ui: Ui, path: &str, line: usize, col: usize) -> bool {
     let line = line.saturating_sub(1).min(editor.last_line());
     let start = editor.offset_of_line(line);
     // Not past the line's end (its line break).
-    let end = editor.rope_text().line_end_offset(line, true).max(start);
-    let at = start + col.saturating_sub(1).min(end - start);
+    let rope = editor.rope_text();
+    let end = rope.line_end_offset(line, true).max(start);
+    // The column counts characters, as VS Code's does (never inside one written in several bytes).
+    let text = rope.slice_to_cow(start..end);
+    let at = start + text.char_indices().nth(col.saturating_sub(1)).map_or(text.len(), |(i, _)| i);
     editor.cursor.update(|c| c.set_insert(floem::views::editor::core::selection::Selection::caret(at)));
     if let Some(id) = editor.editor_view_id.get_untracked() {
         id.request_focus();
@@ -447,6 +471,31 @@ pub fn register(ui: Ui, _send: &Send) {
     crate::menus::add(Menu::TitleBar(GO), item(GOTO_SYMBOL).group("4_symbol_nav").order(2));
     crate::menus::add(Menu::TitleBar(GO), item(GOTO_LINE).group("5_infile_nav").order(1));
     let st = recent(ui);
+    // Whether the editor drawn has the keys: followed on its own focus signals, in a scope of its own that goes when
+    // another editor is drawn.
+    floem::reactive::create_effect(move |was: Option<Option<floem::reactive::Scope>>| {
+        if let Some(Some(old)) = was {
+            old.dispose();
+        }
+        let (gained, lost) =
+            ui.live.with(|l| l.as_ref().map(|(_, e)| (e.editor_view_focused, e.editor_view_focus_lost)))?;
+        let cx = ui.scope.create_child();
+        floem::reactive::with_scope(cx, || {
+            floem::reactive::create_effect(move |first: Option<()>| {
+                gained.track();
+                if first.is_some() {
+                    st.editor_keys.set(true);
+                }
+            });
+            floem::reactive::create_effect(move |first: Option<()>| {
+                lost.track();
+                if first.is_some() {
+                    st.editor_keys.set(false);
+                }
+            });
+        });
+        Some(cx)
+    });
     floem::reactive::create_effect(move |_| {
         let Some(path) = ui.active.get() else { return };
         if ui.tab(&path).is_some_and(|t| t.is_file())
