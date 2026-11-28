@@ -862,6 +862,9 @@ Sections used:
   turn it covers: Show summary shows what the model goes on with, and after another compaction
   the divider moves and shows the latest summary. Questions the summary covers can no longer be
   edited or answered again.
+- **Checklists in the Plan view.** The checklist on in the session shows 'N/M done' and Turn off, and
+  its items are boxes you tick, each with how the model did or checked it. With none on, you turn one
+  of yours or the repository's on, and make, edit or delete your own (its items one per line).
 
 
 ### :bug: Bugs fixed
