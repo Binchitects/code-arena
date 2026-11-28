@@ -135,8 +135,11 @@ fn clock(ui: Ui, me: Items) {
     go(ui, me);
 }
 
-/// A spinner's turn now.
-fn turned(me: Items) -> f64 {
+/// A spinner's turn now: none when motion is reduced.
+fn turned(ui: Ui, me: Items) -> f64 {
+    if crate::accessibility::still(ui) {
+        return 0.0;
+    }
     (me.tick.get() % 12) as f64 * std::f64::consts::TAU / 12.0
 }
 
@@ -213,8 +216,11 @@ pub fn register(ui: Ui, _send: &Send) {
             }
         });
         clickable(
-            h_stack((icon("loading", 16.0).style(move |s| s.rotate(turned(me))), label(move || n.get().to_string())))
-                .style(|s| s.gap(4.0).items_center()),
+            h_stack((
+                icon("loading", 16.0).style(move |s| s.rotate(turned(ui, me))),
+                label(move || n.get().to_string()),
+            ))
+            .style(|s| s.gap(4.0).items_center()),
             move || {
                 commands::run(ui, &send, crate::workbench::SHOW_AGENT);
             },
@@ -276,7 +282,7 @@ pub fn register(ui: Ui, _send: &Send) {
                     move || running.get(),
                     move |r| {
                         if r {
-                            icon("loading", 16.0).style(move |s| s.rotate(turned(me))).into_any()
+                            icon("loading", 16.0).style(move |s| s.rotate(turned(ui, me))).into_any()
                         } else {
                             icon("sparkle", 16.0).into_any()
                         }

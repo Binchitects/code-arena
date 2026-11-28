@@ -9,6 +9,7 @@
 //! ones in `state.vm_logins`; `vm_login_answer{id, user, password, save}` or `vm_login_answer{id, cancel: true}` out.
 //! The password is cleared as soon as it is sent.
 
+use floem::action::exec_after;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect};
 use floem::style::CursorStyle;
 use floem::views::{Decorators, container, h_stack, label};
@@ -19,6 +20,9 @@ use crate::icons::icon;
 use crate::layers::{self, Place};
 use crate::state::{Send, Ui};
 use crate::widgets::form::{self, Form};
+
+/// How long after a sign-in the keys wait before they go back to the chat, for the guest to refuse it.
+const BACK_TO_CHAT: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// A question, as the driver asked it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,7 +133,9 @@ impl VmLogin {
     }
 
     /// The question asked now is no longer (answered here or elsewhere): the form closes without telling anyone,
-    /// and the next one is asked; when none waits, the keys go back to the chat.
+    /// and the next one is asked; when none waits a moment later, the keys go back to the chat. The moment lets a
+    /// guest that refused the password ask again first: the chat taking the keys from the form asked again would
+    /// close it, and so cancel the sign-in.
     fn finish(self, ui: Ui, id: u64) {
         self.waiting.update(|w| w.retain(|q| q.id != id));
         if self.asked.with_untracked(|a| a.as_ref().is_some_and(|q| q.id == id)) {
@@ -137,9 +143,11 @@ impl VmLogin {
             self.password.set(String::new());
             self.form.close();
             self.next();
-            if self.asked.with_untracked(Option::is_none) {
-                crate::chat_bridge::focus(ui);
-            }
+            exec_after(BACK_TO_CHAT, move |_| {
+                if self.asked.with_untracked(Option::is_none) {
+                    crate::chat_bridge::focus(ui);
+                }
+            });
         }
     }
 }
