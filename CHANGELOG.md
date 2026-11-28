@@ -1078,6 +1078,15 @@ Sections used:
   the network and without your keys. It stops when the trust is taken back or another folder is
   opened. At most six run at once, and the last 200 lines of each one's log are kept. A server
   that ends by itself is offered a restart up to three times in three minutes.
+- **The IDE keeps a log.** code-arena.log sits beside an installed program, or in the data folder's
+  logs/, with a time on every line. Keys and the page's address key are blanked. It rotates at 5 MB
+  and keeps 3 older files, and About shows where it is.
+- **Updates from Arena in the native window.** At start and once a day (unless update.check is
+  off), the window says 'Code Arena X is available from Arena (this is Y).' with Update Now, and the
+  status bar shows Update. A click downloads the build and checks its size, its SHA-256 and that the
+  Arena's signing CA signed it, then puts it in the program's place. The item then reads 'Updated:
+  restart' and starts the new program. Check for Updates... is in the palette and the Manage menu,
+  beside Install Update and Restart to Update.
 
 
 ### :bug: Bugs fixed
