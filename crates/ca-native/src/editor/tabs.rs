@@ -636,10 +636,7 @@ fn one_tab(ui: Ui, group: Shown, tab: Tab) -> impl IntoView {
                 .apply_if(preview.get() && *crate::widgets::ITALIC, |s| s.font_style(floem::text::Style::Italic))
         }),
         label(move || apart.get().unwrap_or_default()).style(move |s| {
-            s.font_size(12.0)
-                .color(t.get().desc)
-                .selectable(false)
-                .apply_if(apart.with(Option::is_none), |s| s.hide())
+            s.font_size(12.0).color(t.get().desc).selectable(false).apply_if(apart.with(Option::is_none), |s| s.hide())
         }),
         dyn_container(
             move || slot.get(),

@@ -187,7 +187,11 @@ fn block(
                 }),
                 prose(ui, words, 13.0, false, q, doc).style(move |s| {
                     if beside.get() {
-                        s.width(floem::unit::PxPctAuto::Auto).max_width_full().flex_grow(0.0_f32).flex_shrink(1.0_f32).min_width(0.0)
+                        s.width(floem::unit::PxPctAuto::Auto)
+                            .max_width_full()
+                            .flex_grow(0.0_f32)
+                            .flex_shrink(1.0_f32)
+                            .min_width(0.0)
                     } else {
                         s.flex_grow(1.0_f32).flex_basis(0.0)
                     }
