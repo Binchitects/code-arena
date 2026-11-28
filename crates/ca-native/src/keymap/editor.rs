@@ -755,7 +755,7 @@ fn row_view(ui: Ui, send: Send, e: Entry, odd: bool) -> AnyView {
             }
         })
         .style(move |s| {
-            s.width(24.0).flex_shrink(0.0).height_full().items_center().justify_center().cursor(if p2() {
+            s.width(24.0).flex_shrink(0.0_f32).height_full().items_center().justify_center().cursor(if p2() {
                 CursorStyle::Pointer
             } else {
                 CursorStyle::Default
@@ -1071,7 +1071,7 @@ fn view(ui: Ui, send: Send) -> AnyView {
                 .style(|s| s.items_center())
                 .into_any(),
             ];
-            for line in w.iter().take(5).cloned() {
+            for line in w.into_iter().take(5) {
                 lines.push(label(move || line.clone()).style(|s| s.margin_left(22.0).text_ellipsis()).into_any());
             }
             if n > 5 {
@@ -1438,18 +1438,21 @@ mod tests {
     #[test]
     fn a_rule_is_added_at_the_end_and_the_rest_kept() {
         let rule = written("ctrl+e", "a", "");
-        assert_eq!(append("", &rule).unwrap(), format!("{HEADER}[\n    {rule}\n]\n"));
-        assert_eq!(append("[]", &rule).unwrap(), format!("[\n    {rule}\n]"));
-        assert_eq!(append("// x\n[\n]\n", &rule).unwrap(), format!("// x\n[\n    {rule}\n]\n"));
-        assert_eq!(append("[\n  // only this\n]", &rule).unwrap(), format!("[\n  // only this\n    {rule}\n]"));
+        assert_eq!(append("", &rule).expect("written"), format!("{HEADER}[\n    {rule}\n]\n"));
+        assert_eq!(append("[]", &rule).expect("written"), format!("[\n    {rule}\n]"));
+        assert_eq!(append("// x\n[\n]\n", &rule).expect("written"), format!("// x\n[\n    {rule}\n]\n"));
+        assert_eq!(
+            append("[\n  // only this\n]", &rule).expect("written"),
+            format!("[\n  // only this\n    {rule}\n]")
+        );
         let one = "[\n    // first\n    { \"key\": \"f1\", \"command\": \"x\" } // after\n]";
         assert_eq!(
-            append(one, &rule).unwrap(),
+            append(one, &rule).expect("written"),
             format!("[\n    // first\n    {{ \"key\": \"f1\", \"command\": \"x\" }},\n    {rule} // after\n]")
         );
         // A trailing comma stays where it was.
         let trailing = "[\n    {\"key\": \"f1\", \"command\": \"x\"},\n]";
-        let out = append(trailing, &rule).unwrap();
+        let out = append(trailing, &rule).expect("written");
         assert_eq!(out, format!("[\n    {{\"key\": \"f1\", \"command\": \"x\"}},\n    {rule},\n]"));
         assert!(ca_settings::jsonc::parse(&out).is_ok());
         assert_eq!(append("{}", &rule), None);
@@ -1458,10 +1461,16 @@ mod tests {
     #[test]
     fn a_rule_is_taken_out_with_its_comma() {
         let text = "[\n    {\"command\": \"a\"},\n    // b's\n    {\"command\": \"b\"},\n    {\"command\": \"c\"}\n]";
-        assert_eq!(remove(text, 1).unwrap(), "[\n    {\"command\": \"a\"},\n    {\"command\": \"c\"}\n]");
-        assert_eq!(remove(text, 2).unwrap(), "[\n    {\"command\": \"a\"},\n    // b's\n    {\"command\": \"b\"}\n]");
-        assert_eq!(remove(text, 0).unwrap(), "[\n    // b's\n    {\"command\": \"b\"},\n    {\"command\": \"c\"}\n]");
-        assert_eq!(remove("// keep\n[\n    {\"command\": \"a\"},\n]\n", 0).unwrap(), "// keep\n[\n]\n");
+        assert_eq!(remove(text, 1).expect("written"), "[\n    {\"command\": \"a\"},\n    {\"command\": \"c\"}\n]");
+        assert_eq!(
+            remove(text, 2).expect("written"),
+            "[\n    {\"command\": \"a\"},\n    // b's\n    {\"command\": \"b\"}\n]"
+        );
+        assert_eq!(
+            remove(text, 0).expect("written"),
+            "[\n    // b's\n    {\"command\": \"b\"},\n    {\"command\": \"c\"}\n]"
+        );
+        assert_eq!(remove("// keep\n[\n    {\"command\": \"a\"},\n]\n", 0).expect("written"), "// keep\n[\n]\n");
         assert_eq!(remove(text, 3), None);
     }
 
@@ -1491,23 +1500,23 @@ mod tests {
     fn keys_are_added_removed_and_reset() {
         let all = rows_with("");
         // A command with no keys is given some; another key added to one that has.
-        let text = edit("", Os::Linux, row(&all, "c.none"), &Change::Keys(keys("f2"))).unwrap();
-        let text = edit(&text, Os::Linux, row(&rows_with(&text), "a.open"), &Change::Add(keys("f3"))).unwrap();
+        let text = edit("", Os::Linux, row(&all, "c.none"), &Change::Keys(keys("f2"))).expect("written");
+        let text = edit(&text, Os::Linux, row(&rows_with(&text), "a.open"), &Change::Add(keys("f3"))).expect("written");
         let all = rows_with(&text);
         assert_eq!(keys_of(&all, "c.none"), ["f2"]);
         assert_eq!(keys_of(&all, "a.open"), ["ctrl+k ctrl+o", "f3"]);
         // The person's removed: its rule is taken out of the file; a default's: taken away by `-command`.
-        let user = all.iter().find(|e| e.command == "a.open" && e.source == Source::User).unwrap();
-        let text = edit(&text, Os::Linux, user, &Change::Remove).unwrap();
+        let user = all.iter().find(|e| e.command == "a.open" && e.source == Source::User).expect("written");
+        let text = edit(&text, Os::Linux, user, &Change::Remove).expect("written");
         let all = rows_with(&text);
         assert_eq!(keys_of(&all, "a.open"), ["ctrl+k ctrl+o"]);
-        let text = edit(&text, Os::Linux, row(&all, "a.open"), &Change::Remove).unwrap();
+        let text = edit(&text, Os::Linux, row(&all, "a.open"), &Change::Remove).expect("written");
         let all = rows_with(&text);
         assert_eq!(keys_of(&all, "a.open"), [""]);
         assert!(text.contains("\"-a.open\""));
         // Reset of a default changed: its rules of the person's go, and it has its default again.
-        let text = edit(&text, Os::Linux, row(&all, "b.close"), &Change::Keys(keys("f4"))).unwrap();
-        let text = edit(&text, Os::Linux, row(&rows_with(&text), "b.close"), &Change::Reset).unwrap();
+        let text = edit(&text, Os::Linux, row(&all, "b.close"), &Change::Keys(keys("f4"))).expect("written");
+        let text = edit(&text, Os::Linux, row(&rows_with(&text), "b.close"), &Change::Reset).expect("written");
         let all = rows_with(&text);
         assert_eq!(keys_of(&all, "b.close"), ["ctrl+w"]);
         assert_eq!(row(&all, "b.close").source, Source::Default);
@@ -1519,12 +1528,12 @@ mod tests {
     #[test]
     fn a_when_changed_is_written_and_a_file_that_cannot_be_read_is_not() {
         let all = rows_with("");
-        let text = edit("", Os::Linux, row(&all, "a.open"), &Change::When(" terminalFocus ".into())).unwrap();
+        let text = edit("", Os::Linux, row(&all, "a.open"), &Change::When(" terminalFocus ".into())).expect("written");
         let all = rows_with(&text);
         let e = row(&all, "a.open");
         assert_eq!((e.key_text.as_str(), e.when.as_str(), e.source), ("ctrl+k ctrl+o", "terminalFocus", Source::User));
         assert_eq!(keys_of(&all, "a.open").len(), 1);
-        let text = edit(&text, Os::Linux, e, &Change::When(String::new())).unwrap();
+        let text = edit(&text, Os::Linux, e, &Change::When(String::new())).expect("written");
         assert_eq!(row(&rows_with(&text), "a.open").when, "");
         // No keys, no `when` to change; a file that is not a list is never written into.
         assert_eq!(edit("", Os::Linux, row(&all, "c.none"), &Change::When("x".into())), None);
