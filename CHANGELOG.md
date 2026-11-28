@@ -514,6 +514,15 @@ Sections used:
 - **Window title.** The window is called '<folder> · Code Arena'.
 - **Ctrl+0** (View: Focus into Primary Side Bar) shows the primary side bar.
 - **A cheat code.** Type the Konami code where no box has the keys.
+- **Quick Open modes.** Type `:12` or `:12:5` to go to a line and column of the file shown (Go to
+  Line/Column, Ctrl+G, or click Ln/Col in the status bar). Type `path:12[:5]` to open a file at a
+  line, `@` to list the file's symbols (Go to Symbol in Editor, Ctrl+Shift+O; `@:` groups them by
+  kind), and `?` to list the modes. Ctrl+Enter opens a file to the side.
+- **Recently opened and recently used.** With nothing typed, Quick Open lists the files you opened
+  last first. The Command Palette lists the last 20 commands you ran under 'recently used', and both
+  lists are kept with the folder. The palette also finds commands by id or by words in any order,
+  and opens with F1 too, from the editor and the terminal.
+- **Go menu.** Go to File, Go to Symbol in Editor and Go to Line/Column are now in the Go menu.
 
 
 ### :bug: Bugs fixed
