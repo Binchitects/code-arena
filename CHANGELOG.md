@@ -716,6 +716,24 @@ Sections used:
 - **Keys shown are the ones in force.** The palette, the menus and the tab menu show your own key
   for a command when you set one. On macOS, Ctrl in a default key is Cmd and keys show as macOS
   writes them (⇧⌘P).
+- **Save All, Save without Formatting and Revert File.** Ctrl+K S saves every tab with unsaved
+  changes, Ctrl+K Ctrl+Shift+S saves without the on-save fixes, and File > Revert File reloads the
+  file from disk.
+- **A save never silently overwrites someone else's change.** If the file changed on disk after it
+  was read, saving asks VS Code's question: Overwrite, or Compare your version with the file on
+  disk.
+- **Hot exit.** Unsaved text is backed up a second after you stop typing. At the next start it comes
+  back into its tab, still unsaved, as one edit over the disk text. Saving or discarding drops the
+  backup (files.hotExit).
+- **Auto save.** files.autoSave supports afterDelay (files.autoSaveDelay), onFocusChange and
+  onWindowChange. It pauses for a file that changed on disk and says so once.
+- **Fixes on save.** files.trimTrailingWhitespace, files.insertFinalNewline and
+  files.trimFinalNewlines run on Save. Each can be undone by itself and line endings are kept.
+- **Open files catch up at once.** When the window regains focus, or after the agent's
+  edit_file/write_file, the open files are checked on disk straight away instead of at the next
+  watch tick.
+- **Exit with unsaved text.** File > Exit and the title bar's close button back up unsaved text
+  first. With hot exit off they ask Save / Don't Save.
 
 
 ### :bug: Bugs fixed
