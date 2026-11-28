@@ -1,9 +1,8 @@
-//! The input's tools picker: the wrench in the box's toolbar (without the word "Tools": the panel is narrow), with
-//! how many of the session's tool groups are on (hidden while the model calls no tools). A click opens its popover
-//! over the box, "Tools: N of M on": each group
-//! (Code Arena's own, the Arena project's, each MCP server's) with its icon, its title, a shield when it asks before
-//! each call, an About button that opens what it is for and its functions, and a switch (Code Arena's own is always
-//! on). Customize tools… at the foot opens the Configure Tools dialog (`CUSTOMIZE`).
+//! The input's tools picker: the wrench in the box's toolbar (without the word "Tools": the panel is narrow), with how
+//! many of the session's tool groups are on (hidden while the model calls no tools). A click opens its popover over the
+//! box, "Tools: N of M on": each group (Code Arena's own, the Arena project's, each MCP server's) with its icon, its
+//! title, a shield when it asks before each call, an About button that opens what it is for and its functions, and a
+//! switch (Code Arena's own is always on). Customize tools… at the foot opens the Configure Tools dialog (`CUSTOMIZE`).
 //!
 //! The groups come in the driver's `tools` (asked when the session is said, after a turn and when the popover
 //! opens); a switch sends `tools_set{group, on, key}`. While a turn runs it waits for the turn's end, and says so.
@@ -193,21 +192,19 @@ fn button(ui: Ui, _send: Send) -> impl IntoView {
         let ((on, all), _) = shown.get();
         format!("Tools: {on} of {all} on")
     };
-    tooltip(inner, move || label(tip))
-        .on_click_stop(move |_| st.open.update(|o| *o = !*o))
-        .style(move |s| {
-            let c = t.get();
-            let ((_, all), tools) = shown.get();
-            s.height(24.0)
-                .padding_horiz(6.0)
-                .gap(5.0)
-                .items_center()
-                .border_radius(4.0)
-                .color(c.desc)
-                .cursor(CursorStyle::Pointer)
-                .hover(|s| s.background(c.toolbar_hover))
-                .apply_if(all == 0 || !tools, |s| s.hide())
-        })
+    tooltip(inner, move || label(tip)).on_click_stop(move |_| st.open.update(|o| *o = !*o)).style(move |s| {
+        let c = t.get();
+        let ((_, all), tools) = shown.get();
+        s.height(24.0)
+            .padding_horiz(6.0)
+            .gap(5.0)
+            .items_center()
+            .border_radius(4.0)
+            .color(c.desc)
+            .cursor(CursorStyle::Pointer)
+            .hover(|s| s.background(c.toolbar_hover))
+            .apply_if(all == 0 || !tools, |s| s.hide())
+    })
 }
 
 /// A switch: lit while on.
@@ -392,9 +389,8 @@ fn body(ui: Ui, send: Send, groups: Vec<Group>, about: Option<String>, waiting: 
         }),
         scroll(v_stack_from_iter(rows).style(|s| s.width_full().gap(1.0).padding_horiz(6.0).padding_bottom(4.0)))
             .style(|s| s.max_height(320.0).width_full()),
-        container(customize).style(move |s| {
-            s.width_full().padding(4.0).border_top(1.0).border_color(t.get().widget_border)
-        }),
+        container(customize)
+            .style(move |s| s.width_full().padding(4.0).border_top(1.0).border_color(t.get().widget_border)),
     ))
     .style(|s| s.width_full())
     .into_any()
@@ -406,9 +402,7 @@ fn popover(ui: Ui, send: &Send) -> AnyView {
     let t = ui.colors;
     let st = ui.state::<Tools>();
     let send = send.clone();
-    let what = create_memo(move |_| {
-        st.open.get().then(|| (st.groups.get(), st.about.get(), st.waiting.get()))
-    });
+    let what = create_memo(move |_| st.open.get().then(|| (st.groups.get(), st.about.get(), st.waiting.get())));
     let asked = send.clone();
     let panel = dyn_container(
         move || what.get(),
@@ -499,7 +493,12 @@ mod tests {
         let g = group(json!({"id": "x", "description": "Does x.", "ask_first": true, "loaded": false}));
         assert_eq!(
             about_lines(&g, true),
-            ["Does x.", "Asks you before each call.", "Its tools join with the next message.", "Applies when the answer is done."]
+            [
+                "Does x.",
+                "Asks you before each call.",
+                "Its tools join with the next message.",
+                "Applies when the answer is done."
+            ]
         );
         let own = group(json!({"id": "own", "locked": true}));
         assert_eq!(about_lines(&own, false), ["Always on."]);

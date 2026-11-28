@@ -490,10 +490,12 @@ pub fn describe(servers: &Servers) -> Vec<String> {
                 State::Connecting => "connecting".to_string(),
                 State::Connected { tools } => format!("connected, {tools} tools"),
                 State::Unavailable(w) => format!("not available here ({w})"),
-                State::Failed(w) => match s.next_try().and_then(|t| t.duration_since(std::time::SystemTime::now()).ok()) {
-                    Some(d) => format!("not connected: {w} (trying again in {} s)", d.as_secs() + 1),
-                    None => format!("not connected: {w}"),
-                },
+                State::Failed(w) => {
+                    match s.next_try().and_then(|t| t.duration_since(std::time::SystemTime::now()).ok()) {
+                        Some(d) => format!("not connected: {w} (trying again in {} s)", d.as_secs() + 1),
+                        None => format!("not connected: {w}"),
+                    }
+                }
             };
             format!("{:<14} {state}", s.title)
         })

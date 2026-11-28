@@ -284,7 +284,8 @@ fn dialog(ui: Ui, send: Send, all: Vec<Server>) -> AnyView {
         label(move || format!("{on} of {total} connected"))
             .style(move |s| s.color(t.get().desc).apply_if(total == 0, |s| s.hide())),
         list,
-        label(|| NOTE).style(move |s| s.font_size(12.0).line_height(1.4).color(t.get().desc).text_overflow(TextOverflow::Wrap)),
+        label(|| NOTE)
+            .style(move |s| s.font_size(12.0).line_height(1.4).color(t.get().desc).text_overflow(TextOverflow::Wrap)),
         buttons,
     ))
     .on_event_stop(EventListener::PointerDown, |_| {})
