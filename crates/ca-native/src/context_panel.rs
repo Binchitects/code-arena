@@ -258,7 +258,7 @@ fn content(ui: Ui, send: Send, w: Window, d: Option<Detail>, width: f64) -> AnyV
             let line = ring::use_line(&w);
             move || line.clone()
         })
-        .style(|s| s.font_size(12.0).text_overflow(TextOverflow::Wrap))
+        .style(|s| s.font_size(12.0).line_height(1.4).text_overflow(TextOverflow::Wrap))
         .into_any(),
     ];
     if let Some(over) = ring::over_line(&w) {
@@ -416,7 +416,9 @@ fn field(ui: Ui, send: Send, name: &'static str, hint: &'static str, value: RwSi
                 .focus(|s| s.border_color(c.focus))
         });
     v_stack((
-        label(move || name).style(|s| s.font_size(12.0).font_weight(Weight::SEMIBOLD)),
+        label(move || name).style(|s| {
+            s.font_size(12.0).line_height(1.4).font_weight(Weight::SEMIBOLD).text_overflow(TextOverflow::Wrap)
+        }),
         input,
         label(move || hint).style(move |s| s.font_size(12.0).color(t.get().desc)),
     ))
