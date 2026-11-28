@@ -300,10 +300,9 @@ pub fn bubble(ui: Ui, send: Send, item: &Item) -> AnyView {
             } else {
                 let w = words.clone();
                 let rtl = crate::bidi::rtl(&w);
-                let words = label(move || w.clone()).style(move |s| {
-                    let s = s.color(t.get().fg).line_height(1.5).text_overflow(TextOverflow::Wrap);
-                    crate::bidi::stand(s, rtl)
-                });
+                let look = move || crate::bidi::Look { size: 13.0, line_height: 1.5, color: t.get().fg };
+                let words = crate::bidi::lines(move || w.clone(), look)
+                    .style(move |s| crate::bidi::stand(s.text_overflow(TextOverflow::Wrap), rtl));
                 v_stack((words,)).style(|s| s.width_full().min_width(0.0)).into_any()
             }
         },

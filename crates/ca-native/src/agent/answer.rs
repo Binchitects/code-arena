@@ -362,11 +362,19 @@ fn thinking(ui: Ui, send: Send, answer: Answer) -> impl IntoView {
     let paragraphs = create_memo(move |_| reasoning.with(|r| r.split("\n\n").count()));
     let paragraph = move |n: usize| {
         let words = create_memo(move |_| reasoning.with(|r| r.split("\n\n").nth(n).unwrap_or("").trim().to_string()));
-        // On the right when its first strong letter is (each of its lines laid out by its own words).
+        // On the right when its first strong letter is, each of its lines laid out by its own words (drawn again
+        // only when whether it has a right-to-left line changes).
         let rtl = create_memo(move |_| words.with(|w| crate::bidi::rtl(w)));
-        label(move || words.get()).style(move |s| {
-            crate::bidi::stand(s.text_overflow(TextOverflow::Wrap).line_height(1.5).width_full().min_width(0.0), rtl.get())
-        })
+        let mixed = create_memo(move |_| words.with(|w| crate::bidi::any_rtl_line(w)));
+        let look = move || crate::bidi::Look { size: 13.0, line_height: 1.5, color: t.get().desc };
+        dyn_container(
+            move || mixed.get(),
+            move |_| {
+                crate::bidi::lines(move || words.get(), look)
+                    .style(|s| s.text_overflow(TextOverflow::Wrap).min_width(0.0).flex_shrink(1.0_f32))
+            },
+        )
+        .style(move |s| crate::bidi::stand(s.width_full().min_width(0.0), rtl.get()))
     };
     let words = dyn_stack(move || 0..paragraphs.get(), |n| *n, paragraph)
         .style(|s| s.flex_col().gap(8.0).width_full().min_width(0.0));

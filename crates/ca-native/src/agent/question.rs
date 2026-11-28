@@ -38,8 +38,9 @@ pub(super) fn bubble(ui: Ui, question: Question) -> AnyView {
     let skill = question.skill.clone();
     let card = (!skill.is_empty()).then(|| skill_card(ui, skill));
     let inside = v_stack((
-        label(move || words.clone())
-            .style(move |s| s.color(t.get().fg).line_height(1.5).text_overflow(TextOverflow::Wrap)),
+        // Each of its lines on the side of its own words' direction.
+        crate::bidi::lines(move || words.clone(), move || crate::bidi::Look { size: 13.0, line_height: 1.5, color: t.get().fg })
+            .style(|s| s.text_overflow(TextOverflow::Wrap)),
         match card {
             Some(c) => c.into_any(),
             None => empty().style(|s| s.hide()).into_any(),

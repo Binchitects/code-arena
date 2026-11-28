@@ -6,14 +6,20 @@
 //! it does not reorder them. What every part has (`register`, `take`) is said in `ext.rs`.
 
 use std::rc::Rc;
+use std::sync::LazyLock;
 
+use floem::IntoView;
+use floem::peniko::Color;
 use floem::style::{AlignItems, Style};
+use floem::text::{Attrs, AttrsList, FamilyOwned, LineHeightValue, TextLayout};
 use floem::unit::PxPctAuto;
+use floem::views::{Decorators, label, rich_text};
 use serde_json::Value;
 use unicode_bidi::{Direction, get_base_direction, get_base_direction_full};
 
 use crate::markdown::Block;
 use crate::state::{Send, Ui};
+use crate::widgets::UI_FONT;
 
 /// What it adds to the window's registries, once at start.
 pub fn register(_ui: Ui, _send: &Send) {}
@@ -21,6 +27,46 @@ pub fn register(_ui: Ui, _send: &Send) {}
 /// The session's messages that are this part's, taken in; true takes one away from the parts after it.
 pub fn take(_ui: Ui, _m: &Value, _send: &Send) -> bool {
     false
+}
+
+static UI: LazyLock<Vec<FamilyOwned>> = LazyLock::new(|| FamilyOwned::parse_list(&UI_FONT).collect());
+
+/// How a text of the chat is drawn: its size, its line height (times the size), its colour.
+#[derive(Clone, Copy)]
+pub struct Look {
+    pub size: f32,
+    pub line_height: f32,
+    pub color: Color,
+}
+
+/// A text of several lines, each laid out by its own words (the browser's `dir="auto"` with
+/// `unicode-bidi: plaintext`): a right-to-left line stands on the right of the text's width, a left-to-right one on
+/// its left. A text with no right-to-left line is a label as before (it can be selected); one with such a line is
+/// laid out to its widest line's width, or to its place's when it wraps. Its style wraps it (`TextOverflow::Wrap`).
+pub fn lines(words: impl Fn() -> String + 'static, look: impl Fn() -> Look + 'static) -> floem::AnyView {
+    if !floem::reactive::untrack(|| any_rtl_line(&words())) {
+        return label(words)
+            .style(move |s| {
+                let l = look();
+                s.font_size(l.size).line_height(l.line_height).color(l.color)
+            })
+            .into_any();
+    }
+    rich_text(move || laid(&words(), look())).into_any()
+}
+
+/// A text laid out to its widest line's width, so that each line stands on the side of its own direction.
+fn laid(words: &str, l: Look) -> TextLayout {
+    let attrs = Attrs::new()
+        .family(&UI)
+        .font_size(l.size)
+        .line_height(LineHeightValue::Normal(l.line_height))
+        .color(l.color);
+    let mut layout = TextLayout::new();
+    layout.set_text(words, AttrsList::new(attrs));
+    let widest = layout.size().width.ceil() as f32 + 1.0;
+    layout.set_size(widest, f32::MAX);
+    layout
 }
 
 /// The left-to-right mark: an invisible strong letter that sets the direction of the line it starts.
