@@ -34,8 +34,10 @@ impl Area for Here {
                 let (items, building) = find(index, q, limit);
                 send(&out, json!({"type": "symbols", "q": q, "items": items, "building": building}));
             };
+            // Begun (or kept for the scan's end) before the answer, so that one ending meanwhile still answers it.
+            let scan = index.begin(&q, limit);
             answer(&q, limit, &index);
-            if index.begin(&q, limit) {
+            if scan {
                 index.scan(&root);
                 if let Some((q, limit)) = index.end() {
                     answer(&q, limit, &index);
@@ -182,7 +184,7 @@ pub fn find(index: &Index, q: &str, limit: usize) -> (Vec<Value>, bool) {
 }
 
 /// How well a name matches what was typed (lower case): the whole name 100, its start 80, its initials 60
-/// (`rta` for `RunToolsAsync`, `gfn` for `get_file_name`), inside it 40, its letters in order 20; none otherwise.
+/// (`rta` for `RunToolsAsync`, `gfn` for `get_file_name`), inside it 40; none otherwise.
 pub fn score(name: &str, q: &str) -> Option<u32> {
     if q.is_empty() {
         return None;
@@ -197,11 +199,7 @@ pub fn score(name: &str, q: &str) -> Option<u32> {
     if q.chars().count() > 1 && initials(name).starts_with(q) {
         return Some(60);
     }
-    if lower.contains(q) {
-        return Some(40);
-    }
-    let mut rest = lower.chars();
-    q.chars().all(|c| rest.any(|n| n == c)).then_some(20)
+    lower.contains(q).then_some(40)
 }
 
 /// A name's initials, lower case: its first letter, each capital after a small letter or a digit, and each letter
@@ -505,7 +503,7 @@ mod tests {
         assert_eq!(score("RunToolsAsync", "rta"), Some(60));
         assert_eq!(score("get_file_name", "gfn"), Some(60));
         assert_eq!(score("RunToolsAsync", "tools"), Some(40));
-        assert_eq!(score("RunToolsAsync", "rnsy"), Some(20));
+        assert_eq!(score("RunToolsAsync", "rnsy"), None);
         assert_eq!(score("RunToolsAsync", "zz"), None);
         assert_eq!(score("x", ""), None);
         assert_eq!(initials("HTTPServer2Go"), "hg");
