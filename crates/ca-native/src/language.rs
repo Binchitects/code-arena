@@ -306,7 +306,8 @@ impl Associations {
 
 /// A file's language by its path and first line, as VS Code finds it: the associations, the file's name, its
 /// extension (the longest that is one), its first line; Plain Text when none says.
-pub fn detect(associations: &Associations, path: &str, first_line: &str) -> &'static str {
+/// The first line is asked for only when nothing before it says.
+pub fn detect(associations: &Associations, path: &str, first_line: impl FnOnce() -> String) -> &'static str {
     if path.starts_with("user:") {
         // The person's settings, keybindings and snippets: JSON with comments.
         return "jsonc";
@@ -327,7 +328,7 @@ pub fn detect(associations: &Associations, path: &str, first_line: &str) -> &'st
     if let Some((id, _)) = by_extension {
         return id;
     }
-    by_first_line(first_line).unwrap_or(PLAIN)
+    by_first_line(&first_line()).unwrap_or(PLAIN)
 }
 
 /// The language a file's first line says: the program of a `#!` line (`/usr/bin/env -S python3 -u`), or `<?php`,
@@ -372,8 +373,14 @@ impl crate::ext::State for Languages {
     }
 }
 
+/// A tab's first line, when it is short enough to be a `#!` line (a minified file's one line is not copied).
 fn first_line(ui: Ui, path: &str) -> String {
-    ui.tab(path).map(|t| t.doc.rope_text().line_content(0).to_string()).unwrap_or_default()
+    let Some(tab) = ui.tab(path) else { return String::new() };
+    let text = tab.doc.rope_text();
+    if text.line_end_offset(0, true) > 1000 {
+        return String::new();
+    }
+    text.line_content(0).to_string()
 }
 
 /// A tab's language (by its path), followed: told again when it is picked, or the associations change.
@@ -382,7 +389,7 @@ pub fn id(ui: Ui, path: &str) -> &'static str {
     if let Some(id) = s.chosen.with(|c| c.get(path).copied()) {
         return id;
     }
-    s.associations.with(|a| detect(a, path, &first_line(ui, path)))
+    s.associations.with(|a| detect(a, path, || first_line(ui, path)))
 }
 
 /// A tab's language now, not followed: for a command or a key.
@@ -391,7 +398,7 @@ pub fn now(ui: Ui, path: &str) -> &'static str {
     if let Some(id) = s.chosen.with_untracked(|c| c.get(path).copied()) {
         return id;
     }
-    s.associations.with_untracked(|a| detect(a, path, &first_line(ui, path)))
+    s.associations.with_untracked(|a| detect(a, path, || first_line(ui, path)))
 }
 
 /// A tab's language now, as the settings' calls take it.
@@ -399,15 +406,17 @@ pub fn of(ui: Ui, path: &str) -> Option<&'static str> {
     Some(now(ui, path))
 }
 
-/// The grammar a tab is drawn with, followed. A file of no language the window knows keeps the grammar its name
-/// finds, if there is one (`.scala`, `.hs`); one picked as Plain Text is drawn plain.
+/// The grammar a tab is drawn with, followed. A file whose language is neither picked nor associated keeps the
+/// grammar its name or first line finds (`.scala`, `.erb`), else its language's; otherwise its language's alone.
 pub fn syntax(ui: Ui, path: &str) -> Option<&'static SyntaxReference> {
     let id = id(ui, path);
-    let picked = ui.state::<Languages>().chosen.with(|c| c.contains_key(path));
-    if id == PLAIN && !picked {
-        return crate::highlight::syntax_for(path, &first_line(ui, path));
+    let s = ui.state::<Languages>();
+    let picked = s.chosen.with(|c| c.contains_key(path));
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    if picked || s.associations.with(|a| a.of_path(path, name).is_some()) {
+        return grammar(id);
     }
-    grammar(id)
+    crate::highlight::syntax_for(path, &first_line(ui, path)).or_else(|| grammar(id))
 }
 
 /// The tab shown now, when its language may be changed: a file's text.
@@ -565,7 +574,7 @@ mod tests {
     use super::*;
 
     fn found(path: &str, first: &str) -> &'static str {
-        detect(&Associations::default(), path, first)
+        detect(&Associations::default(), path, || first.to_string())
     }
 
     #[test]
@@ -592,10 +601,10 @@ mod tests {
     #[test]
     fn the_associations_win_those_of_a_path_over_those_of_a_name() {
         let a = Associations::of(&json!({"*.inc": "php", "src/**/*.inc": "c", "*.conf": "no-such", "[": "rust"}));
-        assert_eq!(detect(&a, "lib/a.inc", ""), "php");
-        assert_eq!(detect(&a, "src/x/a.inc", ""), "c");
-        assert_eq!(detect(&a, "/w/src/a.INC", ""), "php", "an absolute path is not under the project's src");
-        assert_eq!(detect(&a, "a.conf", ""), "properties", "a language not known is left out");
+        assert_eq!(detect(&a, "lib/a.inc", String::new), "php");
+        assert_eq!(detect(&a, "src/x/a.inc", String::new), "c");
+        assert_eq!(detect(&a, "/w/src/a.INC", String::new), "php", "an absolute path is not under the project's src");
+        assert_eq!(detect(&a, "a.conf", String::new), "properties", "a language not known is left out");
         assert_eq!(Associations::of(&json!({"*.inc": "php"})), Associations::of(&json!({"*.inc": "php"})));
     }
 
@@ -668,6 +677,12 @@ mod tests {
         assert_eq!(id(ui, "a.txt"), PLAIN);
         choose(ui, "a.txt", Some("go"));
         ui.close("a.txt");
+        // A file neither picked nor associated keeps the grammar its name finds.
+        for path in ["a.erb", "a.properties", "a.jsp", "a.scala", "a.ts", "a.h", "Makefile"] {
+            ui.take(&json!({"type": "file", "path": path, "text": "x\n", "modified": 1}), &send);
+            let by_name = crate::highlight::syntax_for(path, "x").map(|s| s.name.clone());
+            assert_eq!(syntax(ui, path).map(|s| s.name.clone()), by_name, "{path}");
+        }
         assert!(ui.state::<Languages>().chosen.with_untracked(|c| c.is_empty()));
     }
 
