@@ -106,10 +106,13 @@ pub fn icon_of(name: &str) -> &'static str {
     }
 }
 
-/// What a call is about, on its head: what its tool says, else its first short text argument.
+/// What a call is about, on its head: what its tool says (its first line, the head being one line), else its first
+/// short text argument.
 pub fn main_argument(t: &Tool) -> String {
     if !t.subject.is_empty() {
-        return t.subject.clone();
+        let mut lines = t.subject.lines().map(str::trim_end).filter(|l| !l.trim().is_empty());
+        let first = lines.next().unwrap_or_default().to_string();
+        return if lines.next().is_some() { first + " …" } else { first };
     }
     t.arguments
         .as_object()
@@ -490,5 +493,9 @@ mod tests {
         assert!(matches!(shown(&call("run_shell", json!({}))), Shown::Console(_)));
         assert_eq!(shown(&Tool { text: "plain".into(), ..call("plan", json!({})) }), Shown::Raw("plain".into()));
         assert_eq!(main_argument(&call("x", json!({"query": "find me"}))), "find me");
+        // A command of several lines is told by its first on the one line of the head.
+        let mut many = call("run_shell", json!({}));
+        many.subject = "mkdir -p out && python3 - <<'PY'\nprint(1)\nPY".into();
+        assert_eq!(main_argument(&many), "mkdir -p out && python3 - <<'PY' …");
     }
 }
