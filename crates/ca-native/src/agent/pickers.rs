@@ -284,6 +284,39 @@ fn choose(ui: Ui, send: &Send, which: Picker, v: &str) {
     send(chosen(which, v));
 }
 
+/// What a picker has in force, as its pill shows it: the mode with a capital ("Auto-edit", "Yolo"), the model by
+/// its id; a choice made while a turn runs until the session takes it.
+pub fn shown(ui: Ui, which: Picker) -> String {
+    named(which, &current(ui, which))
+}
+
+/// A picker's choices as a quick pick (the status bar's mode and model open it): the one in force lit, what each
+/// is said of dimmed beside it, and the ones that cannot be chosen left out. Taking one is choosing it in the pill.
+pub fn quick(ui: Ui, send: &Send, which: Picker) {
+    let (title, placeholder) = match which {
+        Picker::Mode => ("Agent Mode", "Select how much runs without asking"),
+        Picker::Model => ("Agent Model", "Select the agent's model"),
+        Picker::Thinking => ("Thinking", "Select how much the model thinks"),
+    };
+    let items: Vec<crate::widgets::quick::Item> = options(ui, which)
+        .into_iter()
+        .filter(|o| o.enabled)
+        .map(|o| crate::widgets::quick::item(&o.value, &o.name).description(&o.detail))
+        .collect();
+    let send = send.clone();
+    crate::widgets::quick::pick(title)
+        .placeholder(if ui.running.get_untracked() { NEXT_TURN } else { placeholder })
+        .items(items)
+        .active(&current(ui, which))
+        .open(ui, move |item| {
+            if let Some(item) = item
+                && item.id != current(ui, which)
+            {
+                choose(ui, &send, which, &item.id);
+            }
+        });
+}
+
 /// The choices still waited for once the session says what is in force (`status`): one it now has is not; the
 /// others still are (at a turn's end it says what it had before it takes those that waited).
 fn settled(pending: &[(Picker, String)], status: &Value) -> Vec<(Picker, String)> {
