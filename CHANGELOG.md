@@ -849,6 +849,12 @@ Sections used:
   as it was.
 - **Accessibility toggles.** Toggle High Contrast Theme, Toggle More Contrast, Toggle Colour-Blind
   Safe Colours and Toggle Reduce Motion are in the Command Palette.
+- **Status bar agent and window items.** The status bar shows the agent's mode (red in Yolo) and
+  model; click either to change it in a quick pick (Chat: Open Mode Picker / Open Model Picker). It
+  also shows a spinner with the count of commands running with no time limit, the last turn's time
+  and tokens ('12 s · 8.6K in (73% cached) · 1.2K out'), a dot for the session's connection, and
+  'code-arena <version>', which opens About. The Local remote item offers Open Folder and Open
+  Recent. Every item has a tooltip.
 
 
 ### :bug: Bugs fixed
