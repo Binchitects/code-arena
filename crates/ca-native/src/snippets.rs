@@ -135,7 +135,8 @@ fn in_session(ui: Ui) -> bool {
     SESSION.with(|s| s.borrow().as_ref().is_some_and(|s| Some(&s.path) == live.as_ref()))
 }
 
-fn has_next(ui: Ui) -> bool {
+/// Whether the snippet being filled in the editor shown has a stop after the one at the caret.
+pub(crate) fn has_next(ui: Ui) -> bool {
     in_session(ui) && SESSION.with(|s| s.borrow().as_ref().is_some_and(|s| s.at + 1 < s.stops.len()))
 }
 

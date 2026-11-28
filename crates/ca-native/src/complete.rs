@@ -882,11 +882,12 @@ pub fn typed_lately() -> bool {
 
 /// Shows an inline suggestion at a place of a file (line and column from 0, the column a byte in the line), in place
 /// of the one shown; only its first line is drawn, Tab takes it whole. None is shown while the suggestions widget is
-/// open, as in VS Code: Tab there takes the widget's suggestion, not the ghost.
+/// open, as in VS Code, nor while a snippet has a next tab stop: Tab there is the widget's or the snippet's.
 pub fn ghost(ui: Ui, path: &str, line: usize, col: usize, text: &str) {
     if crate::settings::now(ui, "editor.inlineSuggest.enabled", crate::language::of(ui, path)).as_bool() == Some(false)
         || text.is_empty()
         || is_open(ui)
+        || crate::snippets::has_next(ui)
     {
         return ghost_clear(ui, path);
     }
