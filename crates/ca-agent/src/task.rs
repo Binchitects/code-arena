@@ -82,10 +82,21 @@ pub enum Work {
     /// Its words since the last piece.
     Text(String),
     Notice(String),
-    ToolStart { id: String, name: String, subject: String },
-    ToolEnd { id: String, ok: bool, text: String, ms: u64 },
+    ToolStart {
+        id: String,
+        name: String,
+        subject: String,
+    },
+    ToolEnd {
+        id: String,
+        ok: bool,
+        text: String,
+        ms: u64,
+    },
     /// A step ended, its window this full.
-    StepEnd { tokens: u64 },
+    StepEnd {
+        tokens: u64,
+    },
 }
 
 /// How a sub-agent ended.
@@ -438,6 +449,89 @@ impl Tool for TaskTool {
 /// The call a run answers, as the turn said it.
 fn ctx_call(ctx: &Context) -> Option<String> {
     ctx.call.clone().filter(|c| !c.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type Heard = Arc<Mutex<Vec<SubEvent>>>;
+
+    fn heard() -> (Watch, Heard) {
+        let all: Heard = Arc::default();
+        let kept = all.clone();
+        (Arc::new(move |e| kept.lock().expect("held").push(e)), all)
+    }
+
+    fn steps(watch: Watch) -> Steps {
+        Steps {
+            name: "sub-agent".into(),
+            say: Arc::new(|_| {}),
+            watch: Some((watch, "c1".into())),
+            thinking: String::new(),
+            text: String::new(),
+            told: Instant::now(),
+            tokens: 0,
+        }
+    }
+
+    fn work(all: &Heard) -> Vec<Work> {
+        let all = all.lock().expect("held");
+        all.iter()
+            .filter_map(|e| match e {
+                SubEvent::Step { work, .. } => Some(work.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn words_are_gathered_and_told_when_a_call_or_a_step_begins() {
+        let (w, all) = heard();
+        let mut s = steps(w);
+        s.reasoning("Let ");
+        s.reasoning("me see.");
+        s.text("Reading");
+        let args = Value::Null;
+        s.tool_start(&Call { id: "r1", name: "read_file", subject: "a.rs", arguments: &args });
+        s.step_window(900, 32_000, None);
+        s.step_end();
+        assert_eq!(
+            work(&all),
+            [
+                Work::Thinking("Let me see.".into()),
+                Work::Text("Reading".into()),
+                Work::ToolStart { id: "r1".into(), name: "read_file".into(), subject: "a.rs".into() },
+                Work::StepEnd { tokens: 900 },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_ending_is_told_once_and_a_dropped_one_as_stopped() {
+        let (w, all) = heard();
+        let mut e = Ending { watch: Some((w.clone(), "c1".into())) };
+        e.end(End { status: "done", report: "ok".into(), error: None });
+        drop(e);
+        drop(Ending { watch: Some((w, "c2".into())) });
+        let all = all.lock().expect("held");
+        let ends: Vec<(&str, &str)> = all
+            .iter()
+            .filter_map(|e| match e {
+                SubEvent::Ended { call, end } => Some((call.as_str(), end.status)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ends, [("c1", "done"), ("c2", "stopped")]);
+    }
+
+    #[tokio::test]
+    async fn a_stop_asked_before_it_is_waited_for_is_kept() {
+        let stop = Stop::default();
+        stop.ask();
+        stop.wait().await;
+        assert!(stop.asked());
+    }
 }
 
 /// A sub-agent the person stopped: what it did so far is told, and the model hears it was stopped.
