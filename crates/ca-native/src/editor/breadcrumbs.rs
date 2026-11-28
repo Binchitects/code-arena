@@ -228,16 +228,18 @@ fn bar(ui: Ui, path: String, file: String, folders: bool, focused: Memo<bool>) -
     });
     // The part with the keys while the bar has them, and each part's view (to open its list under it).
     let lit = create_rw_signal(None::<usize>);
+    // Whether the bar has the keys (the lit part's ring is drawn only then).
+    let keys = create_rw_signal(false);
     let ids: Rc<RefCell<HashMap<usize, ViewId>>> = Rc::new(RefCell::new(HashMap::new()));
     let count = move || first + chain.with(Vec::len);
     let row = h_stack((
-        stack_from_iter(parts.into_iter().enumerate().map(|(n, p)| crumb(ui, n, p, lit, ids.clone(), count))),
+        stack_from_iter(parts.into_iter().enumerate().map(|(n, p)| crumb(ui, n, p, (lit, keys), ids.clone(), count))),
         {
             let ids = ids.clone();
             dyn_stack(
                 move || chain.get().into_iter().enumerate().collect::<Vec<_>>(),
                 |(n, p): &(usize, Crumb)| (*n, p.clone()),
-                move |(n, p)| crumb(ui, first + n, p, lit, ids.clone(), count),
+                move |(n, p)| crumb(ui, first + n, p, (lit, keys), ids.clone(), count),
             )
         },
         empty().style(|s| s.flex_grow(1.0_f32)),
@@ -269,7 +271,9 @@ fn bar(ui: Ui, path: String, file: String, folders: bool, focused: Memo<bool>) -
         n
     });
     row.keyboard_navigable()
+        .on_event_cont(EventListener::FocusGained, move |_| keys.set(true))
         .on_event_cont(EventListener::FocusLost, move |_| {
+            keys.set(false);
             if lit.get_untracked().is_some() && c.open.get_untracked().is_none() {
                 lit.set(None);
             }
@@ -305,7 +309,7 @@ fn crumb(
     ui: Ui,
     n: usize,
     p: Crumb,
-    lit: RwSignal<Option<usize>>,
+    (lit, keys): (RwSignal<Option<usize>>, RwSignal<bool>),
     ids: Rc<RefCell<HashMap<usize, ViewId>>>,
     count: impl Fn() -> usize + Copy + 'static,
 ) -> impl IntoView {
@@ -325,7 +329,7 @@ fn crumb(
     ));
     let id = part.id();
     ids.borrow_mut().insert(n, id);
-    let bar_lit = move || lit.get() == Some(n);
+    let bar_lit = move || keys.get() && lit.get() == Some(n);
     let opened = move || c.from.get() == Some(id);
     h_stack((
         part.on_click_stop(move |_| {
@@ -434,15 +438,27 @@ fn filtered(picks: &[Pick], typed: &str) -> im::Vector<usize> {
     (0..picks.len()).filter(|&i| outline::matches(&picks[i].text, typed)).collect()
 }
 
+/// The list open taken away; whether one was.
+fn drop_list(ui: Ui) -> bool {
+    let c = ui.state::<Crumbs>();
+    let Some(id) = c.open.get_untracked() else { return false };
+    c.open.set(None);
+    c.from.set(None);
+    remove_overlay(id);
+    true
+}
+
 /// The list open closed, the keys back where they were.
 fn close_list(ui: Ui, back: Option<ViewId>) {
-    let c = ui.state::<Crumbs>();
-    if let Some(id) = c.open.get_untracked() {
-        c.open.set(None);
-        c.from.set(None);
-        remove_overlay(id);
-        if let Some(b) = back {
-            b.request_focus();
+    if drop_list(ui) {
+        match back {
+            Some(b) => b.request_focus(),
+            // The keys go back to the editor (a row taken, a press outside the list).
+            None => {
+                if let Some(editor) = ui.active.get_untracked().and_then(|p| super::live(ui, &p)) {
+                    super::focus(&editor);
+                }
+            }
         }
     }
 }
@@ -456,7 +472,7 @@ const ROW: f64 = 22.0;
 fn picker(ui: Ui, under: ViewId, picks: Vec<Pick>, none: &'static str, back: Option<ViewId>) {
     let t = ui.colors;
     let c = ui.state::<Crumbs>();
-    close_list(ui, None);
+    drop_list(ui);
     if crate::widgets::popup::is_open(ui) {
         crate::widgets::popup::close(ui);
     }
@@ -714,6 +730,20 @@ mod tests {
         );
         assert_eq!(files_in("", &entries)[0].1, "a.rs");
         assert!(files_in("src", &[e("only", true)]).is_empty(), "then the list says there are only folders");
+    }
+
+    #[test]
+    fn a_folders_list_waits_for_that_folders_read_only() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let c = ui.state::<Crumbs>();
+        let under = empty().id();
+        c.waiting.set(Some(("src".into(), under, None)));
+        let ls = |path: &str| serde_json::json!({"type": "ls", "path": path, "error": "gone"});
+        assert!(!take(ui, &ls("docs"), &send), "the Explorer takes it too");
+        assert!(c.waiting.get_untracked().is_some(), "another folder's read is not the one waited for");
+        assert!(!take(ui, &ls("src"), &send));
+        assert!(c.waiting.get_untracked().is_none() && c.open.get_untracked().is_none(), "an error opens no list");
     }
 
     #[test]
