@@ -126,7 +126,6 @@ pub const MODULES: &[Module] = &[
     module!(agent::diffs),
     module!(agent::media),
     module!(agent::mentions),
-    module!(agent::pieces),
     module!(agent::quotes),
     module!(agent::rating),
     module!(agent::ring),
@@ -152,6 +151,8 @@ pub const MODULES: &[Module] = &[
     module!(decor),
     module!(diagrams),
     module!(editor::editing),
+    // After the editor's commands: its Ctrl+L (Add to chat) takes Expand Line Selection's place.
+    module!(agent::pieces),
     module!(editor::folding),
     module!(editor::groups),
     module!(editor::highlights),

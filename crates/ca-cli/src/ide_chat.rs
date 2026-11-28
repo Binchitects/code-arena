@@ -19,6 +19,8 @@
 //!   `queue_cancel`, `queue_clear`), and said to be read (`took_in`).
 //! - `context.rs`: what fills the window, piece by piece (`context_detail`'s parts), when it compacts and who set
 //!   it (`compact` in `state` and `status`), and that changed from the window (`compact_at`).
+//! - `pieces.rs`: the lines of files a message is sent with (its `context`), read for the model and named in its
+//!   `files`.
 //! - `rewind.rs`: what going back to a question would do (`rewind_preview`), and a question asked again.
 
 use serde_json::Value;
@@ -31,6 +33,7 @@ mod history;
 pub(crate) mod library;
 mod mentions;
 pub mod pickers;
+mod pieces;
 pub mod queue;
 pub mod replay;
 pub mod rewind;
@@ -84,6 +87,7 @@ impl Area for Here {
     }
 
     fn shape(sh: &Shared, sent: &mut Sent) {
+        pieces::sent(sh, sent);
         history::sent(sh, sent);
     }
 

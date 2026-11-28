@@ -127,6 +127,7 @@ thread_local! {
     static KEYS: Kept<OnKey> = const { RefCell::new(Vec::new()) };
     static WITH: Kept<With> = const { RefCell::new(Vec::new()) };
     static PIECES: RefCell<Option<AddPiece>> = const { RefCell::new(None) };
+    static ASKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn put<T>(list: &mut Vec<Added<T>>, new: Added<T>) {
@@ -184,10 +185,19 @@ pub fn add_piece(ui: Ui, piece: Piece) {
     }
 }
 
+/// A question asked at once. While it is sent, `asking_now` holds: what waits in the box for the next message (the
+/// lines of files) stays there.
 pub fn ask_now(ui: Ui, send: &Send, text: &str) {
     if let Some(b) = bridge() {
+        ASKING.with(|a| a.set(true));
         (b.ask_now)(ui, send, text);
+        ASKING.with(|a| a.set(false));
     }
+}
+
+/// Whether the message being filled is a question asked at once (`ask_now`), not the box's.
+pub fn asking_now() -> bool {
+    ASKING.with(std::cell::Cell::get)
 }
 
 pub fn focus(ui: Ui) {
