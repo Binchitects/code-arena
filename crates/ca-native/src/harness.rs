@@ -294,16 +294,21 @@ pub fn install(ui: Ui, send: &Send) {
         });
 }
 
+/// What the trust question says of the project's hooks (0: not listed yet, so no count).
+pub fn trust_detail(n: usize) -> String {
+    let what = match n {
+        0 => "The project's hooks run commands on your machine.".to_string(),
+        1 => "The project declares 1 hook that runs commands on your machine.".to_string(),
+        n => format!("The project declares {n} hooks that run commands on your machine."),
+    };
+    format!("{what} They run from the next message; a change to them asks again.")
+}
+
 /// Trust Project Hooks, once the person said so.
 pub fn trust(ui: Ui, send: &Send) {
     let send = send.clone();
     let n = state(ui).hooks.with_untracked(|h| h.as_ref().map_or(0, |h| h.waiting.len()));
-    let detail = format!(
-        "The project declares {n} hook{} that run{} commands on your machine. They run from the next message; a \
-         change to them asks again.",
-        if n == 1 { "" } else { "s" },
-        if n == 1 { "s" } else { "" }
-    );
+    let detail = trust_detail(n);
     dialog::ask("Trust the project's hooks?").detail(&detail).kind(dialog::Kind::Warning).button("Trust").open(
         ui,
         move |a| {
@@ -732,9 +737,6 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
 /// Doctor's tab: what it found, or that it runs.
 fn doctor_view(ui: Ui, send: Send, _tab: &Tab) -> floem::AnyView {
     let (t, st) = (ui.colors, state(ui));
-    if st.doctor.with_untracked(Option::is_none) {
-        send(json!({"type": "doctor"}));
-    }
     let again = send.clone();
     let top = h_stack((
         label(|| "Doctor").style(move |s| bold(s).font_size(13.0)),
@@ -776,7 +778,8 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(command(DOCTOR, "Harness", "Run Doctor", doctor));
     add(command(INSTALL, "Harness", "Install Plugin...", install));
     add(command(TRUST, "Harness", "Trust Project Hooks", |ui, send| {
-        if state(ui).hooks.with_untracked(|h| h.as_ref().is_some_and(|h| !h.waiting.is_empty())) {
+        // Before the view has asked, the driver says whether there are any.
+        if state(ui).hooks.with_untracked(|h| h.as_ref().is_none_or(|h| !h.waiting.is_empty())) {
             trust(ui, send);
         } else {
             toast::info(ui, "This project has no hooks waiting to be trusted.");
@@ -884,6 +887,8 @@ mod tests {
         assert!(rule_problem("").is_some());
         assert!(rule_problem("run shell").is_some());
         assert!(rule_problem("run_shell(npm").is_some());
+        assert!(trust_detail(0).starts_with("The project's hooks run"));
+        assert!(trust_detail(2).starts_with("The project declares 2 hooks that run"));
         assert!(source_problem("  ").is_some());
         assert_eq!(source_problem("https://example.com/p.git"), None);
     }

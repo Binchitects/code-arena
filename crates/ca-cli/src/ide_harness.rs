@@ -310,11 +310,12 @@ fn plugin_work(sh: &Shared, m: &Value) -> Result<String, String> {
 /// The session prepared again as it is (its rules for this session kept), so that what was changed is in force
 /// from the next message.
 async fn again(ctx: &mut Ctx<'_>) -> Result<(), String> {
-    let rules = ctx.p.agent.policy.rules.clone();
+    let (rules, thinking) = (ctx.p.agent.policy.rules.clone(), ctx.p.agent.thinking.clone());
     let id = ctx.p.session.clone();
     let stored = ctx.p.store.lock().ok().and_then(|s| s.summary(&id).ok()).is_some();
     crate::ide_sessions::switch_session(ctx, if stored { Resume::Id(id) } else { Resume::New }).await?;
     ctx.p.agent.policy.rules = rules;
+    ctx.p.agent.thinking = thinking;
     Ok(())
 }
 
