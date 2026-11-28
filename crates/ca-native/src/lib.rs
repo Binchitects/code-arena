@@ -182,6 +182,7 @@ fn keep_view_state_by(ui: Ui, send: Send, later: Later) {
         ui.tabs.track();
         ui.active.track();
         crate::activity_bar::track(ui);
+        crate::scm::tree::track(ui);
         if ui.loaded.get_untracked() {
             // That a change waits is said before the changes are counted: the count is what tells the keeping
             // (said after it, the first change after a start waited for a second one to be kept).

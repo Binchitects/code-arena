@@ -6,7 +6,7 @@
 //! Revert puts the file back as it was, or deletes it when the agent made it. The status bar counts the files and
 //! the activity bar's icon has the count as its badge.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use floem::peniko::Color;
@@ -27,6 +27,7 @@ use crate::ext::State;
 use crate::icons::icon;
 use crate::layout::View;
 use crate::menus::Menu;
+use crate::scm::tree::{self as scm_tree, Which};
 use crate::state::{Change, Send, Ui};
 use crate::widgets::tree::{self, Node};
 use crate::widgets::{MONO_FONT, action, dialog, popup, toast};
@@ -49,13 +50,11 @@ fn letter_colour(letter: &str, dark: bool) -> Color {
     }
 }
 
-/// The view's own state: its tree, whether it shows the files as a tree, the folders folded, and whether the
-/// changes were asked for and not answered yet (and asked again meanwhile).
+/// The view's own state: its tree, and whether the changes were asked for and not answered yet (and asked again
+/// meanwhile). Whether it shows a tree, and the folders folded, are `scm::tree`'s (kept with the folder).
 #[derive(Clone, Copy)]
 struct Review {
     tree: tree::State,
-    as_tree: RwSignal<bool>,
-    folded: RwSignal<HashSet<String>>,
     asked: RwSignal<bool>,
     again: RwSignal<bool>,
 }
@@ -64,8 +63,6 @@ impl State for Review {
     fn new(ui: Ui) -> Review {
         Review {
             tree: tree::State::new(ui),
-            as_tree: ui.scope.create_rw_signal(false),
-            folded: ui.scope.create_rw_signal(HashSet::new()),
             asked: ui.scope.create_rw_signal(false),
             again: ui.scope.create_rw_signal(false),
         }
@@ -89,46 +86,35 @@ fn stamp(c: &Change) -> u64 {
     c.letter().as_bytes()[0] as u64
 }
 
-/// The folders of a tree, each with the files right in it.
-#[derive(Default)]
-struct Dir<'a> {
-    dirs: BTreeMap<&'a str, Dir<'a>>,
-    files: Vec<&'a Change>,
-}
-
-fn emit(dir: &Dir, prefix: &str, depth: usize, folded: &HashSet<String>, out: &mut im::Vector<Node>) {
-    for (name, sub) in &dir.dirs {
-        let path = format!("{prefix}{name}");
-        let open = !folded.contains(&path);
-        out.push_back(tree::folder(&format!("{FOLDER}{path}"), depth, open));
-        if open {
-            emit(sub, &format!("{path}/"), depth + 1, folded, out);
-        }
-    }
-    for c in &dir.files {
-        out.push_back(Node { stamp: stamp(c), ..tree::leaf(&c.path, depth) });
-    }
-}
-
-/// The rows: each file under its folders (a tree), or each file alone, its folder written after its name (a list).
-/// A folder comes before the files beside it; a folded one's rows are left out.
-fn rows(changes: &[Change], as_tree: bool, folded: &HashSet<String>) -> im::Vector<Node> {
+/// The rows: each file under its folders (a tree, as `scm::tree` lays it out: a folder with only one folder in it
+/// on one row with it when `compact`), or each file alone, its folder written after its name (a list). A folder
+/// comes before the files beside it; a folded one's rows are left out. A folder's stamp is how many names its row
+/// shows; a file's says the way it is shown too, so its row is drawn again when that changes.
+fn rows(changes: &[Change], as_tree: bool, compact: bool, folded: &BTreeSet<String>) -> im::Vector<Node> {
     if !as_tree {
         return changes.iter().map(|c| Node { stamp: stamp(c), ..tree::leaf(&c.path, 0) }).collect();
     }
-    let mut top = Dir::default();
-    for c in changes {
-        let mut at = &mut top;
-        let mut parts: Vec<&str> = c.path.split('/').collect();
-        parts.pop();
-        for p in parts {
-            at = at.dirs.entry(p).or_default();
-        }
-        at.files.push(c);
-    }
-    let mut out = im::Vector::new();
-    emit(&top, "", 0, folded, &mut out);
-    out
+    let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
+    scm_tree::layout(&paths, compact, &|p| !folded.contains(p))
+        .into_iter()
+        .map(|e| match e {
+            scm_tree::Entry::Folder { path, span, depth, open } => {
+                Node { stamp: span as u64, ..tree::folder(&format!("{FOLDER}{path}"), depth, open) }
+            }
+            scm_tree::Entry::File { index, depth } => {
+                let c = &changes[index];
+                Node { stamp: stamp(c) | 1 << 8, ..tree::leaf(&c.path, depth) }
+            }
+        })
+        .collect()
+}
+
+/// The rows shown now. Followed.
+fn rows_now(ui: Ui) -> im::Vector<Node> {
+    let as_tree = scm_tree::as_tree(ui, Which::Changes);
+    let compact = as_tree && scm_tree::compact(ui);
+    let folded = if as_tree { scm_tree::folded(ui, Which::Changes) } else { BTreeSet::new() };
+    ui.changes.with(|c| rows(c, as_tree, compact, &folded))
 }
 
 /// The change of a row (none: a folder's, or a file no longer changed).
@@ -240,11 +226,13 @@ fn row_letter(ui: Ui, node: &Node) -> AnyView {
         .into_any()
 }
 
-/// A row: a file's name in its letter's colour and its folder dimmed (in a list); or a folder's name.
-fn row(ui: Ui, node: &Node, as_tree: bool) -> AnyView {
+/// A row: a file's name in its letter's colour and its folder dimmed (in a list); or a folder's name (the names it
+/// spans, as its stamp says).
+fn row(ui: Ui, node: &Node) -> AnyView {
     let t = ui.colors;
+    let as_tree = scm_tree::as_tree_now(ui, Which::Changes);
     if let Some(path) = node.id.strip_prefix(FOLDER) {
-        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let name = scm_tree::label_of(path, node.stamp as usize);
         return label(move || name.clone()).style(|s| s.font_size(13.0)).into_any();
     }
     let path = node.id.clone();
@@ -278,13 +266,23 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     r.asked.set(false);
     refresh(ui, &send);
     let (acting, menu_send) = (send.clone(), send);
-    let list = tree::tree(ui, r.tree, move || {
-        let as_tree = r.as_tree.get();
-        r.folded.with(|f| ui.changes.with(|c| rows(c, as_tree, f)))
-    })
-    .content(move |node| row(ui, node, r.as_tree.get_untracked()))
+    let list = tree::tree(ui, r.tree, move || rows_now(ui))
+    .content(move |node| row(ui, node))
     .decoration(move |node| row_letter(ui, node))
     .actions(move |node| {
+        // A folder's act on every file under it.
+        if let Some(folder) = node.id.strip_prefix(FOLDER) {
+            let (folder, undoer, send) = (folder.to_string(), acting.clone(), acting.clone());
+            let undone = folder.clone();
+            return vec![
+                tree::act("discard", "Revert", move || ask_revert_folder(ui, &undoer, &undone)),
+                tree::act("check", "Accept (keep the agent's changes)", move || {
+                    for c in changes_under(ui, &folder) {
+                        accept(&send, &c.path);
+                    }
+                }),
+            ];
+        }
         let Some(c) = change_of(ui, &node.id) else { return vec![] };
         let mut out = Vec::new();
         if c.after.is_some() {
@@ -299,12 +297,9 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         out
     })
     .on_toggle(move |id| {
-        let Some(path) = id.strip_prefix(FOLDER) else { return };
-        r.folded.update(|f| {
-            if !f.remove(path) {
-                f.insert(path.to_string());
-            }
-        });
+        if let Some(path) = id.strip_prefix(FOLDER) {
+            scm_tree::toggle(ui, Which::Changes, path);
+        }
     })
     .on_open(move |id| {
         if let Some(c) = change_of(ui, id) {
@@ -337,9 +332,8 @@ fn tip(v: impl IntoView + 'static, text: &'static str) -> AnyView {
 /// The actions in the view's title, as Source Control's: Accept All, Refresh, View as Tree or List, Collapse All.
 pub fn actions(ui: Ui, send: Send) -> impl IntoView {
     let t = ui.colors;
-    let r = ui.state::<Review>();
     let (all, again) = (send.clone(), send);
-    let as_tree = create_memo(move |_| r.as_tree.get());
+    let as_tree = create_memo(move |_| scm_tree::as_tree(ui, Which::Changes));
     h_stack((
         tip(
             action(t, "check-all", move || {
@@ -352,9 +346,9 @@ pub fn actions(ui: Ui, send: Send) -> impl IntoView {
             move || as_tree.get(),
             move |shown| {
                 if shown {
-                    tip(action(t, "list-flat", move || r.as_tree.set(false)), "View as List")
+                    tip(action(t, "list-flat", move || scm_tree::set_tree(ui, Which::Changes, false)), "View as List")
                 } else {
-                    tip(action(t, "list-tree", move || r.as_tree.set(true)), "View as Tree")
+                    tip(action(t, "list-tree", move || scm_tree::set_tree(ui, Which::Changes, true)), "View as Tree")
                 }
             },
         ),
@@ -366,18 +360,46 @@ pub fn actions(ui: Ui, send: Send) -> impl IntoView {
 
 /// Every folder of the tree folded.
 fn collapse_all(ui: Ui) {
-    let all: HashSet<String> = ui.changes.with_untracked(|cs| {
-        cs.iter()
-            .flat_map(|c| {
-                let parts: Vec<&str> = c.path.split('/').collect();
-                (1..parts.len()).map(move |n| parts[..n].join("/")).collect::<Vec<_>>()
-            })
-            .collect()
+    let compact = scm_tree::compact(ui);
+    let all: BTreeSet<String> = ui.changes.with_untracked(|cs| {
+        let paths: Vec<&str> = cs.iter().map(|c| c.path.as_str()).collect();
+        scm_tree::folders(&paths, compact).into_iter().collect()
     });
-    let r = ui.state::<Review>();
-    if r.folded.with_untracked(|f| *f != all) {
-        r.folded.set(all);
+    scm_tree::fold_only(ui, Which::Changes, all);
+}
+
+/// The changes of the files under a folder.
+fn changes_under(ui: Ui, folder: &str) -> Vec<Change> {
+    ui.changes.with_untracked(|cs| cs.iter().filter(|c| scm_tree::under(folder, &c.path)).cloned().collect())
+}
+
+/// The question before every file under a folder is reverted, then the reverts.
+fn ask_revert_folder(ui: Ui, send: &Send, folder: &str) {
+    let under = changes_under(ui, folder);
+    match under.as_slice() {
+        [] => return,
+        [one] => return ask_revert(ui, send, one),
+        _ => {}
     }
+    let name = folder.rsplit('/').next().unwrap_or(folder);
+    let send = send.clone();
+    let mut asked = dialog::ask(&format!(
+        "Are you sure you want to revert the agent's changes to the {} files in '{name}'?",
+        under.len()
+    ))
+    .detail("Each file goes back to how it was before the agent changed it; a file the agent made is deleted.")
+    .button("Revert")
+    .destructive();
+    if let Some(v) = ui.state::<Review>().tree.view() {
+        asked = asked.back(v);
+    }
+    asked.open(ui, move |answer| {
+        if answer.yes() {
+            for c in &under {
+                send(json!({"type": "changes_revert", "path": c.path}));
+            }
+        }
+    });
 }
 
 /// "Agent changes: 3 files", as the status bar writes it.
@@ -521,10 +543,10 @@ mod tests {
             change("src/main.rs", None, Some("new")),
             change("src/ui/view.rs", Some("a"), None),
         ];
-        let list = rows(&cs, false, &HashSet::new());
+        let list = rows(&cs, false, true, &BTreeSet::new());
         assert_eq!(ids(&list), [("README.md".into(), 0), ("src/main.rs".into(), 0), ("src/ui/view.rs".into(), 0)]);
         assert_eq!(list.iter().map(|n| n.stamp).collect::<Vec<_>>(), [b'M' as u64, b'A' as u64, b'D' as u64]);
-        let tree = rows(&cs, true, &HashSet::new());
+        let tree = rows(&cs, true, true, &BTreeSet::new());
         assert_eq!(
             ids(&tree),
             [
@@ -535,9 +557,17 @@ mod tests {
                 ("README.md".into(), 0),
             ]
         );
-        let folded = rows(&cs, true, &HashSet::from(["src/ui".to_string()]));
+        let folded = rows(&cs, true, true, &BTreeSet::from(["src/ui".to_string()]));
         assert_eq!(folded.len(), 4);
         assert_eq!(folded[1].fold, Some(false));
+        // A file's row in a tree is drawn again from its row in a list.
+        assert_ne!(tree[4], list[0]);
+        // A folder with only one folder in it shares its row with it; its stamp is the names it spans.
+        let deep = [change("tests/unit/a.rs", Some("a"), Some("b"))];
+        let compact = rows(&deep, true, true, &BTreeSet::new());
+        assert_eq!(ids(&compact), [("folder:tests/unit".into(), 0), ("tests/unit/a.rs".into(), 1)]);
+        assert_eq!(compact[0].stamp, 2);
+        assert_eq!(rows(&deep, true, false, &BTreeSet::new()).len(), 3);
     }
 
     #[test]

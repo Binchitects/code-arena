@@ -15,7 +15,7 @@
 //! What every part has (`register`, `take`) is said in `ext.rs`; what a view has (`READY`, `view`, `actions`), in
 //! `layout.rs`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use floem::keyboard::{Key, NamedKey};
@@ -46,6 +46,11 @@ pub const READY: bool = true;
 /// The tab kind of a file's changes: `scm:w:<path>` (the working tree against the index) or `scm:i:<path>` (the
 /// index against HEAD).
 const KIND: &str = "scm";
+
+/// VS Code's commands that show the changes as a tree, as a list, and fold every folder of the tree.
+pub const TREE: &str = "workbench.scm.action.setTreeViewMode";
+pub const LIST: &str = "workbench.scm.action.setListViewMode";
+pub const COLLAPSE: &str = "workbench.scm.action.collapseAllRepositories";
 
 /// One changed file, as the driver says it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -184,7 +189,8 @@ fn letter_colour(c: &Colors, letter: char) -> Color {
     }
 }
 
-/// A row's id: a group's (`g:changes`), or a file's in a group (`f:changes:src/a.rs`).
+/// A row's id: a group's (`g:changes`), a folder's in a group (`d:changes:src/ui`, in a tree), or a file's in a
+/// group (`f:changes:src/a.rs`).
 fn group_row(g: Group) -> String {
     format!("g:{}", g.id())
 }
@@ -193,10 +199,20 @@ fn file_row(g: Group, path: &str) -> String {
     format!("f:{}:{path}", g.id())
 }
 
+fn folder_row(g: Group, path: &str) -> String {
+    format!("d:{}:{path}", g.id())
+}
+
+/// What a folded folder is known by: its group's id and its path (a folder may be in two groups).
+fn fold_key(g: Group, path: &str) -> String {
+    format!("{}:{path}", g.id())
+}
+
 /// What a row's id names.
 #[derive(Debug, PartialEq)]
 enum Row<'a> {
     Group(Group),
+    Folder(Group, &'a str),
     File(Group, &'a str),
 }
 
@@ -204,13 +220,25 @@ fn row_of(id: &str) -> Option<Row<'_>> {
     if let Some(g) = id.strip_prefix("g:") {
         return Group::of_id(g).map(Row::Group);
     }
+    if let Some(rest) = id.strip_prefix("d:") {
+        let (g, path) = rest.split_once(':')?;
+        return Group::of_id(g).map(|g| Row::Folder(g, path));
+    }
     let (g, path) = id.strip_prefix("f:")?.split_once(':')?;
     Group::of_id(g).map(|g| Row::File(g, path))
 }
 
+/// How the files are shown: a list, or a tree (its folders compact or not, and the ones folded, by `fold_key`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Look {
+    pub tree: bool,
+    pub compact: bool,
+    pub folded: BTreeSet<String>,
+}
+
 /// The rows shown: each group that has files (Changes also when it has none, as VS Code's), its files under it
-/// unless it is folded.
-pub fn rows(s: &Status, folded: &[Group]) -> im::Vector<wt::Node> {
+/// unless it is folded; in a tree, under their folders.
+pub fn rows(s: &Status, folded: &[Group], look: &Look) -> im::Vector<wt::Node> {
     let mut out = im::Vector::new();
     for g in GROUPS {
         let files = s.of_group(g);
@@ -221,15 +249,64 @@ pub fn rows(s: &Status, folded: &[Group]) -> im::Vector<wt::Node> {
         let mut head = wt::folder(&group_row(g), 0, open);
         head.stamp = files.len() as u64;
         out.push_back(head);
-        if open {
-            for f in files {
-                let mut n = wt::leaf(&file_row(g, &f.path), 1);
-                n.stamp = u64::from(g.letter(f)) << 8 | u64::from(f.from.is_some());
-                out.push_back(n);
+        if !open {
+            continue;
+        }
+        // A file's row is drawn again when it is shown the other way (its folder is written in a list only).
+        let file_node = |f: &File, depth: usize| {
+            let mut n = wt::leaf(&file_row(g, &f.path), depth);
+            n.stamp = u64::from(g.letter(f)) << 8 | u64::from(look.tree) << 1 | u64::from(f.from.is_some());
+            n
+        };
+        if !look.tree {
+            out.extend(files.iter().map(|f| file_node(f, 1)));
+            continue;
+        }
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        for e in tree::layout(&paths, look.compact, &|p| !look.folded.contains(&fold_key(g, p))) {
+            match e {
+                tree::Entry::Folder { path, span, depth, open } => {
+                    // The same folder may span another number of names (compact folders turned on or off).
+                    let mut n = wt::folder(&folder_row(g, &path), depth + 1, open);
+                    n.stamp = span as u64;
+                    out.push_back(n);
+                }
+                tree::Entry::File { index, depth } => out.push_back(file_node(files[index], depth + 1)),
             }
         }
     }
     out
+}
+
+/// How the view shows its files now. Followed.
+fn look_of(ui: Ui) -> Look {
+    let tree = tree::as_tree(ui, tree::Which::Scm);
+    Look {
+        tree,
+        compact: tree && tree::compact(ui),
+        folded: if tree { tree::folded(ui, tree::Which::Scm) } else { BTreeSet::new() },
+    }
+}
+
+/// The files of a group under a folder.
+fn files_under(ui: Ui, g: Group, folder: &str) -> Vec<File> {
+    files_of(ui, g).into_iter().filter(|f| tree::under(folder, &f.path)).collect()
+}
+
+/// Every folder of the tree folded (Collapse All); the groups stay open.
+fn collapse_all(ui: Ui) {
+    let compact = tree::compact(ui);
+    let keys = state(ui).status.with_untracked(|s| {
+        let Some(s) = s else { return BTreeSet::new() };
+        GROUPS
+            .into_iter()
+            .flat_map(|g| {
+                let paths: Vec<&str> = s.of_group(g).into_iter().map(|f| f.path.as_str()).collect();
+                tree::folders(&paths, compact).into_iter().map(move |p| fold_key(g, &p)).collect::<Vec<_>>()
+            })
+            .collect()
+    });
+    tree::fold_only(ui, tree::Which::Scm, keys);
 }
 
 /// The paths git is given for files; with `from`, a renamed file's old path too (to unstage both halves: it is
@@ -578,6 +655,10 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
         Some(Row::Group(g)) => {
             label(move || g.title()).style(|s| s.width_full().font_bold().text_ellipsis().min_width(0.0)).into_any()
         }
+        Some(Row::Folder(_, path)) => {
+            let name = tree::label_of(path, node.stamp as usize);
+            label(move || name.clone()).style(|s| s.width_full().text_ellipsis().min_width(0.0)).into_any()
+        }
         Some(Row::File(g, path)) => {
             let f =
                 me.status.with_untracked(|s| s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned()));
@@ -585,8 +666,10 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
             let letter = g.letter(&f);
             let deleted = letter == 'D';
             let name = name_of(&f.path).to_string();
+            // In a tree the folder is the row above; a renamed file still says where it came from.
             let dir = match (f.path.rsplit_once('/'), &f.from) {
                 (_, Some(from)) => format!("{from} →"),
+                (Some(_), None) if tree::as_tree_now(ui, tree::Which::Scm) => String::new(),
                 (Some((d, _)), None) => d.to_string(),
                 (None, None) => String::new(),
             };
@@ -644,7 +727,7 @@ fn row_decoration(ui: Ui, node: &wt::Node) -> floem::AnyView {
                 })
                 .into_any()
         }
-        None => empty().into_any(),
+        Some(Row::Folder(..)) | None => empty().into_any(),
     }
 }
 
@@ -662,6 +745,22 @@ fn row_actions(ui: Ui, send: &Send, node: &wt::Node) -> Vec<wt::Action> {
                     vec![
                         wt::act("discard", "Discard All Changes", move || discard(ui, &d, files())),
                         wt::act("add", "Stage All Changes", move || stage(&s, &files())),
+                    ]
+                }
+            }
+        }
+        // A folder's are its group's, for the files under it.
+        Some(Row::Folder(g, path)) => {
+            let folder = path.to_string();
+            let files = move || files_under(ui, g, &folder);
+            match g {
+                Group::Merge => vec![wt::act("add", "Stage Changes", move || stage(&s, &files()))],
+                Group::Staged => vec![wt::act("remove", "Unstage Changes", move || unstage(&s, &files()))],
+                Group::Changes => {
+                    let (d, f2) = (s.clone(), files.clone());
+                    vec![
+                        wt::act("discard", "Discard Changes", move || discard(ui, &d, f2())),
+                        wt::act("add", "Stage Changes", move || stage(&s, &files())),
                     ]
                 }
             }
@@ -859,22 +958,25 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     let me = state(ui);
     let what = create_memo(move |_| me.status.with(|s| empty_of(s.as_ref())));
     let rows_now =
-        create_memo(move |_| me.status.with(|s| s.as_ref().map(|s| rows(s, &me.folded.get())).unwrap_or_default()));
+        create_memo(move |_| {
+            let look = look_of(ui);
+            me.status.with(|s| s.as_ref().map(|s| rows(s, &me.folded.get(), &look)).unwrap_or_default())
+        });
     let (acting, opened) = (send.clone(), send.clone());
     let changes = wt::tree(ui, me.tree, move || rows_now.get())
         .content(move |n| row_content(ui, n))
         .decoration(move |n| row_decoration(ui, n))
         .actions(move |n| row_actions(ui, &acting, n))
         .multi()
-        .on_toggle(move |id| {
-            if let Some(Row::Group(g)) = row_of(id) {
-                me.folded.update(|f| match f.iter().position(|x| *x == g) {
-                    Some(at) => {
-                        f.remove(at);
-                    }
-                    None => f.push(g),
-                });
-            }
+        .on_toggle(move |id| match row_of(id) {
+            Some(Row::Group(g)) => me.folded.update(|f| match f.iter().position(|x| *x == g) {
+                Some(at) => {
+                    f.remove(at);
+                }
+                None => f.push(g),
+            }),
+            Some(Row::Folder(g, path)) => tree::toggle(ui, tree::Which::Scm, &fold_key(g, path)),
+            _ => {}
         })
         .on_open(move |id| open_row(ui, &opened, id))
         .view()
@@ -955,6 +1057,16 @@ pub fn register(_ui: Ui, _send: &Send) {
     let title = Menu::ViewTitle(View::Scm);
     crate::menus::add(title, item("git.commit").title("Commit").icon("check").group("navigation").order(1));
     crate::menus::add(title, item("git.refresh").title("Refresh").icon("refresh").group("navigation").order(2));
+    // View as Tree or View as List (the one not shown now), and Collapse All in a tree, as VS Code's.
+    let tree_now = |ui: Ui| tree::as_tree(ui, tree::Which::Scm);
+    add(command(TREE, "Source Control", "View as Tree", |ui, _| tree::set_tree(ui, tree::Which::Scm, true))
+        .when(move |ui| !tree_now(ui)));
+    add(command(LIST, "Source Control", "View as List", |ui, _| tree::set_tree(ui, tree::Which::Scm, false))
+        .when(tree_now));
+    add(command(COLLAPSE, "Source Control", "Collapse All", |ui, _| collapse_all(ui)).when(tree_now));
+    crate::menus::add(title, item(TREE).icon("list-tree").group("navigation").order(3));
+    crate::menus::add(title, item(LIST).icon("list-flat").group("navigation").order(3));
+    crate::menus::add(title, item(COLLAPSE).icon("collapse-all").group("navigation").order(4));
     crate::editor::kinds::add(
         crate::editor::kinds::kind(
             KIND,
@@ -1083,7 +1195,7 @@ mod tests {
             file("e.rs", 'A', ' '),
         ]);
         assert_eq!(
-            ids(&rows(&s, &[])),
+            ids(&rows(&s, &[], &Look::default())),
             [
                 "g:merge",
                 "f:merge:c.rs",
@@ -1100,14 +1212,53 @@ mod tests {
             GROUPS.iter().flat_map(|g| s.of_group(*g).into_iter().map(|f| g.letter(f)).collect::<Vec<_>>()).collect();
         assert_eq!(letters, ['C', 'M', 'A', 'M', 'U', 'D']);
         // A folded group keeps its row; a group with nothing in it is left out, but Changes is always there.
-        let folded = ids(&rows(&s, &[Group::Staged]));
+        let folded = ids(&rows(&s, &[Group::Staged], &Look::default()));
         assert!(folded.contains(&"g:staged".to_string()) && !folded.iter().any(|i| i.starts_with("f:staged")));
-        assert_eq!(ids(&rows(&status(vec![]), &[])), ["g:changes"]);
+        assert_eq!(ids(&rows(&status(vec![]), &[], &Look::default())), ["g:changes"]);
         // A row whose letter changes is drawn again.
-        let before = rows(&status(vec![file("a.rs", ' ', 'M')]), &[]);
-        let after = rows(&status(vec![file("a.rs", ' ', 'D')]), &[]);
+        let before = rows(&status(vec![file("a.rs", ' ', 'M')]), &[], &Look::default());
+        let after = rows(&status(vec![file("a.rs", ' ', 'D')]), &[], &Look::default());
         assert_ne!(before[1], after[1]);
         assert_eq!(row_of("f:changes:src/a:b.rs"), Some(Row::File(Group::Changes, "src/a:b.rs")));
+    }
+
+    #[test]
+    fn in_a_tree_each_group_has_its_files_under_their_folders_folded_apart() {
+        let s = status(vec![file("src/ui/a.rs", 'M', 'M'), file("src/ui/b.rs", ' ', 'M'), file("top.rs", ' ', 'M')]);
+        let mut look = Look { tree: true, compact: true, folded: BTreeSet::new() };
+        let both = |look: &Look| {
+            rows(&s, &[], look).iter().map(|n| format!("{} {}", n.depth, n.id)).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            both(&look),
+            [
+                "0 g:staged",
+                "1 d:staged:src/ui",
+                "2 f:staged:src/ui/a.rs",
+                "0 g:changes",
+                "1 d:changes:src/ui",
+                "2 f:changes:src/ui/a.rs",
+                "2 f:changes:src/ui/b.rs",
+                "1 f:changes:top.rs"
+            ]
+        );
+        // The compact row spans two names; folding it in Changes leaves Staged's open.
+        let compact = rows(&s, &[], &look);
+        assert_eq!(compact[1].stamp, 2);
+        look.folded.insert(fold_key(Group::Changes, "src/ui"));
+        let shown = both(&look);
+        assert!(shown.contains(&"2 f:staged:src/ui/a.rs".to_string()));
+        assert!(!shown.contains(&"2 f:changes:src/ui/a.rs".to_string()));
+        assert_eq!(row_of("d:changes:src/ui"), Some(Row::Folder(Group::Changes, "src/ui")));
+        // Not compact: a row for each folder; and a file's row is drawn again when the way it is shown changes.
+        let apart = Look { tree: true, compact: false, folded: BTreeSet::new() };
+        assert!(both(&apart).contains(&"2 d:staged:src/ui".to_string()));
+        let in_list = rows(&s, &[], &Look::default());
+        assert_eq!(in_list.iter().find(|n| n.id == "f:changes:top.rs").map(|n| n.depth), Some(1));
+        assert_ne!(
+            in_list.iter().find(|n| n.id == "f:changes:top.rs"),
+            rows(&s, &[], &apart).iter().find(|n| n.id == "f:changes:top.rs")
+        );
     }
 
     #[test]

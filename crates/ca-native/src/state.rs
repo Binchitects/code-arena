@@ -565,6 +565,7 @@ impl Ui {
             "search": crate::search::kept(*self),
             "activity_bar": crate::activity_bar::kept(*self),
             "quick": crate::quick_modes::kept(*self),
+            "scm_tree": crate::scm::tree::kept(*self),
         })
     }
 
