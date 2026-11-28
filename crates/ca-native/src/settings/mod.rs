@@ -357,6 +357,11 @@ pub fn register(_ui: Ui, _send: &Send) {
     commands::add(commands::command(OPEN_USER_JSON, "Preferences", "Open User Settings (JSON)", |ui, send| {
         open_user(ui, send, "settings.json")
     }));
+    // Open Settings (Ctrl+,) opens the settings.json until the Settings editor is there; the part that brings it
+    // adds its own command under this id, which takes this one's place.
+    commands::add(commands::command(crate::manage::OPEN_SETTINGS, "Preferences", "Open Settings", |ui, send| {
+        open_user(ui, send, "settings.json")
+    }));
     commands::add(commands::command(
         OPEN_WORKSPACE_JSON,
         "Preferences",
