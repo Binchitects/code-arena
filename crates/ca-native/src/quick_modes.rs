@@ -1,7 +1,8 @@
 //! Quick Open's other modes, as VS Code's: what is typed first says what the box is on. Nothing typed first is the
 //! files (with ":12" or ":12:5" after a path to open it at a line), ">" the commands, ":" a line of the file shown
 //! (Go to Line/Column, Ctrl+G), "@" the symbols of the file shown (Go to Symbol in Editor, Ctrl+Shift+O; "@:" has
-//! them by kind) and "?" lists the modes. Quick Open with nothing typed has the files opened last first, and the
+//! them by kind), "#" the symbols of the whole folder by name (Go to Symbol in Workspace, Ctrl+T: asked of the
+//! session a moment after the typing stops) and "?" lists the modes. Quick Open with nothing typed has the files opened last first, and the
 //! palette the commands run last ("recently used"), both kept with the folder's view state.
 
 use std::rc::Rc;
@@ -19,6 +20,7 @@ use crate::state::{Send, Ui};
 
 pub const GOTO_LINE: &str = "workbench.action.gotoLine";
 pub const GOTO_SYMBOL: &str = "workbench.action.gotoSymbol";
+pub const SHOW_ALL_SYMBOLS: &str = "workbench.action.showAllSymbols";
 
 /// How many commands run last are kept (VS Code's `workbench.commandPalette.history`).
 pub const RECENT_COMMANDS: usize = 20;
@@ -40,6 +42,7 @@ pub const PREFIXES: &[Prefix] = &[
     Prefix { prefix: ">", help: "Show and Run Commands", mode: Mode::Commands },
     Prefix { prefix: ":", help: "Go to Line/Column", mode: Mode::Line },
     Prefix { prefix: "@", help: "Go to Symbol in Editor", mode: Mode::Symbols },
+    Prefix { prefix: "#", help: "Go to Symbol in Workspace", mode: Mode::WorkspaceSymbols },
     Prefix { prefix: "?", help: "Help", mode: Mode::Help },
 ];
 
@@ -390,9 +393,10 @@ pub fn symbols_shown(ui: Ui) -> Option<Option<Rc<Vec<Symbol>>>> {
     Some(shown)
 }
 
-/// The symbols read again the next time "@" is shown.
+/// The symbols read again the next time "@" is shown, and the folder's asked for again the next time "#" is.
 pub fn forget_symbols(ui: Ui) {
     recent(ui).asked.set(None);
+    workspace(ui).asked.set(None);
 }
 
 /// The lines of the file shown, when its editor is the one drawn.
@@ -446,6 +450,148 @@ pub fn open_at(ui: Ui, send: &Send, path: &str, line: usize, col: usize) {
     retry(ui, path, line, col, 20);
 }
 
+/// How long after the last key "#" asks the session, and how many symbols it asks for.
+const ASK_AFTER: Duration = Duration::from_millis(150);
+const WORKSPACE_SYMBOLS: usize = 100;
+
+/// A symbol of the folder's, as the session answered it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Found {
+    pub name: String,
+    pub kind: Option<Kind>,
+    pub container: String,
+    pub path: String,
+    pub line: usize,
+}
+
+/// The session's last answer for "#": what it was asked, what it found, and whether it is still reading the folder.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Got {
+    pub q: Option<String>,
+    pub items: Vec<Found>,
+    pub building: bool,
+}
+
+impl Got {
+    pub fn of(m: &Value) -> Got {
+        let s = |v: &Value, k: &str| v[k].as_str().unwrap_or("").to_string();
+        let items = m["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|i| Found {
+                name: s(i, "name"),
+                kind: Kind::named(i["kind"].as_str().unwrap_or("")),
+                container: s(i, "container"),
+                path: s(i, "path"),
+                line: i["line"].as_u64().unwrap_or(1).max(1) as usize,
+            })
+            .filter(|f| !f.name.is_empty() && !f.path.is_empty())
+            .collect();
+        Got { q: m["q"].as_str().map(str::to_string), items, building: m["building"] == true }
+    }
+}
+
+/// What "#" keeps: the last answer, the question last asked (none: ask again), and the keys typed (the newest is
+/// the one asked when the typing stops).
+#[derive(Clone, Copy)]
+pub struct Workspace {
+    pub got: RwSignal<Rc<Got>>,
+    asked: RwSignal<Option<String>>,
+    typed: RwSignal<u64>,
+}
+
+impl crate::ext::State for Workspace {
+    fn new(ui: Ui) -> Self {
+        let s = ui.scope;
+        Workspace {
+            got: s.create_rw_signal(Rc::new(Got::default())),
+            asked: s.create_rw_signal(None),
+            typed: s.create_rw_signal(0),
+        }
+    }
+}
+
+pub fn workspace(ui: Ui) -> Workspace {
+    ui.state::<Workspace>()
+}
+
+/// What is typed after "#", as it is asked.
+fn workspace_query(ui: Ui) -> Option<String> {
+    (crate::palette::shown(ui)? == Mode::WorkspaceSymbols)
+        .then(|| ui.quick_text.with(|t| rest_of(t, Mode::WorkspaceSymbols).trim().to_string()))
+}
+
+/// The session asked for the folder's symbols a moment after the typing after "#" stops, once for each query.
+fn ask_workspace(ui: Ui, send: &Send) {
+    let st = workspace(ui);
+    let send = send.clone();
+    floem::reactive::create_effect(move |_| {
+        let Some(q) = workspace_query(ui) else { return };
+        if q.is_empty() || st.asked.with_untracked(|a| a.as_deref() == Some(q.as_str())) {
+            return;
+        }
+        let n = st.typed.get_untracked() + 1;
+        st.typed.set(n);
+        let send = send.clone();
+        floem::action::exec_after(ASK_AFTER, move |_| {
+            if st.typed.try_get_untracked() != Some(n)
+                || workspace_query(ui).as_deref() != Some(q.as_str())
+                || st.asked.with_untracked(|a| a.as_deref() == Some(q.as_str()))
+            {
+                return;
+            }
+            st.asked.set(Some(q.clone()));
+            send(json!({"type": "symbols", "q": q, "limit": WORKSPACE_SYMBOLS}));
+        });
+    });
+}
+
+/// The session's answer kept, when it is for what is typed now (an older one is passed over).
+fn took_symbols(ui: Ui, m: &Value) {
+    let st = workspace(ui);
+    let now = ui.quick_text.with_untracked(|t| rest_of(t, Mode::WorkspaceSymbols).trim().to_string());
+    if m["q"].as_str() != Some(now.as_str()) {
+        return;
+    }
+    let got = Got::of(m);
+    if st.got.with_untracked(|g| **g != got) {
+        st.got.set(Rc::new(got));
+    }
+}
+
+/// Go to Symbol in Workspace's rows for what is typed after "#": each symbol with its kind's icon, its name lit
+/// where it matches, the declaration it is in and its file and line; choosing one opens it there. Until the answer
+/// for what is typed comes, the last one's rows stay.
+pub fn workspace_rows(got: &Got, rest: &str) -> Vec<Row> {
+    let typed = rest.trim();
+    if typed.is_empty() {
+        return vec![said("Type the name of a symbol to open it.")];
+    }
+    let q = Query::of(typed);
+    let mut rows: Vec<Row> = got
+        .items
+        .iter()
+        .map(|f| {
+            let at = format!("{}:{}", f.path, f.line);
+            let detail = if f.container.is_empty() { at } else { format!("{}  {at}", f.container) };
+            let row = Row::new(&f.name, &detail, positions(&f.name, &q), "", Pick::FileAt(f.path.clone(), f.line, 1));
+            match f.kind {
+                Some(k) => row.kind(k),
+                None => row,
+            }
+        })
+        .collect();
+    let answered = got.q.as_deref() == Some(typed);
+    if rows.is_empty() && answered && !got.building {
+        rows.push(said("No matching workspace symbols"));
+    }
+    if got.building && got.q.is_some() {
+        rows.push(said("Still reading the folder's symbols; more may come."));
+    }
+    rows
+}
+
 /// What is kept with the folder's view state (`Ui::view_state`).
 pub fn kept(ui: Ui) -> Value {
     let st = recent(ui);
@@ -475,7 +621,12 @@ pub fn register(ui: Ui, _send: &Send) {
     add(command(GOTO_LINE, "", "Go to Line/Column...", |ui, send| open(ui, send, Mode::Line)).keys("Ctrl+G"));
     add(command(GOTO_SYMBOL, "", "Go to Symbol in Editor...", |ui, send| open(ui, send, Mode::Symbols))
         .keys("Ctrl+Shift+O"));
+    add(command(SHOW_ALL_SYMBOLS, "", "Go to Symbol in Workspace...", |ui, send| {
+        open(ui, send, Mode::WorkspaceSymbols)
+    }));
+    crate::menus::add(Menu::TitleBar(GO), item(SHOW_ALL_SYMBOLS).group("4_symbol_nav").order(1));
     crate::menus::add(Menu::TitleBar(GO), item(GOTO_SYMBOL).group("4_symbol_nav").order(2));
+    ask_workspace(ui, _send);
     crate::menus::add(Menu::TitleBar(GO), item(GOTO_LINE).group("5_infile_nav").order(1));
     let st = recent(ui);
     // Whether the editor drawn has the keys: followed on its own focus signals, in a scope of its own that goes when
@@ -517,6 +668,9 @@ pub fn register(ui: Ui, _send: &Send) {
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     if m["type"] == "state" {
         restore(ui, &m["view_state"]["quick"]);
+    }
+    if m["type"] == "symbols" {
+        took_symbols(ui, m);
     }
     false
 }
@@ -608,10 +762,10 @@ mod tests {
     #[test]
     fn the_help_lists_the_modes_and_types_the_one_chosen() {
         let rows = help_rows("");
-        assert_eq!(names(&rows), ["…", ">", ":", "@", "?"]);
+        assert_eq!(names(&rows), ["…", ">", ":", "@", "#", "?"]);
         assert_eq!(rows[2].detail, "Go to Line/Column");
         assert!(matches!(&rows[3].pick, Pick::Prefix(p) if p == "@"));
-        assert_eq!(names(&help_rows("symbol")), ["@"]);
+        assert_eq!(names(&help_rows("symbol")), ["@", "#"]);
     }
 
     #[test]
@@ -667,6 +821,49 @@ mod tests {
         assert_eq!(shown(ui), Some(Mode::Symbols));
         press(Key::Named(NamedKey::F1), Modifiers::empty());
         assert_eq!(shown(ui), Some(Mode::Commands));
+    }
+
+    #[test]
+    fn workspace_symbols_are_asked_after_the_typing_and_listed_by_the_answer() {
+        use std::cell::RefCell;
+        let ui = Ui::new();
+        let sent: Rc<RefCell<Vec<Value>>> = Rc::default();
+        let log = sent.clone();
+        let send: Send = Rc::new(move |m| log.borrow_mut().push(m));
+        register(ui, &send);
+        crate::palette::open(ui, &send, Mode::WorkspaceSymbols);
+        assert_eq!(crate::palette::shown(ui), Some(Mode::WorkspaceSymbols));
+        assert_eq!(
+            names(&workspace_rows(&workspace(ui).got.get_untracked(), "")),
+            ["Type the name of a symbol to open it."]
+        );
+        ui.quick_text.set("#rta".into());
+        // Not asked until the typing stops (the timer is the window's own); nothing sent yet.
+        assert!(sent.borrow().iter().all(|m| m["type"] != "symbols"));
+        let answer = json!({"type": "symbols", "q": "rta", "building": false, "items": [
+            {"name": "RunToolsAsync", "kind": "method", "container": "Runner", "path": "src/Runner.cs", "line": 7, "end": 9},
+            {"name": "readTheAnswer", "kind": "nonsense", "container": "", "path": "web/a.ts", "line": 2, "end": 2}
+        ]});
+        // An answer for another query is passed over; the one for what is typed is listed.
+        take(ui, &json!({"type": "symbols", "q": "rt", "items": [], "building": false}), &send);
+        assert_eq!(workspace(ui).got.get_untracked().q, None);
+        take(ui, &answer, &send);
+        let rows = workspace_rows(&workspace(ui).got.get_untracked(), "rta");
+        assert_eq!(names(&rows), ["RunToolsAsync", "readTheAnswer"]);
+        assert_eq!(rows[0].detail, "Runner  src/Runner.cs:7");
+        assert_eq!(rows[1].detail, "web/a.ts:2");
+        assert_eq!((rows[0].kind, rows[1].kind), (Some(Kind::Method), None));
+        assert!(matches!(&rows[0].pick, Pick::FileAt(p, 7, 1) if p == "src/Runner.cs"));
+        // None found, and still reading.
+        let none = Got { q: Some("zz".into()), items: Vec::new(), building: false };
+        assert_eq!(names(&workspace_rows(&none, "zz")), ["No matching workspace symbols"]);
+        let building = Got { building: true, ..none };
+        assert_eq!(names(&workspace_rows(&building, "zz")), ["Still reading the folder's symbols; more may come."]);
+        // Its command and its key.
+        crate::palette::close(ui);
+        use floem::keyboard::{Key, Modifiers};
+        crate::commands::press(ui, &send, &Key::Character("t".into()), Modifiers::CONTROL);
+        assert_eq!(crate::palette::shown(ui), Some(Mode::WorkspaceSymbols));
     }
 
     #[test]

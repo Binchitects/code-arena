@@ -62,6 +62,25 @@ impl Kind {
         })
     }
 
+    /// By its name as the session says it (`function`, `class`, ... `heading`), as Go to Symbol in Workspace has it.
+    pub fn named(name: &str) -> Option<Kind> {
+        Some(match name {
+            "function" => Kind::Function,
+            "method" => Kind::Method,
+            "class" => Kind::Class,
+            "struct" => Kind::Struct,
+            "enum" => Kind::Enum,
+            "interface" => Kind::Interface,
+            "type" => Kind::Type,
+            "module" => Kind::Module,
+            "constant" => Kind::Constant,
+            "variable" => Kind::Variable,
+            "field" => Kind::Field,
+            "heading" => Kind::Heading,
+            _ => return None,
+        })
+    }
+
     /// VS Code's codicon for it.
     pub fn icon(self) -> &'static str {
         match self {

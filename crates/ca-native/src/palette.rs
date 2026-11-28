@@ -36,6 +36,8 @@ pub enum Mode {
     /// ":", "@" and "?" typed first (`quick_modes`).
     Line,
     Symbols,
+    /// "#": the folder's symbols by name (Go to Symbol in Workspace).
+    WorkspaceSymbols,
     Help,
 }
 
@@ -431,6 +433,10 @@ pub fn refresh(ui: Ui) {
             };
             (rows, 0)
         }
+        Mode::WorkspaceSymbols => {
+            let got = crate::quick_modes::workspace(ui).got.get();
+            (crate::quick_modes::workspace_rows(&got, rest), 0)
+        }
         Mode::Help => (crate::quick_modes::help_rows(rest), 0),
         Mode::Themes => {
             let was = ui.quick_theme.get_untracked().unwrap_or_else(|| ui.choice.get_untracked());
@@ -480,6 +486,7 @@ pub fn open(ui: Ui, send: &Send, mode: Mode) {
         Mode::Commands => ui.quick_text.set(">".into()),
         Mode::Line => ui.quick_text.set(":".into()),
         Mode::Symbols => ui.quick_text.set("@".into()),
+        Mode::WorkspaceSymbols => ui.quick_text.set("#".into()),
         Mode::Help => ui.quick_text.set("?".into()),
         Mode::Themes => {
             ui.quick_theme.set(Some(ui.choice.get_untracked()));

@@ -67,6 +67,8 @@ const TABLE: &[(&str, &str, &str, Option<&str>)] = &[
     ("ctrl+g", "workbench.action.gotoLine", "", Some("ctrl+g")),
     ("ctrl+shift+o", "workbench.action.gotoSymbol", "", None),
     ("ctrl+t", "workbench.action.showAllSymbols", "", None),
+    // The old Code Arena's, kept for the hands that know it (a browser keeps Ctrl+T).
+    ("ctrl+alt+shift+o", "workbench.action.showAllSymbols", "", None),
     ("ctrl+=", "workbench.action.zoomIn", "", None),
     ("ctrl+-", "workbench.action.zoomOut", "", None),
     ("ctrl+numpad0", "workbench.action.zoomReset", "", None),
