@@ -682,6 +682,13 @@ Sections used:
   picker and the / menu pick them up within about 30 seconds, without a reload.
 - **A skeleton while the session starts.** The window shows its shape until the first state
   arrives, instead of an empty workbench.
+- **Code Studio connect.** `code-arena ide --connect` (signed in with `code-arena login`) dials
+  Arena's Code Studio over a WebSocket with your API key, as "FOLDER on MACHINE" with its git
+  project and branch. A lost or silent link is dialled again after 1 s, doubling up to 30 s, and the
+  folder keeps its id between runs. The run's own key never leaves the machine. A refusal or a
+  deletion in Code Studio ends it.
+- **Ports view.** The panel's Ports view says the folder is on this machine, so what its programs
+  listen on is already at localhost.
 
 
 ### :bug: Bugs fixed
