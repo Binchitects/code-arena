@@ -795,7 +795,8 @@ mod tests {
         ui.take(&json!({"type": "saved", "path": "b.rs", "modified": 20}), &send);
         assert!(ui.on_disk.get_untracked().is_empty());
         ui.take(&json!({"type": "stats", "items": [{"path": "b.rs", "modified": 20}]}), &send);
-        assert_eq!(asked.borrow().len(), 2);
+        // (A save also asks quick diff's index text: only the reads are counted.)
+        assert_eq!(asked.borrow().iter().filter(|m| m["type"] == "open").count(), 2);
         // Read again and not readable: said, and the file opens as any other the next time it is asked for.
         ui.take(&json!({"type": "stats", "items": [{"path": "b.rs", "modified": 30}]}), &send);
         ui.take(&json!({"type": "file", "path": "b.rs", "error": "not text"}), &send);
