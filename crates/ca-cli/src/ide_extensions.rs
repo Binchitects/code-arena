@@ -50,7 +50,8 @@ const MOST_FILES: usize = 10_000;
 const LIST: &str = "installed.json";
 
 /// The contributions used here (grammars only kept, for now).
-const USED: &[&str] = &["themes", "iconThemes", "snippets", "languages", "grammars", "keybindings", "configurationDefaults"];
+const USED: &[&str] =
+    &["themes", "iconThemes", "snippets", "languages", "grammars", "keybindings", "configurationDefaults"];
 
 /// The contributions merged for the window to apply, each entry with its extension and version.
 const MERGED: &[&str] = &["themes", "iconThemes", "snippets", "languages", "grammars", "keybindings"];
@@ -140,7 +141,10 @@ fn answer(at: &Folders, kind: &str, m: &Value) -> (Value, bool) {
         },
         "ext_enable" => {
             let on = m["on"].as_bool();
-            match on.ok_or_else(|| "Say whether it is on: {\"id\", \"on\": true or false}.".to_string()).and_then(|on| enable(&at.root, &id, on)) {
+            match on
+                .ok_or_else(|| "Say whether it is on: {\"id\", \"on\": true or false}.".to_string())
+                .and_then(|on| enable(&at.root, &id, on))
+            {
                 Ok(item) => (json!({"type": kind, "id": id, "on": on, "item": item}), true),
                 Err(e) => refused(json!({"type": kind, "id": id, "on": on}), e.into()),
             }
@@ -234,7 +238,10 @@ impl Vsix {
             let name = raw.replace('\\', "/");
             let parts: Vec<&str> = name.split('/').collect();
             if name.starts_with('/') || name.contains('\0') || parts[0].contains(':') || parts.contains(&"..") {
-                return Err(format!("The .vsix holds a file whose name leads out of it ({}): it is refused.", one_line(&raw)));
+                return Err(format!(
+                    "The .vsix holds a file whose name leads out of it ({}): it is refused.",
+                    one_line(&raw)
+                ));
             }
             if f.unix_mode().is_some_and(|mode| mode & 0o170000 == 0o120000) {
                 return Err(format!("The .vsix holds a link ({}): links are not taken.", one_line(&raw)));
@@ -418,10 +425,14 @@ fn localized(v: &Value, nls: &Value) -> Value {
     match v {
         Value::Object(o) => Value::Object(o.iter().map(|(k, x)| (k.clone(), localized(x, nls))).collect()),
         Value::Array(a) => Value::Array(a.iter().map(|x| localized(x, nls)).collect()),
-        Value::String(s) if s.len() > 2 && s.starts_with('%') && s.ends_with('%') && !s[1..s.len() - 1].contains('%') => {
+        Value::String(s)
+            if s.len() > 2 && s.starts_with('%') && s.ends_with('%') && !s[1..s.len() - 1].contains('%') =>
+        {
             match &nls[&s[1..s.len() - 1]] {
                 Value::String(t) => json!(t),
-                said @ Value::Object(_) => said.get("message").cloned().filter(Value::is_string).unwrap_or_else(|| v.clone()),
+                said @ Value::Object(_) => {
+                    said.get("message").cloned().filter(Value::is_string).unwrap_or_else(|| v.clone())
+                }
                 _ => v.clone(),
             }
         }
@@ -457,9 +468,8 @@ impl Taking {
 /// `package.json` read, its `%placeholders%` filled from `package.nls.json`; with `deep`, the theme and icon theme
 /// files too, for the files they name in turn (includes, icons, fonts).
 fn read_manifest(src: &mut dyn Source, deep: bool) -> Result<Manifest, String> {
-    let bytes = src
-        .read("package.json")?
-        .ok_or("There is no extension/package.json: this is not a VS Code extension.")?;
+    let bytes =
+        src.read("package.json")?.ok_or("There is no extension/package.json: this is not a VS Code extension.")?;
     let raw = ca_settings::jsonc::parse(&String::from_utf8_lossy(&bytes))
         .map_err(|e| format!("Its package.json is not JSON: {e}."))?;
     if !raw.is_object() {
@@ -473,7 +483,9 @@ fn read_manifest(src: &mut dyn Source, deep: bool) -> Result<Manifest, String> {
         text(&json, "version").unwrap_or("").to_string(),
     );
     if !publisher_ok(&publisher) || !package_ok(&name) {
-        return Err("Its package.json does not name its publisher and name as VS Code's do (letters, digits and -).".into());
+        return Err(
+            "Its package.json does not name its publisher and name as VS Code's do (letters, digits and -).".into()
+        );
     }
     if !version_ok(&version) {
         return Err("Its package.json does not give a version as VS Code's do (1.2.3).".into());
@@ -496,8 +508,11 @@ fn read_manifest(src: &mut dyn Source, deep: bool) -> Result<Manifest, String> {
         let Some(kept) = t.keep("", Some(path), &format!("theme {label}"), true) else {
             continue;
         };
-        let ui = text(th, "uiTheme").filter(|u| ["vs", "vs-dark", "hc-black", "hc-light"].contains(u)).unwrap_or("vs-dark");
-        themes.push(json!({"label": label, "uiTheme": ui, "path": kept, "id": th.get("id").cloned().unwrap_or(Value::Null)}));
+        let ui =
+            text(th, "uiTheme").filter(|u| ["vs", "vs-dark", "hc-black", "hc-light"].contains(u)).unwrap_or("vs-dark");
+        themes.push(
+            json!({"label": label, "uiTheme": ui, "path": kept, "id": th.get("id").cloned().unwrap_or(Value::Null)}),
+        );
         if deep {
             theme_files(src, &kept, &label, &mut t, &mut HashSet::from([kept.clone()]))?;
         }
@@ -549,7 +564,8 @@ fn read_manifest(src: &mut dyn Source, deep: bool) -> Result<Manifest, String> {
             language[key] = Value::Array(strings(l.get(key)));
         }
         language["firstLine"] = json!(text(l, "firstLine"));
-        language["configuration"] = json!(t.keep("", text(l, "configuration"), &format!("language {lang}'s configuration"), true));
+        language["configuration"] =
+            json!(t.keep("", text(l, "configuration"), &format!("language {lang}'s configuration"), true));
         languages.push(language);
     }
     contributes.insert("languages".into(), Value::Array(languages));
@@ -608,7 +624,8 @@ fn read_manifest(src: &mut dyn Source, deep: bool) -> Result<Manifest, String> {
             t.unused.push(format!("{key}: {}", why(key)));
         }
     }
-    let code: Vec<String> = ["main", "browser"].iter().filter_map(|k| text(&json, k).map(|m| format!("{k}: {m}"))).collect();
+    let code: Vec<String> =
+        ["main", "browser"].iter().filter_map(|k| text(&json, k).map(|m| format!("{k}: {m}"))).collect();
     if !code.is_empty() {
         t.unused.insert(0, format!("its code ({}): Code Arena runs no extension's code", code.join(", ")));
     }
@@ -644,7 +661,13 @@ fn read_manifest(src: &mut dyn Source, deep: bool) -> Result<Manifest, String> {
 }
 
 /// A colour theme's file and what it takes in: its `include` (and that one's), and `tokenColors` given as a file.
-fn theme_files(src: &mut dyn Source, path: &str, label: &str, t: &mut Taking, seen: &mut HashSet<String>) -> Result<(), String> {
+fn theme_files(
+    src: &mut dyn Source,
+    path: &str,
+    label: &str,
+    t: &mut Taking,
+    seen: &mut HashSet<String>,
+) -> Result<(), String> {
     if seen.len() > 10 {
         return Ok(());
     }
@@ -789,7 +812,14 @@ fn copy_files(src: &mut dyn Source, m: &mut Manifest, wanted: &[String], temp: &
 }
 
 /// The copied folder put in its place and the list written: the extension's entry, as the window reads it.
-fn keep(root: &Path, temp: &Path, m: &Manifest, wanted: &[String], kept: &[String], from: &str) -> Result<Value, Refused> {
+fn keep(
+    root: &Path,
+    temp: &Path,
+    m: &Manifest,
+    wanted: &[String],
+    kept: &[String],
+    from: &str,
+) -> Result<Value, Refused> {
     let mut contributes = m.contributes.clone();
     if kept.len() < wanted.len() {
         let missing: HashSet<&String> = wanted.iter().filter(|w| !kept.contains(w)).collect();
@@ -810,10 +840,8 @@ fn keep(root: &Path, temp: &Path, m: &Manifest, wanted: &[String], kept: &[Strin
     });
     let mut all = load(root);
     let before = all.iter().position(|e| text(e, "id") == Some(m.id.as_str()));
-    let installed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let installed =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     let entry = json!({
         "id": m.id,
         "version": m.version,
@@ -874,7 +902,9 @@ fn file(root: &Path, id: &str, path: &str) -> Result<(&'static str, Vec<u8>), St
     if !named || inside("", path).as_deref() != Some(path) {
         return Err(no());
     }
-    let bytes = Folder(root.join(text(e, "dir").unwrap_or(""))).read(path)?.ok_or_else(|| format!("{path} of {id} is gone."))?;
+    let bytes = Folder(root.join(text(e, "dir").unwrap_or("")))
+        .read(path)?
+        .ok_or_else(|| format!("{path} of {id} is gone."))?;
     Ok((type_of(path).unwrap_or("application/octet-stream"), bytes))
 }
 
@@ -911,12 +941,10 @@ fn save(root: &Path, all: &[Value]) -> Result<(), String> {
     std::fs::create_dir_all(root).map_err(|e| format!("{}: {e}", root.display()))?;
     let (file, temp) = (root.join(LIST), root.join(temp_name("list")));
     let text = serde_json::to_string_pretty(all).map_err(|e| e.to_string())?;
-    std::fs::write(&temp, text)
-        .and_then(|()| std::fs::rename(&temp, &file))
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&temp);
-            format!("{}: {e}", file.display())
-        })
+    std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, &file)).map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        format!("{}: {e}", file.display())
+    })
 }
 
 /// Contributions as the window lists them: keybindings counted, not given.
@@ -1096,7 +1124,9 @@ fn local(root: &Path, home: Option<&Path>) -> Vec<Value> {
             v["from"] = json!(c.from);
             v["path"] = json!(c.dir.display().to_string());
             v["usable"] = json!(c.manifest.as_ref().is_some_and(|m| m.usable));
-            v["problem"] = json!(c.problem.clone().or_else(|| c.manifest.as_ref().filter(|m| !m.usable).map(|m| nothing_usable(m).text)));
+            v["problem"] = json!(
+                c.problem.clone().or_else(|| c.manifest.as_ref().filter(|m| !m.usable).map(|m| nothing_usable(m).text))
+            );
             v["installed"] = json!(kept.get(&c.id));
             v
         })
@@ -1181,8 +1211,12 @@ fn recommended(root: &Path, home: Option<&Path>, project: &Path) -> Value {
     };
     let json = match ca_settings::jsonc::parse(&String::from_utf8_lossy(&bytes)) {
         Ok(v) if v.is_object() => v,
-        Ok(_) => return json!({"file": true, "error": ".vscode/extensions.json holds no object.", "recommendations": [], "unwanted": []}),
-        Err(e) => return json!({"file": true, "error": format!(".vscode/extensions.json: {e}"), "recommendations": [], "unwanted": []}),
+        Ok(_) => {
+            return json!({"file": true, "error": ".vscode/extensions.json holds no object.", "recommendations": [], "unwanted": []});
+        }
+        Err(e) => {
+            return json!({"file": true, "error": format!(".vscode/extensions.json: {e}"), "recommendations": [], "unwanted": []});
+        }
     };
     let kept = kept_versions(root);
     let mut local: Option<std::collections::BTreeMap<String, LocalCopy>> = None;
@@ -1207,7 +1241,11 @@ fn recommended(root: &Path, home: Option<&Path>, project: &Path) -> Value {
                         ("unsupported", nothing_usable(m).text)
                     }
                 }
-                None => ("unknown", "Not on this computer: install it from its .vsix (Open VSX or the Marketplace's page has one).".to_string()),
+                None => (
+                    "unknown",
+                    "Not on this computer: install it from its .vsix (Open VSX or the Marketplace's page has one)."
+                        .to_string(),
+                ),
             }
         };
         item["status"] = json!(status);
@@ -1274,14 +1312,17 @@ mod tests {
     }"#;
 
     fn themed(at: &Path) -> PathBuf {
-        vsix(at, &[
-            ("package.json", THEMED),
-            ("package.nls.json", r#"{"display": "Acme Night"}"#),
-            ("themes/night.json", r#"{"include": "./base.json", "colors": {}}"#),
-            ("themes/base.json", r#"{"colors": {}}"#),
-            ("themes/unused.json", "{}"),
-            ("out/extension.js", "run()"),
-        ])
+        vsix(
+            at,
+            &[
+                ("package.json", THEMED),
+                ("package.nls.json", r#"{"display": "Acme Night"}"#),
+                ("themes/night.json", r#"{"include": "./base.json", "colors": {}}"#),
+                ("themes/base.json", r#"{"colors": {}}"#),
+                ("themes/unused.json", "{}"),
+                ("out/extension.js", "run()"),
+            ],
+        )
     }
 
     #[test]
@@ -1362,7 +1403,8 @@ mod tests {
         assert!(install(&root, &d.path().join("plain.vsix")).expect_err("zip").text.contains("zip"));
         let bare = vsix(d.path(), &[("readme.md", "")]);
         assert!(install(&root, &bare).expect_err("bare").text.contains("package.json"));
-        let pkg = r#"{"publisher": "a", "name": "b", "version": "1.0.0", "main": "x.js", "contributes": {"commands": []}}"#;
+        let pkg =
+            r#"{"publisher": "a", "name": "b", "version": "1.0.0", "main": "x.js", "contributes": {"commands": []}}"#;
         let r = install(&root, &vsix(d.path(), &[("package.json", pkg)])).expect_err("code");
         assert!(r.text.contains("nothing Code Arena can use (its code)") && r.unused[0].contains("its code"));
         // A theme named but not in the extension: left out, and with nothing else it brings, refused.
@@ -1442,13 +1484,16 @@ mod tests {
             .iter()
             .map(|x| (x["id"].as_str().unwrap_or(""), x["status"].as_str().unwrap_or("")))
             .collect();
-        assert_eq!(stands, [
-            ("acme.night", "installed"),
-            ("esbenp.prettier-vscode", "built-in"),
-            ("dbaeumer.vscode-eslint", "unsupported"),
-            ("acme.snips", "local"),
-            ("someone.else", "unknown"),
-        ]);
+        assert_eq!(
+            stands,
+            [
+                ("acme.night", "installed"),
+                ("esbenp.prettier-vscode", "built-in"),
+                ("dbaeumer.vscode-eslint", "unsupported"),
+                ("acme.snips", "local"),
+                ("someone.else", "unknown"),
+            ]
+        );
         assert_eq!(r["unwanted"], json!(["github.copilot"]));
         std::fs::write(project.join(".vscode/extensions.json"), "[1]").expect("w");
         assert!(recommended(&root, Some(&home), &project)["error"].is_string());
@@ -1457,11 +1502,8 @@ mod tests {
     #[test]
     fn each_message_is_answered_with_the_key_it_carries() {
         let d = tempfile::tempdir().expect("temp");
-        let at = Folders {
-            root: d.path().join("ext"),
-            home: Some(d.path().join("home")),
-            project: d.path().to_path_buf(),
-        };
+        let at =
+            Folders { root: d.path().join("ext"), home: Some(d.path().join("home")), project: d.path().to_path_buf() };
         themed(d.path());
         let (r, changed) = answer(&at, "ext_install", &json!({"type": "ext_install", "path": "x.vsix"}));
         assert!(changed && r["path"] == "x.vsix" && r["item"]["id"] == "acme.night", "{r}");

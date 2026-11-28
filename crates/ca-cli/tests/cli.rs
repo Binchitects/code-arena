@@ -2555,14 +2555,21 @@ async fn an_extension_is_installed_from_a_vsix_the_ide_is_given_and_listed_to_ev
     assert_eq!(next(&mut page, "extensions").await, json!({"type": "extensions", "items": []}));
     ask(&mut page, json!({"type": "ext_install", "path": "night.vsix"})).await;
     let installed = next(&mut page, "ext_install").await;
-    assert_eq!((installed["path"].as_str(), installed["item"]["id"].as_str()), (Some("night.vsix"), Some("acme.night")));
+    assert_eq!(
+        (installed["path"].as_str(), installed["item"]["id"].as_str()),
+        (Some("night.vsix"), Some("acme.night"))
+    );
     // Every face hears the list and what the extensions bring, as they now are.
     assert_eq!(next(&mut page, "extensions").await["items"][0]["id"], "acme.night");
     let brought = next(&mut page, "ext_contributions").await;
-    assert_eq!((brought["themes"][0]["label"].as_str(), brought["themes"][0]["extension"].as_str()), (Some("Night"), Some("acme.night")));
+    assert_eq!(
+        (brought["themes"][0]["label"].as_str(), brought["themes"][0]["extension"].as_str()),
+        (Some("Night"), Some("acme.night"))
+    );
     assert!(home.path().join("data/extensions/acme.night-1.0.0/night.json").is_file());
     ask(&mut page, json!({"type": "ext_recommended"})).await;
     let said = next(&mut page, "ext_recommended").await;
-    let stands: Vec<&str> = said["recommendations"].as_array().expect("list").iter().filter_map(|r| r["status"].as_str()).collect();
+    let stands: Vec<&str> =
+        said["recommendations"].as_array().expect("list").iter().filter_map(|r| r["status"].as_str()).collect();
     assert_eq!(stands, ["installed", "unknown"]);
 }
