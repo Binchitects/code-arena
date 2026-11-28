@@ -49,7 +49,7 @@ thread_local! {
     static MAIN: Cell<Option<ViewId>> = const { Cell::new(None) };
     /// Where each title bar menu's title begins across the window, as laid out.
     static TITLES: Cell<[Option<f64>; 8]> = const { Cell::new([None; 8]) };
-    /// A title bar menu was opened by its keys, and has them.
+    /// The title bar menu open now has the keys (they go back to the editor when it closes).
     static BY_KEYS: Cell<bool> = const { Cell::new(false) };
     /// How far into the Konami code the keys typed are.
     static TYPED: Cell<usize> = const { Cell::new(0) };
@@ -453,7 +453,12 @@ pub fn title_x(n: usize) -> Option<f64> {
     TITLES.with(|t| t.get().get(n).copied().flatten())
 }
 
-/// Whether the title bar menu open now was opened by its keys (it then has them).
+/// A title bar menu opened, and took the keys.
+pub fn menu_took_keys() {
+    BY_KEYS.with(|b| b.set(true));
+}
+
+/// Whether the title bar menu open now has the keys.
 pub fn menu_by_keys() -> bool {
     BY_KEYS.with(Cell::get)
 }

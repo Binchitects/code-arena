@@ -440,11 +440,11 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
                     }
                 })
                 .style(|s| s.position(Position::Absolute).inset(0.0).size_full());
-            // Opened by its keys (Alt+F, F10), it takes them; opened by a click, they stay where they were.
-            if crate::layout_commands::menu_by_keys() {
-                let id = floem::View::id(&layer);
-                floem::action::exec_after(std::time::Duration::ZERO, move |_| id.request_focus());
-            }
+            // It has the keys while it is open (by a click too: the click took them from the editor), and gives
+            // them back when it closes.
+            crate::layout_commands::menu_took_keys();
+            let id = floem::View::id(&layer);
+            floem::action::exec_after(std::time::Duration::ZERO, move |_| id.request_focus());
             layer.into_any()
         },
     )
