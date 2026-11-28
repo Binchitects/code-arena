@@ -1053,6 +1053,15 @@ Sections used:
   run.
 - **Build configuration.** Tasks: Select Build Configuration picks Debug or Release for each folder.
   The tasks found in the project build with it (cargo --release, dotnet -c, CMAKE_BUILD_TYPE).
+- **TypeScript, TSX and JSX get their own colours.** `.ts`, `.tsx` and `.jsx` files and fenced
+  blocks are coloured as TypeScript, with types, interfaces, decorators, templates and JSX tags.
+  Before, they were coloured as plain JavaScript.
+- **TOML, Dockerfile, Kotlin, PowerShell, Terraform/HCL and GraphQL are coloured.** These files and
+  fenced blocks were drawn plain before. TOML tables and TypeScript's definitions now appear in the
+  Outline.
+- **Vue and Svelte components are coloured.** The template is read as HTML, the `<script>` as
+  TypeScript and the `<style>` as CSS, along with `{{ }}`, `{#if}` and `{expr}` blocks. New Svelte,
+  Terraform, HCL and GraphQL entries appear in the language picker.
 
 
 ### :bug: Bugs fixed
