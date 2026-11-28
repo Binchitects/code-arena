@@ -913,6 +913,18 @@ Sections used:
   checked by listing its models. It is kept in credentials.json, which only you can read, and is
   never shown again. The models appear at once in the model picker as provider:model. When Arena's
   admins do not allow other providers, the dialog says so.
+- **Work as an Arena assistant from the chat.** The chat's More menu has an Assistant submenu (None:
+  Code Arena's own, then yours and those shared with you, each with its description and model, a
+  check by the one at work; dimmed while a turn runs), and Chat: Work as an Assistant… is a quick
+  pick. /assistant [N|NAME|none] works in the chat's box too; what it says comes as a bubble.
+- **Put the session in an Arena project.** The More menu's Project submenu and Chat: Put the Session
+  in a Project… offer In no project and the projects you add to, with "its repository's" by the one
+  this folder's repository is in; /project NAME|N|none and /project new NAME work in the chat. The
+  status bar shows the project the session counts to, and a click changes it.
+- **Projects view.** Mine, Global and All I See, a box to find a project, New Project (global when
+  you may) and Refresh; each row says global, archived, your role, how much of its goals are done,
+  this month's spend of its budget, whether this session counts to it and whether this folder's
+  repository is in it, and the pointer on a row puts the session in it.
 
 
 ### :bug: Bugs fixed
