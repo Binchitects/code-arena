@@ -4,6 +4,10 @@
 //!   in force ([`message`]), each language's own, where each one that is not its default comes from, and what in
 //!   the files was not taken. It is said again, unasked, whenever one of the settings files changes: saved from the
 //!   window (`set_setting`, `save_user`), or changed on disk by anything else (they are looked at twice a second).
+//! - `settings_schema` [T] is answered with `settings_schema{entries, problems, unknown, files}`: every setting with
+//!   its kind, bounds, default, description, section and scope, its value in force and where it comes from, what
+//!   each file sets it to itself, and why this edition cannot change it ([`schema_message`]). The Settings editor
+//!   asks it when it opens and again each time `settings` is said.
 //! - `user_file{name}` [T] is answered with `user_file{name, text, modified, path}` and `save_user{name, text}` [T]
 //!   with `saved_user{name, modified, path}` (or `error`), for the files in Code Arena's settings folder that are
 //!   the person's to write: `settings.json`, `keybindings.json` and `snippets/NAME` ([`user_path`]). `settings.json`
@@ -111,6 +115,107 @@ pub fn message(s: &Settings, files: &Files) -> Value {
         "by_lang": by_lang,
         "sources": sources,
         "problems": problems,
+        "files": {
+            "user": files.user.display().to_string(),
+            "project": files.project.display().to_string(),
+            "workspace": files.workspace.display().to_string(),
+        },
+    })
+}
+
+/// A setting's kind as the Settings editor names it.
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Bool => "bool",
+        Kind::String => "string",
+        Kind::Integer { .. } => "integer",
+        Kind::Number { .. } => "number",
+        Kind::Enum(_) => "enum",
+        Kind::BoolOr(_) => "bool_or",
+        Kind::StringList => "string_list",
+        Kind::NumberList => "number_list",
+        Kind::Object => "object",
+    }
+}
+
+/// The layers' names, as `set_setting`'s `where` and the Settings editor's tabs say them.
+const LAYERS: [(Layer, &str); 3] = [(Layer::User, "user"), (Layer::Project, "project"), (Layer::Workspace, "workspace")];
+
+/// The `settings_schema` message: what the Settings editor is drawn from.
+///
+/// - `entries`: every setting, in the editor's order (the IDE's sections first, then the agent's), each with its
+///   `key`, `kind`, `enum` (the words of a choice), `min` and `max` (null: no bound), `default`, `description`,
+///   `section`, `scope` (`user`, `project`, `language`), `env` (the variable that overrides it), `value` (in force),
+///   `source` (`default`, `user`, `project`, `workspace`, `env:NAME`, `flag`), `written` (what each file sets it to
+///   itself, by layer), `in` (the layers whose files set it) and `locked` (why this edition cannot change it).
+///   The agent's own settings that are objects (the MCP servers, the hooks, the permissions) have no `value` and
+///   no `written` values, as in [`message`]: they may hold a token, and are edited in `settings.json`.
+/// - `problems`: as [`message`]'s. `unknown`: by layer, the keys each file holds that are no setting.
+/// - `files`: the three files' paths.
+pub fn schema_message(s: &Settings, files: &Files, edition: ca_settings::Edition) -> Value {
+    let ide = ide_schema::ALL.iter().map(|s| (*s, true));
+    let mut entries = Vec::new();
+    for (setting, ide) in ide.chain(schema::ALL.iter().map(|s| (*s, false))) {
+        let open = ide || !matches!(setting.kind, Kind::Object);
+        let (value, source) = s.resolve(setting);
+        let source = match source {
+            Source::Default => "default".to_string(),
+            Source::User(_) => "user".to_string(),
+            Source::Project(f) if f == files.workspace => "workspace".to_string(),
+            Source::Project(_) => "project".to_string(),
+            Source::Env(name) => format!("env:{name}"),
+            Source::Flag => "flag".to_string(),
+        };
+        let (mut written, mut layers) = (Map::new(), Vec::new());
+        for (layer, name) in LAYERS {
+            if let Some(v) = s.written(layer, setting.key) {
+                layers.push(Value::from(name));
+                if open {
+                    written.insert(name.to_string(), v.clone());
+                }
+            }
+        }
+        let words = match setting.kind {
+            Kind::Enum(w) | Kind::BoolOr(w) => json!(w),
+            _ => Value::Null,
+        };
+        let (min, max) = setting.bounds();
+        let scope = match setting.scope {
+            schema::Scope::User => "user",
+            schema::Scope::Project => "project",
+            schema::Scope::Language => "language",
+        };
+        entries.push(json!({
+            "key": setting.key,
+            "kind": kind_name(setting.kind),
+            "enum": words,
+            "min": min,
+            "max": max,
+            "default": setting.default_value(),
+            "description": setting.description,
+            "section": setting.section,
+            "scope": scope,
+            "env": setting.env,
+            "value": if open { value } else { Value::Null },
+            "source": source,
+            "written": written,
+            "in": layers,
+            "locked": crate::edition::setting_locked(edition, setting.key),
+        }));
+    }
+    let problems: Vec<Value> = s
+        .problems
+        .iter()
+        .chain(&s.ide_problems)
+        .map(|p| json!({"key": p.key, "file": p.file.display().to_string(), "error": p.message}))
+        .collect();
+    let unknown: Map<String, Value> =
+        LAYERS.iter().map(|(layer, name)| (name.to_string(), json!(s.unknown(*layer)))).collect();
+    json!({
+        "type": "settings_schema",
+        "entries": entries,
+        "problems": problems,
+        "unknown": unknown,
         "files": {
             "user": files.user.display().to_string(),
             "project": files.project.display().to_string(),
@@ -315,6 +420,7 @@ pub struct Here;
 impl Area for Here {
     const MESSAGES: &'static [(&'static str, Rule)] = &[
         ("settings", Rule::Turn),
+        ("settings_schema", Rule::Turn),
         ("user_file", Rule::Turn),
         ("save_user", Rule::Turn),
         ("workspace_settings", Rule::Side),
@@ -364,6 +470,7 @@ impl Area for Here {
         match kind(m) {
             // From what is read already: no file is touched.
             "settings" => send(&sh.out, message(&current(sh), &watched(sh).0)),
+            "settings_schema" => send(&sh.out, schema_message(&current(sh), &watched(sh).0, sh.edition)),
             "user_file" => {
                 let (config, out) = (sh.paths.config.clone(), sh.out.clone());
                 tokio::task::spawn_blocking(move || send(&out, read_user(&config, &name)));
@@ -473,6 +580,53 @@ mod tests {
         assert_eq!(again["values"]["editor.wordWrap"], "bounded");
         assert_eq!(again["values"]["agent.mode"], "plan");
         assert_eq!(again["by_lang"], json!({"python": {"editor.tabSize": 2}}));
+    }
+
+    #[test]
+    fn the_settings_editor_is_told_each_setting_with_what_each_file_sets_it_to() {
+        let (_d, _paths, files) = folders(
+            r#"{
+                "editor.fontSize": 15,
+                "editor.tabSize": "wide",
+                "mcpServers": {"mine": {"command": "serve", "env": {"TOKEN": "not-a-real-one"}}},
+                "my.own": 1
+            }"#,
+            r#"{"editor.fontSize": 16}"#,
+            r#"{"editor.wordWrap": "on", "editor.fontSize": 17}"#,
+        );
+        let env = Env::from_pairs([("CODE_ARENA_MODE", "plan")]);
+        let s = Settings::load(&files.user, Some(&files.project), env);
+        let m = schema_message(&s, &files, ca_settings::Edition::Standalone);
+        assert_eq!(m["type"], "settings_schema");
+        let entries = m["entries"].as_array().expect("entries");
+        assert_eq!(entries.len(), ide_schema::ALL.len() + schema::ALL.len());
+        // The IDE's first, in their order.
+        assert_eq!(entries[0]["key"], ide_schema::ALL[0].key);
+        let of = |key: &str| entries.iter().find(|e| e["key"] == key).expect(key).clone();
+        let size = of("editor.fontSize");
+        assert_eq!((size["kind"].as_str(), size["min"].as_i64(), size["max"].as_i64()), (Some("number"), Some(6), Some(100)));
+        assert_eq!((size["value"].as_i64(), size["source"].as_str(), size["scope"].as_str()), (Some(17), Some("workspace"), Some("language")));
+        assert_eq!(size["written"], json!({"user": 15, "project": 16, "workspace": 17}));
+        assert_eq!(size["in"], json!(["user", "project", "workspace"]));
+        assert_eq!(size["default"], 13);
+        let wrap = of("editor.wordWrap");
+        assert!(wrap["enum"].as_array().is_some_and(|w| w.contains(&json!("bounded"))), "{wrap}");
+        // A value not taken is no value of the file's: its problem says it.
+        assert_eq!(of("editor.tabSize")["in"], json!([]));
+        let mode = of("agent.mode");
+        assert_eq!((mode["source"].as_str(), mode["env"].as_str()), (Some("env:CODE_ARENA_MODE"), Some("CODE_ARENA_MODE")));
+        assert_eq!(mode["scope"], "user");
+        // The agent's own objects: where they are set, never what they hold.
+        let servers = of("mcpServers");
+        assert_eq!((servers["kind"].as_str(), &servers["value"], &servers["written"]), (Some("object"), &Value::Null, &json!({})));
+        assert_eq!(servers["in"], json!(["user"]));
+        assert!(!m.to_string().contains("not-a-real-one"));
+        // This edition's locks, what was not taken, and what is no setting.
+        assert!(of("arena.syncChats")["locked"].as_str().is_some_and(|w| w.contains("Farzan Arena")));
+        assert!(size["locked"].is_null());
+        assert_eq!(m["problems"][0]["key"], "editor.tabSize");
+        assert_eq!(m["unknown"], json!({"user": ["my.own"], "project": [], "workspace": []}));
+        assert_eq!(m["files"]["workspace"], files.workspace.display().to_string());
     }
 
     #[test]
