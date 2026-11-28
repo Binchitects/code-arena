@@ -725,7 +725,34 @@ impl Runs {
         let all = self.0.lock().unwrap_or_else(|e| e.into_inner());
         all.iter().filter(|(_, r)| r.running).map(|(l, r)| (l.clone(), r.terminal)).collect()
     }
+
+    /// A task started, unless it runs already: the two asks of one task at once start one terminal, and the
+    /// later one waits on it.
+    fn claim(&self, label: &str, start: impl FnOnce() -> u64) -> Claim {
+        let mut all = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match all.get(label) {
+            Some(r) if r.running => Claim::Running(r.terminal),
+            was => {
+                let replaces = was.map(|r| r.terminal);
+                let terminal = start();
+                all.insert(label.to_string(), Run { terminal, running: true, stopped: false });
+                Claim::Started { terminal, replaces }
+            }
+        }
+    }
 }
+
+/// What [`Runs::claim`] did.
+#[derive(Debug, PartialEq)]
+enum Claim {
+    /// It was running already, in this terminal.
+    Running(u64),
+    /// It was started, in this terminal, in the place of the last run's.
+    Started { terminal: u64, replaces: Option<u64> },
+}
+
+/// What one run asked for has finished so far, by label: a task two of its dependencies share runs once.
+type Finished = Arc<Mutex<HashMap<String, Result<(), String>>>>;
 
 /// The list a face asked for.
 fn list_message(sh: &Shared, m: &Value) -> Value {
@@ -884,11 +911,34 @@ type Running = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 
 /// Runs a task once its dependencies have; `Err` says why it did not end well (or was not run).
 fn run_one(sh: Shared, book: Arc<Book>, cx: Arc<Context>, label: String) -> Running {
+    run_in(sh, book, cx, Finished::default(), label)
+}
+
+fn run_in(sh: Shared, book: Arc<Book>, cx: Arc<Context>, finished: Finished, label: String) -> Running {
     Box::pin(async move {
+        // One this run has run already (a dependency two others share) is not run again.
+        if let Some(was) = finished.lock().unwrap_or_else(|e| e.into_inner()).get(&label).cloned() {
+            return was;
+        }
+        let result = run_fresh(&sh, &book, &cx, &finished, &label).await;
+        finished.lock().unwrap_or_else(|e| e.into_inner()).insert(label, result.clone());
+        result
+    })
+}
+
+async fn run_fresh(
+    sh: &Shared,
+    book: &Arc<Book>,
+    cx: &Arc<Context>,
+    finished: &Finished,
+    label: &str,
+) -> Result<(), String> {
+    let (sh, label) = (sh.clone(), label.to_string());
+    {
         let task = book.find(&label).cloned().ok_or_else(|| format!("There is no task '{label}'."))?;
-        // A dependency already active is not started again: it is waited for (a background one is done).
         let r = runs(&sh);
         let mut rx = sh.out.subscribe();
+        // A dependency already active is not started again: it is waited for (a background one is done).
         if let Some(run) = r.get(&label).filter(|r| r.running) {
             if task.background {
                 return Ok(());
@@ -896,16 +946,13 @@ fn run_one(sh: Shared, book: Arc<Book>, cx: Arc<Context>, label: String) -> Runn
             let code = ended(&sh, &mut rx, run.terminal).await;
             return verdict(&label, code, r.get(&label).is_some_and(|r| r.stopped));
         }
+        let dep = |d: &String| run_in(sh.clone(), book.clone(), cx.clone(), finished.clone(), d.clone());
         if task.sequence {
             for d in &task.depends_on {
-                run_one(sh.clone(), book.clone(), cx.clone(), d.clone()).await.map_err(|e| because(&e, &label))?;
+                dep(d).await.map_err(|e| because(&e, &label))?;
             }
         } else {
-            let started: Vec<_> = task
-                .depends_on
-                .iter()
-                .map(|d| tokio::spawn(run_one(sh.clone(), book.clone(), cx.clone(), d.clone())))
-                .collect();
+            let started: Vec<_> = task.depends_on.iter().map(|d| tokio::spawn(dep(d))).collect();
             let mut first = None;
             for h in started {
                 let got = h.await.unwrap_or_else(|e| Err(e.to_string()));
@@ -918,11 +965,23 @@ fn run_one(sh: Shared, book: Arc<Book>, cx: Arc<Context>, label: String) -> Runn
             }
         }
         let (program, args, cwd) = cx.expand(|vars| command_of(&task, vars, &cx.shell))?;
-        let replaces = r.get(&label).filter(|r| !r.running).map(|r| r.terminal);
         rx = sh.out.subscribe();
-        let terminal = sh.side.term_start(&format!("Task - {label}"), "task", &program, &args, &cwd);
-        r.set(&label, Run { terminal, running: true, stopped: false });
-        send(&sh.out, json!({"type": "task_started", "label": label, "terminal": terminal, "replaces": replaces}));
+        let title = format!("Task - {label}");
+        let terminal = match r.claim(&label, || sh.side.term_start(&title, "task", &program, &args, &cwd)) {
+            // Asked twice at once (Run Build Task pressed again while its dependencies ran): one terminal.
+            Claim::Running(terminal) => {
+                if task.background {
+                    return Ok(());
+                }
+                let code = ended(&sh, &mut rx, terminal).await;
+                return verdict(&label, code, r.get(&label).is_some_and(|r| r.stopped));
+            }
+            Claim::Started { terminal, replaces } => {
+                let m = json!({"type": "task_started", "label": label, "terminal": terminal, "replaces": replaces});
+                send(&sh.out, m);
+                terminal
+            }
+        };
         let finish = {
             let (sh, label) = (sh.clone(), label.clone());
             async move {
@@ -942,7 +1001,7 @@ fn run_one(sh: Shared, book: Arc<Book>, cx: Arc<Context>, label: String) -> Runn
             return Ok(());
         }
         finish.await
-    })
+    }
 }
 
 /// A dependency's failure, as the task that waited on it tells it.
@@ -970,25 +1029,25 @@ async fn ended(sh: &Shared, rx: &mut tokio::sync::broadcast::Receiver<String>, i
         (v["type"] == "term_exit" && v["id"] == id).then(|| v["code"].as_i64())
     };
     loop {
-        match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
+        let gone = match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
             Ok(Ok(s)) => {
                 if let Some(code) = mine(&s) {
                     return code;
                 }
+                false
             }
-            Ok(Err(RecvError::Lagged(_))) => {}
             Ok(Err(RecvError::Closed)) => return None,
-            // Its end may have been passed over while too much came at once: the terminal is gone, so what is
-            // still coming is read a little longer for its code.
-            Err(_) if !sh.side.term_alive(id) => {
-                while let Ok(Ok(s)) = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
-                    if let Some(code) = mine(&s) {
-                        return code;
-                    }
+            Ok(Err(RecvError::Lagged(_))) | Err(_) => !sh.side.term_alive(id),
+        };
+        // Its end may have been passed over while too much came at once: the terminal is gone, so what is still
+        // coming is read a little longer for its code.
+        if gone {
+            while let Ok(Ok(s)) = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
+                if let Some(code) = mine(&s) {
+                    return code;
                 }
-                return None;
             }
-            Err(_) => {}
+            return None;
         }
     }
 }
@@ -1237,6 +1296,22 @@ mod tests {
         assert_eq!(build_of(d.path(), b), "Debug");
         assert!(set_build(d.path(), a, "Fast").is_err());
         assert_eq!(build_of(d.path(), a), "Release");
+    }
+
+    #[test]
+    fn a_task_asked_for_while_it_runs_is_not_started_twice() {
+        let runs = Runs::default();
+        let started = std::cell::Cell::new(0);
+        let start = |id: u64| {
+            started.set(started.get() + 1);
+            id
+        };
+        assert_eq!(runs.claim("build", || start(7)), Claim::Started { terminal: 7, replaces: None });
+        assert_eq!(runs.claim("build", || start(8)), Claim::Running(7));
+        assert_eq!(started.get(), 1);
+        runs.set("build", Run { terminal: 7, running: false, stopped: false });
+        assert_eq!(runs.claim("build", || start(9)), Claim::Started { terminal: 9, replaces: Some(7) });
+        assert_eq!(runs.running(), vec![("build".to_string(), 9)]);
     }
 
     #[test]
