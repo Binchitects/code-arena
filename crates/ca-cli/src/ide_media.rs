@@ -34,12 +34,8 @@ const MOST_BYTES: u64 = 50 * 1024 * 1024;
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] = &[
-        ("media", Rule::Side),
-        ("media_open", Rule::Side),
-        ("diagram", Rule::Side),
-        ("diagram_open", Rule::Side),
-    ];
+    const MESSAGES: &'static [(&'static str, Rule)] =
+        &[("media", Rule::Side), ("media_open", Rule::Side), ("diagram", Rule::Side), ("diagram_open", Rule::Side)];
 
     fn side(side: &Side, m: &Value) -> bool {
         let path = m["path"].as_str().unwrap_or("");
@@ -256,11 +252,8 @@ fn run(mut cmd: std::process::Command, dir: &Path, timeout: Duration) -> Result<
 
 /// What a failing program said, shortly: its last lines that are not a stack's frames.
 fn said(stderr: &str, otherwise: &str) -> String {
-    let lines: Vec<&str> = stderr
-        .lines()
-        .map(str::trim_end)
-        .filter(|l| !l.is_empty() && !l.trim_start().starts_with("at "))
-        .collect();
+    let lines: Vec<&str> =
+        stderr.lines().map(str::trim_end).filter(|l| !l.is_empty() && !l.trim_start().starts_with("at ")).collect();
     let kept = lines[lines.len().saturating_sub(8)..].join("\n");
     if kept.is_empty() { otherwise.to_string() } else { kept.chars().take(1500).collect() }
 }

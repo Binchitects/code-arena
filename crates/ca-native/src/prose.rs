@@ -119,8 +119,11 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyVi
                 })
             };
             if crate::diagrams::kind_of(lang).is_some() {
-                let closed = create_memo(move |_| now.with(|b| matches!(b.as_deref(), Some(Block::Code { closed: true, .. }))));
-                return crate::diagrams::block(ui, lang, name, text, closed).style(move |s| s.margin_top(over(8.0))).into_any();
+                let closed =
+                    create_memo(move |_| now.with(|b| matches!(b.as_deref(), Some(Block::Code { closed: true, .. }))));
+                return crate::diagrams::block(ui, lang, name, text, closed)
+                    .style(move |s| s.margin_top(over(8.0)))
+                    .into_any();
             }
             code(ui, lang, name, text).style(move |s| s.margin_top(over(8.0))).into_any()
         }
@@ -783,10 +786,9 @@ pub(crate) fn code_with(
                 .selectable(false)
                 .apply_if(wrap.get(), |s| s.hide())
         });
-    let body = h_stack((numbers, scroll(lines).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0))))
-        .style(move |s| {
-            s.width_full().min_width(0.0).padding_horiz(12.0).padding_vert(8.0).apply_if(is_drawn(), |s| s.hide())
-        });
+    let body = h_stack((numbers, scroll(lines).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)))).style(
+        move |s| s.width_full().min_width(0.0).padding_horiz(12.0).padding_vert(8.0).apply_if(is_drawn(), |s| s.hide()),
+    );
     let label_text = code_label(lang, name);
     let name = name.to_string();
     let file = create_memo(move |_| {
@@ -958,7 +960,12 @@ mod tests {
         let para = |s| Block::Paragraph(inline(s));
         assert_eq!(shape(&para("a")), shape(&para("a longer one")));
         assert_ne!(shape(&para("a")), shape(&Block::Quote(inline("a"))));
-        let code = |lang: &str, text: &str| Block::Code { lang: lang.into(), name: String::new(), text: text.into(), closed: true };
+        let code = |lang: &str, text: &str| Block::Code {
+            lang: lang.into(),
+            name: String::new(),
+            text: text.into(),
+            closed: true,
+        };
         assert_eq!(shape(&code("rust", "fn")), shape(&code("rust", "fn main() {}")));
         assert_ne!(shape(&code("rust", "fn")), shape(&code("sh", "fn")));
         assert_ne!(shape(&Block::Heading(1, inline("a"))), shape(&Block::Heading(2, inline("a"))));

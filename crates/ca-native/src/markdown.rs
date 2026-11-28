@@ -587,7 +587,10 @@ mod tests {
     #[test]
     fn a_fence_names_its_language_and_its_file() {
         let blocks = parse("```TS:src/App.ts\nlet a = 1\n```");
-        assert_eq!(blocks, [Block::Code { lang: "ts".into(), name: "src/App.ts".into(), text: "let a = 1".into(), closed: true }]);
+        assert_eq!(
+            blocks,
+            [Block::Code { lang: "ts".into(), name: "src/App.ts".into(), text: "let a = 1".into(), closed: true }]
+        );
     }
 
     #[test]
@@ -714,7 +717,12 @@ mod tests {
         // Still being written.
         assert_eq!(
             parse("```sh\nls -la\n# not a heading"),
-            [Block::Code { lang: "sh".into(), name: String::new(), text: "ls -la\n# not a heading".into(), closed: false }]
+            [Block::Code {
+                lang: "sh".into(),
+                name: String::new(),
+                text: "ls -la\n# not a heading".into(),
+                closed: false
+            }]
         );
         assert_eq!(
             parse("~~~\n```\n~~~"),

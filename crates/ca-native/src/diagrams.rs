@@ -134,13 +134,7 @@ fn over_of(shown: Option<&Shown>, showing_code: bool) -> Over {
 }
 
 /// A diagram's block: its code's box, with the drawing in the lines' place once its fence is closed.
-pub fn block(
-    ui: Ui,
-    lang: &str,
-    name: &str,
-    text: impl Fn() -> String + 'static,
-    closed: Memo<bool>,
-) -> impl IntoView {
+pub fn block(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static, closed: Memo<bool>) -> impl IntoView {
     let t = ui.colors;
     let kind = kind_of(lang).unwrap_or("mermaid");
     let source = create_memo(move |_| text());
@@ -216,9 +210,10 @@ const MOST_HEIGHT: f64 = 800.0;
 /// A diagram drawn at its own size, made smaller to fit the answer's width.
 fn picture(p: Rc<Picture>) -> AnyView {
     let (w, h) = (f64::from(p.width).max(1.0), f64::from(p.height).max(1.0));
-    container(media::drawn(p).style(move |s| {
-        s.width_full().max_width(w).max_height(MOST_HEIGHT).aspect_ratio((w / h) as f32)
-    }))
+    container(
+        media::drawn(p)
+            .style(move |s| s.width_full().max_width(w).max_height(MOST_HEIGHT).aspect_ratio((w / h) as f32)),
+    )
     .style(|s| s.width_full().min_width(0.0).justify_center().padding(12.0))
     .into_any()
 }

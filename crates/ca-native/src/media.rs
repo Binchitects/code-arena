@@ -458,9 +458,8 @@ fn picture(st: State, path: &str, p: Rc<Picture>) -> AnyView {
         move |actual| {
             let (w, h) = (f64::from(p.width), f64::from(p.height));
             let on = path.clone();
-            let drawn = drawn(p.clone())
-                .on_click_stop(move |_| toggle(st, &on))
-                .style(|s| s.cursor(CursorStyle::Pointer));
+            let drawn =
+                drawn(p.clone()).on_click_stop(move |_| toggle(st, &on)).style(|s| s.cursor(CursorStyle::Pointer));
             if actual {
                 scroll(
                     container(drawn.style(move |s| s.width(w).height(h).flex_shrink(0.0_f32)))
