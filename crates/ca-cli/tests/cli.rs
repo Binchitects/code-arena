@@ -2774,3 +2774,128 @@ async fn ide_connect_dials_code_studio_with_the_folder_kept() {
     }
     assert_eq!(ids[0], ids[1], "the folder keeps its id");
 }
+
+#[tokio::test]
+async fn the_chats_own_commands_answer_in_the_ides_thread_and_the_status_line_follows_a_turn() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::io::BufRead;
+    use tokio_tungstenite::tungstenite::Message;
+    let said = |text: &str| sse(json!({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}));
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(vec![said("Done.")], AtomicUsize::new(0)))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false,
+               "statusLine": {"type": "command", "command": "printf '\\033[32mon main\\033[0m\\n'"}})
+        .to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let mut child = code_arena(home.path())
+        .args(["ide", "--no-open", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("runs");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stderr = child.stderr.take().expect("stderr");
+    let _child = Kill(child);
+    let url = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| l.split("The IDE: ").nth(1).map(str::to_string))
+        .expect("the address");
+    let (base, key) = url.split_once("/?k=").expect("key in it");
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+        format!("ws://{}/ws", base.trim_start_matches("http://")).as_str(),
+    )
+    .expect("request");
+    request.headers_mut().insert("cookie", format!("code_arena={key}").parse().expect("h"));
+    request.headers_mut().insert("origin", base.parse().expect("h"));
+    let (mut page, _) = tokio_tungstenite::connect_async(request).await.expect("the page connects");
+    let until = async |page: &mut tokio_tungstenite::WebSocketStream<_>, end: &dyn Fn(&Value) -> bool| -> Vec<Value> {
+        let mut seen = Vec::new();
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            let Message::Text(t) = m else { continue };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            let done = end(&v);
+            seen.push(v);
+            if done {
+                return seen;
+            }
+        }
+    };
+    let ask = async |page: &mut tokio_tungstenite::WebSocketStream<_>, m: Value| {
+        page.send(Message::text(m.to_string())).await.expect("send");
+    };
+    let notice =
+        |v: &Value, starts: &str| v["type"] == "notice" && v["text"].as_str().is_some_and(|t| t.starts_with(starts));
+    until(&mut page, &|v| v["type"] == "state").await;
+    // The `/` menu offers the chat's own commands.
+    ask(&mut page, json!({"type": "library", "key": 3})).await;
+    let lib = until(&mut page, &|v| v["type"] == "library").await.pop().expect("library");
+    let names: Vec<&str> =
+        lib["builtins"].as_array().expect("builtins").iter().filter_map(|b| b["name"].as_str()).collect();
+    assert!(names.contains(&"compact") && names.contains(&"help") && lib["key"] == 3, "{lib}");
+    // A command of the terminal's is said in the thread; one that has a view opens it.
+    ask(&mut page, json!({"type": "send", "text": "/help"})).await;
+    let help = until(&mut page, &|v| notice(v, "/help — ")).await.pop().expect("help");
+    assert!(help["text"].as_str().is_some_and(|t| t.contains("/compact — ") && t.contains("!command — ")), "{help}");
+    ask(&mut page, json!({"type": "send", "text": "/tasks", "key": "k1"})).await;
+    let open = until(&mut page, &|v| v["type"] == "ui_action").await.pop().expect("open");
+    assert_eq!(open, json!({"type": "ui_action", "open": "tasks", "key": "k1"}), "with the key it answers");
+    ask(&mut page, json!({"type": "send", "text": "/goal make the tests pass"})).await;
+    let open = until(&mut page, &|v| v["type"] == "ui_action").await.pop().expect("open");
+    assert_eq!(open, json!({"type": "ui_action", "open": "goal", "text": "make the tests pass"}));
+    ask(&mut page, json!({"type": "send", "text": "/exit"})).await;
+    until(&mut page, &|v| notice(v, "To leave, close the window")).await;
+    ask(&mut page, json!({"type": "send", "text": "/mode auto-edit"})).await;
+    let mode = until(&mut page, &|v| v["type"] == "status").await;
+    assert!(mode.iter().any(|v| notice(v, "The mode is auto-edit.")), "{mode:?}");
+    assert_eq!(mode.last().expect("status")["mode"], "auto-edit");
+    // `!command` runs now, and its output goes with the next message.
+    ask(&mut page, json!({"type": "send", "text": "!echo hi-there"})).await;
+    let ran = until(&mut page, &|v| notice(v, "$ echo hi-there")).await.pop().expect("ran");
+    assert!(ran["text"].as_str().is_some_and(|t| t.ends_with("\nhi-there")), "{ran}");
+    ask(&mut page, json!({"type": "send", "text": "/cost"})).await;
+    until(&mut page, &|v| notice(v, "This run: 0 in")).await;
+    ask(&mut page, json!({"type": "send", "text": "hello"})).await;
+    let after = until(&mut page, &|v| v["type"] == "status_line").await;
+    assert!(after.iter().any(|v| v["type"] == "turn_end" && v["ok"] == true), "{after:?}");
+    assert_eq!(after.last().expect("line")["text"], "on main", "its escapes left out");
+    let requests = gateway.received_requests().await.expect("requests");
+    assert!(
+        requests.iter().any(|r| String::from_utf8_lossy(&r.body).contains("I ran `echo hi-there` myself")),
+        "the model read the command's output"
+    );
+    // A face that comes later is given the line in `state`.
+    ask(&mut page, json!({"type": "state"})).await;
+    let state = until(&mut page, &|v| v["type"] == "state").await.pop().expect("state");
+    assert_eq!(state["status_line"], "on main");
+    // A command the driver answers itself is answered as the faces' own message is.
+    ask(&mut page, json!({"type": "send", "text": "/compact"})).await;
+    let compacted = until(&mut page, &|v| v["type"] == "context_detail").await;
+    assert!(compacted.iter().any(|v| v["type"] == "notice"), "{compacted:?}");
+    assert!(!compacted.iter().any(|v| v["type"] == "refused"), "{compacted:?}");
+}

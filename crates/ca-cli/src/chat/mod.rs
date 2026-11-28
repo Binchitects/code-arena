@@ -755,8 +755,9 @@ fn choose_session(app: &App, opts: &Opts) -> anyhow::Result<Resume> {
     }
 }
 
-/// Runs one of the chat's commands; false when it is none of them (it goes to the model as typed).
-async fn command(
+/// Runs one of the chat's commands; false when it is none of them (it goes to the model as typed). The IDE runs
+/// it too, with a `ui` that collects what it says.
+pub(crate) async fn command(
     line: &str,
     p: &mut Prepared,
     app: &mut App,

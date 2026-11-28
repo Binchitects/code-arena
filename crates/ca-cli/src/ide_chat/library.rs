@@ -3,7 +3,8 @@
 //! - `library` → `library{commands: [{name, description, hint, source}], skills: [{name, description, source,
 //!   path}], builtins: [{name, description}]}`: the project's and the person's commands and the skills, as the
 //!   session reads them (`ca_agent::library::load`), each command once and before a skill of its name. The chat's
-//!   own commands (`builtins`) are none yet. A `key` the request carries is said again in the reply.
+//!   own commands (`builtins`, names without the `/`) are those the edition has (`builtins::listed`). A `key` the
+//!   request carries is said again in the reply.
 //! - `expand`: a line typed `/NAME words` made what goes to the model, and `/one /two words` each of them for the
 //!   same words, one after the other (the menu lets several skills be chosen together).
 
@@ -13,7 +14,7 @@ use serde_json::{Value, json};
 use crate::ide_ext::{Shared, send};
 
 /// The reply to `library`, from what was read.
-fn listed(library: &Library) -> Value {
+fn listed(library: &Library, builtins: Value) -> Value {
     let commands: Vec<Value> = library
         .commands
         .iter()
@@ -25,15 +26,16 @@ fn listed(library: &Library) -> Value {
         .filter(|k| !library.commands.iter().any(|c| c.name == k.name))
         .map(|k| json!({"name": k.name, "description": k.description, "source": k.source, "path": k.path}))
         .collect();
-    json!({"type": "library", "commands": commands, "skills": skills, "builtins": []})
+    json!({"type": "library", "commands": commands, "skills": skills, "builtins": builtins})
 }
 
 /// `library`: read off the driver's loop when there is one to be off, the folders being on disk.
 pub fn asked(sh: &Shared, m: &Value) -> bool {
     let (sources, out) = (sh.sources.clone(), sh.out.clone());
+    let builtins = super::builtins::listed(sh.edition);
     let key = Some(&m["key"]).filter(|k| k.is_string() || k.is_number()).cloned();
     let work = move || {
-        let mut reply = listed(&load(&sources));
+        let mut reply = listed(&load(&sources), builtins);
         if let Some(key) = key {
             reply["key"] = key;
         }
@@ -96,7 +98,7 @@ mod tests {
     #[test]
     fn the_menu_is_given_the_commands_with_their_hints_and_each_skill_a_command_does_not_hide() {
         let (_d, lib) = library();
-        let got = listed(&lib);
+        let got = listed(&lib, json!([]));
         assert_eq!(got["type"], "library");
         assert_eq!(
             got["commands"],

@@ -153,6 +153,8 @@ pub const TAKEN: &[&str] = &[
     "term_out",
     "term_exit",
     "term_started",
+    "ui_action",
+    "status_line",
 ];
 
 /// The most messages kept for a turn's end; what comes after is refused.
