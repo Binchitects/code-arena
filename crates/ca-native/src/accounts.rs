@@ -139,11 +139,14 @@ struct Accounts {
     working: RwSignal<Option<u64>>,
     /// The feedback this window sent last, by its number.
     feedback: RwSignal<u64>,
+    /// The driver has said whose the key is (until then the button has no dot).
+    known: RwSignal<bool>,
 }
 
 impl crate::ext::State for Accounts {
     fn new(ui: Ui) -> Accounts {
         Accounts {
+            known: ui.scope.create_rw_signal(false),
             account: ui.scope.create_rw_signal(Account::default()),
             signing_in: ui.scope.create_rw_signal(None),
             working: ui.scope.create_rw_signal(None),
@@ -157,15 +160,16 @@ fn state(ui: Ui) -> Accounts {
 }
 
 /// The dot drawn over the Accounts button while no key is kept or it was refused, as VS Code's warning badge.
-pub fn dot(ui: Ui, shown: bool) -> impl IntoView {
+/// It sits at the icon's lower right, where the count of a view's badge is (`top`, `right` from the icon's box).
+pub fn dot(ui: Ui, shown: bool, top: f64, right: f64) -> impl IntoView {
     let t = ui.colors;
-    let warns = state(ui).account;
+    let me = state(ui);
     empty().style(move |s| {
         let c = t.get();
-        let on = shown && warns.with(Account::warns);
+        let on = shown && me.known.get() && me.account.with(Account::warns);
         s.absolute()
-            .inset_top(10.0)
-            .inset_right(10.0)
+            .inset_top(top)
+            .inset_right(right)
             .size(8.0, 8.0)
             .border_radius(4.0)
             .background(c.warning_badge_bg)
@@ -375,13 +379,20 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             if me.account.with_untracked(|was| *was != a) {
                 me.account.set(a);
             }
+            if !me.known.get_untracked() {
+                me.known.set(true);
+            }
         }
         "sign_in" => {
             let user = m["user"].as_str().unwrap_or("");
-            // The answer to another window's sign-in is that window's to show.
-            if me.signing_in.with_untracked(|u| u.as_deref() != Some(user)) {
+            // The answer to another window's sign-in is that window's to show; one with no user (no sign-in
+            // waited for the code) is the answer to whichever window waits.
+            let mine = me.signing_in.with_untracked(|u| u.as_deref().is_some_and(|u| user.is_empty() || u == user));
+            if !mine {
                 return false;
             }
+            let user = me.signing_in.get_untracked().unwrap_or_default();
+            let user = user.as_str();
             done_working(ui);
             let error = m["error"].as_str().filter(|e| !e.is_empty());
             match m["status"].as_str().unwrap_or("") {
@@ -528,6 +539,10 @@ mod tests {
         take(ui, &json!({"type": "sign_in", "status": "error", "error": "Wrong password.", "user": "sara"}), &send);
         assert_eq!(me.signing_in.get_untracked(), None);
         assert_eq!(toast::count(ui), 1);
+        // A code no sign-in waited for is answered with no user: the window that waits takes it.
+        me.signing_in.set(Some("sara".into()));
+        take(ui, &json!({"type": "sign_in", "status": "error", "error": "No sign-in waits.", "user": ""}), &send);
+        assert_eq!(me.signing_in.get_untracked(), None);
         // A refusal mid-turn ends the wait too.
         me.signing_in.set(Some("sara".into()));
         take(

@@ -431,7 +431,7 @@ pub fn open_view_menu(ui: Ui, at: At, v: View) {
 fn foot(ui: Ui, send: Send, name: &'static str, tip: &'static str, command: &'static str) -> impl IntoView {
     let t = ui.colors;
     // Accounts has a dot while no key is kept or it was refused (`accounts.rs`).
-    let button = container(stack((icon(name, 24.0), crate::accounts::dot(ui, command == ACCOUNTS))));
+    let button = container(stack((icon(name, 24.0), crate::accounts::dot(ui, command == ACCOUNTS, 16.0, -2.0))));
     let id = button.id();
     let button = button
         .on_click_stop(move |_| {
@@ -603,7 +603,7 @@ pub fn top(ui: Ui, send: Send) -> impl IntoView {
     };
     let small = move |name: &'static str, command: &'static str, menu: crate::menus::Menu| {
         let send = send.clone();
-        let b = container(icon(name, 16.0));
+        let b = container(stack((icon(name, 16.0), crate::accounts::dot(ui, command == ACCOUNTS, 10.0, -4.0))));
         let id = b.id();
         b.on_click_stop(move |_| {
             FOOT.set(Some(id));

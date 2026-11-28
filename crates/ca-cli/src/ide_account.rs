@@ -181,6 +181,10 @@ async fn sign_in(ctx: &mut Ctx<'_>, m: &Value) {
     if user.is_empty() {
         return refused(ctx, &url, &user, "A user name is needed.");
     }
+    // Asked before the password, so that no key is made in Arena for a connection that cannot be kept.
+    if let Err(e) = kept_as(&ctx.app.connection, &url, Secret::new("")) {
+        return refused(ctx, &url, &user, &e);
+    }
     let password = Secret::new(m["password"].as_str().unwrap_or(""));
     let s = match PasswordSignIn::new(&url, ctx.app.ca()) {
         Ok(s) => s,
@@ -216,32 +220,37 @@ async fn sign_in_code(ctx: &mut Ctx<'_>, m: &Value) {
     }
 }
 
+/// The connection kept once signed in to `url` with `key`, as `code-arena login` keeps it: the gateway named
+/// before stays only for the same Arena, the CA and the person's own providers stay. Refused when the gateway
+/// cannot be guessed from the address (an IP address).
+fn kept_as(before: &Connection, url: &str, key: Secret) -> Result<Connection, String> {
+    let same = before.url.as_deref() == Some(url);
+    let conn = Connection {
+        url: Some(url.to_string()),
+        gateway: before.gateway.clone().filter(|_| same),
+        ca: before.ca.clone(),
+        providers: before.providers.clone(),
+        api_key: Some(key),
+        ..Default::default()
+    };
+    match conn.gateway_url() {
+        Some(_) => Ok(conn),
+        None => Err(format!(
+            "{url} is an address, so its gateway cannot be guessed: sign in with code-arena login --url {url} --gateway URL"
+        )),
+    }
+}
+
 /// Signed in: a key made for this machine and kept as `code-arena login` keeps it, then the session taken up with it.
 async fn signed_in(ctx: &mut Ctx<'_>, s: PasswordSignIn, url: String, user: String) {
     let key = match s.make_key(&crate::account::machine_name()).await {
         Ok(k) => k,
         Err(e) => return refused(ctx, &url, &user, &format!("Signed in, but no key could be made: {e}")),
     };
-    let before = &ctx.app.connection;
-    let same = before.url.as_deref() == Some(url.as_str());
-    let mut conn = Connection {
-        url: Some(url.clone()),
-        gateway: before.gateway.clone().filter(|_| same),
-        ca: before.ca.clone(),
-        providers: before.providers.clone(),
-        api_key: Some(key.clone()),
-        ..Default::default()
+    let mut conn = match kept_as(&ctx.app.connection, &url, key.clone()) {
+        Ok(c) => c,
+        Err(e) => return refused(ctx, &url, &user, &e),
     };
-    if conn.gateway_url().is_none() {
-        return refused(
-            ctx,
-            &url,
-            &user,
-            &format!(
-                "{url} is an address, so its gateway cannot be guessed: sign in with code-arena login --url {url} --gateway URL"
-            ),
-        );
-    }
     if let Ok(arena) = ArenaClient::new(&url, Some(key), conn.ca.as_deref())
         && let Ok(me) = arena.me().await
     {
@@ -356,6 +365,30 @@ mod tests {
         assert_eq!(v["signed_in"], true, "a key is kept: Sign out stays in the menu");
         assert_eq!(v["problem"], "Arena refused the key: That key was revoked.");
         assert_eq!(said(None, Ok(None))["host"], Value::Null);
+    }
+
+    #[test]
+    fn the_connection_kept_once_signed_in() {
+        let before = Connection {
+            url: Some("https://arena.example".into()),
+            gateway: Some("https://gw.arena.example".into()),
+            ca: Some("/ca.pem".into()),
+            api_key: Some(Secret::new("sk-old")),
+            account: Some("Sara".into()),
+            ..Default::default()
+        };
+        let same = kept_as(&before, "https://arena.example", Secret::new("sk-new")).expect("kept");
+        assert_eq!(same.gateway.as_deref(), Some("https://gw.arena.example"), "the same Arena keeps its gateway");
+        assert_eq!(same.api_key.as_ref().map(Secret::expose), Some("sk-new"));
+        assert_eq!((same.ca.clone(), same.account.clone()), (before.ca.clone(), None));
+        let other = kept_as(&before, "https://other.example", Secret::new("sk-new")).expect("kept");
+        assert_eq!(other.gateway, None, "another Arena's gateway is guessed from its address");
+        assert!(other.gateway_url().is_some());
+        let ip = kept_as(&Connection::default(), "https://10.0.0.5", Secret::new("sk-new"));
+        assert!(ip.is_err_and(|e| e.contains("--gateway")));
+        // Its gateway named before, the same address is kept.
+        let named = Connection { url: Some("https://10.0.0.5".into()), gateway: before.gateway.clone(), ..before };
+        assert!(kept_as(&named, "https://10.0.0.5", Secret::new("k")).is_ok());
     }
 
     #[test]
