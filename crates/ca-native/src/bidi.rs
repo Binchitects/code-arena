@@ -42,13 +42,14 @@ pub struct Look {
 /// A text of several lines, each laid out by its own words (the browser's `dir="auto"` with
 /// `unicode-bidi: plaintext`): a right-to-left line stands on the right of the text's width, a left-to-right one on
 /// its left. A text with no right-to-left line is a label as before (it can be selected); one with such a line is
-/// laid out to its widest line's width, or to its place's when it wraps. Its style wraps it (`TextOverflow::Wrap`).
+/// laid out to its widest line's width, or to its place's when it wraps. Its style wraps it (`TextOverflow::Wrap`);
+/// a label's size is its style's (the place's, unless it says one), the look's for one laid out.
 pub fn lines(words: impl Fn() -> String + 'static, look: impl Fn() -> Look + 'static) -> floem::AnyView {
     if !floem::reactive::untrack(|| any_rtl_line(&words())) {
         return label(words)
             .style(move |s| {
                 let l = look();
-                s.font_size(l.size).line_height(l.line_height).color(l.color)
+                s.line_height(l.line_height).color(l.color)
             })
             .into_any();
     }

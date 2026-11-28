@@ -148,10 +148,18 @@ fn quote(ui: Ui, at: u64, text: String) -> impl IntoView {
         .on_click_stop(move |_| go_to_quote(ui, at, &text))
         .style(move |s| s.font_size(11.0).color(t.get().link).cursor(CursorStyle::Pointer));
     v_stack((
-        label(move || if all.get() { words.clone() } else { short.clone() }).style(move |s| {
-            let s = s.font_size(12.0).line_height(1.5).color(t.get().desc).text_overflow(TextOverflow::Wrap);
-            crate::bidi::stand(s, rtl)
-        }),
+        // Its lines each on the side of its own words' direction.
+        floem::views::dyn_container(
+            move || all.get(),
+            move |all| {
+                let words = if all { words.clone() } else { short.clone() };
+                let look = move || crate::bidi::Look { size: 12.0, line_height: 1.5, color: t.get().desc };
+                crate::bidi::lines(move || words.clone(), look).style(move |s| {
+                    crate::bidi::stand(s.font_size(12.0).text_overflow(TextOverflow::Wrap).min_width(0.0), rtl)
+                })
+            },
+        )
+        .style(|s| s.flex_col().min_width(0.0)),
         h_stack((toggle, go)).style(|s| s.gap(12.0)),
     ))
     .style(move |s| {
