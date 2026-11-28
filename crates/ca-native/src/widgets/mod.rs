@@ -54,9 +54,10 @@ pub static ITALIC: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
 pub static SEMIBOLD: std::sync::LazyLock<floem::text::Weight> = std::sync::LazyLock::new(|| {
     let ui = UI_FONT.as_str();
     let fonts = floem::text::FONT_SYSTEM.lock();
-    let has = fonts.db().faces().any(|f| {
-        f.weight == floem::text::Weight::SEMIBOLD && f.families.iter().any(|(name, _)| name == ui)
-    });
+    let has = fonts
+        .db()
+        .faces()
+        .any(|f| f.weight == floem::text::Weight::SEMIBOLD && f.families.iter().any(|(name, _)| name == ui));
     if has { floem::text::Weight::SEMIBOLD } else { floem::text::Weight::BOLD }
 });
 

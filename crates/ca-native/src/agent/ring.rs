@@ -525,7 +525,9 @@ fn body(ui: Ui, send: Send, w: Window, d: Option<Detail>) -> AnyView {
                 })
                 .collect();
             if !big.is_empty() {
-                rows.push(label(|| "Biggest").style(|s| s.font_size(12.0).font_weight(*crate::widgets::SEMIBOLD)).into_any());
+                rows.push(
+                    label(|| "Biggest").style(|s| s.font_size(12.0).font_weight(*crate::widgets::SEMIBOLD)).into_any(),
+                );
                 rows.push(v_stack_from_iter(big).style(|s| s.gap(6.0).width_full()).into_any());
             }
         }
