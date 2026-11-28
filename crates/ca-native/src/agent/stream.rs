@@ -33,3 +33,21 @@ pub fn thread_of(ui: Ui, m: &Value) -> Vec<Item> {
     }
     items
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Kind;
+
+    #[test]
+    fn a_compaction_mark_is_an_item_where_it_is() {
+        let ui = crate::state::Ui::new();
+        let m = serde_json::json!({"messages": [
+            {"role": "user", "text": "one", "q": 1, "covered": true},
+            {"role": "mark", "type": "compaction", "after_q": 1, "summary": "So far: one."},
+            {"role": "user", "text": "two", "q": 2}]});
+        let items = thread_of(ui, &m);
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[1].kind, Kind::Compaction { after_q: 1, summary, .. } if summary == "So far: one."));
+    }
+}

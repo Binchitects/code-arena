@@ -4,7 +4,7 @@
 //! written ('Compact when the answer is done.') or while the thread has fewer than two messages ('Nothing to
 //! compact yet.'). While the model summarizes, a line over the box says so ('Compacting: the model summarizes…');
 //! a toast says how it ended. After the last turn it covers, the thread has a 'Chat compacted' divider whose 'Show
-//! summary' shows the summary the model goes on with (its file names open); compacted again, the divider moves and
+//! summary' shows the summary the model goes on with, drawn as an answer is; compacted again, the divider moves and
 //! shows the latest. A question it covers cannot be edited or answered again (`covers`).
 //!
 //! The session says `compacting` before and `compacted{summary, through_q}` after (`nothing` or `error` when it did
@@ -212,15 +212,18 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
         "notice" if st.busy.get_untracked() && said_by_us(m["text"].as_str().unwrap_or("")) => return true,
         "compacted" => {
             change(st.busy, false);
+            let through = m["through_q"].as_u64().unwrap_or(0);
             if let Some(summary) = m["summary"].as_str() {
-                let through = m["through_q"].as_u64().unwrap_or(0);
-                let mark = Item { id: ui.id(), kind: Kind::compaction(ui.scope, through, summary) };
-                ui.items.update(|l| {
-                    l.retain(|i| !matches!(i.kind, Kind::Compaction { .. }));
-                    let at = place(l, through);
-                    l.insert(at, mark);
-                });
-                change(st.through_q, through);
+                // Only steps of the turn summarized (no question covered): no divider to draw.
+                if through > 0 {
+                    let mark = Item { id: ui.id(), kind: Kind::compaction(ui.scope, through, summary) };
+                    ui.items.update(|l| {
+                        l.retain(|i| !matches!(i.kind, Kind::Compaction { .. }));
+                        let at = place(l, through);
+                        l.insert(at, mark);
+                    });
+                    change(st.through_q, through);
+                }
                 toast::info(ui, "Chat compacted: the model reads a summary of the earlier part from now on.");
             } else if m["nothing"] == true {
                 toast::info(ui, "Nothing older to summarize.");
@@ -229,7 +232,12 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
                 toast::error(ui, &format!("The model gave no summary ({why}): the conversation is as it was."));
             }
         }
-        "state" => change(st.through_q, covered_in(m)),
+        "refused" if m["of"] == "compact" => change(st.busy, false),
+        "turn_start" => change(st.busy, false),
+        "state" => {
+            change(st.busy, false);
+            change(st.through_q, covered_in(m));
+        }
         "older" => {
             let older = covered_in(m);
             if older > st.through_q.get_untracked() {
@@ -278,6 +286,34 @@ mod tests {
         assert_eq!(place(&items, 2), 2);
         assert_eq!(place(&items, 3), 3);
         assert_eq!(place(&[], 3), 0);
+    }
+
+    #[test]
+    fn compacted_again_the_divider_moves_and_covered_questions_are_known() {
+        let ui = Ui::new();
+        let send: Send = std::rc::Rc::new(|_| {});
+        ui.items.set(vec![asked(1), asked(2), asked(3)]);
+        let marks = |ui: Ui| {
+            ui.items.with_untracked(|l| {
+                l.iter()
+                    .enumerate()
+                    .filter(|(_, i)| matches!(i.kind, Kind::Compaction { .. }))
+                    .map(|(at, _)| at)
+                    .collect::<Vec<_>>()
+            })
+        };
+        take(ui, &json!({"type": "compacting"}), &send);
+        assert!(ui.state::<Compaction>().busy.get_untracked());
+        assert!(take(ui, &json!({"type": "notice", "text": "Compacting: the older part."}), &send));
+        take(ui, &json!({"type": "compacted", "summary": "So far.", "through_q": 1}), &send);
+        assert_eq!(marks(ui), [1]);
+        take(ui, &json!({"type": "compacted", "summary": "Later.", "through_q": 2}), &send);
+        assert_eq!(marks(ui), [2]);
+        assert!(!ui.state::<Compaction>().busy.get_untracked());
+        assert!(covers_now(ui, 2) && !covers_now(ui, 3) && !covers_now(ui, 0));
+        // Only steps of a turn summarized: no divider.
+        take(ui, &json!({"type": "compacted", "summary": "Steps.", "through_q": 0}), &send);
+        assert_eq!(marks(ui), [2]);
     }
 
     #[test]
