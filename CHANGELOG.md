@@ -825,6 +825,10 @@ Sections used:
   publisher or description, and @installed, @enabled, @disabled, @recommended and @local narrow it.
   The title also has Refresh and Clear Extensions Search Results, and the palette has Show Installed
   and Show Recommended Extensions.
+- **Rate an answer.** Under an answer of a chat kept in Arena you can give a thumb up or down. A
+  down vote can carry a reason (Wrong, Incomplete, Too long, Unsafe, Ignored instructions, Other).
+  Either vote can carry some words and 'Share this chat with the admins'. Take back removes the
+  rating, and the thumb you gave is still shown after a reload.
 
 
 ### :bug: Bugs fixed
