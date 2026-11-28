@@ -805,7 +805,8 @@ mod tests {
         assert_eq!(Source::parse("empty"), Some(Source::Empty));
         assert_eq!(Source::parse("what:x"), None);
         let hash = "0123456789abcdef0123456789abcdef01234567";
-        let (l, r) = (Source::Rev(format!("{hash}^"), "src/old.rs".into()), Source::Rev(hash.into(), "src/a.rs".into()));
+        let (l, r) =
+            (Source::Rev(format!("{hash}^"), "src/old.rs".into()), Source::Rev(hash.into(), "src/a.rs".into()));
         let rest = kinds::split(&path_of(&l, &r)).expect("a kind path").1.to_string();
         assert_eq!(sides_of(&rest), Some((l, r)), "a revision's side, though its path has a ':' before it");
         assert_eq!(title_of(&rest), "old.rs (01234567^) ↔ a.rs (01234567)");

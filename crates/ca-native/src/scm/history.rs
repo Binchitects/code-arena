@@ -11,10 +11,10 @@
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
+use floem::IntoView;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo};
 use floem::style::CursorStyle;
 use floem::views::{Decorators, empty, h_stack, label, tooltip, v_stack};
-use floem::IntoView;
 use serde_json::{Value, json};
 
 use crate::compare::{self, Source};
@@ -303,9 +303,12 @@ fn with_file(ui: Ui) -> bool {
 
 /// A commit as a pick's row: its message, its short hash, who and when.
 fn pick_row(c: &Commit, now: u64) -> quick::Item {
-    quick::item(&c.hash, &c.subject)
-        .icon("git-commit")
-        .description(&format!("{} · {} · {}", c.short, c.author, ago(now, c.at)))
+    quick::item(&c.hash, &c.subject).icon("git-commit").description(&format!(
+        "{} · {} · {}",
+        c.short,
+        c.author,
+        ago(now, c.at)
+    ))
 }
 
 /// A file's commits picked from; the one picked opens its parent's text beside its own.
@@ -377,9 +380,9 @@ fn pick_revision(ui: Ui, send: &Send, path: String, commits: Vec<Commit>, refs: 
 /// Open Changes: the active file's changes tab (the working tree's, else the index's), as the view opens them.
 fn open_changes(ui: Ui) {
     let Some(path) = active_file(ui) else { return };
-    let f = super::state(ui).status.with_untracked(|s| {
-        s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned())
-    });
+    let f = super::state(ui)
+        .status
+        .with_untracked(|s| s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned()));
     match f {
         Some(f) if f.changed => crate::editor::kinds::open(ui, &format!("{}:w:{path}", super::KIND)),
         Some(f) if f.staged => crate::editor::kinds::open(ui, &format!("{}:i:{path}", super::KIND)),
@@ -507,9 +510,7 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     let me = state(ui);
     let shown = create_memo(move |_| super::has_repo(ui));
     let open = create_memo(move |_| me.open.get());
-    let rows_now = create_memo(move |_| {
-        me.commits.with(|c| me.unfolded.with(|u| me.files.with(|f| rows(c, u, f))))
-    });
+    let rows_now = create_memo(move |_| me.commits.with(|c| me.unfolded.with(|u| me.files.with(|f| rows(c, u, f)))));
     let height = create_memo(move |_| rows_now.with(|r| r.len().max(1)) as f64 * wt::ROW);
     let asking = send.clone();
     let title = h_stack((
@@ -566,7 +567,11 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         });
     v_stack((title, list))
         .style(move |s| {
-            s.width_full().flex_shrink(0.0_f32).max_height_pct(45.0).min_height(0.0).apply_if(!shown.get(), |s| s.hide())
+            s.width_full()
+                .flex_shrink(0.0_f32)
+                .max_height_pct(45.0)
+                .min_height(0.0)
+                .apply_if(!shown.get(), |s| s.hide())
         })
         .into_any()
 }
@@ -584,8 +589,7 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
             let row = h_stack((
                 icon("git-commit", 16.0).style(move |s| s.color(t.get().icon).flex_shrink(0.0_f32)),
                 label(move || subject.clone()).style(|s| s.text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)),
-                label(move || short.clone())
-                    .style(move |s| s.font_size(12.0).color(t.get().desc).flex_shrink(0.0_f32)),
+                label(move || short.clone()).style(move |s| s.font_size(12.0).color(t.get().desc).flex_shrink(0.0_f32)),
             ))
             .style(|s| s.width_full().min_width(0.0).items_center().gap(6.0));
             tooltip(row, move || {
@@ -596,7 +600,8 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
             .into_any()
         }
         Some(Row::File(hash, path)) => {
-            let f = me.files.with_untracked(|f| f.get(hash).and_then(|f| f.files.iter().find(|x| x.path == path).cloned()));
+            let f =
+                me.files.with_untracked(|f| f.get(hash).and_then(|f| f.files.iter().find(|x| x.path == path).cloned()));
             let Some(f) = f else { return empty().into_any() };
             let letter = f.status;
             let name = name_of(&f.path).to_string();
@@ -626,9 +631,9 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
 fn row_decoration(ui: Ui, node: &wt::Node) -> floem::AnyView {
     let t = ui.colors;
     let Some(Row::File(hash, path)) = row_of(&node.id) else { return empty().into_any() };
-    let letter = state(ui).files.with_untracked(|f| {
-        f.get(hash).and_then(|f| f.files.iter().find(|x| x.path == path).map(|x| x.status))
-    });
+    let letter = state(ui)
+        .files
+        .with_untracked(|f| f.get(hash).and_then(|f| f.files.iter().find(|x| x.path == path).map(|x| x.status)));
     let Some(letter) = letter else { return empty().into_any() };
     label(move || letter.to_string())
         .style(move |s| s.font_size(12.0).width(12.0).margin_right(10.0).color(colour_of(&t.get(), letter)))
@@ -646,7 +651,11 @@ mod tests {
 
     #[test]
     fn a_commits_file_opens_its_parent_beside_it_with_an_empty_side_for_an_added_or_deleted_one() {
-        let f = |path: &str, status: char, from: Option<&str>| Changed { path: path.into(), status, from: from.map(Into::into) };
+        let f = |path: &str, status: char, from: Option<&str>| Changed {
+            path: path.into(),
+            status,
+            from: from.map(Into::into),
+        };
         assert_eq!(
             sides_of("abc", false, &f("a.rs", 'M', None)),
             (Source::Rev("abc^".into(), "a.rs".into()), Source::Rev("abc".into(), "a.rs".into()))

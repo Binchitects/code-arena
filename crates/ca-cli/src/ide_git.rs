@@ -1726,7 +1726,8 @@ mod tests {
         let first = String::from_utf8_lossy(&git(p, &["rev-parse", "HEAD"], None).expect("rev")).trim().to_string();
         let v = &answered(p, json!({"type": "git_commit_files", "repo": "", "hash": first, "key": "k"}))[0];
         assert_eq!(v["parents"], json!([]));
-        let added = json!([{"path": "a.txt", "status": "A", "from": null}, {"path": "gone.txt", "status": "A", "from": null}]);
+        let added =
+            json!([{"path": "a.txt", "status": "A", "from": null}, {"path": "gone.txt", "status": "A", "from": null}]);
         assert_eq!(v["files"], added, "{v}");
         git(p, &["mv", "a.txt", "b.txt"], None).expect("mv");
         git(p, &["rm", "-q", "gone.txt"], None).expect("rm");
