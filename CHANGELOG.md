@@ -533,6 +533,17 @@ Sections used:
 - **Outline filter, Collapse All and signatures.** The Outline has a Filter box that keeps the
   symbols matching it and the symbols they are in, a Collapse All button in its title, and a
   tooltip on each row with the symbol's definition line.
+- **Plan view.** The Plan view shows the agent's working plan: its title, 'N/M done', goal and steps
+  (Done, Doing, Blocked, To do) with 'Done when: `check` · passed|failed' (output on hover), 'after
+  1, 2', file chips, the symbols it changes, impact and notes; Clear Plan in its title.
+- **Plan review in plan mode.** A proposed plan shows what a second reading said, then Approve,
+  Approve, asking before each change, Another Way... and Reject... (each asks why), and Change step N
+  on each step; the review is said to the agent as the next turn.
+- **Undo a step, carry on an earlier plan.** 'Undo step N' puts a begun step's files back (after a
+  confirmation, with a toast); with no plan, the view offers to carry on the plan an earlier session
+  of the folder left unfinished.
+- **Plan bar.** The plan's bar over the input shows a progress bar and 'waiting for your review',
+  and opens to the steps with a click.
 
 
 ### :bug: Bugs fixed
