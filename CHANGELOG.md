@@ -905,6 +905,14 @@ Sections used:
   server's state, its tools or why it is not connected, its address (without user, password or
   query), when it is tried again, and Try again (also Try All Again). A footer says which settings
   turn Arena's tools and Farzan Graph's on and off.
+- **Other providers dialog.** The plug beside the chat's pickers, or More → Other Providers…, lists
+  the providers of your own keys: each one's API (Messages API or Chat completions), its address,
+  where its key comes from (kept here, from its variable, or no key in red), up to four of its
+  models, and a button to remove it. You can add Anthropic, OpenAI, DeepSeek, OpenRouter, Mistral or
+  another API (its name, address and what it speaks). The key goes in a password field and is
+  checked by listing its models. It is kept in credentials.json, which only you can read, and is
+  never shown again. The models appear at once in the model picker as provider:model. When Arena's
+  admins do not allow other providers, the dialog says so.
 
 
 ### :bug: Bugs fixed
