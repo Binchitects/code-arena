@@ -597,7 +597,7 @@ pub fn of_rows(ui: Ui, send: &Send, rows: Vec<Row>) -> Vec<Item> {
     rows.into_iter()
         .map(|r| match r {
             Row::Line => Item::Line,
-            Row::Entry { title, keys, command, .. } => {
+            Row::Entry { title, keys, command, checked, .. } => {
                 let (send, enabled) = (send.clone(), command.is_some());
                 let id = command.unwrap_or_default();
                 entry(&title, move || {
@@ -605,6 +605,7 @@ pub fn of_rows(ui: Ui, send: &Send, rows: Vec<Row>) -> Vec<Item> {
                 })
                 .keys(&keys)
                 .enabled(enabled)
+                .checked(checked)
                 .into()
             }
         })
@@ -790,9 +791,15 @@ mod tests {
             ui.message.set("went".into())
         }));
         let rows = vec![
-            Row::Entry { title: "Go".into(), keys: "F9".into(), icon: "", command: Some("test.popup.go".into()) },
+            Row::Entry {
+                title: "Go".into(),
+                keys: "F9".into(),
+                icon: "",
+                command: Some("test.popup.go".into()),
+                checked: false,
+            },
             Row::Line,
-            Row::Entry { title: "Later".into(), keys: String::new(), icon: "", command: None },
+            Row::Entry { title: "Later".into(), keys: String::new(), icon: "", command: None, checked: false },
         ];
         let items = of_rows(ui, &send, rows);
         assert!(matches!(items[1], Item::Line));
