@@ -20,7 +20,7 @@ use std::rc::Rc;
 use floem::IntoView;
 use floem::keyboard::{Key, Modifiers};
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo};
-use floem::style::{CursorStyle, FlexWrap, Position};
+use floem::style::{CursorStyle, FlexWrap, Position, TextOverflow};
 use floem::views::{Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, tooltip, v_stack};
 use serde_json::{Value, json};
 
@@ -257,10 +257,21 @@ fn named(ui: Ui, name: String, line: String, error: bool) -> floem::AnyView {
         icon("file", 16.0).style(move |s| s.color(t.get().desc).flex_shrink(0.0_f32)),
         v_stack((
             label(move || name.clone()).style(|s| s.max_width(176.0).text_ellipsis()),
-            label(move || line.clone()).style(move |s| {
-                let c = t.get();
-                s.font_size(11.0).max_width(176.0).text_ellipsis().color(if error { c.error } else { c.desc })
-            }),
+            tooltip(
+                label({
+                    let line = line.clone();
+                    move || line.clone()
+                })
+                .style(move |s| {
+                    let c = t.get();
+                    s.font_size(11.0).max_width(176.0).text_ellipsis().color(if error { c.error } else { c.desc })
+                }),
+                // The line is cut to the chip; the whole of it (an upload's error, mostly) on hover.
+                move || {
+                    let line = line.clone();
+                    label(move || line.clone()).style(|s| s.max_width(360.0).text_overflow(TextOverflow::Wrap))
+                },
+            ),
         )),
     ))
     .style(|s| s.gap(8.0).items_center().padding_vert(4.0).padding_left(8.0).padding_right(28.0))
@@ -298,10 +309,7 @@ fn chip(ui: Ui, u: Upload) -> impl IntoView {
     let x = tooltip(
         container(icon("close", 12.0)).on_click_stop(move |_| remove(ui, &key)).style(move |s| {
             let c = t.get();
-            s.position(Position::Absolute)
-                .inset_top(3.0)
-                .inset_right(3.0)
-                .width(18.0)
+            s.width(18.0)
                 .height(18.0)
                 .items_center()
                 .justify_center()
@@ -315,7 +323,9 @@ fn chip(ui: Ui, u: Upload) -> impl IntoView {
             let name = name.clone();
             label(move || format!("Remove {name}"))
         },
-    );
+    )
+    // Placed on the hover box itself: a box of no size laid out in the row would get no clicks for what it holds.
+    .style(|s| s.position(Position::Absolute).inset_top(3.0).inset_right(3.0));
     container((body, bar, x)).style(move |s| {
         let c = t.get();
         s.position(Position::Relative)
@@ -354,8 +364,14 @@ fn chips(ui: Ui) -> impl IntoView {
             .color(t.get().desc)
             .apply_if(blind.with(Option::is_none), |s| s.hide())
     });
-    let note = label(move || me.note.get())
-        .style(move |s| s.font_size(11.0).color(t.get().error).apply_if(me.note.with(String::is_empty), |s| s.hide()));
+    let note = label(move || me.note.get()).style(move |s| {
+        s.font_size(12.0)
+            .line_height(1.4)
+            .min_width(0.0)
+            .text_overflow(TextOverflow::Wrap)
+            .color(t.get().error)
+            .apply_if(me.note.with(String::is_empty), |s| s.hide())
+    });
     let empty_all = create_memo(move |_| me.uploads.with(Vec::is_empty) && me.note.with(String::is_empty));
     v_stack((list, blind_line, note))
         .style(move |s| s.gap(6.0).margin_bottom(6.0).width_full().apply_if(empty_all.get(), |s| s.hide()))

@@ -1440,7 +1440,9 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
                         };
                         let s = s
                             .apply_if(run.bold, |s| s.font_weight(floem::text::Weight::BOLD))
-                            .apply_if(run.italic, |s| s.font_style(floem::text::Style::Italic));
+                            .apply_if(run.italic && *crate::widgets::ITALIC, |s| {
+                                s.font_style(floem::text::Style::Italic)
+                            });
                         if !caret {
                             return s;
                         }

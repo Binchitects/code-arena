@@ -357,7 +357,7 @@ impl Styling for Colours {
             if style.font_style.contains(FontStyle::BOLD) {
                 a = a.weight(Weight::BOLD);
             }
-            if style.font_style.contains(FontStyle::ITALIC) {
+            if style.font_style.contains(FontStyle::ITALIC) && *crate::widgets::ITALIC {
                 a = a.style(FontSlant::Italic);
             }
             spans.push((range, a));
