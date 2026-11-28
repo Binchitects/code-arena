@@ -79,6 +79,8 @@ impl Row {
             "here" => ("Key kept here".into(), false),
             "env" if !self.key_env.is_empty() => (format!("Key from {}", self.key_env), false),
             "env" => ("Key from the environment".into(), false),
+            // Kept without one only where none is needed (as the driver takes them): not a fault.
+            _ if self.name == "ollama" || self.url.starts_with("http://") => ("No key needed".into(), false),
             _ => ("No key".into(), true),
         }
     }
@@ -495,6 +497,8 @@ mod tests {
             Row::of(&json!({"name": "x", "key": "here"})).map(|r| r.key_words().0),
             Some("Key kept here".into())
         );
+        let local = Row::of(&json!({"name": "local", "url": "http://127.0.0.1:8080", "key": "none"})).expect("a row");
+        assert_eq!(local.key_words(), ("No key needed".to_string(), false), "an API nearby needs no key");
         assert!(Row::of(&json!({"kind": "openai"})).is_none(), "a row without its name is not one");
     }
 

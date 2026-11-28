@@ -522,6 +522,15 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         });
         let button = tooltip(button, move || hover(v));
         let id = button.id();
+        // The view shown is scrolled into sight when the bar has more icons than room (a view opened from the
+        // palette was otherwise lit below the bar's fold, half drawn or not at all).
+        floem::reactive::create_effect(move |was: Option<bool>| {
+            let now = lit();
+            if now && was != Some(true) {
+                id.scroll_to(None);
+            }
+            now
+        });
         DRAWN.with(|d| {
             let mut d = d.borrow_mut();
             d.side_items.retain(|(x, _)| *x != v);
