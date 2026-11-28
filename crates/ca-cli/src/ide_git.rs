@@ -1375,8 +1375,9 @@ mod tests {
     #[test]
     fn a_git_that_takes_too_long_is_stopped() {
         let Some(d) = repo() else { return };
-        // `git var` answers at once; a limit of nothing stops even it, or lets it finish: either says so plainly.
-        match git_for(d.path(), &["var", "GIT_EDITOR"], std::time::Duration::ZERO) {
+        // `git rev-parse` answers at once (and, unlike `git var GIT_EDITOR`, whatever the terminal is); a limit of
+        // nothing stops even it, or lets it finish: either says so plainly.
+        match git_for(d.path(), &["rev-parse", "--is-inside-work-tree"], std::time::Duration::ZERO) {
             Ok(_) => {}
             Err(e) => assert!(e.contains("took longer than 0 minutes"), "{e}"),
         }
