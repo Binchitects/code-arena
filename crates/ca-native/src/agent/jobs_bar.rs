@@ -165,12 +165,10 @@ pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
         move || folded.get(),
         |f| icon(if f { "chevron-right" } else { "chevron-down" }, 14.0).into_any(),
     );
-    let head = h_stack((
-        chevron,
-        label(move || bar.jobs.with(|js| header(js))).style(move |s| bold(s).font_size(12.0)),
-    ))
-    .style(|s| s.gap(5.0).items_center().width_full().cursor(CursorStyle::Pointer))
-    .on_click_stop(move |_| bar.folded.update(|f| *f = !*f));
+    let head =
+        h_stack((chevron, label(move || bar.jobs.with(|js| header(js))).style(move |s| bold(s).font_size(12.0))))
+            .style(|s| s.gap(5.0).items_center().width_full().cursor(CursorStyle::Pointer))
+            .on_click_stop(move |_| bar.folded.update(|f| *f = !*f));
     let rows = dyn_container(
         move || folded.get(),
         move |f| {
@@ -207,40 +205,51 @@ fn row(ui: Ui, bar: Bar, send: Send, j: Job) -> impl IntoView {
             return s.rotate((bar.tick.get() % 12) as f64 * std::f64::consts::TAU / 12.0);
         }
         let ok = status == "ended" && j.exit == Some(0);
-        s.color(if ok { c.ok } else if status == "stopped" { c.desc } else { c.error })
+        s.color(if ok {
+            c.ok
+        } else if status == "stopped" {
+            c.desc
+        } else {
+            c.error
+        })
     });
     let mark = h_stack((mark,)).style(|s| s.width(14.0).height(14.0).items_center().justify_center());
     let name = format!("job {id}");
     let (command, words) = (j.command.clone(), standing(&j));
     let tip = j.command.clone();
-    let stop = {
-        let send = send.clone();
-        label(move || {
-            if bar.stopping.with(|s| s.contains(&id)) { "Stopping…".to_string() } else { format!("Stop job {id}") }
-        })
-        .on_click_stop(move |_| {
-            if !bar.stopping.with_untracked(|s| s.contains(&id)) {
-                bar.stopping.update(|s| {
-                    s.insert(id);
-                });
-                send(json!({"type": "stop_job", "id": id}));
-            }
-        })
-        .style(move |s| {
-            let c = t.get();
-            s.padding_horiz(8.0)
-                .padding_vert(1.0)
-                .border_radius(3.0)
-                .font_size(12.0)
-                .flex_shrink(0.0_f32)
-                .background(c.button2_bg)
-                .color(c.button2_fg)
-                .cursor(CursorStyle::Pointer)
-                .selectable(false)
-                .hover(|s| s.background(c.button2_hover))
-                .apply_if(!running, |s| s.hide())
-        })
-    };
+    let stop =
+        {
+            let send = send.clone();
+            label(move || {
+                if bar.stopping.with(|s| s.contains(&id)) {
+                    "Stopping…".to_string()
+                } else {
+                    format!("Stop job {id}")
+                }
+            })
+            .on_click_stop(move |_| {
+                if !bar.stopping.with_untracked(|s| s.contains(&id)) {
+                    bar.stopping.update(|s| {
+                        s.insert(id);
+                    });
+                    send(json!({"type": "stop_job", "id": id}));
+                }
+            })
+            .style(move |s| {
+                let c = t.get();
+                s.padding_horiz(8.0)
+                    .padding_vert(1.0)
+                    .border_radius(3.0)
+                    .font_size(12.0)
+                    .flex_shrink(0.0_f32)
+                    .background(c.button2_bg)
+                    .color(c.button2_fg)
+                    .cursor(CursorStyle::Pointer)
+                    .selectable(false)
+                    .hover(|s| s.background(c.button2_hover))
+                    .apply_if(!running, |s| s.hide())
+            })
+        };
     let line = h_stack((
         chevron,
         mark,

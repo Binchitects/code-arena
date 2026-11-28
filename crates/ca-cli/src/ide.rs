@@ -89,7 +89,13 @@ pub(crate) fn tasks(sh: &Shared) -> Value {
         .unwrap_or_default()
         .into_iter()
         .map(|j| {
-            let status = if j.running { "running" } else if j.stopped { "stopped" } else { "ended" };
+            let status = if j.running {
+                "running"
+            } else if j.stopped {
+                "stopped"
+            } else {
+                "ended"
+            };
             json!({"id": j.id, "command": j.command, "running": j.running, "exit": j.exit, "background": j.background,
                    "status": status, "started_ms": j.started_ms, "ended_ms": j.ended_ms})
         })
