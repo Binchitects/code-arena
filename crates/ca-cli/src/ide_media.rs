@@ -40,14 +40,13 @@ const MOST_BYTES: u64 = 50 * 1024 * 1024;
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] =
-        &[
-            ("media", Rule::Side),
-            ("media_open", Rule::Side),
-            ("media_save", Rule::Side),
-            ("diagram", Rule::Side),
-            ("diagram_open", Rule::Side),
-        ];
+    const MESSAGES: &'static [(&'static str, Rule)] = &[
+        ("media", Rule::Side),
+        ("media_open", Rule::Side),
+        ("media_save", Rule::Side),
+        ("diagram", Rule::Side),
+        ("diagram_open", Rule::Side),
+    ];
 
     fn side(side: &Side, m: &Value) -> bool {
         let path = m["path"].as_str().unwrap_or("");
