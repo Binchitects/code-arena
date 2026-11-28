@@ -109,18 +109,17 @@ pub fn split(ui: Ui, path: &str) -> (String, String) {
 /// was last asked (`force`: asked anyway, Refresh).
 pub fn ask(ui: Ui, send: &Send, force: bool) {
     let me = state(ui);
-    let setting = |k: &str| crate::settings::now(ui, k, None);
     let mut open: Vec<String> = ui.tabs.with_untracked(|tabs| {
         tabs.iter().filter(|t| t.kind.is_none() && t.diff.is_none()).map(|t| t.file.clone()).collect()
     });
     open.sort();
     open.dedup();
-    let detect = match setting("git.autoRepositoryDetection") {
+    let detect = match crate::settings::now(ui, "git.autoRepositoryDetection", None) {
         Value::Null => json!(true),
         v => v,
     };
-    let depth = setting("git.repositoryScanMaxDepth").as_i64().unwrap_or(1);
-    let ignored = match setting("git.repositoryScanIgnoredFolders") {
+    let depth = crate::settings::now(ui, "git.repositoryScanMaxDepth", None).as_i64().unwrap_or(1);
+    let ignored = match crate::settings::now(ui, "git.repositoryScanIgnoredFolders", None) {
         Value::Array(a) => Value::Array(a),
         _ => json!(["node_modules"]),
     };
