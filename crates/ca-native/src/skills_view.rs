@@ -35,6 +35,7 @@ pub const IMPORT: &str = "codeArena.skills.import";
 pub const EXPORT_OWN: &str = "codeArena.skills.exportOwn";
 pub const EXPORT_ALL: &str = "codeArena.skills.exportAll";
 pub const BUILT_IN: &str = "codeArena.skills.toggleBuiltIn";
+pub const MORE: &str = "codeArena.skills.more";
 
 /// The setting that turns the built-in skills on and off.
 const BUILT_IN_KEY: &str = "skills.builtIn";
@@ -159,11 +160,11 @@ fn stamp(v: &impl std::hash::Hash) -> u64 {
     BuildHasherDefault::<DefaultHasher>::default().hash_one(v)
 }
 
-/// The folders a group's skills are in, as its row says them.
+/// The folders a group's skills are in, as its row says them (not when it is the group's own title: Built in).
 pub fn origins(g: &Group) -> String {
     let mut seen: Vec<&str> = Vec::new();
     for k in &g.skills {
-        if !seen.contains(&k.origin.as_str()) {
+        if !seen.contains(&k.origin.as_str()) && !k.origin.eq_ignore_ascii_case(&g.title) {
             seen.push(&k.origin);
         }
     }
@@ -536,6 +537,32 @@ fn count_badge(ui: Ui, n: usize) -> impl IntoView {
     })
 }
 
+/// The title's "…" menu: the items of the view's title that are not drawn as its actions.
+pub fn more_rows(rows: Vec<crate::menus::Row>) -> Vec<crate::menus::Row> {
+    use crate::menus::Row as M;
+    let mut out: Vec<M> = Vec::new();
+    for r in rows {
+        match r {
+            M::Entry { icon, .. } if !icon.is_empty() => {}
+            M::Line if out.is_empty() || matches!(out.last(), Some(M::Line)) => {}
+            r => out.push(r),
+        }
+    }
+    if matches!(out.last(), Some(M::Line)) {
+        out.pop();
+    }
+    out
+}
+
+/// Opens the title's "…" menu at the top right of the list.
+fn more(ui: Ui, send: &Send) {
+    use crate::widgets::popup;
+    let Some(view) = state(ui).tree.view() else { return };
+    let r = view.layout_rect();
+    let rows = more_rows(crate::menus::rows(ui, crate::menus::Menu::ViewTitle(View::Skills)));
+    popup::open(ui, popup::At::point(view, r.x1 - 8.0, r.y0), popup::of_rows(ui, send, rows));
+}
+
 /// The actions in its title: none of its own (they are the title menu's).
 pub fn actions(_ui: Ui, _send: Send) -> Option<floem::AnyView> {
     None
@@ -559,6 +586,7 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(command(EXPORT_ALL, "Skills", "Export All...", move |ui, send| {
         export(ui, send, names_in(&list(ui), &[]), "all-skills.zip", "Export All Skills")
     }));
+    add(command(MORE, "Skills", "More Actions...", more).hidden());
     add(command(BUILT_IN, "Skills", "Built-in Skills", move |ui, send| {
         let on = list(ui).builtin;
         send(json!({"type": "set_setting", "key": BUILT_IN_KEY, "value": !on}));
@@ -569,6 +597,7 @@ pub fn register(_ui: Ui, _send: &Send) {
     crate::menus::add(at, title(NEW, "add", 1));
     crate::menus::add(at, title(REFRESH, "refresh", 2));
     crate::menus::add(at, title(COLLAPSE, "collapse-all", 3));
+    crate::menus::add(at, title(MORE, "ellipsis", 4));
     crate::menus::add(at, item(IMPORT).group("1_transfer").order(1));
     crate::menus::add(at, item(EXPORT_OWN).group("1_transfer").order(2));
     crate::menus::add(at, item(EXPORT_ALL).group("1_transfer").order(3));
@@ -743,5 +772,35 @@ mod tests {
         assert_eq!(p.skills, [("a".to_string(), vec!["project".to_string()]), ("b".to_string(), vec![])]);
         assert_eq!(p.secret, ["a"]);
         assert_eq!(p.left_out.len(), 1);
+    }
+
+    #[test]
+    fn the_more_menu_has_the_titles_items_without_an_icon_and_no_stray_line() {
+        use crate::menus::Row as M;
+        let entry = |title: &str, icon: &'static str| M::Entry {
+            title: title.into(),
+            keys: String::new(),
+            icon,
+            command: Some(title.into()),
+            checked: false,
+        };
+        let got = more_rows(vec![
+            entry("New", "add"),
+            M::Line,
+            entry("Import", ""),
+            M::Line,
+            M::Line,
+            entry("Built-in", ""),
+            M::Line,
+            entry("Help", "question"),
+        ]);
+        let titles: Vec<String> = got
+            .iter()
+            .map(|r| match r {
+                M::Entry { title, .. } => title.clone(),
+                M::Line => "-".into(),
+            })
+            .collect();
+        assert_eq!(titles, ["Import", "-", "Built-in"]);
     }
 }
