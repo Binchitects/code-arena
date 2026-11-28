@@ -1087,6 +1087,21 @@ Sections used:
   Arena's signing CA signed it, then puts it in the program's place. The item then reads 'Updated:
   restart' and starts the new program. Check for Updates... is in the palette and the Manage menu,
   beside Install Update and Restart to Update.
+- **Jupyter notebooks open as cells.** An .ipynb opens in a notebook editor like VS Code's: code
+  cells in editors with their language's colours, a run button and [n] / [*], and their outputs
+  below as text; Markdown cells drawn as they read (double-click or Enter to edit). The toolbar
+  has + Code, + Markdown, Run All, Clear All Outputs, Interrupt, Restart, Open as Text and the
+  kernel's name. Each cell has Move Up/Down, Change to Markdown/Code, Clear Outputs and Delete.
+- **Jupyter's keys in notebooks.** With a cell selected (Esc leaves its editor): Enter edits it,
+  Up/Down or K/J move between cells, A/B add a cell above or below, D D deletes, M/Y/R make it
+  Markdown, code or raw, C/X/V copy, cut and paste cells, Z and Shift+Z undo and redo a change to
+  the cells. Ctrl+Enter, Shift+Enter and Alt+Enter run the cell, then stay, move to the next or add
+  one below.
+- **Notebooks saved as Jupyter saves them.** Ctrl+S writes keys sorted, the file's own indent and
+  text as lists of lines, so a notebook opened and saved unchanged is the same file. Open as Text,
+  Reopen Editor With... and Open as Notebook (at the breadcrumbs' end) switch views. A notebook that
+  is not nbformat 4 opens as text. Create: New Jupyter Notebook makes one and never overwrites a
+  file.
 
 
 ### :bug: Bugs fixed
