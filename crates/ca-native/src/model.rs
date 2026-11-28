@@ -294,10 +294,10 @@ pub enum Kind {
     Assistant(Answer),
     Notice(String),
     Error(String),
+    /// The question before a call, and the person's answer once given.
     Ask {
         id: u64,
-        tool: String,
-        subject: String,
+        asked: crate::agent::ask::Asked,
         answer: RwSignal<Option<String>>,
     },
     /// Where the chat was compacted: after which question, the summary the model goes on with, and whether the

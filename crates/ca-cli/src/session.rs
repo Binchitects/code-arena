@@ -290,6 +290,35 @@ pub fn watch_arena_settings(app: &App, notices: &Notices) -> Option<tokio::task:
     }))
 }
 
+/// Laya as Arena has it: a reading in 3 seconds or none, and none from then on once the server says it has no
+/// Laya.
+struct ArenaLaya {
+    arena: ca_arena::ArenaClient,
+    cwd: String,
+    missing: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl ca_agent::CommandCheck for ArenaLaya {
+    async fn check(&self, command: &str) -> Option<ca_agent::Risk> {
+        use std::sync::atomic::Ordering;
+        if self.missing.load(Ordering::Relaxed) {
+            return None;
+        }
+        let read = tokio::time::timeout(Duration::from_secs(3), self.arena.laya_check(command, &self.cwd)).await;
+        match read {
+            Ok(Ok(Some(r))) => {
+                Some(ca_agent::Risk { destructive: r.destructive, outside: r.outside, network: r.network })
+            }
+            Ok(Ok(None)) => {
+                self.missing.store(true, Ordering::Relaxed);
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
 async fn keep_arena_skills(arena: ca_arena::ArenaClient, data: std::path::PathBuf, builtin: bool, notices: Notices) {
     {
         let Ok(Ok(got)) = tokio::time::timeout(Duration::from_secs(15), arena.skills()).await else { return };
@@ -890,6 +919,16 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         repo_key: Some(ca_memory::keys::project_key(&ws_root)).filter(|k| !k.starts_with("local/")),
         attached: Default::default(),
     };
+    // Laya reads each command first, when signed in to an Arena that has it.
+    if app.connection.signed_in()
+        && let Ok(arena) = app.arena()
+    {
+        agent.policy.laya = Some(ca_agent::Laya(Arc::new(ArenaLaya {
+            arena,
+            cwd: folder.clone(),
+            missing: std::sync::atomic::AtomicBool::new(false),
+        })));
+    }
     // The sandbox, as the settings and this system allow.
     let sandbox_mode = app.settings.string(&schema::SANDBOX).unwrap_or_else(|| "auto".into());
     if sandbox_mode != "off" {

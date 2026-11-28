@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use ca_agent::{Answer, Approver, Call, Events};
+use ca_agent::{Answer, Approver, Call, Events, Question};
 use ca_tools::Output;
 use serde_json::{Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -64,13 +64,13 @@ struct PageApprover {
 
 #[async_trait::async_trait]
 impl Approver for PageApprover {
-    async fn ask(&self, tool: &str, subject: &str) -> Option<Answer> {
+    async fn ask(&self, q: &Question<'_>) -> Option<Answer> {
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = oneshot::channel();
         if let Ok(mut p) = self.pending.lock() {
             p.insert(id, tx);
         }
-        send(&self.out, json!({"type": "ask", "id": id, "tool": tool, "subject": subject}));
+        send(&self.out, ask_message(id, q));
         // A turn stopped (its questions dropped) answers no.
         Some(rx.await.unwrap_or(Answer::No))
     }
@@ -160,6 +160,14 @@ fn shown_arguments(v: &Value) -> Value {
         Value::Object(o) => Value::Object(o.iter().map(|(k, v)| (k.clone(), shown_arguments(v))).collect()),
         other => other.clone(),
     }
+}
+
+/// The question the page shows as a card: the call, its first line, what "always" would spare (null: it asks every
+/// time), Laya's reading (null: none), and how a command waits.
+fn ask_message(id: u64, q: &Question<'_>) -> Value {
+    json!({"type": "ask", "id": id, "tool": q.tool, "subject": q.subject, "title": q.title,
+           "arguments": shown_arguments(q.arguments), "always": q.always, "risk": q.risk,
+           "timeless": q.timeless, "background": q.background})
 }
 
 /// A call as the page is told of it: its id, its name, what it is about and what it was asked with.
@@ -1424,6 +1432,33 @@ mod tests {
         let v = shown_arguments(&json!({"content": long, "n": 3, "list": ["a"]}));
         assert!(v["content"].as_str().is_some_and(|s| s.ends_with('…') && s.chars().count() == SHOWN_ARGUMENT + 1));
         assert_eq!((&v["n"], &v["list"]), (&json!(3), &json!(["a"])));
+    }
+
+    #[test]
+    fn a_question_says_its_title_what_always_spares_and_lays_reading() {
+        let args = json!({"command": "rm -rf ../build", "timeout": 0});
+        let q = Question {
+            tool: "run_shell",
+            subject: "[no time limit] rm -rf ../build",
+            title: "Run this command?",
+            arguments: &args,
+            always: None,
+            risk: Some(ca_agent::Risk { destructive: 0.96, outside: 0.93, network: 0.03 }),
+            timeless: true,
+            background: false,
+        };
+        let m = ask_message(4, &q);
+        assert_eq!((&m["type"], &m["id"], &m["tool"]), (&json!("ask"), &json!(4), &json!("run_shell")));
+        assert_eq!(
+            (&m["title"], &m["always"], &m["timeless"]),
+            (&json!("Run this command?"), &json!(null), &json!(true))
+        );
+        assert_eq!(m["risk"], json!({"destructive": 0.96, "outside": 0.93, "network": 0.03}));
+        assert_eq!(m["arguments"]["command"], "rm -rf ../build");
+        let q =
+            Question { always: Some("Always for this session: no more questions about file edits."), risk: None, ..q };
+        let m = ask_message(5, &q);
+        assert_eq!((m["risk"].is_null(), m["always"].as_str().is_some()), (true, true));
     }
 
     #[test]

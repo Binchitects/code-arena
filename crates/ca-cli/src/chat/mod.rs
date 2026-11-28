@@ -8,7 +8,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use ca_agent::{Answer, Approver, Mode, TurnError};
+use ca_agent::{Answer, Approver, Mode, Question, TurnError};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{cursor, execute, queue, terminal};
 use tokio::sync::{mpsc, oneshot};
@@ -139,17 +139,19 @@ struct KeyApprover {
 
 #[async_trait::async_trait]
 impl Approver for KeyApprover {
-    async fn ask(&self, tool: &str, subject: &str) -> Option<Answer> {
+    async fn ask(&self, q: &Question<'_>) -> Option<Answer> {
         let (tx, rx) = oneshot::channel();
         if let Ok(mut p) = self.pending.lock() {
             *p = Some(tx);
         }
-        let shown: String = subject.chars().take(300).collect();
+        let shown: String = q.subject.chars().take(300).collect();
+        let laya = q.risk.map(|r| format!("\n  {}", self.ui.yellow(&r.line()))).unwrap_or_default();
+        let keys = if q.always.is_some() { "[y]es  [n]o  [a]lways for this session" } else { "[y]es  [n]o" };
         ui::out(&format!(
-            "\x07{} {}\n  {}  ",
-            self.ui.yellow(&format!("Allow {tool}?")),
+            "\x07{} {}{laya}\n  {}  ",
+            self.ui.yellow(&format!("Allow {}?", q.tool)),
             self.ui.dim(&shown),
-            self.ui.bold("[y]es  [n]o  [a]lways for this session")
+            self.ui.bold(keys)
         ));
         rx.await.ok()
     }
