@@ -23,10 +23,10 @@
 //! - The view: a section for each source, a fold for each file under it (its name, its folder dimmed, its count),
 //!   and its problems, the worst first: the severity's icon, the message, the source and code, `[Ln 12, Col 5]`. A
 //!   click opens the file there. Under the pointer: Fix with Code Arena; the right-click menu: Copy, Copy Message,
-//!   Fix with Code Arena, Quick Fix…. Its title: the filter (`text, **/*.ts, !**/node_modules/**`: words looked for
+//!   Fix with Code Arena, Quick Fix…. Over the rows: the filter (`text, **/*.ts, !**/node_modules/**`: words looked for
 //!   in the message, the code, the source and the path; a pattern of the files; `!` before either leaves them out),
-//!   the filter's menu (Show Errors, Show Warnings, Show Infos, Show Active File Only) and Collapse All. What the
-//!   filter hides is counted under the title.
+//!   the filter's menu (Show Errors, Show Warnings, Show Infos, Show Active File Only); in the title, Collapse
+//!   All. What the filter hides is counted under it.
 //! - In every editor of a file with problems, opened before they came or after: a squiggle under each (its hover:
 //!   the message, the source and code), its mark in the overview ruler, and the light bulb in the glyph margin of
 //!   each line that has one: a click on it (or Ctrl+., Quick Fix…, on the caret's line) offers Fix with Code Arena.
@@ -71,7 +71,7 @@ pub const QUICK_FIX: &str = "editor.action.quickFix";
 /// What the light bulb and the problem's menu offer.
 const FIX_TITLE: &str = "Fix with Code Arena";
 /// The filter's hint, as VS Code's.
-const FILTER_HINT: &str = "Filter (e.g. text, **/*.ts, !**/node_modules/**)";
+const FILTER_HINT: &str = "Filter (text, **/*.ts, !exclude)";
 const NONE_AT_ALL: &str = "No problems have been detected in the workspace.";
 const NONE_IN_FILE: &str = "No problems have been detected in the current file.";
 const NONE_SHOWN: &str = "No results found with provided filter criteria.";
@@ -252,6 +252,9 @@ fn store(ui: Ui) -> Store {
 
 /// A source's problems, in place of those it said before (none: the source is gone).
 pub fn publish(ui: Ui, source: &str, mut items: Vec<Problem>) {
+    for p in &mut items {
+        p.line = p.line.max(1);
+    }
     sort(&mut items);
     let s = store(ui);
     let same = s.by_source.with_untracked(|m| match m.get(source) {
@@ -508,7 +511,7 @@ fn on_line(ui: Ui, path: &str, line: usize) -> Vec<(String, Problem)> {
 }
 
 /// The light bulb's menu for a line (from 0) of a file: Fix with Code Arena, and the whole file's when it has
-/// more; by the line in its editor when that is on screen, else the fix asked at once.
+/// more; by the line in its editor. Nothing when the editor is not on screen: the agent is asked only by a click.
 fn quick_fix_at(ui: Ui, send: &Send, path: &str, line: usize) {
     let here = on_line(ui, path, line);
     if here.is_empty() {
@@ -516,10 +519,7 @@ fn quick_fix_at(ui: Ui, send: &Send, path: &str, line: usize) {
         return;
     }
     let all = of_file(ui, path);
-    let Some(at) = at_line(ui, path, line) else {
-        fix(ui, send, &here);
-        return;
-    };
+    let Some(at) = at_line(ui, path, line) else { return };
     let (s1, s2) = (send.clone(), send.clone());
     let mut items: Vec<popup::Item> = vec![popup::entry(FIX_TITLE, move || fix(ui, &s1, &here)).into()];
     if all.len() > 1 {
@@ -806,16 +806,13 @@ fn open_menu(ui: Ui, send: &Send, src: &str, p: Problem, at: popup::At) {
     let (fixer, opener) = (send.clone(), send.clone());
     let quick = p.clone();
     let mut items: Vec<popup::Item> = vec![
-        popup::entry("Copy", move || copy(ui, c1.clone())).keys("Ctrl+C").into(),
+        popup::entry("Copy", move || copy(ui, c1.clone())).into(),
         popup::entry("Copy Message", move || copy(ui, c2.clone())).into(),
         popup::line(),
         popup::entry(FIX_TITLE, move || fix(ui, &fixer, &pair)).into(),
         popup::entry("Quick Fix...", move || {
             open_problem(ui, &opener, &quick);
-            let (send, path, line) = (opener.clone(), quick.path.clone(), quick.line - 1);
-            floem::action::exec_after(std::time::Duration::from_millis(300), move |_| {
-                quick_fix_at(ui, &send, &path, line);
-            });
+            menu_when_drawn(ui, opener.clone(), quick.path.clone(), quick.line.saturating_sub(1), 20);
         })
         .keys("Ctrl+.")
         .into(),
@@ -826,6 +823,17 @@ fn open_menu(ui: Ui, send: &Send, src: &str, p: Problem, at: popup::At) {
         items.extend(more);
     }
     popup::open(ui, at, items);
+}
+
+/// The light bulb's menu once the file's editor is drawn (asked every 50 ms, a second at most).
+fn menu_when_drawn(ui: Ui, send: Send, path: String, line: usize, left: u32) {
+    floem::action::exec_after(std::time::Duration::from_millis(50), move |_| {
+        if at_line(ui, &path, line).is_some() {
+            quick_fix_at(ui, &send, &path, line);
+        } else if left > 0 {
+            menu_when_drawn(ui, send, path, line, left - 1);
+        }
+    });
 }
 
 /// The view's own content.
@@ -912,9 +920,14 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
             .font_size(12.0)
             .apply_if(hidden.get() == 0 || empty.get(), |st| st.hide())
     });
-    v_stack((note, hid, list.style(|st| st.flex_grow(1.0_f32).flex_basis(0.0).width_full().min_height(0.0))))
-        .style(|st| st.size_full().min_height(0.0))
-        .into_any()
+    v_stack((
+        filter_row(ui),
+        note,
+        hid,
+        list.style(|st| st.flex_grow(1.0_f32).flex_basis(0.0).width_full().min_height(0.0)),
+    ))
+    .style(|st| st.size_full().min_height(0.0))
+    .into_any()
 }
 
 /// "3 problems hidden by the filter".
@@ -953,8 +966,8 @@ fn collapse_all(ui: Ui) {
     }
 }
 
-/// The actions in its title: the filter, its menu of what is shown, Collapse All.
-pub fn actions(ui: Ui, _send: Send) -> Option<floem::AnyView> {
+/// The filter over the rows, the whole width: its text, and its menu of what is shown.
+fn filter_row(ui: Ui) -> impl IntoView {
     let t = ui.colors;
     let s = store(ui);
     let focused = create_rw_signal(false);
@@ -1004,9 +1017,7 @@ pub fn actions(ui: Ui, _send: Send) -> Option<floem::AnyView> {
     let menu = tooltip(menu, || label(|| "More Filters..."));
     let filter = h_stack((input, menu)).style(move |st| {
         let c = t.get();
-        st.flex_basis(260.0)
-            .flex_shrink(1.0_f32)
-            .min_width(100.0)
+        st.width_full()
             .height(24.0)
             .padding_right(2.0)
             .items_center()
@@ -1015,8 +1026,14 @@ pub fn actions(ui: Ui, _send: Send) -> Option<floem::AnyView> {
             .border_color(if focused.get() { c.focus } else { c.input_border })
             .background(c.input_bg)
     });
+    container(filter).style(|st| st.width_full().padding_left(20.0).padding_right(12.0).padding_vert(4.0))
+}
+
+/// The actions in its title: Collapse All.
+pub fn actions(ui: Ui, _send: Send) -> Option<floem::AnyView> {
+    let t = ui.colors;
     let collapse = tooltip(action(t, "collapse-all", move || collapse_all(ui)), || label(|| "Collapse All"));
-    Some(h_stack((filter, collapse)).style(|st| st.gap(4.0).items_center()).into_any())
+    Some(collapse.into_any())
 }
 
 /// The status bar's words for the counts' tooltip.
