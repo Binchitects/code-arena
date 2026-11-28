@@ -8,14 +8,15 @@
 //! - `memory{key?}` [T]: answered by `memory{key, online, signed_in, denied, project, notebook, items: [{n, text,
 //!   kind, where, pinned, own}]}`. `n` is the number `/memory` gives it; `where` is person, project or company;
 //!   `notebook` is the project's long memory (`.remember/MEMORY.md`) while it is kept and the file is there.
-//! - `memory_remember{text, project}` [T]: a `notice` ("Remembered for this project, in Arena." or "Remembered
-//!   already.", or why not), then `memory` again.
-//! - `memory_forget{n, text?}` [T]: a `notice` (what was forgotten, or why not), then `memory` again. With `text`,
-//!   the memory at `n` must still be that one: the list may have changed since the view drew it.
+//! - `memory_remember{text, project}` [T]: a `notice{text, of, error?}` ("Remembered for this project, in Arena."
+//!   or "Remembered already.", or why not; `of` is the message answered, `error` is true for why not), then
+//!   `memory` again.
+//! - `memory_forget{n, text?}` [T]: a `notice{text, of, error?}` (what was forgotten, or why not), then `memory`
+//!   again. With `text`, the memory at `n` must still be that one: the list may have changed since the view drew it.
 
 use serde_json::{Value, json};
 
-use crate::ide_ext::{Area, Rule, Shared, kind, say, send};
+use crate::ide_ext::{Area, Rule, Shared, kind, send};
 
 /// The most characters a memory kept from the view has (the view stops there too).
 const MOST: usize = 500;
@@ -35,14 +36,11 @@ impl Area for Here {
                     (sh.clone(), m["text"].as_str().unwrap_or("").to_string(), m["project"].as_bool());
                 tokio::spawn(async move {
                     let said = if text.trim().chars().count() > MOST {
-                        format!("A memory is at most {MOST} characters.")
+                        Err(format!("A memory is at most {MOST} characters."))
                     } else {
-                        match sh.memory.remember(project != Some(true), &text, "fact").await {
-                            Ok(r) => remembered(r),
-                            Err(e) => e,
-                        }
+                        sh.memory.remember(project != Some(true), &text, "fact").await.map(remembered)
                     };
-                    say(&sh.out, &said);
+                    send(&sh.out, notice("memory_remember", said));
                     send(&sh.out, listed(&sh, &Value::Null));
                 });
             }
@@ -52,13 +50,10 @@ impl Area for Here {
                 tokio::spawn(async move {
                     let texts: Vec<String> = sh.memory.items().into_iter().map(|i| i.text).collect();
                     let said = match still(&texts, n, text.as_deref()) {
-                        Err(e) => e,
-                        Ok(()) => match sh.memory.forget(n).await {
-                            Ok(t) => format!("Forgot: {t}"),
-                            Err(e) => e,
-                        },
+                        Err(e) => Err(e),
+                        Ok(()) => sh.memory.forget(n).await.map(|t| format!("Forgot: {t}")),
                     };
-                    say(&sh.out, &said);
+                    send(&sh.out, notice("memory_forget", said));
                     send(&sh.out, listed(&sh, &Value::Null));
                 });
             }
@@ -101,6 +96,14 @@ fn items_of(items: &[ca_memory::Item]) -> Vec<Value> {
             json!({"n": i + 1, "text": m.text, "kind": m.kind, "where": m.scope, "pinned": m.pinned, "own": m.own})
         })
         .collect()
+}
+
+/// The notice that answers a request: what was done, or why not.
+fn notice(of: &str, said: Result<String, String>) -> Value {
+    match said {
+        Ok(text) => json!({"type": "notice", "text": text, "of": of}),
+        Err(text) => json!({"type": "notice", "text": text, "of": of, "error": true}),
+    }
 }
 
 /// What remembering says: where it went, or that it was there already.
