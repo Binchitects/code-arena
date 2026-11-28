@@ -51,6 +51,8 @@ pub struct Saves {
     pending: RwSignal<HashMap<String, String>>,
     /// Whether the kept texts were asked for (once a window).
     asked: RwSignal<bool>,
+    /// Whether their answer is still to come.
+    waiting: RwSignal<bool>,
     /// Counted up at each edit: a timer that finds it moved on is of an edit before the last.
     typed: RwSignal<u64>,
     /// The files auto save was paused for, said once each.
@@ -64,6 +66,7 @@ impl crate::ext::State for Saves {
             backed: ui.scope.create_rw_signal(HashMap::new()),
             pending: ui.scope.create_rw_signal(HashMap::new()),
             asked: ui.scope.create_rw_signal(false),
+            waiting: ui.scope.create_rw_signal(false),
             typed: ui.scope.create_rw_signal(0),
             paused: ui.scope.create_rw_signal(HashSet::new()),
         }
@@ -336,13 +339,19 @@ fn ask_conflict(ui: Ui, path: &str) {
         .detail("Please compare your version with the file contents or overwrite the content of the file with your changes.")
         .button("Overwrite")
         .button("Compare")
-        .open(ui, move |a| match a.button {
-            Some(0) => tell(ui, |send| save(ui, &path, send, How::Overwrite)),
-            Some(1) => tell(ui, |send| {
-                use crate::compare::{Source, open};
-                open(ui, send, Source::Saved(path.clone()), Source::Live(path.clone()));
-            }),
-            _ => {}
+        .open(ui, move |a| {
+            // A close waiting for this save goes on only with Overwrite.
+            if a.button != Some(0) && ui.close_saved.with_untracked(|c| c.as_deref() == Some(path.as_str())) {
+                ui.close_saved.set(None);
+            }
+            match a.button {
+                Some(0) => tell(ui, |send| save(ui, &path, send, How::Overwrite)),
+                Some(1) => tell(ui, |send| {
+                    use crate::compare::{Source, open};
+                    open(ui, send, Source::Saved(path.clone()), Source::Live(path.clone()));
+                }),
+                _ => {}
+            }
         });
 }
 
@@ -416,6 +425,7 @@ fn after(ui: Ui, m: &Value, send: &Send) {
         "state" if !s.asked.get_untracked() => {
             s.asked.set(true);
             if settings::now(ui, "files.hotExit", None) != "off" {
+                s.waiting.set(true);
                 send(json!({"type": "backups"}));
             }
         }
@@ -442,7 +452,9 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     let text = |k: &str| m[k].as_str().unwrap_or("").to_string();
     match m["type"].as_str().unwrap_or("") {
         "saved" => saved(ui, m),
-        "backups" => {
+        // Only the answer to this window's own asking, once: another would put older texts over newer typing.
+        "backups" if s.waiting.get_untracked() => {
+            s.waiting.set(false);
             for it in m["items"].as_array().into_iter().flatten() {
                 let (Some(path), Some(kept)) = (it["path"].as_str(), it["text"].as_str()) else { continue };
                 match ui.tab(path).filter(|t| t.is_file()) {
@@ -621,6 +633,10 @@ mod tests {
     fn a_text_kept_at_the_last_exit_comes_back_into_its_tab_as_one_undo() {
         let (ui, send, asked) = window();
         ui.take(&json!({"type": "file", "path": "a.rs", "text": "one\n", "modified": 5}), &send);
+        after(ui, &json!({"type": "state"}), &send);
+        assert_eq!(of(&asked, "backups").len(), 1, "asked for once");
+        after(ui, &json!({"type": "state"}), &send);
+        assert_eq!(of(&asked, "backups").len(), 1);
         ui.take(
             &json!({"type": "backups", "items": [
                 {"path": "a.rs", "text": "one, changed\n"},
@@ -632,6 +648,10 @@ mod tests {
         let a = ui.tab("a.rs").expect("open");
         assert_eq!(a.text(), "one, changed\n");
         assert!(a.dirty.get_untracked());
+        // Another window's answer, later: not put over what is typed since.
+        type_in(ui, "a.rs", "new ");
+        ui.take(&json!({"type": "backups", "items": [{"path": "a.rs", "text": "old\n"}]}), &send);
+        assert_eq!(a.text(), "new one, changed\n");
         // The others are opened, and put back once they come.
         assert!(of(&asked, "open").iter().any(|m| m["path"] == "b.rs"));
         let b = json!({"type": "file", "path": "b.rs", "text": "b\n", "modified": 5});

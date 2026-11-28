@@ -303,7 +303,7 @@ fn title_bar(ui: Ui, send: Send) -> impl IntoView {
         toggle("layout-sidebar-right", "layout-sidebar-right-off", View::Agent),
     ))
     .style(|s| s.gap(2.0).items_center().padding_right(8.0));
-    let window = |name: &'static str, close: bool, on: fn()| {
+    let window = |name: &'static str, close: bool, on: std::rc::Rc<dyn Fn()>| {
         container(icon(name, 16.0)).on_click_stop(move |_| on()).style(move |s| {
             let c = t.get();
             s.width(46.0).height_full().items_center().justify_center().color(c.title_fg).hover(move |s| {
@@ -323,9 +323,19 @@ fn title_bar(ui: Ui, send: Send) -> impl IntoView {
         command_center,
         drag_window_area(empty()).style(|s| s.flex_grow(1.0_f32).height_full()),
         layout_buttons,
-        window("chrome-minimize", false, minimize_window),
-        window("chrome-maximize", false, toggle_window_maximized),
-        window("chrome-close", true, floem::quit_app),
+        window("chrome-minimize", false, std::rc::Rc::new(minimize_window)),
+        window("chrome-maximize", false, std::rc::Rc::new(toggle_window_maximized)),
+        // As File > Exit: what is not saved is kept aside or asked about first (`save.rs`).
+        window(
+            "chrome-close",
+            true,
+            std::rc::Rc::new(move || match ui.out.get_untracked() {
+                Some(send) => {
+                    crate::commands::run(ui, &send, QUIT);
+                }
+                None => floem::quit_app(),
+            }),
+        ),
     ))
     .style(move |s| {
         let c = t.get();
