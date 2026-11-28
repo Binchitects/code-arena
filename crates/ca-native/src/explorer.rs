@@ -19,12 +19,13 @@ use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::kurbo::{Point, Rect};
 use floem::peniko::{Brush, Color};
-use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal};
+use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal};
 use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, scroll, text_input, tooltip, v_stack};
 use floem::{AnyView, IntoView, View};
 use serde_json::{Value, json};
 
+use crate::explorer_decor as decor;
 use crate::icons::icon;
 use crate::keymap::TakesKeys;
 use crate::menus::Menu;
@@ -937,6 +938,10 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
             .into_any();
     }
     let (path, shown, target) = (r.path.clone(), r.path.clone(), r.path.clone());
+    let mark = decor::mark_of(ui, r.path.clone());
+    let closed = r.dir && !r.open;
+    let clipped = r.path.clone();
+    let cut = create_memo(move |_| x.clip.with(|k| k.as_ref().is_some_and(|k| k.cut && k.paths.contains(&clipped))));
     let name = if r.link { format!("{} \u{21aa}", r.name) } else { r.name.clone() };
     let row = h_stack((
         empty().style(move |s| s.width(indent)),
@@ -946,7 +951,28 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
             empty().style(|s| s.width(16.0)).into_any()
         },
         icon(icon_of(&r.name, r.dir, r.open), 16.0).style(|s| s.margin_left(2.0)),
-        label(move || name.clone()).style(|s| s.padding_left(4.0).text_ellipsis().selectable(false)),
+        label(move || name.clone()).style(move |s| {
+            let s = s.padding_left(4.0).min_width(0.0).flex_grow(1.0_f32).text_ellipsis().selectable(false);
+            match decor::colour(ui, &mark.get()) {
+                Some(c) if !cut.get() => s.color(c),
+                _ => s,
+            }
+        }),
+        // A file's letters, a closed folder's dot, in the decoration's colour.
+        label(move || {
+            let m = mark.get();
+            if closed && m.dot { "\u{25CF}".to_string() } else { m.badge }
+        })
+        .style(move |s| {
+            let m = mark.get();
+            let dot = closed && m.dot;
+            let s = s.flex_shrink(0.0_f32).padding_left(6.0).padding_right(12.0).selectable(false);
+            let s = s.font_size(if dot { 9.0 } else { 12.0 }).apply_if(!dot && m.badge.is_empty(), |s| s.hide());
+            match decor::colour(ui, &m) {
+                Some(c) if !cut.get() => s.color(c),
+                _ => s,
+            }
+        }),
     ));
     // A press, then a move past 5 px, is a drag of the rows selected; let go without one, a click.
     let start = create_rw_signal(None::<Point>);
@@ -956,97 +982,105 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
         Point::new(o.x + p.x, o.y + p.y)
     };
     let dragged = path.clone();
-    row.on_event(EventListener::PointerDown, move |e| {
-        if let Event::PointerDown(p) = e
-            && p.button.is_primary()
-        {
-            start.set(Some(at(p.pos)));
-            id.request_active();
-            // A drag whose row was drawn again before it ended is over.
-            if x.drag.with_untracked(Option::is_some) {
-                x.drag.set(None);
-            }
-        }
-        EventPropagation::Continue
-    })
-    // Passed on: the Explorer keeps where the pointer is, for a row's menu.
-    .on_event_cont(EventListener::PointerMove, move |e| {
-        let (Event::PointerMove(p), Some(from)) = (e, start.get_untracked()) else { return };
-        let now = at(p.pos);
-        if x.drag.with_untracked(Option::is_none) {
-            if (now - from).hypot() < 5.0 {
-                return;
-            }
-            // The row dragged is among the rows selected, or it alone is.
-            if !selection(ui).contains(&dragged) {
-                select_one(ui, &dragged);
-            }
-            x.drag.set(Some(Drag { paths: outermost(&selection(ui)), over: None }));
-        }
-        let over = x.drag.with_untracked(|d| d.as_ref().and_then(|d| aim(ui, &d.paths, now)));
-        if x.drag.with_untracked(|d| d.as_ref().is_some_and(|d| d.over != over)) {
-            x.drag.update(|d| {
-                if let Some(d) = d {
-                    d.over = over;
-                }
-            });
-        }
-    })
-    .on_event_stop(EventListener::PointerUp, move |e| {
-        let Event::PointerUp(p) = e else { return };
-        let was = start.get_untracked();
-        start.set(None);
-        match x.drag.get_untracked() {
-            Some(d) => {
-                x.drag.set(None);
-                let copy = if cfg!(target_os = "macos") {
-                    p.modifiers.contains(Modifiers::ALT)
-                } else {
-                    p.modifiers.contains(Modifiers::CONTROL)
-                };
-                if let Some(folder) = d.over {
-                    drop_on(ui, &send, &d.paths, &folder, copy);
+    let row = row
+        .on_event(EventListener::PointerDown, move |e| {
+            if let Event::PointerDown(p) = e
+                && p.button.is_primary()
+            {
+                start.set(Some(at(p.pos)));
+                id.request_active();
+                // A drag whose row was drawn again before it ended is over.
+                if x.drag.with_untracked(Option::is_some) {
+                    x.drag.set(None);
                 }
             }
-            None if was.is_some() => {
-                focus_tree(ui);
-                click(ui, &send, &path, r.dir, p.modifiers);
+            EventPropagation::Continue
+        })
+        // Passed on: the Explorer keeps where the pointer is, for a row's menu.
+        .on_event_cont(EventListener::PointerMove, move |e| {
+            let (Event::PointerMove(p), Some(from)) = (e, start.get_untracked()) else { return };
+            let now = at(p.pos);
+            if x.drag.with_untracked(Option::is_none) {
+                if (now - from).hypot() < 5.0 {
+                    return;
+                }
+                // The row dragged is among the rows selected, or it alone is.
+                if !selection(ui).contains(&dragged) {
+                    select_one(ui, &dragged);
+                }
+                x.drag.set(Some(Drag { paths: outermost(&selection(ui)), over: None }));
             }
-            None => {}
-        }
+            let over = x.drag.with_untracked(|d| d.as_ref().and_then(|d| aim(ui, &d.paths, now)));
+            if x.drag.with_untracked(|d| d.as_ref().is_some_and(|d| d.over != over)) {
+                x.drag.update(|d| {
+                    if let Some(d) = d {
+                        d.over = over;
+                    }
+                });
+            }
+        })
+        .on_event_stop(EventListener::PointerUp, move |e| {
+            let Event::PointerUp(p) = e else { return };
+            let was = start.get_untracked();
+            start.set(None);
+            match x.drag.get_untracked() {
+                Some(d) => {
+                    x.drag.set(None);
+                    let copy = if cfg!(target_os = "macos") {
+                        p.modifiers.contains(Modifiers::ALT)
+                    } else {
+                        p.modifiers.contains(Modifiers::CONTROL)
+                    };
+                    if let Some(folder) = d.over {
+                        drop_on(ui, &send, &d.paths, &folder, copy);
+                    }
+                }
+                None if was.is_some() => {
+                    focus_tree(ui);
+                    click(ui, &send, &path, r.dir, p.modifiers);
+                }
+                None => {}
+            }
+        })
+        .on_secondary_click_stop(move |_| {
+            // A row among those selected keeps them; another is selected alone.
+            if !selection(ui).contains(&target) {
+                select_one(ui, &target);
+            }
+            menu(target.clone(), r.dir);
+        })
+        .style(move |s| {
+            let c = t.get();
+            let selected = ui
+                .selected
+                .with(|sel| *sel == shown || x.picked.with(|p| p.len() > 1 && p.contains(sel) && p.contains(&shown)));
+            let cut = cut.get();
+            let dropped = x.over.with(|o| o.as_ref().is_some_and(|f| !f.is_empty() && inside(&shown, f)));
+            let s = s
+                .height(ROW)
+                .width_full()
+                .items_center()
+                .padding_left(8.0)
+                .font_size(13.0)
+                .color(c.side_fg)
+                .cursor(CursorStyle::Pointer)
+                .selectable(false);
+            // VS Code's selection: lit while the tree has the keys, dimmed while it has not.
+            let s = match (selected, focused.get()) {
+                (true, true) => s.background(c.list_selected).color(c.list_selected_fg),
+                (true, false) => s.background(c.list_inactive),
+                _ => s.hover(|s| s.background(c.list_hover)),
+            };
+            // A row cut is faded until it is pasted; the folder rows would be dropped in is shaded with all in it.
+            s.apply_if(cut, |s| s.color(c.desc)).apply_if(dropped, |s| s.background(c.drop_bg))
+        });
+    // VS Code's tooltip: the path, then what each decoration says.
+    let tip = r.path.clone();
+    tooltip(row, move || {
+        let tip = tip.clone();
+        label(move || decor::tooltip(&tip, &mark.get()))
     })
-    .on_secondary_click_stop(move |_| {
-        // A row among those selected keeps them; another is selected alone.
-        if !selection(ui).contains(&target) {
-            select_one(ui, &target);
-        }
-        menu(target.clone(), r.dir);
-    })
-    .style(move |s| {
-        let c = t.get();
-        let selected = ui
-            .selected
-            .with(|sel| *sel == shown || x.picked.with(|p| p.len() > 1 && p.contains(sel) && p.contains(&shown)));
-        let cut = x.clip.with(|k| k.as_ref().is_some_and(|k| k.cut && k.paths.contains(&shown)));
-        let dropped = x.over.with(|o| o.as_ref().is_some_and(|f| !f.is_empty() && inside(&shown, f)));
-        let s = s
-            .height(ROW)
-            .width_full()
-            .items_center()
-            .padding_left(8.0)
-            .font_size(13.0)
-            .color(c.side_fg)
-            .cursor(CursorStyle::Pointer)
-            .selectable(false);
-        // VS Code's selection: lit while the tree has the keys, dimmed while it has not.
-        let s = match (selected, focused.get()) {
-            (true, true) => s.background(c.list_selected).color(c.list_selected_fg),
-            (true, false) => s.background(c.list_inactive),
-            _ => s.hover(|s| s.background(c.list_hover)),
-        };
-        // A row cut is faded until it is pasted; the folder rows would be dropped in is shaded with all in it.
-        s.apply_if(cut, |s| s.color(c.desc)).apply_if(dropped, |s| s.background(c.drop_bg))
-    })
+    .style(|s| s.width_full())
     .into_any()
 }
 

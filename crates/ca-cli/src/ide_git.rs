@@ -441,6 +441,7 @@ fn status(dir: &Path) -> (Value, Option<PathBuf>) {
     };
     let (branch, files) = parse_status(&out);
     let total = files.len();
+    let ignored = ignored(dir);
     let files: Vec<Value> = files
         .iter()
         .take(MOST_FILES)
@@ -467,9 +468,38 @@ fn status(dir: &Path) -> (Value, Option<PathBuf>) {
             "behind": branch.behind,
             "files": files,
             "total": total,
+            "ignored": ignored,
         }),
         Some(git_dir),
     )
+}
+
+/// What the repository ignores in a folder, from the folder: a folder ignored whole is one path ending in a slash,
+/// with nothing in it listed. At most `MOST_FILES` of them; none when git cannot say.
+fn ignored(dir: &Path) -> Vec<String> {
+    let args = [
+        "--no-optional-locks",
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "--",
+        ".",
+    ];
+    match git(dir, &args, None) {
+        Ok(out) => ignored_of(&out),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn ignored_of(out: &[u8]) -> Vec<String> {
+    out.split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .take(MOST_FILES)
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        .collect()
 }
 
 /// The repository's status said to every face, and kept as what was last said of it.
@@ -1570,6 +1600,26 @@ mod tests {
             std::os::unix::fs::symlink("a.txt", dir.join("link")).expect("link");
             assert_eq!(stage_text(&dir, "link", "x").map_err(|e| e.1), Err(true));
         }
+    }
+
+    #[test]
+    fn a_status_lists_what_is_ignored_from_the_folder_a_folder_ignored_whole_as_one_path() {
+        let Some(d) = repo() else { return };
+        let dir = d.path();
+        std::fs::write(dir.join(".gitignore"), "target/\n*.log\n").expect("w");
+        std::fs::create_dir_all(dir.join("target/debug")).expect("dir");
+        std::fs::write(dir.join("target/debug/x"), "x").expect("w");
+        std::fs::create_dir(dir.join("src")).expect("dir");
+        std::fs::write(dir.join("src/run.log"), "x").expect("w");
+        std::fs::write(dir.join("src/a.rs"), "x").expect("w");
+        let (v, _) = status(dir);
+        let mut ignored: Vec<&str> = v["ignored"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        ignored.sort();
+        assert_eq!(ignored, ["src/run.log", "target/"]);
+        // From a folder inside the repository, its paths are from that folder.
+        let (v, _) = status(&dir.join("src"));
+        assert_eq!(v["ignored"], json!(["run.log"]));
+        assert_eq!(ignored_of(b"a\0b/\0\0"), ["a", "b/"]);
     }
 
     #[test]
