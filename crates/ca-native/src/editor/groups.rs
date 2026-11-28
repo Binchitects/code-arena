@@ -1143,7 +1143,12 @@ fn close_group(ui: Ui) {
     change(ui, |m, order| {
         let at = m.at();
         // A window's group gives what is kept to the editor's last group.
-        let to = m.groups[if apart { m.main_len() - 1 } else if at == 0 { 1 } else { at - 1 }].id;
+        let to = match (apart, at) {
+            (true, _) => m.main_len() - 1,
+            (false, 0) => 1,
+            (false, at) => at - 1,
+        };
+        let to = m.groups[to].id;
         if let Some(g) = m.group_mut(to) {
             g.tabs.extend(keep.iter().cloned());
             g.tabs.sort_by_key(|p| order.iter().position(|o| o == p).unwrap_or(usize::MAX));
@@ -1376,7 +1381,7 @@ mod tests {
     fn an_editor_moved_into_a_window_is_a_group_apart_that_gives_its_tabs_back() {
         let mut m = Model::default();
         m.reconcile(&paths(&["a", "b", "c"]), Some("b"));
-        let w = m.detach(1, "b").unwrap();
+        let w = m.detach(1, "b").expect("a window");
         assert_eq!((m.groups[0].tabs.clone(), m.groups[0].active.as_deref()), (paths(&["a", "c"]), Some("c")));
         assert_eq!((m.focused, m.apart.clone(), m.main_len()), (w, vec![w], 1));
         assert_eq!(m.shown().as_deref(), Some("b"));
@@ -1389,7 +1394,7 @@ mod tests {
         m.focused = w;
         // A file opened while the window has the keys joins it; the window's order is the tabs'.
         m.reconcile(&paths(&["a", "b", "c", "d"]), Some("d"));
-        assert_eq!(m.group(w).unwrap().tabs, paths(&["b", "d"]));
+        assert_eq!(m.group(w).expect("the window's group").tabs, paths(&["b", "d"]));
         m.focused = w;
         m.reconcile(&paths(&["a", "b", "c", "d"]), Some("b"));
         m.attach(w, 1, &paths(&["a", "b", "c", "d"]));
@@ -1401,7 +1406,7 @@ mod tests {
     fn a_window_whose_last_tab_closes_goes_and_the_editor_keeps_an_empty_group() {
         let mut m = Model::default();
         m.reconcile(&paths(&["a"]), Some("a"));
-        let w = m.detach(1, "a").unwrap();
+        let w = m.detach(1, "a").expect("a window");
         // The editor's last group stays, empty.
         assert_eq!((m.groups.len(), m.main_len(), m.groups[0].tabs.len()), (2, 1, 0));
         m.reconcile(&paths(&["a"]), Some("a"));
@@ -1410,9 +1415,9 @@ mod tests {
         assert_eq!((m.groups.len(), m.apart.len(), m.focused), (1, 0, 1));
         // Splits fill the editor's place before a window; the window comes last and its share is none of theirs.
         m.reconcile(&paths(&["a", "b"]), Some("a"));
-        let w = m.detach(1, "b").unwrap();
+        let w = m.detach(1, "b").expect("a window");
         m.focused = 1;
-        let s = m.split(true).unwrap();
+        let s = m.split(true).expect("a split");
         assert_eq!(m.groups.iter().map(|g| g.id).collect::<Vec<_>>(), vec![1, s, w]);
         m.remove(s);
         assert_eq!(m.groups[0].share, 1.0);
