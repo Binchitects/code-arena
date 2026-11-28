@@ -182,7 +182,7 @@ contexts:
     # A method: a name at a line's start whose parameters and body follow on that line.
     - match: '^\s*{{modifiers}}(\*\s*)?{{not_keyword}}(#?{{id}})(?=\s*\??\s*(?:<[^>]*>)?\s*\([^()]*(?:\([^()]*\)[^()]*)*\)\s*(?::\s*[^={;]+)?\s*\{)'
       captures:
-        2: meta.definition.method.ts entity.name.function.method.ts
+        2: meta.definition.method.ts entity.name.function.method.ts entity.name.method.ts
     - match: '\b(constructor)\b'
       scope: storage.type.ts
     - match: '(@)({{id}}(?:\.{{id}})*)'

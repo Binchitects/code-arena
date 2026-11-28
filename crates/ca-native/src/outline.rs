@@ -685,6 +685,29 @@ mod tests {
             c.iter().map(|s| (s.0.as_str(), s.1)).collect::<Vec<_>>(),
             [("s", Kind::Struct), ("main", Kind::Function), ("X", Kind::Constant)]
         );
+        // TypeScript's definitions, not the names it calls or the types it uses.
+        let ts = said(
+            "a.ts",
+            "interface I { a(): void }\nenum E { A }\ntype T = string;\nclass C extends Base<T> {\n  \
+             private m(x: number): T { return go(x); }\n}\nexport const run = async () => {};\nnamespace N {}\n",
+        );
+        assert_eq!(
+            ts.iter().map(|s| (s.0.as_str(), s.1)).collect::<Vec<_>>(),
+            [
+                ("I", Kind::Interface),
+                ("E", Kind::Enum),
+                ("T", Kind::Type),
+                ("C", Kind::Class),
+                ("m", Kind::Method),
+                ("run", Kind::Function),
+                ("N", Kind::Module),
+            ]
+        );
+        let toml = said("Cargo.toml", "[package]\nname = \"a\"\n[[bin]]\n");
+        assert_eq!(toml.iter().map(|s| (s.0.as_str(), s.1)).collect::<Vec<_>>(), [
+            ("package", Kind::Heading),
+            ("bin", Kind::Heading)
+        ]);
         assert!(said("notes.txt", "fn main() {}\n# Title\n").is_empty());
     }
 
