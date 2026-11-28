@@ -444,10 +444,13 @@ Workspace Settings (JSON)**).",
         recipe(
             "Change a keyboard shortcut",
             &[
-                "Press Ctrl+K Ctrl+S: your keybindings.json.",
-                "Add `{ \"key\": \"ctrl+shift+e\", \"command\": \"workbench.action.togglePanel\" }`; \
-`\"-command\"` takes a key away. Commands have VS Code's ids (the palette lists them).",
-                "Save: it applies at once, in the editor too.",
+                "Press Ctrl+K Ctrl+S: the Keyboard Shortcuts editor. Search for the command, or press **Record \
+Keys** and the keys.",
+                "Double-click its row, press the new keys (one, or a chord of two) and Enter. The row's menu adds, \
+removes or resets keys, or changes when they apply.",
+                "It is written into your keybindings.json and applies at once. **Preferences: Open Keyboard \
+Shortcuts (JSON)** opens the file: `{ \"key\": \"ctrl+shift+e\", \"command\": \"workbench.action.togglePanel\" }`; \
+`\"-command\"` takes a key away.",
             ],
         ),
         recipe(
