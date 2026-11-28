@@ -478,11 +478,8 @@ pub fn accept(ui: Ui, path: &str, index: usize, choice: Choice, both: bool) {
     let text = doc.text().to_string();
     let conflicts = merge_inline::parse(&text);
     let Some(c) = conflicts.get(index) else { return };
-    let (from, to, kept) = if both {
-        combine(&text, c, choice == Choice::Incoming)
-    } else {
-        merge_inline::resolve(&text, c, choice)
-    };
+    let (from, to, kept) =
+        if both { combine(&text, c, choice == Choice::Incoming) } else { merge_inline::resolve(&text, c, choice) };
     doc.edit_single(Selection::region(from, to), &kept, EditType::Other);
     if e.at.get_untracked() != index {
         e.at.set(index);
@@ -506,7 +503,8 @@ pub fn go(ui: Ui, path: &str, forward: bool) {
         return;
     }
     let editors = e.editors.borrow().clone();
-    let caret_line = editors.as_ref().map(|ed| ed.result.offset_to_line_col(ed.result.cursor.with_untracked(|c| c.offset())).0);
+    let caret_line =
+        editors.as_ref().map(|ed| ed.result.offset_to_line_col(ed.result.cursor.with_untracked(|c| c.offset())).0);
     let index = match caret_line.and_then(|l| merge_inline::next(&conflicts, l, forward)) {
         Some(start) => conflicts.iter().position(|c| c.start == start).unwrap_or(0),
         None => {
@@ -618,7 +616,9 @@ fn view(ui: Ui, send: Send, tab: &Tab) -> AnyView {
     let said = create_memo(move |_| {
         info.with(|i| match i.as_deref() {
             Some(Info { error: Some(err), .. }) => Some(format!("Git could not say what is in conflict: {err}")),
-            Some(Info { unmerged: false, .. }) => Some("Git has already merged this file: it is not in conflict.".into()),
+            Some(Info { unmerged: false, .. }) => {
+                Some("Git has already merged this file: it is not in conflict.".into())
+            }
             _ => None,
         })
     });
@@ -718,7 +718,8 @@ fn header(ui: Ui, title: &'static str, what: impl Fn() -> String + 'static, acti
     let t = ui.colors;
     h_stack((
         label(move || title).style(|s| crate::widgets::bold(s.font_size(12.0))),
-        label(what).style(move |s| s.margin_left(8.0).font_size(12.0).color(t.get().desc).text_ellipsis().min_width(0.0)),
+        label(what)
+            .style(move |s| s.margin_left(8.0).font_size(12.0).color(t.get().desc).text_ellipsis().min_width(0.0)),
         empty().style(|s| s.flex_grow(1.0_f32)),
         actions,
     ))
@@ -876,11 +877,16 @@ pub fn register(_ui: Ui, _send: &Send) {
         .when(|ui| file_of(ui).is_some()),
     );
     crate::commands::add(
-        crate::commands::command("merge.goToNextUnhandledConflict", "Merge Editor", "Go to Next Unhandled Conflict", |ui, _| {
-            if let Some(e) = shown(ui) {
-                go(ui, &e.path, true);
-            }
-        })
+        crate::commands::command(
+            "merge.goToNextUnhandledConflict",
+            "Merge Editor",
+            "Go to Next Unhandled Conflict",
+            |ui, _| {
+                if let Some(e) = shown(ui) {
+                    go(ui, &e.path, true);
+                }
+            },
+        )
         .when(|ui| shown(ui).is_some()),
     );
     crate::commands::add(
@@ -952,7 +958,8 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             true
         }
         "saved" => {
-            let waiting = ENTRIES.with(|o| o.borrow().get(&path_of(path)).cloned()).filter(|e| e.completing.get().is_some());
+            let waiting =
+                ENTRIES.with(|o| o.borrow().get(&path_of(path)).cloned()).filter(|e| e.completing.get().is_some());
             if let Some(e) = waiting {
                 let anyway = e.completing.take().unwrap_or(false);
                 if m["error"].is_null() {
@@ -972,7 +979,9 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         }
         "git_failed" if m["of"] == "git_merge_complete" => {
             match m["error"].as_str() {
-                Some("markers") => toast::warning(ui, &format!("{name} still has conflict markers: it was not staged.")),
+                Some("markers") => {
+                    toast::warning(ui, &format!("{name} still has conflict markers: it was not staged."))
+                }
                 Some(err) => toast::error(ui, &format!("Could not stage {name}: {err}")),
                 None => toast::error(ui, &format!("Could not stage {name}.")),
             };
@@ -986,11 +995,13 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
 mod tests {
     use super::*;
 
-    const RESULT: &str = "one\n<<<<<<< HEAD\n2\n=======\nTWO\n>>>>>>> feature\nthree\n<<<<<<< HEAD\nx\n=======\n>>>>>>> feature\nend\n";
+    const RESULT: &str =
+        "one\n<<<<<<< HEAD\n2\n=======\nTWO\n>>>>>>> feature\nthree\n<<<<<<< HEAD\nx\n=======\n>>>>>>> feature\nend\n";
 
     #[test]
     fn a_sides_header_names_its_branch_and_commit_and_the_title_what_is_under_way() {
-        let s = Side { name: "feature".into(), commit: "abc".into(), short: "1a2b3c4".into(), subject: "Shout two".into() };
+        let s =
+            Side { name: "feature".into(), commit: "abc".into(), short: "1a2b3c4".into(), subject: "Shout two".into() };
         assert_eq!(s.describe(), "feature · 1a2b3c4 Shout two");
         assert_eq!(Side { name: "main".into(), ..Side::default() }.describe(), "main");
         assert_eq!(title_of("src/a.rs", "merge"), "Merging a.rs");
@@ -1072,7 +1083,10 @@ mod tests {
         assert_eq!(said.borrow()[0]["type"], "save", "{:?}", said.borrow());
         said.borrow_mut().clear();
         take(ui, &json!({"type": "saved", "path": "a.txt", "modified": 2}), &send);
-        assert_eq!(*said.borrow(), [json!({"type": "git_merge_complete", "repo": "", "path": "a.txt", "anyway": false})]);
+        assert_eq!(
+            *said.borrow(),
+            [json!({"type": "git_merge_complete", "repo": "", "path": "a.txt", "anyway": false})]
+        );
         assert!(take(ui, &json!({"type": "git_done", "repo": "", "of": "git_merge_complete", "path": "a.txt"}), &send));
         assert!(ui.tab("merge:a.txt").is_none(), "closed once staged");
         assert!(entry("merge:a.txt").is_none());
@@ -1086,7 +1100,11 @@ mod tests {
         ui.take(&json!({"type": "file", "path": "b.png", "text": "x", "modified": 1}), &send);
         open(ui, &send, "b.png");
         assert!(ui.tab("merge:b.png").is_some());
-        assert!(take(ui, &json!({"type": "git_merge_info", "repo": "", "path": "b.png", "unmerged": true, "binary": true}), &send));
+        assert!(take(
+            ui,
+            &json!({"type": "git_merge_info", "repo": "", "path": "b.png", "unmerged": true, "binary": true}),
+            &send
+        ));
         assert!(ui.tab("merge:b.png").is_none());
     }
 }

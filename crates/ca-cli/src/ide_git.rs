@@ -615,7 +615,8 @@ fn side_of(dir: &Path, rev: &str, name: Option<String>) -> Value {
     let mut parts = said.splitn(3, '\0');
     let (commit, short, subject) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next().unwrap_or(""));
     let name = name.filter(|n| !n.is_empty()).or_else(|| {
-        let named = git(dir, &["name-rev", "--name-only", "--no-undefined", "--exclude=refs/tags/*", rev], None).ok()?;
+        let named =
+            git(dir, &["name-rev", "--name-only", "--no-undefined", "--exclude=refs/tags/*", rev], None).ok()?;
         let named = String::from_utf8_lossy(&named).trim().to_string();
         (!named.is_empty()).then_some(named)
     });
@@ -1065,7 +1066,8 @@ mod tests {
     fn a_rebase_and_a_cherry_pick_say_what_is_under_way_and_whose_side_is_whose() {
         let Some(d) = diverged() else { return };
         let p = d.path();
-        let main = String::from_utf8_lossy(&git(p, &["rev-parse", "--short", "main"], None).expect("rev")).trim().to_string();
+        let main =
+            String::from_utf8_lossy(&git(p, &["rev-parse", "--short", "main"], None).expect("rev")).trim().to_string();
         git(p, &["checkout", "-q", "feature"], None).expect("feature");
         assert!(git(p, &["rebase", "-q", "main"], None).is_err(), "the rebase stops on the conflict");
         let info = merge_info(p, "a.txt");
