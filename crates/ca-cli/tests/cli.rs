@@ -2465,3 +2465,104 @@ async fn lines_of_files_sent_from_the_ide_are_read_for_the_model_and_named_under
     let question = messages.as_array().into_iter().flatten().find(|m| m["role"] == "user").expect("kept");
     assert_eq!(question["files"][0]["path"], "cart.rs", "{question}");
 }
+
+#[tokio::test]
+async fn an_extension_is_installed_from_a_vsix_the_ide_is_given_and_listed_to_every_face() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::io::{BufRead, Write};
+    use tokio_tungstenite::tungstenite::Message;
+    let gateway = MockServer::start().await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    std::fs::create_dir_all(folder.path().join(".vscode")).expect("a .vscode");
+    std::fs::write(
+        folder.path().join(".vscode/extensions.json"),
+        r#"{"recommendations": ["acme.night", "someone.else"]}"#,
+    )
+    .expect("recommendations");
+    // A .vsix with one colour theme, in the project (named by its path there).
+    let mut z = zip::ZipWriter::new(std::fs::File::create(folder.path().join("night.vsix")).expect("vsix"));
+    let o = zip::write::SimpleFileOptions::default();
+    for (name, body) in [
+        (
+            "extension/package.json",
+            r#"{"publisher": "acme", "name": "night", "version": "1.0.0", "contributes": {"themes": [{"label": "Night", "uiTheme": "vs-dark", "path": "./night.json"}]}}"#,
+        ),
+        ("extension/night.json", r##"{"colors": {"editor.background": "#000000"}}"##),
+    ] {
+        z.start_file(name, o).expect("start");
+        z.write_all(body.as_bytes()).expect("write");
+    }
+    z.finish().expect("zip");
+    let mut child = code_arena(home.path())
+        .args(["ide", "--no-open", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("runs");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stderr = child.stderr.take().expect("stderr");
+    let _child = Kill(child);
+    let url = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| l.split("The IDE: ").nth(1).map(str::to_string))
+        .expect("the address");
+    let (base, key) = url.split_once("/?k=").expect("key in it");
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+        format!("ws://{}/ws", base.trim_start_matches("http://")).as_str(),
+    )
+    .expect("request");
+    request.headers_mut().insert("cookie", format!("code_arena={key}").parse().expect("h"));
+    request.headers_mut().insert("origin", base.parse().expect("h"));
+    let (mut page, _) = tokio_tungstenite::connect_async(request).await.expect("the page connects");
+    let next = async |page: &mut tokio_tungstenite::WebSocketStream<_>, of: &str| -> Value {
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            let Message::Text(t) = m else { continue };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            if v["type"] == of {
+                return v;
+            }
+        }
+    };
+    let ask = async |page: &mut tokio_tungstenite::WebSocketStream<_>, m: Value| {
+        page.send(Message::text(m.to_string())).await.expect("send");
+    };
+    next(&mut page, "state").await;
+    ask(&mut page, json!({"type": "extensions"})).await;
+    assert_eq!(next(&mut page, "extensions").await, json!({"type": "extensions", "items": []}));
+    ask(&mut page, json!({"type": "ext_install", "path": "night.vsix"})).await;
+    let installed = next(&mut page, "ext_install").await;
+    assert_eq!((installed["path"].as_str(), installed["item"]["id"].as_str()), (Some("night.vsix"), Some("acme.night")));
+    // Every face hears the list and what the extensions bring, as they now are.
+    assert_eq!(next(&mut page, "extensions").await["items"][0]["id"], "acme.night");
+    let brought = next(&mut page, "ext_contributions").await;
+    assert_eq!((brought["themes"][0]["label"].as_str(), brought["themes"][0]["extension"].as_str()), (Some("Night"), Some("acme.night")));
+    assert!(home.path().join("data/extensions/acme.night-1.0.0/night.json").is_file());
+    ask(&mut page, json!({"type": "ext_recommended"})).await;
+    let said = next(&mut page, "ext_recommended").await;
+    let stands: Vec<&str> = said["recommendations"].as_array().expect("list").iter().filter_map(|r| r["status"].as_str()).collect();
+    assert_eq!(stands, ["installed", "unknown"]);
+}
