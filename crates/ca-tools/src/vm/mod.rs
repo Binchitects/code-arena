@@ -175,7 +175,7 @@ pub struct Machine {
     pub state: String,
 }
 
-/// Whether what a hypervisor's program said means the guest refused the user and password it was given.
+/// Whether a text says the guest refused the user and password it was given.
 pub fn refused(said: &str) -> bool {
     let s = said.to_ascii_lowercase();
     [
@@ -184,11 +184,24 @@ pub fn refused(said: &str) -> bool {
         "invalid user name or password",
         "user name or password is incorrect",
         "the credential is invalid",
-        "logon failure",
-        "access is denied",
     ]
     .iter()
     .any(|w| s.contains(w))
+}
+
+/// Whether a failed call of a hypervisor's program failed because the guest refused the sign-in. Only the program's
+/// own words count, never the guest command's output: VBoxManage's are its `VBoxManage: error:` lines (the guest's
+/// errors come on the same stream), vmrun says its errors on its output, PowerShell on its errors.
+pub fn refused_by(hv: Hypervisor, r: &run::Ran) -> bool {
+    if r.ok() {
+        return false;
+    }
+    match hv {
+        Hypervisor::VirtualBox => r.err.lines().any(|l| l.starts_with("VBoxManage: error:") && refused(l)),
+        Hypervisor::VMware => refused(&r.said()),
+        Hypervisor::HyperV => refused(&r.err),
+        Hypervisor::Libvirt => false,
+    }
 }
 
 /// Where the tools put what they bring back (screens, files, logs): `.code-arena/vm` in the workspace.
@@ -256,6 +269,22 @@ mod tests {
         assert!(refused("VBoxManage: error: VERR_AUTHENTICATION_FAILURE"));
         assert!(refused("Error: Invalid user name or password for the guest OS"));
         assert!(!refused("VBoxManage: error: Could not find a registered machine named 'x'"));
+        assert!(!refused("Access is denied."), "a guest command's own failure is not a refused sign-in");
+    }
+
+    #[test]
+    fn only_the_programs_own_words_say_the_guest_refused() {
+        let ran = |code, out: &str, err: &str| run::Ran { code: Some(code), out: out.into(), err: err.into() };
+        let vbox = ran(1, "", "VBoxManage: error: VERR_AUTHENTICATION_FAILURE\n");
+        assert!(refused_by(Hypervisor::VirtualBox, &vbox));
+        // The guest's command printed the words itself: its failure is its own.
+        let guest = ran(1, "", "Invalid user name or password\n");
+        assert!(!refused_by(Hypervisor::VirtualBox, &guest));
+        // vmrun says its errors on its output.
+        let vmrun = ran(255, "Error: Invalid user name or password for the guest OS\n", "");
+        assert!(refused_by(Hypervisor::VMware, &vmrun));
+        assert!(!refused_by(Hypervisor::VMware, &ran(0, "Error: Invalid user name or password", "")));
+        assert!(!refused_by(Hypervisor::Libvirt, &vbox));
     }
 
     #[test]

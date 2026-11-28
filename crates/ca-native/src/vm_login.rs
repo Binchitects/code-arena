@@ -129,14 +129,17 @@ impl VmLogin {
     }
 
     /// The question asked now is no longer (answered here or elsewhere): the form closes without telling anyone,
-    /// and the next one is asked.
-    fn finish(self, id: u64) {
+    /// and the next one is asked; when none waits, the keys go back to the chat.
+    fn finish(self, ui: Ui, id: u64) {
         self.waiting.update(|w| w.retain(|q| q.id != id));
         if self.asked.with_untracked(|a| a.as_ref().is_some_and(|q| q.id == id)) {
             self.asked.set(None);
             self.password.set(String::new());
             self.form.close();
             self.next();
+            if self.asked.with_untracked(Option::is_none) {
+                crate::chat_bridge::focus(ui);
+            }
         }
     }
 }
@@ -151,7 +154,7 @@ fn sign_in(ui: Ui, send: &Send) {
     }
     let save = q.can_save && st.save.get_untracked();
     st.password.with_untracked(|p| send(answer(q.id, &user, p, save)));
-    st.finish(q.id);
+    st.finish(ui, q.id);
 }
 
 fn host(ui: Ui, send: Send) -> AnyView {
@@ -166,7 +169,7 @@ fn host(ui: Ui, send: Send) -> AnyView {
             {
                 send(cancelled(q.id));
                 // Not from inside the effect: the next question opens the form again.
-                floem::action::exec_after(std::time::Duration::ZERO, move |_| st.finish(q.id));
+                floem::action::exec_after(std::time::Duration::ZERO, move |_| st.finish(ui, q.id));
             }
         });
     }
@@ -233,7 +236,7 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
         }
         "vm_login_done" => {
             if let Some(id) = m["id"].as_u64() {
-                st.finish(id);
+                st.finish(ui, id);
             }
             true
         }

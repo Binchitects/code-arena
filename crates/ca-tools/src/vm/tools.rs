@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::login::{Guest, SignIn};
 use super::run::{Call, Ran, SecretFile, exec};
-use super::{Hypervisor, Machine, Os, Power, Snap, file_part, hyperv, kept_dir, libvirt, refused, vbox, vmware};
+use super::{Hypervisor, Machine, Os, Power, Snap, file_part, hyperv, kept_dir, libvirt, refused_by, vbox, vmware};
 use crate::{Context, Kind, Output, Tool, arg_str};
 
 /// What reaches into the guest.
@@ -75,17 +75,18 @@ impl Vm {
                 None => self.sign.next().await?,
             };
             let r = self.once(op, Some(&g)).await.scrubbed(&g.password);
-            if !r.ok() && refused(&r.err) {
+            if refused_by(self.hv, &r) {
                 self.guest = None;
                 self.sign.was_refused();
                 continue;
             }
-            if self.guest.is_none() {
-                if let Some(n) = self.sign.took(&g).await {
-                    self.notes.push(n);
-                }
-                self.guest = Some(g);
+            // Kept in the keyring (when the person asked) only once the guest surely took it: a call that worked.
+            if r.ok()
+                && let Some(n) = self.sign.took(&g).await
+            {
+                self.notes.push(n);
             }
+            self.guest = Some(g);
             return Ok(r);
         }
     }
