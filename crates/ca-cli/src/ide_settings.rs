@@ -233,8 +233,8 @@ pub fn schema_message(s: &Settings, files: &Files, edition: ca_settings::Edition
 /// Where VS Code keeps the person's settings on this system, from their home.
 pub fn vscode_file(home: &Path) -> PathBuf {
     if cfg!(windows) {
-        let roaming = std::env::var_os("APPDATA").map_or_else(|| home.join("AppData").join("Roaming"), PathBuf::from);
-        roaming.join("Code").join("User").join("settings.json")
+        // %APPDATA%, where Windows keeps it for every account.
+        home.join("AppData").join("Roaming").join("Code").join("User").join("settings.json")
     } else if cfg!(target_os = "macos") {
         home.join("Library").join("Application Support").join("Code").join("User").join("settings.json")
     } else {
