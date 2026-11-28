@@ -257,10 +257,21 @@ fn named(ui: Ui, name: String, line: String, error: bool) -> floem::AnyView {
         icon("file", 16.0).style(move |s| s.color(t.get().desc).flex_shrink(0.0_f32)),
         v_stack((
             label(move || name.clone()).style(|s| s.max_width(176.0).text_ellipsis()),
-            label(move || line.clone()).style(move |s| {
-                let c = t.get();
-                s.font_size(11.0).max_width(176.0).text_ellipsis().color(if error { c.error } else { c.desc })
-            }),
+            tooltip(
+                label({
+                    let line = line.clone();
+                    move || line.clone()
+                })
+                .style(move |s| {
+                    let c = t.get();
+                    s.font_size(11.0).max_width(176.0).text_ellipsis().color(if error { c.error } else { c.desc })
+                }),
+                // The line is cut to the chip; the whole of it (an upload's error, mostly) on hover.
+                move || {
+                    let line = line.clone();
+                    label(move || line.clone()).style(|s| s.max_width(360.0).text_overflow(TextOverflow::Wrap))
+                },
+            ),
         )),
     ))
     .style(|s| s.gap(8.0).items_center().padding_vert(4.0).padding_left(8.0).padding_right(28.0))
