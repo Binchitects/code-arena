@@ -1217,7 +1217,8 @@ fn recommended(root: &Path, home: Option<&Path>, project: &Path) -> Value {
     json!({"file": true, "recommendations": out, "unwanted": ids(json.get("unwantedRecommendations"))})
 }
 
-/// Versions as VS Code compares them: their numbers first (1.10 after 1.9), then as text.
+/// Versions as VS Code compares them: their numbers first (1.10 after 1.9), then a release after its pre-release,
+/// then as text.
 fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let numbers = |v: &str| -> Vec<u64> {
         v.split(['-', '+']).next().unwrap_or("").split('.').map(|p| p.parse().unwrap_or(0)).collect()
@@ -1226,5 +1227,258 @@ fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     (0..x.len().max(y.len()))
         .map(|i| x.get(i).unwrap_or(&0).cmp(y.get(i).unwrap_or(&0)))
         .find(|o| o.is_ne())
-        .unwrap_or_else(|| a.cmp(b))
+        // A pre-release (`2.0.0-next`) comes before its release, as semver has it.
+        .unwrap_or_else(|| b.contains('-').cmp(&a.contains('-')).then_with(|| a.cmp(b)))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::*;
+
+    /// A .vsix of these files at `at/name` (each under `extension/` unless its name begins with `!`).
+    fn vsix_named(at: &Path, name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let path = at.join(name);
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&path).expect("vsix"));
+        let o = zip::write::SimpleFileOptions::default();
+        z.start_file("[Content_Types].xml", o).expect("start");
+        for (name, body) in files {
+            let name = match name.strip_prefix('!') {
+                Some(raw) => raw.to_string(),
+                None => format!("extension/{name}"),
+            };
+            z.start_file(name, o).expect("start");
+            z.write_all(body.as_bytes()).expect("write");
+        }
+        z.finish().expect("finish");
+        path
+    }
+
+    fn vsix(at: &Path, files: &[(&str, &str)]) -> PathBuf {
+        vsix_named(at, "x.vsix", files)
+    }
+
+    const THEMED: &str = r#"{
+        "publisher": "Acme", "name": "night", "version": "1.2.0", "displayName": "%display%",
+        "main": "./out/extension.js",
+        "contributes": {
+            "themes": [{"label": "Night", "uiTheme": "vs-dark", "path": "./themes/night.json"},
+                       {"label": "Old", "path": "./themes/old.tmTheme"},
+                       {"label": "Away", "path": "../../etc/passwd.json"}],
+            "keybindings": [{"command": "acme.go", "key": "ctrl+g"},
+                            {"command": "editor.action.formatDocument", "key": "alt+f"}],
+            "commands": [{"command": "acme.go", "title": "Go"}],
+            "views": {}
+        }
+    }"#;
+
+    fn themed(at: &Path) -> PathBuf {
+        vsix(at, &[
+            ("package.json", THEMED),
+            ("package.nls.json", r#"{"display": "Acme Night"}"#),
+            ("themes/night.json", r#"{"include": "./base.json", "colors": {}}"#),
+            ("themes/base.json", r#"{"colors": {}}"#),
+            ("themes/unused.json", "{}"),
+            ("out/extension.js", "run()"),
+        ])
+    }
+
+    #[test]
+    fn a_path_a_manifest_gives_stays_inside_the_extension() {
+        assert_eq!(inside("", "./themes/a.json").as_deref(), Some("themes/a.json"));
+        assert_eq!(inside("themes", "../icons/x.svg").as_deref(), Some("icons/x.svg"));
+        assert_eq!(inside("themes", "..\\a.json").as_deref(), Some("a.json"));
+        for out in ["../a.json", "/etc/passwd", "C:/x.json", "themes/../../a", "", "."] {
+            assert_eq!(inside("", out), None, "{out}");
+        }
+    }
+
+    #[test]
+    fn placeholders_are_filled_and_versions_ordered_as_vs_code_does() {
+        let nls = json!({"a": "Alpha", "b": {"message": "Beta"}});
+        let filled = localized(&json!({"x": ["%a%", "%b%", "%c%", "50%"]}), &nls);
+        assert_eq!(filled, json!({"x": ["Alpha", "Beta", "%c%", "50%"]}));
+        assert!(version_cmp("1.10.0", "1.9.3").is_gt() && version_cmp("2.0.0-pre", "2.0.0").is_lt());
+        let guessed = folder_name("ms-python.python-2024.1.0-linux-x64");
+        assert_eq!(guessed, Some(("ms-python.python".into(), "2024.1.0".into())));
+        assert!(id_ok("esbenp.prettier-vscode") && !id_ok("noperiod") && !id_ok("a/b.c"));
+    }
+
+    #[test]
+    fn a_vsix_is_installed_with_only_the_files_its_contributions_name() {
+        let d = tempfile::tempdir().expect("temp");
+        let root = d.path().join("ext");
+        let item = install(&root, &themed(d.path())).expect("installed");
+        assert_eq!((item["id"].as_str(), item["displayName"].as_str()), (Some("acme.night"), Some("Acme Night")));
+        assert_eq!(item["contributes"]["themes"][0]["path"], "themes/night.json");
+        assert_eq!(item["contributes"]["keybindings"], 1, "its own command's key needs its code");
+        let unused = item["unused"].to_string();
+        for said in ["its code", ".tmTheme", "leads outside", "views", "for its own commands"] {
+            assert!(unused.contains(said), "{said} in {unused}");
+        }
+        let kept = root.join("acme.night-1.2.0");
+        assert!(kept.join("themes/night.json").is_file() && kept.join("themes/base.json").is_file());
+        assert!(!kept.join("themes/unused.json").exists() && !kept.join("out/extension.js").exists());
+        assert!(!kept.join("package.json").exists(), "only what the contributions name");
+        // What is on is merged, each with its extension; a file it names is served, any other is not.
+        let c = contributions(&root, "ext_contributions");
+        assert_eq!(c["themes"][0]["extension"], "acme.night");
+        assert_eq!(c["keybindings"][0]["key"], "alt+f");
+        let (mime, bytes) = file(&root, "acme.night", "themes/base.json").expect("file");
+        assert_eq!((mime, bytes.as_slice()), ("application/json", br#"{"colors": {}}"#.as_slice()));
+        assert!(file(&root, "acme.night", "themes/unused.json").is_err());
+        assert!(file(&root, "acme.night", "../installed.json").is_err());
+        // Off: kept, but its contributions do not apply; a new version keeps it off and replaces the old one.
+        assert_eq!(enable(&root, "ACME.night", false).expect("off")["enabled"], false);
+        assert_eq!(contributions(&root, "ext_contributions")["themes"], json!([]));
+        let pkg = THEMED.replace("1.2.0", "1.3.0");
+        let newer = vsix_named(d.path(), "y.vsix", &[("package.json", &pkg), ("themes/night.json", "{}")]);
+        assert_eq!(install(&root, &newer).expect("newer")["enabled"], false);
+        assert!(!kept.exists() && root.join("acme.night-1.3.0/themes/night.json").is_file());
+        assert_eq!(list(&root).len(), 1);
+        uninstall(&root, "acme.night").expect("gone");
+        assert!(list(&root).is_empty() && !root.join("acme.night-1.3.0").exists());
+        assert!(uninstall(&root, "acme.night").is_err());
+    }
+
+    #[test]
+    fn a_vsix_that_leads_out_of_itself_or_holds_a_link_is_refused_whole() {
+        let d = tempfile::tempdir().expect("temp");
+        let root = d.path().join("ext");
+        let escape = vsix(d.path(), &[("package.json", THEMED), ("!extension/../../evil.json", "{}")]);
+        assert!(install(&root, &escape).expect_err("refused").text.contains("leads out of it"));
+        let path = d.path().join("link.vsix");
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&path).expect("vsix"));
+        let o = zip::write::SimpleFileOptions::default();
+        z.start_file("extension/package.json", o).expect("start");
+        z.write_all(THEMED.as_bytes()).expect("write");
+        z.add_symlink("extension/themes/night.json", "/etc/passwd", o).expect("link");
+        z.finish().expect("finish");
+        assert!(install(&root, &path).expect_err("refused").text.contains("link"));
+        assert!(!root.join(LIST).exists(), "nothing was kept");
+        // Not a zip, not an extension, nothing used: each said.
+        std::fs::write(d.path().join("plain.vsix"), "hello").expect("w");
+        assert!(install(&root, &d.path().join("plain.vsix")).expect_err("zip").text.contains("zip"));
+        let bare = vsix(d.path(), &[("readme.md", "")]);
+        assert!(install(&root, &bare).expect_err("bare").text.contains("package.json"));
+        let pkg = r#"{"publisher": "a", "name": "b", "version": "1.0.0", "main": "x.js", "contributes": {"commands": []}}"#;
+        let r = install(&root, &vsix(d.path(), &[("package.json", pkg)])).expect_err("code");
+        assert!(r.text.contains("nothing Code Arena can use (its code)") && r.unused[0].contains("its code"));
+        // A theme named but not in the extension: left out, and with nothing else it brings, refused.
+        let pkg = r#"{"publisher": "a", "name": "b", "version": "1.0.0",
+            "contributes": {"themes": [{"label": "T", "path": "./t.json"}]}}"#;
+        let missing = vsix(d.path(), &[("package.json", pkg)]);
+        assert!(install(&root, &missing).expect_err("missing").text.contains("nothing Code Arena can use"));
+        assert!(std::fs::read_dir(&root).expect("root").next().is_none(), "no folder is left behind");
+    }
+
+    /// VS Code's extensions folder in `home` with this extension at this version: snippets for Rust.
+    fn vscode_has(home: &Path, id: (&str, &str), version: &str) -> PathBuf {
+        let dir = home.join(".vscode/extensions").join(format!("{}.{}-{version}", id.0, id.1));
+        std::fs::create_dir_all(dir.join("snippets")).expect("dir");
+        let pkg = json!({"publisher": id.0, "name": id.1, "version": version, "contributes": {
+            "snippets": [{"language": "rust", "path": "./snippets/rust.json"}]}});
+        std::fs::write(dir.join("package.json"), pkg.to_string()).expect("w");
+        std::fs::write(dir.join("snippets/rust.json"), "{}").expect("w");
+        dir
+    }
+
+    #[test]
+    fn vs_codes_own_extensions_are_found_newest_first_and_imported() {
+        let d = tempfile::tempdir().expect("temp");
+        let (root, home) = (d.path().join("ext"), d.path().join("home"));
+        vscode_has(&home, ("acme", "snips"), "1.9.0");
+        let newest = vscode_has(&home, ("acme", "snips"), "1.10.0");
+        vscode_has(&home, ("acme", "gone"), "1.0.0");
+        let vs = home.join(".vscode/extensions");
+        std::fs::write(vs.join(".obsolete"), r#"{"acme.gone-1.0.0": true}"#).expect("w");
+        std::fs::create_dir_all(vs.join("broken.thing-2.0.0")).expect("dir");
+        std::fs::write(vs.join("broken.thing-2.0.0/package.json"), "{").expect("w");
+        let found = local(&root, Some(&home));
+        let ids: Vec<&str> = found.iter().filter_map(|v| v["id"].as_str()).collect();
+        assert_eq!(ids, ["acme.snips", "broken.thing"]);
+        assert_eq!((found[0]["version"].as_str(), found[0]["usable"].as_bool()), (Some("1.10.0"), Some(true)));
+        assert_eq!((found[1]["version"].as_str(), found[1]["problem"].is_string()), (Some("2.0.0"), true));
+        let item = import(&root, Some(&home), "Acme.Snips").expect("imported");
+        assert_eq!((item["version"].as_str(), item["source"].as_str()), (Some("1.10.0"), Some("vscode")));
+        assert!(root.join("acme.snips-1.10.0/snippets/rust.json").is_file());
+        assert!(newest.join("package.json").is_file(), "VS Code's copy is left as it is");
+        assert_eq!(local(&root, Some(&home))[0]["installed"], "1.10.0");
+        assert!(import(&root, Some(&home), "acme.none").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_reached_through_a_link_in_vs_codes_folder_is_not_taken() {
+        let d = tempfile::tempdir().expect("temp");
+        let (root, home) = (d.path().join("ext"), d.path().join("home"));
+        let dir = vscode_has(&home, ("acme", "snips"), "1.0.0");
+        std::fs::remove_file(dir.join("snippets/rust.json")).expect("rm");
+        std::fs::write(d.path().join("secret"), "{}").expect("w");
+        std::os::unix::fs::symlink(d.path().join("secret"), dir.join("snippets/rust.json")).expect("link");
+        assert!(import(&root, Some(&home), "acme.snips").expect_err("link").text.contains("link"));
+    }
+
+    #[test]
+    fn recommendations_say_where_each_stands_here() {
+        let d = tempfile::tempdir().expect("temp");
+        let (root, home, project) = (d.path().join("ext"), d.path().join("home"), d.path().join("p"));
+        assert_eq!(recommended(&root, Some(&home), &project)["file"], false);
+        vscode_has(&home, ("acme", "snips"), "1.0.0");
+        install(&root, &themed(d.path())).expect("installed");
+        std::fs::create_dir_all(project.join(".vscode")).expect("dir");
+        let said = r#"{
+            // Comments are allowed, as in VS Code.
+            "recommendations": ["acme.night", "esbenp.prettier-vscode", "dbaeumer.vscode-eslint", "acme.snips",
+                                "someone.else", "ACME.NIGHT", "not an id"],
+            "unwantedRecommendations": ["github.copilot"]
+        }"#;
+        std::fs::write(project.join(".vscode/extensions.json"), said).expect("w");
+        let r = recommended(&root, Some(&home), &project);
+        let stands: Vec<(&str, &str)> = r["recommendations"]
+            .as_array()
+            .expect("list")
+            .iter()
+            .map(|x| (x["id"].as_str().unwrap_or(""), x["status"].as_str().unwrap_or("")))
+            .collect();
+        assert_eq!(stands, [
+            ("acme.night", "installed"),
+            ("esbenp.prettier-vscode", "built-in"),
+            ("dbaeumer.vscode-eslint", "unsupported"),
+            ("acme.snips", "local"),
+            ("someone.else", "unknown"),
+        ]);
+        assert_eq!(r["unwanted"], json!(["github.copilot"]));
+        std::fs::write(project.join(".vscode/extensions.json"), "[1]").expect("w");
+        assert!(recommended(&root, Some(&home), &project)["error"].is_string());
+    }
+
+    #[test]
+    fn each_message_is_answered_with_the_key_it_carries() {
+        let d = tempfile::tempdir().expect("temp");
+        let at = Folders {
+            root: d.path().join("ext"),
+            home: Some(d.path().join("home")),
+            project: d.path().to_path_buf(),
+        };
+        themed(d.path());
+        let (r, changed) = answer(&at, "ext_install", &json!({"type": "ext_install", "path": "x.vsix"}));
+        assert!(changed && r["path"] == "x.vsix" && r["item"]["id"] == "acme.night", "{r}");
+        let (r, changed) = answer(&at, "ext_install", &json!({"path": "nope.vsix"}));
+        assert!(!changed && r["path"] == "nope.vsix" && r["error"].is_string());
+        let (r, _) = answer(&at, "ext_enable", &json!({"id": "acme.night"}));
+        assert!(r["error"].as_str().is_some_and(|e| e.contains("on")) && r["id"] == "acme.night");
+        let (r, changed) = answer(&at, "ext_enable", &json!({"id": "acme.night", "on": false}));
+        assert!(changed && r["on"] == false && r["item"]["enabled"] == false);
+        let (r, _) = answer(&at, "ext_file", &json!({"id": "acme.night", "path": "themes/base.json"}));
+        assert_eq!((r["mime"].as_str(), r["data"].as_str()), (Some("application/json"), Some("eyJjb2xvcnMiOiB7fX0=")));
+        let (r, _) = answer(&at, "extensions", &json!({}));
+        assert_eq!(r["items"][0]["id"], "acme.night");
+        let (r, changed) = answer(&at, "ext_uninstall", &json!({"id": "acme.night"}));
+        assert!(changed && r == json!({"type": "ext_uninstall", "id": "acme.night"}));
+        assert_eq!(picked("~/a.vsix", Some(Path::new("/h")), Path::new("/p")), PathBuf::from("/h/a.vsix"));
+        assert_eq!(picked("/abs/a.vsix", None, Path::new("/p")), PathBuf::from("/abs/a.vsix"));
+        assert_eq!(picked("a.vsix", None, Path::new("/p")), PathBuf::from("/p/a.vsix"));
+    }
 }
