@@ -40,6 +40,9 @@ pub struct Form {
     inside: RwSignal<i32>,
     /// What had the keys before it opened.
     back: RwSignal<Option<ViewId>>,
+    /// How many times it was shown: a lost focus closes only the showing it was lost in, never one opened again
+    /// before the check (a sign-in asked again as soon as the last was answered).
+    shown: RwSignal<u64>,
 }
 
 impl Form {
@@ -50,12 +53,14 @@ impl Form {
             boxed: ui.scope.create_rw_signal(None),
             inside: ui.scope.create_rw_signal(0),
             back: ui.scope.create_rw_signal(None),
+            shown: ui.scope.create_rw_signal(0),
         }
     }
 
     /// Opens it, its first input with the keys once it is drawn; `back` has them again when it closes.
     pub fn show(self, back: Option<ViewId>) {
         self.back.set(back);
+        self.shown.update(|n| *n += 1);
         if !self.open.get_untracked() {
             self.open.set(true);
         }
@@ -86,8 +91,9 @@ impl Form {
     /// closes.
     fn lost(self) {
         self.inside.update(|n| *n = (*n - 1).max(0));
+        let at = self.shown.get_untracked();
         exec_after(Duration::ZERO, move |_| {
-            if self.open.get_untracked() && self.inside.get_untracked() == 0 {
+            if self.open.get_untracked() && self.inside.get_untracked() == 0 && self.shown.get_untracked() == at {
                 self.close();
             }
         });
