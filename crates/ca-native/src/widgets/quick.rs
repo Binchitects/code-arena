@@ -674,7 +674,7 @@ fn press(ui: Ui, key: Press) {
 
 /// A secret after a key: a letter typed is added, Backspace takes the last away, Ctrl+V adds what was copied
 /// (`pasted` reads it). None: the key is not the secret's.
-fn secret_key(text: &str, key: &Key, m: Modifiers, pasted: impl FnOnce() -> Option<String>) -> Option<String> {
+pub(crate) fn secret_key(text: &str, key: &Key, m: Modifiers, pasted: impl FnOnce() -> Option<String>) -> Option<String> {
     let held = m.contains(Modifiers::CONTROL) || m.contains(Modifiers::META);
     match key {
         Key::Character(c) if held && c.eq_ignore_ascii_case("v") => {
