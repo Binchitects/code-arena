@@ -991,7 +991,10 @@ fn cell_view(ui: Ui, send: &Send, book: &Rc<Book>, l: Rc<Live>) -> AnyView {
     let body = container(body).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0_f32).min_width(0.0));
     let tools = cell_tools(ui, book, &l);
     let b = book.clone();
-    let row = h_stack((left, body, tools.style(|s| s.align_self(Some(floem::taffy::AlignItems::FlexStart))))).style(
+    // The tools float over the cell's top right corner, as VS Code's do, so selecting a cell leaves its text where
+    // it was.
+    let tools = tools.style(|s| s.absolute().inset_top(-6.0).inset_right(16.0).z_index(2));
+    let row = h_stack((left, body, tools)).style(
         move |s| {
             let c = t.get();
             let on = is_selected.get();
@@ -1155,7 +1158,6 @@ fn cell_tools(ui: Ui, book: &Rc<Book>, l: &Rc<Live>) -> AnyView {
                 .into_any()
         },
     )
-    .style(|s| s.padding_left(6.0).padding_top(2.0))
     .into_any()
 }
 
