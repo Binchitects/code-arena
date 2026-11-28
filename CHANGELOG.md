@@ -485,19 +485,19 @@ Sections used:
 - **Theme button in the activity bar.** It offers Light, Dark and System, plus a Color Theme
   submenu of the theme families. Choosing a family makes its two modes the preferred ones.
 - **A refused setting is said.** When a setting can't be kept, a toast says why.
-- **Activity bar menus.** Right-click an activity bar icon to hide it, move it to the panel, move it up or
-  down, or dock it (Dock, Dock With every group, Float). Right-click the empty part of the bar to show or hide
-  each view's icon, set the bar's position, or reset view locations.
-- **Activity bar position.** Put the activity bar at the side, as a row at the top of the side bar, or hide it.
-  Use the bar's menu or View: Move Activity Bar to Side/Top, Hide Activity Bar, or Toggle Activity Bar
-  Visibility. The position and hidden icons are kept with the folder's layout.
-- **Reorder by dragging.** Drag an icon within the activity bar to reorder it; a line shows where it goes.
-  Drop a view from anywhere onto the bar to put it in the side bar at that place.
-- **Panel tab menu and position.** Right-click a panel tab to move the view to the side bar or move the
-  whole panel to the bottom, left or right (also View: Move Panel Left/Right/To Bottom). The panel keeps its
-  size. Tabs that do not fit go under a '…' menu.
-- **Activity bar foot buttons.** Terminal, Color Theme, Accounts, Manage, Help and About. Manage opens
-  Command Palette, Color Theme and About until a part adds the Manage command.
+- **Activity bar menus.** Right-click an activity bar icon to hide it, move it to the panel, move it
+  up or down, or dock it (Dock, Dock With every group, Float). Right-click the empty part of the bar
+  to show or hide each view's icon, set the bar's position, or reset view locations.
+- **Activity bar position.** Put the activity bar at the side, as a row at the top of the side bar,
+  or hide it. Use the bar's menu or View: Move Activity Bar to Side/Top, Hide Activity Bar, or
+  Toggle Activity Bar Visibility. The position and hidden icons are kept with the folder's layout.
+- **Reorder by dragging.** Drag an icon within the activity bar to reorder it; a line shows where it
+  goes. Drop a view from anywhere onto the bar to put it in the side bar at that place.
+- **Panel tab menu and position.** Right-click a panel tab to move the view to the side bar or move
+  the whole panel to the bottom, left or right (also View: Move Panel Left/Right/To Bottom). The
+  panel keeps its size. Tabs that do not fit go under a '…' menu.
+- **Activity bar foot buttons.** Terminal, Color Theme, Accounts, Manage, Help and About. Manage
+  opens Command Palette, Color Theme and About until a part adds the Manage command.
 
 
 ### :bug: Bugs fixed
