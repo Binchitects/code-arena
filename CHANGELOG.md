@@ -1146,6 +1146,15 @@ Sections used:
 - **Git: Compare with Revision...** compares the active file's editor with HEAD, the index, a
   branch or tag, or one of the file's last 30 commits. **Git: Open Changes** opens the active
   file's working-tree or staged changes.
+- **Several repositories in Source Control.** Repositories inside the project's folders (down to
+  `git.repositoryScanMaxDepth`, skipping `git.repositoryScanIgnoredFolders`) and those of the open
+  files are found as `git.autoRepositoryDetection` says, up to 100. With more than one, the view
+  starts with 'N repositories': each row shows its name, branch, ahead/behind and change count, with
+  Commit and Refresh on hover. Click one to see its changes and use its commit box; each repository
+  keeps its own message.
+- **Git commands ask which repository.** Run from the Command Palette with several repositories, git
+  commands first ask 'Repository'. Git: Fetch From All Repositories fetches each one. Staging,
+  diffs, quick diff and the merge editor work on files in nested repositories too.
 
 
 ### :bug: Bugs fixed
