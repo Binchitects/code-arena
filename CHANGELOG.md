@@ -1079,6 +1079,14 @@ Sections used:
   opens again and says the guest refused, with the user filled in.
 - **The status bar's spinners stand still with reduced motion.** With workbench.reduceMotion on, the
   model item's spinner and the jobs item's spinner no longer turn.
+- **Edit and Answer again look disabled when they cannot be used.** On a question a compaction covers,
+  and while an answer is being written, the two actions are now drawn greyed out, as VS Code draws a
+  disabled action. Before, they looked like the other actions.
+- **A command's answer is scrolled into view.** Sending a line from the box (a /command, a !command or
+  a question) takes the thread to its end even when it was scrolled up, so the answer is no longer
+  hidden below the fold.
+- **Multi-line notices are readable.** The output of a !command and other notices of several lines in
+  the thread are no longer squeezed together.
 
 ## v0.5.0 (2026-11-26)
 
