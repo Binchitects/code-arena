@@ -160,12 +160,12 @@ impl ArenaClient {
     }
 }
 
-/// What feedback is, in Arena's words for it: an idea, a problem, praise, or anything else.
-pub const FEEDBACK_KINDS: [&str; 4] = ["idea", "problem", "praise", "other"];
-
 impl ArenaClient {
+    /// What feedback is, in Arena's words for it: an idea, a problem, praise, or anything else.
+    pub const FEEDBACK_KINDS: [&'static str; 4] = ["idea", "problem", "praise", "other"];
+
     /// `POST /api/feedback`: what the person says about Arena or Code Arena, kept for the admins (Admin → Feedback),
-    /// whose answer comes to the person's bell. `kind` is one of [`FEEDBACK_KINDS`], `page` where it was sent from,
+    /// whose answer comes to the person's bell. `kind` is one of [`Self::FEEDBACK_KINDS`], `page` where it was sent from,
     /// each screenshot a picture's bytes in base64 (at most 3, of 2 MB each, as Arena takes them).
     pub async fn feedback(&self, kind: &str, text: &str, page: &str, screenshots: &[String]) -> Result<(), ArenaError> {
         let mut body = serde_json::json!({"kind": kind, "text": text, "page": page});

@@ -535,7 +535,7 @@ fn view_state(data: &Path, root: &Path) -> Value {
 }
 
 /// The session as a page that just connected needs it: who and where, and its last turns.
-fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
+pub(crate) fn state(p: &Prepared, app: &App, sh: &Shared, running: bool) -> Value {
     let tools = sh.kept.of::<Tools>();
     tools.take_from(p);
     let facts = sh.kept.of::<CallFacts>();
