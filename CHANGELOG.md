@@ -588,6 +588,12 @@ Sections used:
   question as 'Sent with it' and are kept with it.
 - **Add to Chat in the Explorer.** A row's menu puts its @path before what is typed in the chat's
   box.
+- **Reply quoting part of an answer.** Select words in a finished answer and a toolbar offers Reply,
+  Ask about this and Copy. Reply puts the words over the box as 'Quoted in your reply' (cut to 4,000
+  characters; X or Backspace in an empty box takes it away; it comes back if the message is
+  refused), and the model reads the quote before your words. Ask about this sends a question about
+  the words at once ('Explain this', 'Say more', 'Give an example', or your own), leaving the box as
+  it was. Chat: Reply Quoting the Selection is Ctrl+Shift+'.
 
 
 ### :bug: Bugs fixed
