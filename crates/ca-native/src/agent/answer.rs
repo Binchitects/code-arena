@@ -186,6 +186,10 @@ pub(super) fn kept(ui: Ui, msg: &Value, items: &mut Vec<Item>, running: bool) {
             answer.thought.set(Some(Thought::default()));
         }
         finished(*answer, &msg["usage"], None);
+        // The person's rating of it (`rating.rs`), kept on its last message.
+        if let Some(up) = msg["rating"].as_bool() {
+            answer.rating.set(Some(up));
+        }
     }
 }
 

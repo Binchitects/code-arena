@@ -197,6 +197,31 @@ impl ChatSync {
         self.chat_id()
     }
 
+    /// The person's rating of the answer kept as message `seq`, told to the chat's answer in Arena (`None`: taken
+    /// back). An answer Arena does not have yet is sent first (waiting at most a few seconds). The error says why
+    /// it did not reach Arena.
+    pub async fn rate(&self, seq: i64, rating: Option<&serde_json::Value>) -> Result<(), String> {
+        if self.unsupported.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("This Arena keeps no chats for Code Arena.".into());
+        }
+        let link = self.store.lock().ok().and_then(|s| s.chat_link(&self.session).ok()).unwrap_or_default();
+        if link.off {
+            return Err("This chat is kept here only (/sync on sends it to Arena).".into());
+        }
+        let id_of = || self.store.lock().ok().and_then(|s| s.arena_id(&self.session, seq).ok().flatten());
+        let message = match id_of() {
+            Some(m) => Some(m),
+            None => {
+                self.flush(Duration::from_secs(5)).await;
+                id_of()
+            }
+        };
+        let (Some(chat), Some(message)) = (self.chat_id(), message) else {
+            return Err("Arena does not have this answer yet.".into());
+        };
+        self.arena.rate(&chat, &message, rating).await.map_err(|e| e.to_string())
+    }
+
     /// Waits at most `limit` for what the session kept to reach Arena (a one-shot run, before it ends).
     pub async fn flush(&self, limit: Duration) -> bool {
         let deadline = tokio::time::Instant::now() + limit;

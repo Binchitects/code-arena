@@ -372,6 +372,18 @@ impl ArenaClient {
         }
     }
 
+    /// The person's rating of an answer of the chat, by its id in Arena, as the web's thumbs keep it: `{up, reason?,
+    /// comment?, share?}` (`None`: taken back). Arena keeps a reason with a down vote only, and at most 1,000
+    /// characters of comment.
+    pub async fn rate(&self, chat: &str, message: &str, rating: Option<&Value>) -> Result<(), ArenaError> {
+        let path = format!("{API}/chats/{chat}/messages/{message}/feedback");
+        let raw = match rating {
+            Some(r) => self.raw(Method::PUT, &path, Some(r)).await?,
+            None => self.raw(Method::DELETE, &path, None).await?,
+        };
+        if raw.status.is_success() { Ok(()) } else { Err(refusal(&raw)) }
+    }
+
     /// The person continues the chat here: archived on the web, it comes back to the list.
     pub async fn continued(&self, chat: &str) -> Result<(), ArenaError> {
         let raw = self.raw(Method::POST, &format!("{API}/chats/{chat}/continued"), Some(&json!({}))).await?;
@@ -482,6 +494,32 @@ mod tests {
         let e = w.next().await.and_then(|e| e).expect("a change");
         assert_eq!((e.id.as_deref(), e.what.as_deref()), (Some("c1"), Some("messages")));
         assert_eq!(w.next().await, None);
+    }
+
+    #[tokio::test]
+    async fn a_rating_is_put_on_the_answer_and_taken_back() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let at = "/api/code-arena/chats/c1/messages/m2/feedback";
+        let down = json!({"up": false, "reason": "wrong", "comment": "it was not", "share": true});
+        Mock::given(method("PUT"))
+            .and(path(at))
+            .and(body_json(&down))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"up": false})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let c = ArenaClient::new(&server.uri(), Some(ca_core::Secret::new("sk-test")), None).expect("client");
+        c.rate("c1", "m2", Some(&down)).await.expect("rated");
+        c.rate("c1", "m2", None).await.expect("taken back");
+        assert!(c.rate("c1", "m9", Some(&json!({"up": true}))).await.is_err());
     }
 
     #[tokio::test]

@@ -460,6 +460,7 @@ fn thread_page(
     let Ok(page) = store.page(session, PAGE_TURNS, before_turn) else { return (Vec::new(), 0, 1) };
     let from = page.messages.first().map_or(0, |m| m.seq);
     let used = store.usages(session, from).unwrap_or_default();
+    let rated = store.ratings(session, from).unwrap_or_default();
     let details = page.messages.first().and_then(|m| store.details(session, m.seq).ok()).unwrap_or_default();
     let messages = page
         .messages
@@ -479,6 +480,9 @@ fn thread_page(
             }
             if let Some(u) = used.get(&m.seq) {
                 v["usage"] = u.clone();
+            }
+            if let Some(r) = rated.get(&m.seq) {
+                v["rating"] = r["up"].clone();
             }
             // Each call with what the session kept of it, beside their names (which stay as they were).
             if !m.message.tool_calls.is_empty() {

@@ -22,6 +22,7 @@
 //! - `pieces.rs`: the lines of files a message is sent with (its `context`), read for the model and named in its
 //!   `files`.
 //! - `quotes.rs`: a message that quotes part of an answer (`send{quote}`): the quote put first for the model.
+//! - `rating.rs`: an answer's thumbs, kept with it and told to Arena (`rate`), and whether answers can be rated.
 //! - `rewind.rs`: what going back to a question would do (`rewind_preview`), and a question asked again.
 
 use serde_json::Value;
@@ -37,6 +38,7 @@ pub mod pickers;
 mod pieces;
 pub mod queue;
 pub mod quotes;
+mod rating;
 pub mod replay;
 pub mod rewind;
 
@@ -53,6 +55,7 @@ impl Area for Here {
         ("queue_clear", Rule::Turn),
         ("rewind_preview", Rule::Turn),
         ("compact_at", Rule::Queue),
+        ("rate", Rule::Turn),
     ];
 
     fn shared(sh: &Shared, m: &Value) -> bool {
@@ -62,6 +65,7 @@ impl Area for Here {
             "folders" => mentions::asked(sh, m),
             "queue_edit" | "queue_cancel" | "queue_clear" => queue::asked(sh, m),
             "rewind_preview" => rewind::asked(sh, m),
+            "rate" => rating::asked(sh, m),
             _ => false,
         }
     }
@@ -70,6 +74,7 @@ impl Area for Here {
         pickers::state(sh, v);
         v["queued"] = queue::items(sh);
         context::compact(sh, p, v);
+        rating::state(sh, v);
     }
 
     fn status(sh: &Shared, p: Option<&Prepared>, v: &mut Value) {
