@@ -530,7 +530,7 @@ fn viewer(ui: Ui, send: Send) -> AnyView {
         .style(move |s| {
             s.absolute()
                 .inset(0.0)
-                .background(t.get().editor_bg.multiply_alpha(0.97))
+                .background(t.get().editor_bg)
                 .apply_if(!open.get(), |s| s.hide())
         })
         .into_any()
