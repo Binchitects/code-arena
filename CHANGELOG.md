@@ -866,6 +866,19 @@ Sections used:
   and its items are boxes you tick, each with how the model did or checked it. With none on, you
   turn one of yours or the repository's on, and make, edit or delete your own (its items one per
   line).
+- **The chat's own commands work in the IDE.** /help, /model, /mode, /thinking, /cost, /mcp,
+  /commands, /skills, /plan, /checklist, /commit, /hooks, /memory, /remember, /project, /assistant,
+  /arena-agents, /arena-tasks, /sync, /tools, /permissions, /compact-at, /sandbox, /jobs, /search,
+  /output-style and /web answer in the thread. /compact, /rewind N, /fork [N] and /resume ID do what
+  the window's own buttons do. /tasks, /context, /projects, /loop, /goal TEXT and /resume open their
+  views, and /review asks the model to review the changes not committed yet. The / menu lists these
+  commands first.
+- **!command in the chat.** Type !git status to run a command yourself: its output shows in the
+  thread and the model reads it with your next message. Sent while the agent works, it runs when the
+  turn ends.
+- **After each turn, as in the terminal.** git.autoCommit commits what the turn changed, your
+  statusLine command's line shows in the status bar, what background work said shows as toasts, and
+  after a long turn the agent is reminded to keep what it worked out.
 
 
 ### :bug: Bugs fixed
