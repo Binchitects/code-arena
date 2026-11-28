@@ -805,6 +805,16 @@ Sections used:
   Conflict commands (Accept Current, Incoming or Both, Accept All Current, Incoming or Both, Next
   and Previous Conflict). Each accept is undone with one Ctrl+Z. merge-conflict.decorators.enabled
   and merge-conflict.codeLens.enabled turn the colours and the lens off.
+- **Automation view.** The Automation view lists this machine's schedules: each shows its name
+  (struck through while off), how often, its mode and next run, its prompt and its last run. Run it
+  now, Turn off/on and Remove show while the pointer is on a row. New Schedule asks for a name,
+  every 30 minutes to 7 days, a time of day for daily ones, the mode, the folder and what to do. Due
+  schedules run while the IDE is open, and with it closed after `code-arena schedule install`.
+- **Arena's agents and scheduled tasks in the IDE.** Agents in Arena runs an Agent Studio agent with
+  what it is given, and its run is followed here step by step until it ends. Scheduled tasks in
+  Arena shows each task's cron, last run and next run, and runs one now in Arena.
+- **Schedules can be turned off.** A schedule that is off is kept but not run when due, and
+  `code-arena schedule list` says so.
 
 
 ### :bug: Bugs fixed
