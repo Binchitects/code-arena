@@ -251,7 +251,7 @@ fn state_icon(ui: Ui, st: Memo<State>, tick: RwSignal<u64>) -> impl IntoView {
                         _ => st,
                     };
                     // A spinner turns, a twelfth of a turn each tick.
-                    st.apply_if(s == State::Running, |st| {
+                    st.apply_if(s == State::Running && !crate::accessibility::still(ui), |st| {
                         st.rotate((tick.get() % 12) as f64 * std::f64::consts::TAU / 12.0)
                     })
                 })

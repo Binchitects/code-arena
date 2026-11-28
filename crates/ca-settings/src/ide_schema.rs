@@ -710,7 +710,7 @@ pub static ALL: &[&Setting] = &[
         "0",
         Scope::Project,
         "Accessibility",
-        "The whole window larger or smaller, its text and everything else: each step 20% (1: 120%, -1: about 83%), as VS Code's. Ctrl+= and Ctrl+- change it, Ctrl+Numpad0 puts it back. The editor keeps \"editor.fontSize\".",
+        "The whole window larger or smaller, its text and everything else: each step 20% (1: 120%, -1: about 83%), as VS Code's. Ctrl+= and Ctrl+- change it, Ctrl+Numpad0 puts it back. \"editor.fontSize\" is not changed: the editor grows with the window.",
     ),
     &row(
         "window.autoDetectHighContrast",
@@ -742,7 +742,7 @@ pub static ALL: &[&Setting] = &[
         "\"100%\"",
         Scope::Project,
         "Accessibility",
-        "The workbench's text larger, the rest as it is (\"window.zoomLevel\" makes everything larger).",
+        "The workbench larger, its text and its controls, the editor's text as \"editor.fontSize\" has it (\"window.zoomLevel\" makes the editor larger too).",
     ),
     &row(
         "codeArena.accessibility.focusRings",

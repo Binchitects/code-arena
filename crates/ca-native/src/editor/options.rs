@@ -254,13 +254,16 @@ pub fn read(ui: Ui, path: Option<&str>) -> Options {
     let z = ui.state::<Zoom>();
     let level = z.level.get();
     let size = font_size(&settings::setting(ui, "editor.fontSize", lang));
+    let share = crate::accessibility::text_share(ui) as f32;
     let font = Font {
         family: font_family(&settings::setting(ui, "editor.fontFamily", lang)),
         // Whole pixels, as the editor lays its text out with: the columns of the rulers and of a bounded wrap are
         // found at the very size drawn.
-        size: zoomed(size, level).round(),
+        // The workbench's larger text (codeArena.accessibility.textSize) leaves the editor's as it was.
+        size: (zoomed(size, level) / share).round(),
         weight: font_weight(&settings::setting(ui, "editor.fontWeight", lang)),
-        line_height: zoomed(line_height(&settings::setting(ui, "editor.lineHeight", lang), size), level).round(),
+        line_height: (zoomed(line_height(&settings::setting(ui, "editor.lineHeight", lang), size), level) / share)
+            .round(),
     };
     let mut wrap =
         wrap(&settings::setting(ui, "editor.wordWrap", lang), &settings::setting(ui, "editor.wordWrapColumn", lang));

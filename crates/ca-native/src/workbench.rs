@@ -61,7 +61,9 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         })
         .on_event_cont(EventListener::KeyDown, move |e| {
             if let Event::KeyDown(k) = e {
-                key(ui, &keys, &k.key.logical_key, k.modifiers);
+                // A key of the number pad by its own name (Ctrl+Numpad0 is not Ctrl+0).
+                let pad = crate::accessibility::numpad(&k.key.logical_key, k.key.location);
+                key(ui, &keys, pad.as_ref().unwrap_or(&k.key.logical_key), k.modifiers);
             }
         })
         .style(move |s| {
@@ -88,6 +90,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
                         .box_shadow_color(c.shadow)
                 })
                 .class(floem::views::PlaceholderTextClass, |s| s.color(c.placeholder).font_size(13.0))
+                .apply(crate::accessibility::rings(ui, floem::style::Style::new()))
         })
 }
 
