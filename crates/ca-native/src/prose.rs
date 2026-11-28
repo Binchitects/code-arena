@@ -59,12 +59,61 @@ pub struct Quoting {
 /// An answer's text whose selections are told to `quoting` (an answer of the chat, to reply quoting a part of it).
 pub fn answer_quoting(ui: Ui, text: RwSignal<String>, quoting: Option<Quoting>) -> impl IntoView {
     let blocks = create_memo(move |_| text.with(|t| parse(t).into_iter().map(Rc::new).collect::<Vec<_>>()));
+    blocks_view(ui, blocks, quoting, None)
+}
+
+/// Where a link's address leads, as a document reads it.
+pub type Targeting = Box<dyn Fn(&str) -> Option<Target>>;
+
+/// A picture drawn, by its address and its words.
+pub type Picturing = Box<dyn Fn(&str, &str) -> AnyView>;
+
+/// What a document drawn by the answers' renderer (a Markdown file's preview) does that an answer does not: where
+/// its links lead and what a click on one does, how its pictures are drawn, and the view each of its blocks is.
+pub struct Doc {
+    /// Where a link's address leads (a path is the document's own, read from its folder); none: nowhere.
+    pub target: Targeting,
+    /// What a click on a link does.
+    pub follow: Box<dyn Fn(&Target)>,
+    /// A picture of it drawn, by its address and its words.
+    pub picture: Picturing,
+    /// Told each block's view as it is made, by the block's place in the document.
+    pub placed: Box<dyn Fn(usize, floem::ViewId)>,
+}
+
+/// A document's blocks drawn as an answer's are: read off the window's thread by whoever has it, each block laid
+/// out again only when it changes.
+pub fn document(ui: Ui, blocks: Memo<Vec<Rc<Block>>>, doc: Doc) -> impl View {
+    blocks_view(ui, blocks, None, Some(Rc::new(doc)))
+}
+
+fn blocks_view(ui: Ui, blocks: Memo<Vec<Rc<Block>>>, quoting: Option<Quoting>, doc: Option<Rc<Doc>>) -> impl View {
     dyn_stack(
         move || blocks.get().into_iter().enumerate().collect::<Vec<_>>(),
         |(n, b): &(usize, Rc<Block>)| (*n, shape(b)),
-        move |(n, b): (usize, Rc<Block>)| block(ui, n, &b, blocks, quoting.clone()),
+        move |(n, b): (usize, Rc<Block>)| {
+            let view = block(ui, n, &b, blocks, quoting.clone(), doc.clone());
+            if let Some(d) = &doc {
+                (d.placed)(n, view.id());
+            }
+            view
+        },
     )
     .style(move |s| s.flex_col().width_full().min_width(0.0).apply_if(blocks.with(|b| b.is_empty()), |s| s.hide()))
+}
+
+/// A paragraph that is only pictures (and the spaces between them): their addresses and words.
+fn pictures_only(t: &Text) -> Option<Vec<(String, String)>> {
+    if t.pictures.is_empty() {
+        return None;
+    }
+    let mut rest = t.text.clone().into_bytes();
+    for (r, _) in &t.pictures {
+        rest[r.clone()].fill(b' ');
+    }
+    rest.iter()
+        .all(u8::is_ascii_whitespace)
+        .then(|| t.pictures.iter().map(|(r, src)| (src.clone(), t.text[r.clone()].to_string())).collect())
 }
 
 /// What a block's view is made for: its kind, and what of it the view is built with. Its text is not of it, so a
@@ -77,12 +126,21 @@ fn shape(b: &Block) -> u64 {
         Block::Item { depth, marker, .. } => (depth, marker).hash(&mut h),
         Block::Code { lang, name, .. } => (lang, name).hash(&mut h),
         Block::Table { align, .. } => align.hash(&mut h),
+        // A paragraph of pictures is drawn as them (in a document), so its pictures are what it is made for.
+        Block::Paragraph(t) => t.pictures.iter().for_each(|(_, src)| src.hash(&mut h)),
         _ => {}
     }
     h.finish()
 }
 
-fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>, q: Option<Quoting>) -> AnyView {
+fn block(
+    ui: Ui,
+    n: usize,
+    first: &Block,
+    blocks: Memo<Vec<Rc<Block>>>,
+    q: Option<Quoting>,
+    doc: Option<Rc<Doc>>,
+) -> AnyView {
     let t = ui.colors;
     // The block as it is now: only a change to it lays it out again.
     let now = create_memo(move |_| blocks.with(|b| b.get(n).cloned()));
@@ -97,7 +155,14 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>, q: Optio
     // The space over a block (none over an answer's first).
     let over = move |px: f64| if n == 0 { 0.0 } else { px };
     match first {
-        Block::Paragraph(_) => prose(ui, words, 13.0, false, q).style(move |s| s.margin_top(over(8.0))).into_any(),
+        Block::Paragraph(t) if doc.is_some() && pictures_only(t).is_some() => {
+            let d = doc.as_deref().expect("a document");
+            let shown = pictures_only(t).unwrap_or_default();
+            floem::views::h_stack_from_iter(shown.iter().map(|(src, alt)| (d.picture)(src, alt)))
+                .style(move |s| s.flex_wrap(floem::style::FlexWrap::Wrap).gap(4.0).width_full().margin_top(over(8.0)))
+                .into_any()
+        }
+        Block::Paragraph(_) => prose(ui, words, 13.0, false, q, doc).style(move |s| s.margin_top(over(8.0))).into_any(),
         Block::Heading(level, _) => {
             let size = match level {
                 1 => 20.0,
@@ -105,7 +170,7 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>, q: Optio
                 3 => 14.0,
                 _ => 13.0,
             };
-            prose(ui, words, size, true, q).style(move |s| s.margin_top(over(16.0))).into_any()
+            prose(ui, words, size, true, q, doc).style(move |s| s.margin_top(over(16.0))).into_any()
         }
         Block::Item { depth, marker, .. } => {
             let (depth, marker) = (*depth as f64, marker.clone());
@@ -118,12 +183,12 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>, q: Optio
                         .color(t.get().fg)
                         .selectable(false)
                 }),
-                prose(ui, words, 13.0, false, q).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0)),
+                prose(ui, words, 13.0, false, q, doc).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0)),
             ))
             .style(move |s| s.width_full().min_width(0.0).padding_left(depth * 20.0).margin_top(over(4.0)))
             .into_any()
         }
-        Block::Quote(_) => container(prose(ui, words, 13.0, false, q))
+        Block::Quote(_) => container(prose(ui, words, 13.0, false, q, doc))
             .style(move |s| {
                 s.width_full()
                     .min_width(0.0)
@@ -150,7 +215,7 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>, q: Optio
             }
             code(ui, lang, name, text).style(move |s| s.margin_top(over(8.0))).into_any()
         }
-        Block::Table { .. } => table(ui, now, q).style(move |s| s.margin_top(over(8.0))).into_any(),
+        Block::Table { .. } => table(ui, now, q, doc).style(move |s| s.margin_top(over(8.0))).into_any(),
         Block::Rule => empty()
             .style(move |s| {
                 s.height(1.0).width_full().margin_top(over(12.0)).margin_bottom(4.0).background(t.get().widget_border)
@@ -287,16 +352,28 @@ fn lay_out(
 /// A block's text with its runs: wrapped to its width, the backgrounds of its inline code drawn under it. Its links
 /// open with a click (a citation of a file in the editor, an address in the browser); a drag selects its text, and
 /// Ctrl+C copies what is selected.
-fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool, q: Option<Quoting>) -> impl IntoView {
+fn prose(
+    ui: Ui,
+    words: impl Fn() -> Text + 'static,
+    size: f32,
+    heading: bool,
+    q: Option<Quoting>,
+    doc: Option<Rc<Doc>>,
+) -> impl IntoView {
     let t = ui.colors;
+    let doc_links = doc.clone();
     let laid = create_rw_signal(Laid::default());
     // The width the text is wrapped to, as it was laid out last.
     let width = create_rw_signal(0.0_f64);
     // Laid out when the text, the theme or the project's files change; wrapped again only when the width does.
     let whole = create_rw_signal(Laid::default());
     create_effect(move |_| {
-        let (c, words, files) = (t.get(), words(), citations::files(ui));
-        let links = cited(&words, &files);
+        let (c, words) = (t.get(), words());
+        // A document's links are its own (a path read from its folder); an answer's cite the project's files too.
+        let links = match &doc_links {
+            Some(d) => words.links.iter().filter_map(|(r, href)| Some((r.clone(), (d.target)(href)?))).collect(),
+            None => cited(&words, &citations::files(ui)),
+        };
         let (layout, marks) = lay_out(&words, &links, &c, size, heading);
         whole.set(Laid { layout, marks, links, text: words.text });
     });
@@ -380,7 +457,10 @@ fn prose(ui: Ui, words: impl Fn() -> Text + 'static, size: f32, heading: bool, q
             if at == from {
                 selected.set(None);
                 if let Some(to) = inside.then(|| laid.with_untracked(|l| link_at(&l.links, at).cloned())).flatten() {
-                    citations::open(ui, &to);
+                    match &doc {
+                        Some(d) => (d.follow)(&to),
+                        None => citations::open(ui, &to),
+                    }
                 }
             } else {
                 on_up(Some((from, at)));
@@ -564,7 +644,7 @@ fn measure(text: &Text, bold: bool, c: &crate::colors::Colors) -> f64 {
 /// A table as VS Code's chat draws one: its cells in bordered columns as wide as their widest text (to a limit, past
 /// which they wrap), the header's text in bold. A header's click sorts by its column (up, down, then as written),
 /// and a long table has a box to filter its rows. It scrolls across when it is wider than the answer.
-fn table(ui: Ui, now: Memo<Option<Rc<Block>>>, q: Option<Quoting>) -> impl IntoView {
+fn table(ui: Ui, now: Memo<Option<Rc<Block>>>, q: Option<Quoting>, doc: Option<Rc<Doc>>) -> impl IntoView {
     let t = ui.colors;
     let parts = create_memo(move |_| match now.get().as_deref() {
         Some(Block::Table { head, rows, .. }) => (Rc::new(head.clone()), Rc::new(rows.clone())),
@@ -638,7 +718,8 @@ fn table(ui: Ui, now: Memo<Option<Rc<Block>>>, q: Option<Quoting>) -> impl IntoV
             let row = (0..cells.len())
                 .map(|c| {
                     let words = cells[c].clone();
-                    container(prose(ui, move || words.clone(), 13.0, false, q.clone())).style(move |s| cell_style(s, c))
+                    container(prose(ui, move || words.clone(), 13.0, false, q.clone(), doc.clone()))
+                        .style(move |s| cell_style(s, c))
                 })
                 .collect::<Vec<_>>();
             floem::views::h_stack_from_iter(row).style(move |s| s.border_left(1.0).border_color(t.get().widget_border))
@@ -1018,6 +1099,15 @@ mod tests {
         assert_eq!(shape(&code("rust", "fn")), shape(&code("rust", "fn main() {}")));
         assert_ne!(shape(&code("rust", "fn")), shape(&code("sh", "fn")));
         assert_ne!(shape(&Block::Heading(1, inline("a"))), shape(&Block::Heading(2, inline("a"))));
+        assert_ne!(shape(&para("![a](a.png)")), shape(&para("![a](b.png)")), "a picture changed is drawn again");
+    }
+
+    #[test]
+    fn a_paragraph_of_pictures_alone_is_drawn_as_them() {
+        let both = vec![("a.png".to_string(), "one".to_string()), ("b.svg".to_string(), "b.svg".to_string())];
+        assert_eq!(pictures_only(&inline("![one](a.png) ![](b.svg)")), Some(both));
+        assert_eq!(pictures_only(&inline("See ![one](a.png)")), None, "words beside it: a paragraph");
+        assert_eq!(pictures_only(&inline("[one](a.png)")), None, "a link is no picture");
     }
 
     fn rows(cells: &[&[&str]]) -> Vec<Vec<Text>> {

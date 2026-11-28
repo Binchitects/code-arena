@@ -22,6 +22,9 @@ pub struct Text {
     pub spans: Vec<(Range<usize>, Style)>,
     /// Where each link of it leads, as written (`https://…`, `src/app.ts#L12`, `mailto:…`).
     pub links: Vec<(Range<usize>, String)>,
+    /// Its pictures (`![alt](src)`): where each one's words are in the text, and its address as
+    /// written.
+    pub pictures: Vec<(Range<usize>, String)>,
 }
 
 /// How a table's column is aligned, as its delimiter row says (`:--`, `:-:`, `--:`).
@@ -499,6 +502,9 @@ fn walk(s: &str, style: Style, out: &mut Text) {
                         } else {
                             walk(&s[at + 1..text_end], linked, out);
                         }
+                        if b[i] == b'!' && !target.is_empty() {
+                            out.pictures.push((from..out.text.len(), target.clone()));
+                        }
                         if out.text.len() > from && !target.is_empty() {
                             out.links.push((from..out.text.len(), target));
                         }
@@ -654,6 +660,12 @@ mod tests {
         let t = inline("See https://example.com/a_b?c=1. Or <https://x.dev>, or ![a picture](p.png)");
         assert_eq!(t.text, "See https://example.com/a_b?c=1. Or https://x.dev, or a picture");
         assert_eq!(runs(&t), [("https://example.com/a_b?c=1", LINK), ("https://x.dev", LINK), ("a picture", LINK)]);
+        assert_eq!(t.pictures, [(54..63, "p.png".to_string())], "a picture is known as one, with its address");
+        assert_eq!(
+            inline("![](a.svg) [x](b.png)").pictures,
+            [(0..5, "a.svg".to_string())],
+            "one without words, its address as its words"
+        );
     }
 
     #[test]

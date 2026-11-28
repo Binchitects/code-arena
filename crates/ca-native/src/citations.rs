@@ -32,6 +32,8 @@ pub enum Target {
     Web(String),
     /// A file of the project, at its place.
     File(Ref),
+    /// A heading of the document the link is in, by its slug (`#getting-started`): a Markdown preview scrolls to it.
+    Heading(String),
 }
 
 /// The forms a citation takes: `path#L12-L30`, `path(12,5)`, `path:12-30` or `path:12:5`, the path alone.
@@ -188,6 +190,8 @@ pub fn open(ui: Ui, to: &Target) {
             }
         }
         Target::Web(address) => browse(address),
+        // Only a document's own view knows where its headings are.
+        Target::Heading(_) => {}
     }
 }
 
@@ -200,7 +204,7 @@ pub fn save(path: &str, text: &str) {
 }
 
 /// An address given to the system to open (off the window's thread: the program it starts is waited for there).
-fn browse(address: &str) {
+pub fn browse(address: &str) {
     if cfg!(test) {
         return;
     }

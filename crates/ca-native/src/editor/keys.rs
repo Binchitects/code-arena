@@ -13,7 +13,9 @@ use super::find::find_show;
 use super::tell;
 use crate::state::Ui;
 
-/// A key as the editor's own keymap has it (what `default_key_handler` does, with the keymap made once).
+/// A key as the editor's own keymap has it (what `default_key_handler` does, with the keymap made once), except
+/// that Ctrl and Shift with a letter is not taken as Ctrl with it: Ctrl+Shift+V is the workbench's (Markdown: Open
+/// Preview), not a paste, as in VS Code.
 pub(crate) fn default_key(
     map: &KeypressMap,
     editor: RwSignal<Editor>,
@@ -21,6 +23,9 @@ pub(crate) fn default_key(
     mods: Modifiers,
 ) -> CommandExecuted {
     let command = map.keymaps.get(press).or_else(|| {
+        if ctrl_shift_letter(press) {
+            return None;
+        }
         let insert = editor.with_untracked(|e| e.cursor.with_untracked(|c| c.get_mode())) == Mode::Insert;
         let mut press = press.clone();
         press.mods.set(Modifiers::SHIFT, false);
@@ -30,6 +35,14 @@ pub(crate) fn default_key(
         Some(command) => editor.with_untracked(|e| e.doc().run_command(e, command, Some(1), mods)),
         None => CommandExecuted::No,
     }
+}
+
+/// Whether a key is Ctrl and Shift (and no Alt) with a letter or another character.
+fn ctrl_shift_letter(press: &KeyPress) -> bool {
+    let m = press.mods;
+    matches!(&press.key, KeyInput::Keyboard(Key::Character(_), _))
+        && m.contains(Modifiers::CONTROL | Modifiers::SHIFT)
+        && !m.contains(Modifiers::ALT)
 }
 
 /// The workbench's keys that are about the editor, taken by the editor itself (a key it is given goes no further):
@@ -77,4 +90,23 @@ pub fn register(_ui: crate::state::Ui, _send: &crate::state::Send) {}
 /// The session's messages that are this part's, taken in; true takes one away from the parts after it.
 pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state::Send) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use floem::keyboard::{KeyCode, PhysicalKey};
+
+    use super::*;
+
+    fn press(c: &str, mods: Modifiers) -> KeyPress {
+        KeyPress { key: KeyInput::Keyboard(Key::Character(c.into()), PhysicalKey::Code(KeyCode::KeyV)), mods }
+    }
+
+    #[test]
+    fn ctrl_shift_with_a_letter_is_left_to_the_workbench() {
+        assert!(ctrl_shift_letter(&press("V", Modifiers::CONTROL | Modifiers::SHIFT)));
+        assert!(!ctrl_shift_letter(&press("v", Modifiers::CONTROL)));
+        assert!(!ctrl_shift_letter(&press("V", Modifiers::SHIFT)));
+        assert!(!ctrl_shift_letter(&press("V", Modifiers::CONTROL | Modifiers::SHIFT | Modifiers::ALT)));
+    }
 }
