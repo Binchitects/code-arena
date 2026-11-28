@@ -2093,6 +2093,114 @@ async fn what_the_ide_is_asked_while_it_answers_is_answered_kept_for_the_turns_e
 }
 
 #[tokio::test]
+async fn a_plan_proposed_in_the_ide_is_reviewed_and_the_review_runs_as_the_next_turn() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::io::BufRead;
+    use tokio_tungstenite::tungstenite::Message;
+    let said = |text: &str| sse(json!({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}));
+    let plan = json!({"title": "Greet", "steps": [{"title": "Write the greeting"}, {"title": "Print it"}]});
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(vec![call("c1", "plan", plan), said("The plan is ready.")], AtomicUsize::new(0)))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let mut child = code_arena(home.path())
+        .args(["ide", "--no-open", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("runs");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stderr = child.stderr.take().expect("stderr");
+    let _child = Kill(child);
+    let url = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| l.split("The IDE: ").nth(1).map(str::to_string))
+        .expect("the address");
+    let (base, key) = url.split_once("/?k=").expect("key in it");
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+        format!("ws://{}/ws", base.trim_start_matches("http://")).as_str(),
+    )
+    .expect("request");
+    request.headers_mut().insert("cookie", format!("code_arena={key}").parse().expect("h"));
+    request.headers_mut().insert("origin", base.parse().expect("h"));
+    let (mut page, _) = tokio_tungstenite::connect_async(request).await.expect("the page connects");
+    let until = async |page: &mut tokio_tungstenite::WebSocketStream<_>, end: &dyn Fn(&Value) -> bool| -> Vec<Value> {
+        let mut seen = Vec::new();
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            let Message::Text(t) = m else { continue };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            let done = end(&v);
+            seen.push(v);
+            if done {
+                return seen;
+            }
+        }
+    };
+    let ask = async |page: &mut tokio_tungstenite::WebSocketStream<_>, m: Value| {
+        page.send(Message::text(m.to_string())).await.expect("send");
+    };
+    until(&mut page, &|v| v["type"] == "state").await;
+    // Nothing to review yet: said so, with the action it answers.
+    ask(&mut page, json!({"type": "plan_review", "action": "approve"})).await;
+    let no = until(&mut page, &|v| v["type"] == "plan_review").await.pop().expect("reply");
+    assert!(no["error"].as_str().is_some_and(|e| e.contains("no plan waiting")), "{no}");
+    // In plan mode the agent proposes one.
+    ask(&mut page, json!({"type": "mode", "mode": "plan"})).await;
+    ask(&mut page, json!({"type": "send", "text": "plan a greeting"})).await;
+    let turn = until(&mut page, &|v| v["type"] == "turn_end").await;
+    let tasks = turn.iter().rev().find(|v| v["type"] == "tasks" && v["plan"].is_object()).expect("the plan said");
+    assert_eq!((&tasks["plan"]["review"], &tasks["plan"]["title"]), (&json!("proposed"), &json!("Greet")));
+    // A change names what is to change.
+    ask(&mut page, json!({"type": "plan_review", "action": "change", "step": 2})).await;
+    let no = until(&mut page, &|v| v["type"] == "plan_review").await.pop().expect("reply");
+    assert_eq!(no["error"], "Say what should change in step 2.", "{no}");
+    // Approved: the mode is the one that carries it out, and the review is the next turn, said by the session.
+    ask(&mut page, json!({"type": "plan_review", "action": "approve"})).await;
+    let next = until(&mut page, &|v| v["type"] == "turn_end").await;
+    let at = |f: &dyn Fn(&Value) -> bool| next.iter().position(f);
+    let status = at(&|v| v["type"] == "status" && v["mode"] == "auto-edit").expect("the mode");
+    let user = at(&|v| v["type"] == "user").expect("the next turn");
+    assert!(status < user, "{next:?}");
+    assert_eq!(next[user]["carried"], true, "{next:?}");
+    assert!(next[user]["text"].as_str().is_some_and(|t| t.starts_with("I approve the plan.")), "{next:?}");
+    let approved = at(&|v| v["type"] == "tasks" && v["plan"]["review"] == "approved").expect("the plan approved");
+    assert!(approved < user, "{next:?}");
+    // Cleared: no plan, and the plan this session left is not offered back to it.
+    ask(&mut page, json!({"type": "plan_clear"})).await;
+    let cleared = until(&mut page, &|v| v["type"] == "tasks").await;
+    let text = cleared.iter().find(|v| v["type"] == "plan_clear").map(|v| v["text"].clone());
+    assert_eq!(text, Some(json!("The plan is cleared.")), "{cleared:?}");
+    let tasks = cleared.last().expect("tasks");
+    assert!(tasks["plan"].is_null() && tasks["plan_left"].is_null(), "{tasks}");
+}
+
+#[tokio::test]
 async fn what_the_ide_is_sent_is_kept_for_the_folder_and_listed_newest_first_with_the_terminals() {
     use futures_util::{SinkExt, StreamExt};
     use std::io::BufRead;
