@@ -988,6 +988,20 @@ Sections used:
   opened with. **Complete Merge** saves the file, stages it and closes the editor. It asks first
   while conflicts remain. A file that is not text is refused, and a banner says when git has already
   merged the file. Below 700 px the three panes stack into one column.
+- **Formatters found for each file.** The IDE finds the formatters for each file, in order: Prettier
+  (from the nearest node_modules, then the PATH), Ruff and Black (from the folder's .venv, then the
+  PATH), gofmt, rustfmt (with the edition from Cargo.toml), clang-format and dotnet format. Each one
+  says whether it can run, why not, and how to install it.
+- **Your own formatters.** Add them to settings.json under "formatters" (command, args, languages or
+  extensions, rangeArgs), with ${file}, ${relativeFile}, ${workspaceFolder}, ${tabSize} and range
+  placeholders. The text goes in on standard input and comes back on standard output.
+- **Formatting runs sandboxed.** Formatters run in a read-only sandbox with their own /tmp and no
+  network. They get none of Code Arena's keys, NO_COLOR is set, at most four run at once, and each
+  has 10 s (30 s for dotnet format). They run only in a trusted folder, and a fault's line:col is
+  reported back.
+- **Prettier settings.** prettier.printWidth, tabWidth, useTabs, semi, singleQuote, trailingComma,
+  bracketSpacing, arrowParens and endOfLine apply when the folder has no Prettier configuration of
+  its own.
 
 
 ### :bug: Bugs fixed
