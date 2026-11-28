@@ -33,8 +33,11 @@ fn listed(mut mine: Vec<(String, Option<usize>, u64)>) -> Vec<Value> {
     mine.sort_by_key(|p| std::cmp::Reverse(p.2));
     let rest: u64 = mine.iter().skip(MOST).map(|p| p.2).sum();
     let more = mine.len().saturating_sub(MOST);
-    let mut out: Vec<Value> =
-        mine.into_iter().take(MOST).map(|(name, at, tokens)| json!({"name": name, "tokens": tokens, "at": at})).collect();
+    let mut out: Vec<Value> = mine
+        .into_iter()
+        .take(MOST)
+        .map(|(name, at, tokens)| json!({"name": name, "tokens": tokens, "at": at}))
+        .collect();
     if more > 0 {
         out.push(json!({"name": format!("{more} more"), "tokens": rest, "more": true}));
     }
@@ -89,7 +92,9 @@ fn source(sh: &Shared) -> &'static str {
 pub fn compact(sh: &Shared, p: Option<&Prepared>, v: &mut Value) {
     let (at, target) = match p {
         Some(p) => (p.agent.window.compact_at.unwrap_or(0), p.agent.window.target),
-        None => (sh.was.context["compact_at"].as_u64().unwrap_or(0), sh.settings.integer(&COMPACT_TARGET).max(5) as u64),
+        None => {
+            (sh.was.context["compact_at"].as_u64().unwrap_or(0), sh.settings.integer(&COMPACT_TARGET).max(5) as u64)
+        }
     };
     v["compact"] = json!({"at": at, "target": target, "source": source(sh), "account": sh.kept.of::<Account>().get()});
     if let Some(p) = p {
@@ -139,7 +144,8 @@ pub fn checked(at: &Value, target: &Value, account: Option<i64>) -> Result<(u64,
 /// context}`, or `compact_refused{at, target, error}`.
 pub fn set(ctx: &mut Ctx<'_>, m: &Value) {
     let account = ctx.sh.kept.of::<Account>().get();
-    let refused = |error: String| json!({"type": "compact_refused", "at": m["at"], "target": m["target"], "error": error});
+    let refused =
+        |error: String| json!({"type": "compact_refused", "at": m["at"], "target": m["target"], "error": error});
     let (at, target) = match checked(&m["at"], &m["target"], account) {
         Ok(v) => v,
         Err(e) => return send(&ctx.drv.out, refused(e)),
@@ -176,7 +182,7 @@ mod tests {
         assert_eq!(checked(&json!("account"), &json!(25), Some(60)), Ok((60, 25)));
         assert_eq!(checked(&json!("account"), &json!(25), None), Ok((80, 25)), "the account said nothing: 80%");
         assert_eq!(checked(&json!(19), &json!(5), None), Err("The threshold is from 20% to 95% of the window.".into()));
-        assert_eq!(checked(&json!(96), &json!(5), None).is_err(), true);
+        assert!(checked(&json!(96), &json!(5), None).is_err());
         assert_eq!(
             checked(&json!(30), &json!(25), None),
             Err("What is kept is from 5% to 20% (10 points under the threshold).".into())

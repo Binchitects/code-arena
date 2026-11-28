@@ -16,7 +16,9 @@ use floem::peniko::Color;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo};
 use floem::style::CursorStyle;
 use floem::text::Weight;
-use floem::views::{Decorators, container, dyn_container, empty, h_stack, h_stack_from_iter, label, v_stack, v_stack_from_iter};
+use floem::views::{
+    Decorators, container, dyn_container, empty, h_stack, h_stack_from_iter, label, v_stack, v_stack_from_iter,
+};
 use floem::{AnyView, IntoView, View, ViewId};
 use floem_renderer::Renderer as _;
 use serde_json::{Value, json};
@@ -75,7 +77,7 @@ impl Window {
 
     /// The share used, in percent (at most 100).
     pub fn percent(&self) -> u64 {
-        if self.size == 0 { 0 } else { (self.used * 100 / self.size).min(100) }
+        (self.used * 100).checked_div(self.size).map_or(0, |p| p.min(100))
     }
 
     /// The share where the ring turns red: the threshold, or 90% when it compacts only when needed.
@@ -170,7 +172,11 @@ impl Detail {
             counted: text(&m["counted"]),
             biggest: list(&m["biggest"])
                 .iter()
-                .map(|b| Big { role: text(&b["role"]), tokens: b["tokens"].as_u64().unwrap_or(0), start: text(&b["start"]) })
+                .map(|b| Big {
+                    role: text(&b["role"]),
+                    tokens: b["tokens"].as_u64().unwrap_or(0),
+                    start: text(&b["start"]),
+                })
                 .collect(),
             could_free: list(&m["could_free"])
                 .iter()
@@ -448,7 +454,9 @@ pub fn bar(t: Theme, w: &Window, d: Option<&Detail>, width: f64) -> AnyView {
     let tick = (w.at > 0).then(|| {
         let left = (width * w.at as f64 / 100.0 - 1.0).max(0.0);
         empty()
-            .style(move |s| s.absolute().inset_left(left).inset_top(0.0).width(2.0).height_full().background(c.charts_fg))
+            .style(move |s| {
+                s.absolute().inset_left(left).inset_top(0.0).width(2.0).height_full().background(c.charts_fg)
+            })
             .into_any()
     });
     let row = h_stack_from_iter(parts).style(|s| s.width_full().height_full().gap(1.0));
@@ -456,7 +464,12 @@ pub fn bar(t: Theme, w: &Window, d: Option<&Detail>, width: f64) -> AnyView {
     all.extend(tick);
     floem::views::stack_from_iter(all)
         .style(move |s| {
-            s.width(width).height(10.0).border_radius(5.0).background(c.input_bg).border(1.0).border_color(c.widget_border)
+            s.width(width)
+                .height(10.0)
+                .border_radius(5.0)
+                .background(c.input_bg)
+                .border(1.0)
+                .border_color(c.widget_border)
         })
         .into_any()
 }
@@ -671,7 +684,9 @@ mod tests {
         w.used = 30_000;
         assert_eq!(
             over_line(&w).as_deref(),
-            Some("With the 4.1K kept for the answer, this is more than the context: the next message compacts the chat first.")
+            Some(
+                "With the 4.1K kept for the answer, this is more than the context: the next message compacts the chat first."
+            )
         );
     }
 
@@ -697,17 +712,26 @@ mod tests {
 
     #[test]
     fn the_window_takes_what_status_steps_and_the_detail_say() {
-        let w = Window::default().with(&json!({"type": "status", "context": {"used": 900, "size": 32768, "compact_at": 80},
+        let w = Window::default()
+            .with(&json!({"type": "status", "context": {"used": 900, "size": 32768, "compact_at": 80},
             "compact": {"at": 80, "target": 25, "source": "account", "account": 80, "reserve": 4096}}));
-        assert_eq!((w.used, w.size, w.at, w.target, w.reserve, w.source.as_str()), (900, 32768, 80, 25, 4096, "account"));
+        assert_eq!(
+            (w.used, w.size, w.at, w.target, w.reserve, w.source.as_str()),
+            (900, 32768, 80, 25, 4096, "account")
+        );
         assert!(!w.counted);
         let w = w.with(&json!({"type": "step_end", "context": {"used": 1200, "size": 32768, "compact_at": 80}}));
         assert_eq!((w.used, w.counted, w.target), (1200, true, 25));
         assert_eq!(w.with(&json!({"type": "step_end"})), w, "a step that said nothing changes nothing");
-        let d = Detail::of(&json!({"kinds": [{"kind": "Tools", "tokens": 300, "pieces": [{"name": "read_file", "tokens": 120},
+        let d = Detail::of(
+            &json!({"kinds": [{"kind": "Tools", "tokens": 300, "pieces": [{"name": "read_file", "tokens": 120},
             {"name": "3 more", "tokens": 10, "more": true}]}], "reserve": 4096, "free": 100, "counted": "estimate",
-            "biggest": [{"role": "you", "tokens": 50, "start": "hello"}], "could_free": [{"group": "compact", "tokens": 700}]}));
+            "biggest": [{"role": "you", "tokens": 50, "start": "hello"}], "could_free": [{"group": "compact", "tokens": 700}]}),
+        );
         assert_eq!(d.parts[0].pieces[1], Piece { name: "3 more".into(), tokens: 10, more: true });
-        assert_eq!((d.could_free[0].0.as_str(), d.could_free[0].1, role_name(&d.biggest[0].role)), ("compact", 700, "Your message"));
+        assert_eq!(
+            (d.could_free[0].0.as_str(), d.could_free[0].1, role_name(&d.biggest[0].role)),
+            ("compact", 700, "Your message")
+        );
     }
 }

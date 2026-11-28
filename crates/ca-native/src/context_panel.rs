@@ -333,7 +333,11 @@ fn item(ui: Ui, send: Send) -> AnyView {
     let shown = create_memo(move |_| st.window.with(|w| (w.used, w.size, w.percent() >= w.warn_at())));
     let tip = move || {
         let w = st.window.get();
-        let when = if w.at > 0 { format!("compacts at {}%", w.at) } else { "compacts only when a request would not fit".into() };
+        let when = if w.at > 0 {
+            format!("compacts at {}%", w.at)
+        } else {
+            "compacts only when a request would not fit".into()
+        };
         format!("Context: {} of {} tokens ({}%), {when}", short(w.used), short(w.size), w.percent())
     };
     let inner = h_stack((
@@ -421,7 +425,9 @@ fn settings_box(ui: Ui, send: Send) -> AnyView {
     let parts = dyn_container(
         move || detail.get(),
         move |(w, d)| match d {
-            Some(d) => v_stack((ring::bar(t, &w, Some(&d), 408.0), ring::kinds(t, &w, &d))).style(|s| s.gap(8.0)).into_any(),
+            Some(d) => {
+                v_stack((ring::bar(t, &w, Some(&d), 408.0), ring::kinds(t, &w, &d))).style(|s| s.gap(8.0)).into_any()
+            }
             None => ring::bar(t, &w, None, 408.0),
         },
     );
@@ -525,9 +531,12 @@ pub fn register(_ui: Ui, _send: &Send) {
     commands::add(commands::command("codeArena.agent.compact", "Agent", "Compact Now", |ui, send| {
         ring::compact_now(ui, send)
     }));
-    commands::add(commands::command("codeArena.agent.compactionSettings", "Agent", "Compaction Settings…", |ui, send| {
-        open_settings(ui, send)
-    }));
+    commands::add(commands::command(
+        "codeArena.agent.compactionSettings",
+        "Agent",
+        "Compaction Settings…",
+        open_settings,
+    ));
 }
 
 /// The session's messages that are this part's, taken in: a threshold saved closes the settings, one refused says
@@ -559,8 +568,11 @@ mod tests {
         assert_eq!(validate(When::Share, "80", "25", None), Ok((json!(80), 25)));
         assert_eq!(validate(When::Off, "", "85", None), Ok((json!(0), 85)));
         assert_eq!(validate(When::Account, "", "25", Some(60)), Ok((json!("account"), 25)));
-        assert_eq!(validate(When::Share, "19", "5", None), Err("The threshold is from 20% to 95% of the window.".into()));
-        assert_eq!(validate(When::Share, "eighty", "5", None).is_err(), true);
+        assert_eq!(
+            validate(When::Share, "19", "5", None),
+            Err("The threshold is from 20% to 95% of the window.".into())
+        );
+        assert!(validate(When::Share, "eighty", "5", None).is_err());
         assert_eq!(
             validate(When::Share, "30", "25", None),
             Err("What is kept is from 5% to 20% (10 points under the threshold).".into())
