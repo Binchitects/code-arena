@@ -1028,6 +1028,12 @@ Sections used:
   Symbol in Workspace...) finds the project's functions, classes, types and headings by name or
   initials ('rta' finds RunToolsAsync), each with its kind, its container and its path:line; Enter
   opens it at that line.
+- **Move an editor into a window of its own.** Move into New Window in a tab's menu (or View: Move
+  Editor into New Window) opens the tab in its own OS window, as an editor group with its tabs,
+  breadcrumbs and editor. It is the same document, unsaved text included, and files opened while
+  that window has the keys open in it. Move back into the IDE (the window's button, its tab menu, or
+  the command) gives the tabs back. Closing the window also gives them back, and the window closes
+  when its last tab closes.
 
 
 ### :bug: Bugs fixed
