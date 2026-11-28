@@ -391,11 +391,11 @@ fn choices_of(v: &Value) -> BTreeMap<String, Choice> {
     out
 }
 
-/// The skills to write, after the choices: those that replace what is there, and the rest.
-fn chosen(
-    found: &st::Found,
-    choices: &BTreeMap<String, Choice>,
-) -> Result<(Vec<st::Folder>, Vec<st::Folder>, Vec<String>), String> {
+/// What an import writes: the skills that replace what is there, the rest, and the names skipped.
+type Chosen = (Vec<st::Folder>, Vec<st::Folder>, Vec<String>);
+
+/// The skills to write, after the choices.
+fn chosen(found: &st::Found, choices: &BTreeMap<String, Choice>) -> Result<Chosen, String> {
     let (mut replace, mut add, mut skipped) = (Vec::new(), Vec::new(), Vec::new());
     for s in &found.skills {
         match choices.get(&s.name) {
