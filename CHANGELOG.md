@@ -751,6 +751,14 @@ Sections used:
   language for the file, or Auto Detect. The file is coloured again at once, and the choice lasts
   until its tab closes. "Configure '<lang>' language based settings..." adds an empty `[lang]` block
   to your settings.json and opens it.
+- **Commands with no time limit above the chat's box.** See every job the agent started with no time
+  limit or in the background under '2 commands, 1 running' (a click folds them all): each with a
+  spinner or a dot, 'job N', its command, 'running, no time limit', 'running in the background' or
+  'exit code 0 after 3m 12s', and 'Stop job N'. Open one to follow the last 200 lines of its output;
+  the newest one running opens by itself. The bar takes a quarter of the window at most.
+- **The agent carries on when a long command ends.** When a job with no time limit ends while nothing
+  runs, the thread says 'Job N ended with exit code 0.' and the model carries on from its output in a
+  turn of its own, as in the terminal. A job you stopped only gets the notice.
 
 
 ### :bug: Bugs fixed
