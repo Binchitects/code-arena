@@ -189,6 +189,9 @@ pub struct Tool {
     pub progress: Option<Progress>,
     /// When it began to run in this window (none: not running, or read back from the session).
     pub began: Option<std::time::Instant>,
+    /// The files it made, as `.code-arena/media/NAME` (the session finds them in its whole result, else they are
+    /// read from the result shown).
+    pub media: Vec<String>,
 }
 
 impl Tool {
@@ -208,6 +211,10 @@ impl Tool {
             diff: EditDiff::from_json(&v["diff"]).map(Rc::new),
             progress: None,
             began: None,
+            media: match v["media"].as_array() {
+                Some(all) => all.iter().filter_map(|m| m.as_str().map(String::from)).collect(),
+                None => crate::agent::media::found(v["text"].as_str().unwrap_or("")),
+            },
         }
     }
 }

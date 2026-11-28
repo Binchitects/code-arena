@@ -208,6 +208,36 @@ pub struct Picture {
     hash: Vec<u8>,
 }
 
+/// One picture is the same as another only when it is that one (no two decodings are compared pixel by pixel).
+impl PartialEq for Picture {
+    fn eq(&self, other: &Picture) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+impl Picture {
+    /// A decoded picture made ready to draw; `hash` is what the renderer keeps its copy by (the file, when it
+    /// changed, the theme), so one drawn in two places is kept once.
+    pub fn of(d: Decoded, size: u64, hash: Vec<u8>) -> Picture {
+        let blob = Blob::new(Arc::new(d.rgba));
+        let image = peniko::Image::new(blob, peniko::Format::Rgba8, d.drawn.0, d.drawn.1);
+        Picture { width: d.width, height: d.height, size, image, hash }
+    }
+}
+
+/// The checkerboard's two colours in the theme shown: the editor's background and a square a little off it.
+pub fn checker(ui: Ui) -> [[u8; 3]; 2] {
+    let c = ui.colors.get_untracked();
+    let rgb = |c: peniko::Color| [c.r, c.g, c.b];
+    [rgb(c.editor_bg), if c.dark { [20, 20, 20] } else { [230, 230, 230] }]
+}
+
+/// A picture drawn into its place, in the middle of it and as large as fits: never larger than itself unless
+/// `grow` (a picture zoomed in is drawn as large as its place).
+pub fn drawn(picture: Rc<Picture>, grow: bool) -> impl View {
+    Drawn { id: ViewId::new(), picture, grow }
+}
+
 /// What a media tab shows.
 #[derive(Clone)]
 enum Item {
@@ -423,7 +453,7 @@ fn picture(st: State, path: &str, p: Rc<Picture>) -> AnyView {
         move |actual| {
             let (w, h) = (f64::from(p.width), f64::from(p.height));
             let on = path.clone();
-            let drawn = Drawn { id: ViewId::new(), picture: p.clone() }
+            let drawn = Drawn { id: ViewId::new(), picture: p.clone(), grow: false }
                 .on_click_stop(move |_| toggle(st, &on))
                 .style(|s| s.cursor(CursorStyle::Pointer));
             if actual {
@@ -469,6 +499,7 @@ fn message(ui: Ui, glyph: &'static str, line: AnyView, act: AnyView) -> AnyView 
 struct Drawn {
     id: ViewId,
     picture: Rc<Picture>,
+    grow: bool,
 }
 
 impl View for Drawn {
@@ -479,7 +510,13 @@ impl View for Drawn {
     fn paint(&mut self, cx: &mut PaintCx) {
         let place = self.id.get_content_rect();
         let p = &self.picture;
-        let (w, h) = fitted(f64::from(p.width), f64::from(p.height), place.width(), place.height());
+        let (pw, ph) = (f64::from(p.width), f64::from(p.height));
+        let (w, h) = if self.grow && pw > 0.0 && ph > 0.0 {
+            let scale = (place.width() / pw).min(place.height() / ph);
+            (pw * scale, ph * scale)
+        } else {
+            fitted(pw, ph, place.width(), place.height())
+        };
         let (x, y) = (place.x0 + (place.width() - w) / 2.0, place.y0 + (place.height() - h) / 2.0);
         // Drawn at the origin of a moved drawing: the software renderer lays a picture from the origin, whatever
         // the place it is given.
@@ -545,22 +582,15 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
 fn decode_off_thread(ui: Ui, st: State, path: String, m: &Value, size: u64) {
     let data = m["data"].as_str().unwrap_or("").to_string();
     let modified = m["modified"].as_u64().unwrap_or(0);
-    let c = ui.colors.get_untracked();
-    let rgb = |c: peniko::Color| [c.r, c.g, c.b];
-    let checker = [rgb(c.editor_bg), if c.dark { [20, 20, 20] } else { [230, 230, 230] }];
-    let hash = format!("{path}\0{modified}\0{}", c.dark).into_bytes();
+    let checker = checker(ui);
+    let hash = format!("{path}\0{modified}\0{}", ui.colors.get_untracked().dark).into_bytes();
     let file = path.clone();
     let done = floem::ext_event::create_ext_action(ui.scope, move |made: Result<Decoded, String>| {
         if ui.tab(&tab_of(&file)).is_none() {
             return;
         }
         match made {
-            Ok(d) => {
-                let blob = Blob::new(Arc::new(d.rgba));
-                let image = peniko::Image::new(blob, peniko::Format::Rgba8, d.drawn.0, d.drawn.1);
-                let picture = Picture { width: d.width, height: d.height, size, image, hash };
-                st.set(&file, Item::Picture(Rc::new(picture)));
-            }
+            Ok(d) => st.set(&file, Item::Picture(Rc::new(Picture::of(d, size, hash)))),
             Err(e) => st.set(&file, Item::Cannot(format!("{} could not be shown: {e}", name_of(&file)))),
         }
     });
