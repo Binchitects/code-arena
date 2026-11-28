@@ -47,6 +47,10 @@ pub trait Events: Send {
     fn tool_progress(&mut self, _id: &str, _progress: f64, _total: Option<f64>, _message: &str) {}
     /// The model's answer for this step is complete (before its tool calls run).
     fn step_end(&mut self) {}
+    /// How full the window is after this step, said just before `step_end`: the request as the model counted it
+    /// with its answer (Code Arena's estimate when the model said nothing), the window's size, and where it
+    /// compacts (a share of the window; none: only when a request would not fit).
+    fn step_window(&mut self, _used: u64, _size: u64, _compact_at: Option<u64>) {}
 }
 
 /// How often the answer being written is kept as a draft (the session's store; the web chat).
@@ -480,6 +484,11 @@ impl Agent {
             self.window.learn(chars, c.usage.prompt);
             out.steps += 1;
             out.usage.add(c.usage);
+            let used = match c.usage.prompt {
+                0 => self.window.tokens(chars),
+                n => n,
+            } + c.usage.completion;
+            events.step_window(used, self.window.size, self.window.compact_at);
             events.step_end();
             let calls = c.message.tool_calls.clone();
             let finish = c.finish;
@@ -663,6 +672,11 @@ impl Agent {
     /// What fills the next request, by kind, as text (for a tokenizer).
     pub fn context_texts(&self) -> [String; 6] {
         context::kinds_text(&self.system, &self.history, &self.notes, &self.defs())
+    }
+
+    /// What fills the next request, piece by piece.
+    pub fn context_pieces(&self) -> Vec<context::Piece> {
+        context::pieces(&self.system, &self.history, &self.notes, &self.defs())
     }
 
     /// What fills the next request, by kind.

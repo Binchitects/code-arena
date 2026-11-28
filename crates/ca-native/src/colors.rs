@@ -274,6 +274,16 @@ colors! {
     find_match_highlight: ["editor.findMatchHighlightBackground"], "#EA5C0055", "#EA5C0055";
     ruler_find: ["editorOverviewRuler.findMatchForeground"], "#D186167E", "#D186167E";
     unicode_border: ["editorUnicodeHighlight.border"], "#CCA700", "#BF8803";
+    charts_fg: ["charts.foreground", "foreground"], "#CCCCCC", "#616161";
+    charts_lines: ["charts.lines"], "#CCCCCC80", "#61616180";
+    charts_blue: ["charts.blue"], "#3794FF", "#1A85FF";
+    charts_purple: ["charts.purple"], "#B180D7", "#652D90";
+    charts_orange: ["charts.orange"], "#D18616", "#D18616";
+    charts_green: ["charts.green"], "#89D185", "#388A34";
+    charts_yellow: ["charts.yellow"], "#CCA700", "#BF8803";
+    charts_red: ["charts.red"], "#F14C4C", "#E51400";
+    status_warning_bg: ["statusBarItem.warningBackground"], "#7A6400", "#725102";
+    status_warning_fg: ["statusBarItem.warningForeground"], "#FFFFFF", "#FFFFFF";
 }
 
 #[cfg(test)]

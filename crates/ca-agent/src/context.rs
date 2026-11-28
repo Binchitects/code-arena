@@ -163,6 +163,50 @@ pub fn breakdown(system: &str, history: &[Message], notes: &[bool], tools: &[Too
     b
 }
 
+/// One piece of what fills the request: its kind (the place in [`kinds_text`]'s order: instructions, tools, your
+/// messages, answers, tool results, notes), what it is (a tool's name, a message's start), where it is in the
+/// history (none for the instructions and the tools), and its characters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Piece {
+    pub kind: usize,
+    pub name: String,
+    pub at: Option<usize>,
+    pub chars: usize,
+}
+
+/// Every piece of the request, as [`breakdown`] counts them: the instructions, each tool's definition, each
+/// message (a tool's result named by the call it answers).
+pub fn pieces(system: &str, history: &[Message], notes: &[bool], tools: &[ToolDef]) -> Vec<Piece> {
+    let mut out = vec![Piece { kind: 0, name: "The instructions".into(), at: None, chars: system.len() }];
+    for t in tools {
+        let chars = t.name.len() + t.description.len() + t.parameters.to_string().len();
+        out.push(Piece { kind: 1, name: t.name.clone(), at: None, chars });
+    }
+    let mut called: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for (i, m) in history.iter().enumerate() {
+        for c in &m.tool_calls {
+            called.insert(c.id.as_str(), c.name.as_str());
+        }
+        let kind = match m.role {
+            _ if notes.get(i).copied().unwrap_or(false) => 5,
+            Role::User => 2,
+            Role::Assistant => 3,
+            Role::Tool => 4,
+            Role::System => 0,
+        };
+        let start: String = m.content.chars().take(80).collect::<String>().replace('\n', " ");
+        let name = match (kind, m.tool_call_id.as_deref().and_then(|id| called.get(id))) {
+            (4, Some(tool)) => format!("{tool}: {start}"),
+            (3, _) if start.trim().is_empty() && !m.tool_calls.is_empty() => {
+                m.tool_calls.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
+            }
+            _ => start,
+        };
+        out.push(Piece { kind, name, at: Some(i), chars: message_chars(m) });
+    }
+    out
+}
+
 /// Words that mark a line worth keeping when a result is condensed.
 const KEY_WORDS: &[&str] = &["error", "warning", "failed", "panicked", "exception", "traceback", "fatal", "fail:"];
 

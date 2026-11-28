@@ -108,11 +108,13 @@ struct PageEvents {
     /// Since when the model thinks (none: it does not now), and how long it thought before in this turn.
     thinking: Option<std::time::Instant>,
     thought_ms: u64,
+    /// How full the window is after the step that ends next: said with its `step_end`.
+    window: Option<Value>,
 }
 
 impl PageEvents {
     fn new(out: broadcast::Sender<String>, tasks: Option<Shared>) -> Self {
-        PageEvents { out, tasks, thinking: None, thought_ms: 0 }
+        PageEvents { out, tasks, thinking: None, thought_ms: 0, window: None }
     }
 
     /// The model's thinking gave way (to its words, a call, the step's or the turn's end): the faces are told how
@@ -309,9 +311,16 @@ impl Events for PageEvents {
             json!({"type": "tool_progress", "id": id, "progress": progress, "total": total, "message": message}),
         );
     }
+    fn step_window(&mut self, used: u64, size: u64, compact_at: Option<u64>) {
+        self.window = Some(json!({"used": used, "size": size, "compact_at": compact_at}));
+    }
     fn step_end(&mut self) {
         self.thought_ends(false);
-        send(&self.out, json!({"type": "step_end"}));
+        let mut v = json!({"type": "step_end"});
+        if let Some(w) = self.window.take() {
+            v["context"] = w;
+        }
+        send(&self.out, v);
     }
 }
 
@@ -581,12 +590,14 @@ fn context_detail(p: &Prepared) -> Value {
         ("Tool results", b.tool_results),
         ("Notes", b.notes),
     ];
-    json!({
+    let mut v = json!({
         "type": "context_detail",
         "context": context(p),
         "kinds": kinds.iter().map(|(k, c)| json!({"kind": k, "tokens": w.tokens(*c)})).collect::<Vec<_>>(),
         "biggest": b.biggest.iter().map(|(at, role, chars, start)| json!({"at": at, "role": role, "tokens": w.tokens(*chars), "start": start})).collect::<Vec<_>>(),
-    })
+    });
+    crate::ide_chat::context::detail(p, &mut v);
+    v
 }
 
 /// A setting changed from the page: checked as the schema says (its kind, where it may be set, the edition's

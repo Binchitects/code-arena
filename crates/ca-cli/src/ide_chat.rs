@@ -17,6 +17,8 @@
 //!   thinking, the modes).
 //! - `queue.rs`: the messages sent while a turn runs, numbered, changed or taken back until read (`queue_edit`,
 //!   `queue_cancel`, `queue_clear`), and said to be read (`took_in`).
+//! - `context.rs`: what fills the window, piece by piece (`context_detail`'s parts), when it compacts and who set
+//!   it (`compact` in `state` and `status`), and that changed from the window (`compact_at`).
 //! - `rewind.rs`: what going back to a question would do (`rewind_preview`), and a question asked again.
 
 use serde_json::Value;
@@ -24,6 +26,7 @@ use serde_json::Value;
 use crate::ide_ext::{Area, Ctx, Rule, Sent, Shared, kind};
 use crate::session::Prepared;
 
+pub mod context;
 mod history;
 pub(crate) mod library;
 mod mentions;
@@ -44,6 +47,7 @@ impl Area for Here {
         ("queue_cancel", Rule::Turn),
         ("queue_clear", Rule::Turn),
         ("rewind_preview", Rule::Turn),
+        ("compact_at", Rule::Queue),
     ];
 
     fn shared(sh: &Shared, m: &Value) -> bool {
@@ -57,9 +61,26 @@ impl Area for Here {
         }
     }
 
-    fn state(sh: &Shared, _p: Option<&Prepared>, v: &mut Value) {
+    fn state(sh: &Shared, p: Option<&Prepared>, v: &mut Value) {
         pickers::state(sh, v);
         v["queued"] = queue::items(sh);
+        context::compact(sh, p, v);
+    }
+
+    fn status(sh: &Shared, p: Option<&Prepared>, v: &mut Value) {
+        context::compact(sh, p, v);
+    }
+
+    fn start(sh: &Shared) {
+        context::start(sh);
+    }
+
+    async fn idle(ctx: &mut Ctx<'_>, m: &Value) -> bool {
+        match kind(m) {
+            "compact_at" => context::set(ctx, m),
+            _ => return false,
+        }
+        true
     }
 
     fn shape(sh: &Shared, sent: &mut Sent) {
