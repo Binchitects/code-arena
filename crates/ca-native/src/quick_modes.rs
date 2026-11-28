@@ -567,7 +567,7 @@ mod tests {
     }
 
     fn sym(name: &str, kind: Kind, line: usize, depth: usize) -> Symbol {
-        Symbol { name: name.into(), kind, line, depth }
+        Symbol { name: name.into(), kind, line, depth, detail: String::new() }
     }
 
     #[test]
