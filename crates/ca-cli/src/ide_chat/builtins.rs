@@ -124,6 +124,8 @@ pub enum Route {
     /// A message of the driver's own, answered once this is.
     Post(Value),
     Resume(String),
+    /// Words said back: the line was not as the command takes it.
+    Say(&'static str),
     /// A turn with the review asked for.
     Review(String),
     Exit,
@@ -169,6 +171,7 @@ pub fn route(line: &str) -> Route {
             };
             match (q, what, words.next()) {
                 (Some(q), Some(what), None) => Route::Post(json!({"type": "rewind", "q": q, "what": what})),
+                (Some(_), _, _) => Route::Say("Say /rewind N, or /rewind N code or /rewind N chat for one of them."),
                 _ => Route::Text,
             }
         }
@@ -247,8 +250,21 @@ pub async fn command(ctx: &mut Ctx<'_>, sent: &mut Sent) {
     match route {
         Route::Leave => {}
         Route::Help => say(&out, &help(ctx.sh.edition)),
-        Route::Open(view, text) => send(&out, ui_action(view, &text)),
-        Route::Post(m) => ctx.sh.post(m),
+        Route::Say(words) => say(&out, words),
+        Route::Open(view, text) => {
+            let mut v = ui_action(view, &text);
+            // The face that sent it opens the view; the others know theirs by the key.
+            if sent.msg["key"].is_string() || sent.msg["key"].is_number() {
+                v["key"] = sent.msg["key"].clone();
+            }
+            send(&out, v);
+        }
+        // First of what the loop answers next, before a turn the session would carry on with.
+        Route::Post(m) => {
+            if !ctx.drv.later.keep(m, false) {
+                say(&out, "Too much waits to be answered already: try again in a moment.");
+            }
+        }
         Route::Resume(id) => {
             if let Err(e) = crate::ide_sessions::switch_session(ctx, Resume::Id(id)).await {
                 say(&out, &e);
@@ -472,7 +488,8 @@ mod tests {
         assert_eq!(route("/rewind 2 code"), Route::Post(json!({"type": "rewind", "q": 2, "what": "code"})));
         assert_eq!(route("/rewind 2"), Route::Post(json!({"type": "rewind", "q": 2, "what": "both"})));
         assert_eq!(route("/rewind"), Route::Text);
-        assert_eq!(route("/rewind 2 files"), Route::Text);
+        assert!(matches!(route("/rewind 2 files"), Route::Say(_)), "neither the code nor the chat");
+        assert_eq!(route("/rewind all"), Route::Text, "the terminal lists the questions");
         assert_eq!(route("/compact"), Route::Post(json!({"type": "compact"})));
         assert_eq!(route("/model qwen"), Route::Text);
         assert_eq!(route("/review the parser"), Route::Review("the parser".into()));

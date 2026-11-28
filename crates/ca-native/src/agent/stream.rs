@@ -55,7 +55,8 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 line(ui, t);
             }
         }
-        "notice" if m["toast"] == true => {
+        // Not again for a turn said again to a face that came late.
+        "notice" if m["toast"] == true && m["replay"] != true => {
             let text = m["text"].as_str().unwrap_or("");
             if m["problem"] == true {
                 crate::widgets::toast::warning(ui, text);

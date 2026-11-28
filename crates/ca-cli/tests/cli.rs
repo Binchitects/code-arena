@@ -2862,9 +2862,9 @@ async fn the_chats_own_commands_answer_in_the_ides_thread_and_the_status_line_fo
     ask(&mut page, json!({"type": "send", "text": "/help"})).await;
     let help = until(&mut page, &|v| notice(v, "/help — ")).await.pop().expect("help");
     assert!(help["text"].as_str().is_some_and(|t| t.contains("/compact — ") && t.contains("!command — ")), "{help}");
-    ask(&mut page, json!({"type": "send", "text": "/tasks"})).await;
+    ask(&mut page, json!({"type": "send", "text": "/tasks", "key": "k1"})).await;
     let open = until(&mut page, &|v| v["type"] == "ui_action").await.pop().expect("open");
-    assert_eq!(open, json!({"type": "ui_action", "open": "tasks"}));
+    assert_eq!(open, json!({"type": "ui_action", "open": "tasks", "key": "k1"}), "with the key it answers");
     ask(&mut page, json!({"type": "send", "text": "/goal make the tests pass"})).await;
     let open = until(&mut page, &|v| v["type"] == "ui_action").await.pop().expect("open");
     assert_eq!(open, json!({"type": "ui_action", "open": "goal", "text": "make the tests pass"}));
@@ -2893,4 +2893,9 @@ async fn the_chats_own_commands_answer_in_the_ides_thread_and_the_status_line_fo
     ask(&mut page, json!({"type": "state"})).await;
     let state = until(&mut page, &|v| v["type"] == "state").await.pop().expect("state");
     assert_eq!(state["status_line"], "on main");
+    // A command the driver answers itself is answered as the faces' own message is.
+    ask(&mut page, json!({"type": "send", "text": "/compact"})).await;
+    let compacted = until(&mut page, &|v| v["type"] == "context_detail").await;
+    assert!(compacted.iter().any(|v| v["type"] == "notice"), "{compacted:?}");
+    assert!(!compacted.iter().any(|v| v["type"] == "refused"), "{compacted:?}");
 }
