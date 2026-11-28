@@ -1126,6 +1126,17 @@ Sections used:
   .code-arena/settings.json may turn a tool off ('Turned off by the project') or make it ask before
   each call. It can never let a tool run unasked or change what the model is told. 'Always asks'
   holds in every mode, yolo included.
+- **Minimap.** Every file's editor has VS Code's minimap at the right, or at the left with
+  `editor.minimap.side`. Lines are drawn as blocks in their syntax colours, with Monaco's sizes and
+  its 8 px gutter showing the overview ruler's marks (find, problems, quick diff, conflicts).
+  Selections are shown too. Hover to see the slider, click to jump there, drag the slider, or
+  scroll the wheel over it. `editor.minimap.enabled` and Toggle Minimap show and hide it.
+- **Sticky scroll.** The first lines of the scopes the top line is in stay pinned at the top
+  of the editor, up to five, with their line numbers. These are the outline's symbols, or every
+  indented region in a file the Outline has not read. A scope's end pushes its line up, and a
+  click goes to the line. `editor.stickyScroll.enabled` and Toggle Sticky Scroll turn it on and off.
+- **Overview ruler.** The caret's line is shown as a 2 px line, as in VS Code. Marks are placed
+  by the rows drawn, so folds count, and the ruler's border is always drawn.
 
 
 ### :bug: Bugs fixed
@@ -1325,6 +1336,8 @@ Sections used:
   was.
 - **Toasts raised as the window opens use the window's font.** The 'Code Arena X is available' toast
   was drawn in a monospaced font; it now reads like every other notification.
+- **Scrolling stays put.** A scrolled editor no longer jumps back to its caret when its
+  decorations change. Word wrap stops at the minimap's edge.
 
 ## v0.5.0 (2026-11-26)
 
