@@ -17,6 +17,8 @@
 //!   thinking, the modes).
 //! - `queue.rs`: the messages sent while a turn runs, numbered, changed or taken back until read (`queue_edit`,
 //!   `queue_cancel`, `queue_clear`), and said to be read (`took_in`).
+//! - `compaction.rs`: where the chat was compacted (`compacting`, `compacted`, and the mark and `covered` in each
+//!   page of the thread).
 //! - `context.rs`: what fills the window, piece by piece (`context_detail`'s parts), when it compacts and who set
 //!   it (`compact` in `state` and `status`), and that changed from the window (`compact_at`).
 //! - `pieces.rs`: the lines of files a message is sent with (its `context`), read for the model and named in its
@@ -29,6 +31,7 @@ use serde_json::Value;
 use crate::ide_ext::{Area, Ctx, Rule, Sent, Shared, kind};
 use crate::session::Prepared;
 
+pub mod compaction;
 pub mod context;
 mod history;
 pub(crate) mod library;

@@ -461,7 +461,7 @@ fn thread_page(
     let from = page.messages.first().map_or(0, |m| m.seq);
     let used = store.usages(session, from).unwrap_or_default();
     let details = page.messages.first().and_then(|m| store.details(session, m.seq).ok()).unwrap_or_default();
-    let messages = page
+    let (seqs, mut messages): (Vec<i64>, Vec<Value>) = page
         .messages
         .iter()
         .enumerate()
@@ -491,9 +491,15 @@ fn thread_page(
                 let first = at == 0 || page.messages[at - 1].turn != m.turn;
                 question_details(&mut v, first, details.get(&m.seq));
             }
-            v
+            (m.seq, v)
         })
-        .collect();
+        .unzip();
+    // What the latest compaction covers, and its mark.
+    if let Ok(Some((through, summary))) = store.last_compaction(session) {
+        let after_q = crate::ide_chat::compaction::after_q(&numbers, through);
+        let mark = crate::ide_chat::compaction::Mark { through, after_q, summary };
+        crate::ide_chat::compaction::mark(&mut messages, &seqs, &mark, before_turn.is_none());
+    }
     (messages, page.turns_before, page.first_turn)
 }
 
@@ -989,13 +995,16 @@ async fn own_idle(m: &Value, p: &mut Prepared, app: &mut App, sh: &Shared) -> Ow
             }
         }
         "compact" => {
+            send(out, crate::ide_chat::compaction::compacting(m));
             let mut events = PageEvents::new(out.clone(), None);
-            let said = match p.agent.compact(&mut events, true).await {
+            let done = p.agent.compact(&mut events, true).await;
+            let said = match &done {
                 Ok(Some(_)) => "Compacted: the model reads a summary of the earlier part from now on.".to_string(),
                 Ok(None) => "Nothing older to summarize.".to_string(),
                 Err(e) => format!("The model gave no summary ({e}): the conversation is as it was."),
             };
             ide_ext::say(out, &said);
+            send(out, crate::ide_chat::compaction::compacted(p, m, &done));
             send(out, context_detail(p));
             send(out, status(p, sh));
         }

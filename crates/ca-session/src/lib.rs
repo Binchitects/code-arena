@@ -383,16 +383,21 @@ impl Store {
         Ok(Page { messages, first_turn: first.max(1), turns_before: (first - 1).max(0) })
     }
 
-    /// What the model reads: the latest summary and what follows it. Reading starts at the last compaction.
-    pub fn model_view(&self, id: &str) -> Result<ModelView> {
-        let last: Option<(i64, String)> = self
+    /// The latest compaction: the last message it covers and its summary (none: never compacted).
+    pub fn last_compaction(&self, id: &str) -> Result<Option<(i64, String)>> {
+        Ok(self
             .db
             .query_row(
                 "SELECT through, summary FROM compactions WHERE session = ?1 ORDER BY through DESC LIMIT 1",
                 [id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
-            .optional()?;
+            .optional()?)
+    }
+
+    /// What the model reads: the latest summary and what follows it. Reading starts at the last compaction.
+    pub fn model_view(&self, id: &str) -> Result<ModelView> {
+        let last = self.last_compaction(id)?;
         let from = last.as_ref().map(|(t, _)| t + 1).unwrap_or(0);
         let mut q = self.db.prepare("SELECT body FROM messages WHERE session = ?1 AND seq >= ?2 ORDER BY seq")?;
         let rows = q.query_map(params![id, from], |r| r.get::<_, String>(0))?;
