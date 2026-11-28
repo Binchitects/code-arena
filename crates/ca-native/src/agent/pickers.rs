@@ -577,6 +577,12 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
             let left = if m["running"] == true { me.pending.with_untracked(|p| settled(p, m)) } else { Vec::new() };
             set_if_new(me.pending, left);
         }
+        // Arena's settings moved: its models as they are now (`banners.rs` takes the list).
+        "settings_changed" => {
+            let infos: Vec<ModelRow> =
+                m["model_info"].as_array().into_iter().flatten().filter_map(ModelRow::from_json).collect();
+            set_if_new(me.infos, infos);
+        }
         "status" => {
             let left = me.pending.with_untracked(|p| settled(p, m));
             set_if_new(me.pending, left);
