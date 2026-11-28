@@ -684,6 +684,14 @@ mod tests {
         assert_eq!((text(&s, 0), text(&s, 1), s.cursor), ("$".to_string(), String::new(), Some((0, 2))));
     }
 
+    #[test]
+    fn an_ended_line_goes_under_the_rows_the_output_took() {
+        let mut e = Emulator::new(20, 6);
+        assert_eq!(used_rows(&e.screen(&palette())), 0);
+        e.feed("hello\r\n\r\nworld\r\n   ");
+        assert_eq!(used_rows(&e.screen(&palette())), 3, "blank rows and spaces after the text are not counted");
+    }
+
     /// What a redraw costs: the screen of a 200×60 terminal full of coloured text read out, as each output and
     /// each move of a drag reads it. Printed (`--nocapture`), and bounded loosely so a slow machine passes.
     #[test]
@@ -912,13 +920,20 @@ fn shell_name(ui: Ui, id: u64) -> String {
     format!("{s} {}", id + 1 - FIRST_ID)
 }
 
-/// The panel's line for a terminal the session started (a task's) once its program has ended, as VS Code's.
+/// The rows a screen's text takes: up to its last row with more than spaces.
+pub fn used_rows(s: &Screen) -> usize {
+    s.rows.iter().rposition(|r| r.iter().any(|run| !run.text.trim().is_empty())).map_or(0, |i| i + 1)
+}
+
+/// The panel's line for a terminal the session started (a task's) once its program has ended, as VS Code's: the
+/// exit code only when the program failed.
 pub fn task_ended_text(code: Option<i64>) -> String {
-    let ended = match code {
-        Some(code) => format!("The terminal process terminated with exit code: {code}."),
-        None => "The terminal process terminated.".to_string(),
-    };
-    format!("{ended} Terminal will be reused by tasks, press any key to close it.")
+    let reuse = "Terminal will be reused by tasks, press any key to close it.";
+    match code {
+        Some(0) => reuse.to_string(),
+        Some(code) => format!("The terminal process terminated with exit code: {code}. {reuse}"),
+        None => format!("The terminal process terminated. {reuse}"),
+    }
 }
 
 /// What the panel says of a terminal that ended.
@@ -1517,25 +1532,35 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
         },
     )
     .style(|s| s.flex_col());
+    // The rows the output of an ended terminal takes (none while it runs).
+    let ended_at = floem::reactive::create_memo(move |_| {
+        matches!(ui.term.get(), State::Ended(..)).then(|| ui.term_screen.with(used_rows))
+    });
     let ended_line = label(move || match ui.term.get() {
         State::Ended(id, code) if id >= FIRST_DRIVER_TERM => task_ended_text(code),
         State::Ended(_, code) => ended_text(code),
         _ => String::new(),
     })
-    // At the panel's foot over the screen's last rows, wrapped: the rows fill the panel, so a line after them was
-    // cut off below it.
+    // Under the output, as VS Code writes it; at the panel's foot over the screen's last rows when the output
+    // reaches there, wrapped (the rows fill the panel, so a line after them would be cut off below it).
     .style(move |s| {
         let c = t.get();
-        s.absolute()
-            .inset_left(0.0)
-            .inset_right(0.0)
-            .inset_bottom(0.0)
-            .padding_horiz(PAD_X)
-            .padding_vert(4.0)
-            .text_overflow(floem::style::TextOverflow::Wrap)
-            .background(c.terminal_bg)
-            .color(c.desc)
-            .apply_if(!matches!(ui.term.get(), State::Ended(..)), |s| s.hide())
+        let line = panel.look.with(|l| l.line);
+        let top = ended_at
+            .get()
+            .map(|rows| PAD_TOP + rows as f64 * line)
+            .filter(|top| top + 3.0 * line <= panel.rect.get().1);
+        let s = s.absolute().inset_left(0.0).inset_right(0.0);
+        match top {
+            Some(top) => s.inset_top(top),
+            None => s.inset_bottom(0.0),
+        }
+        .padding_horiz(PAD_X)
+        .padding_vert(4.0)
+        .text_overflow(floem::style::TextOverflow::Wrap)
+        .background(c.terminal_bg)
+        .color(c.desc)
+        .apply_if(!matches!(ui.term.get(), State::Ended(..)), |s| s.hide())
     });
     // The link under the pointer, underlined.
     let underline = empty().style(move |s| {
