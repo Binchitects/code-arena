@@ -111,6 +111,13 @@ pub fn keep_window(app: &App, p: &Prepared) {
 }
 
 /// The sub-agents' starting point, as the session is now (its model, mode, tools and instructions).
+/// How the model is given its tools, as the person's `tools.mode` says (else as Arena says for the model: not told
+/// yet, so both).
+pub fn tool_mode(settings: &ca_settings::Settings) -> ca_agent::code_mode::ToolMode {
+    let chosen = settings.given(&schema::TOOL_MODE).then(|| settings.string(&schema::TOOL_MODE)).flatten();
+    ca_agent::code_mode::ToolMode::of(chosen.as_deref(), None)
+}
+
 pub fn refresh_crew(p: &mut Prepared, ui: crate::ui::Ui) {
     let a = &p.agent;
     // Who watches the sub-agents (the IDE's Tasks view) stays as it was.
@@ -950,6 +957,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         },
         repo_key: Some(ca_memory::keys::project_key(&ws_root)).filter(|k| !k.starts_with("local/")),
         attached: Default::default(),
+        tool_mode: tool_mode(&app.settings),
+        kernel: None,
     };
     // Laya reads each command first, when signed in to an Arena that has it.
     if app.connection.signed_in()
@@ -1067,6 +1076,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
     let crew: Arc<Mutex<Option<ca_agent::task::Crew>>> = Arc::new(Mutex::new(None));
     agent.tools.push(Arc::new(ca_agent::task::TaskTool::new(crew.clone())));
     agent.tools.push(Arc::new(ca_agent::steps::RunSteps { crew: crew.clone() }));
+    agent.tools.push(Arc::new(ca_agent::code_mode::RunCode));
     for line in crate::servers::describe(&servers) {
         if !line.contains("connected,") {
             ui.say(&ui.dim(&line));

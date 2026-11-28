@@ -261,6 +261,10 @@ pub struct Agent {
     pub hooks: Arc<crate::hooks::Hooks>,
     /// Files attached to the next message the person sends, taken by the turn it begins.
     pub attached: Attached,
+    /// How the model is given its tools: one by one, the servers' as code, or both.
+    pub tool_mode: crate::code_mode::ToolMode,
+    /// The chat's Python, which `run_code` runs in; started at its first call.
+    pub kernel: Option<crate::code_mode::Kernel>,
 }
 
 /// Files that go with a person's message: what the model reads of them after the words (the `<uploaded>` block,
@@ -306,8 +310,8 @@ pub trait Recorder: Send {
 
 impl Agent {
     fn defs(&self) -> Vec<ToolDef> {
-        let mut d: Vec<ToolDef> = self.tools.iter().map(|t| t.def()).collect();
-        if !self.deferred.is_empty() {
+        let mut d = crate::code_mode::offered(self.tool_mode, &self.tools, &self.deferred);
+        if crate::code_mode::loads(self.tool_mode, &self.tools, &self.deferred) {
             d.push(load_tools_def());
         }
         d
@@ -1087,7 +1091,11 @@ impl Agent {
                             let began = std::time::Instant::now();
                             let mut ctx = self.ctx.clone();
                             ctx.call = Some(call.id.clone());
-                            let o = tool.run(m.args.clone(), &ctx).await;
+                            let o = if m.name == crate::code_mode::RUN_CODE {
+                                self.run_code(&call.id, &m.args, events).await
+                            } else {
+                                tool.run(m.args.clone(), &ctx).await
+                            };
                             events.tool_end(&said, &o, began.elapsed());
                             let o = Self::post_tool(&self.hooks.clone(), &m.name, &m.args, o, events).await;
                             for w in &o.wrote {
@@ -1384,6 +1392,8 @@ mod tests {
             repo_key: None,
             hooks: Arc::default(),
             attached: Default::default(),
+            tool_mode: crate::code_mode::ToolMode::Direct,
+            kernel: None,
         };
         (server, a, dir, seen)
     }
