@@ -792,6 +792,12 @@ Sections used:
   are in the title. Its More menu has Import Skills..., which previews what comes in, where it
   goes, and Replace, Rename or Skip for a name already there, with secrets left out. It also has
   Export the Project's and Yours..., Export All... and the Built-in Skills on/off.
+- **Workspace trust.** The first time you open a folder, Code Arena asks whether you trust its
+  authors, since it runs some of the folder's own programs (formatters, language servers, tasks,
+  debuggers, notebook kernels, project tools). You can trust the parent folder too. Until you trust
+  it, the folder is in Restricted Mode: a banner and a "Restricted Mode" status bar item say so.
+  **Workspaces: Manage Workspace Trust** asks again or takes the trust back. The answer is kept on
+  this computer, and a feature refused for an untrusted folder shows a toast with Trust.
 
 
 ### :bug: Bugs fixed
