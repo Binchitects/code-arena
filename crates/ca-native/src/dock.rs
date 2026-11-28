@@ -387,21 +387,6 @@ impl Dock {
         d
     }
 
-    /// `v` one place up (a negative `by`) or down in its group's order; at an end it stays.
-    pub fn nudged(&self, v: View, by: i32) -> Dock {
-        let mut d = self.clone();
-        let Some(g) = d.group_of(v) else { return d };
-        if let Some(Node::Tabs { views, .. }) = d.root.find_mut(g)
-            && let Some(i) = views.iter().position(|x| *x == v)
-        {
-            let j = i as i64 + by as i64;
-            if (0..views.len() as i64).contains(&j) {
-                views.swap(i, j as usize);
-            }
-        }
-        d
-    }
-
     /// Every group, by number, in the tree's order.
     pub fn all_groups(&self) -> Vec<u32> {
         let mut out = Vec::new();
@@ -773,10 +758,8 @@ mod tests {
         let d = Dock::default().reordered(Outline, Some(Search));
         assert_eq!(side(&d), [Files, Outline, Search, Changes]);
         assert_eq!(side(&Dock::from_json(&d.to_json())), [Files, Outline, Search, Changes]);
-        // Last when nothing is named; up and down by one, staying at the ends.
+        // Last when nothing is named.
         assert_eq!(side(&d.reordered(Files, None)), [Outline, Search, Changes, Files]);
-        assert_eq!(side(&d.nudged(Search, 1)), [Files, Outline, Changes, Search]);
-        assert_eq!(side(&d.nudged(Files, -1)), [Files, Outline, Search, Changes]);
         // Put in from another group at a place, and shown there.
         let d = Dock::default().docked(Agent, 2, Side::Center).reordered(Agent, Some(Search));
         ok(&d);

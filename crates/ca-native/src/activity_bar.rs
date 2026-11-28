@@ -1,7 +1,7 @@
 //! The activity bar, as VS Code's: the side bar's views by their icons (all the views in the window when no group
 //! is at its left), each with its badge when it has a count (`badges.rs`), each dragged to reorder it in the bar (a
-//! line shows where it goes) or to dock it elsewhere; the icons scroll when the window is short. At its foot the
-//! old Code Arena's buttons: the terminal, the colour theme, Accounts and Manage (the commands of those names,
+//! line shows where it goes) or to dock it elsewhere; the icons scroll when the window is short. At its foot its
+//! buttons: the terminal, the colour theme, Accounts and Manage (the commands of those names,
 //! `ACCOUNTS` and `MANAGE`, once a part has added them, else the menus registered for them), Help and About.
 //!
 //! It is at the window's left (VS Code's default), in a row over the side bar (Top), or hidden; and an icon may be
@@ -77,11 +77,17 @@ impl Location {
 struct Bar {
     location: RwSignal<Location>,
     hidden: RwSignal<Vec<View>>,
+    /// Read back from the first state only, as the rest of the layout is (a later one is the same session's).
+    restored: RwSignal<bool>,
 }
 
 impl crate::ext::State for Bar {
     fn new(ui: Ui) -> Bar {
-        Bar { location: ui.scope.create_rw_signal(Location::Default), hidden: ui.scope.create_rw_signal(Vec::new()) }
+        Bar {
+            location: ui.scope.create_rw_signal(Location::Default),
+            hidden: ui.scope.create_rw_signal(Vec::new()),
+            restored: ui.scope.create_rw_signal(false),
+        }
     }
 }
 
@@ -238,12 +244,15 @@ fn listed_untracked(ui: Ui) -> Vec<View> {
     floem::reactive::untrack(|| listed(ui))
 }
 
-/// A view dropped on a bar: in the side bar before `before` (none: last), its icon given back, and shown.
+/// A view dropped on a bar: in the side bar before `before` (none: last), its icon given back.
 pub fn dropped(ui: Ui, v: View, before: Option<View>) {
     let side = ui.dock.with_untracked(|d| d.side_bar());
     match side {
         Some(g) => {
-            ui.dock_view(v, g, Side::Center);
+            // From elsewhere it docks there and is shown; from the bar itself it only takes its new place.
+            if ui.dock.with_untracked(|d| d.group_of(v)) != Some(g) {
+                ui.dock_view(v, g, Side::Center);
+            }
             let next = ui.dock.with_untracked(|d| d.reordered(v, before));
             if ui.dock.with_untracked(|d| *d != next) {
                 ui.dock.set(next);
@@ -280,8 +289,19 @@ pub fn move_panel(ui: Ui, side: Side) {
     }
 }
 
+/// An icon one place up (a negative `by`) or down among the icons the bar lists (hidden ones are passed over).
 fn nudge(ui: Ui, v: View, by: i32) {
-    ui.dock.update(|d| *d = d.nudged(v, by));
+    let order = listed_untracked(ui);
+    let Some(at) = order.iter().position(|x| *x == v) else { return };
+    let before = match by {
+        b if b < 0 && at > 0 => Some(order[at - 1]),
+        b if b > 0 && at + 1 < order.len() => order.get(at + 2).copied(),
+        _ => return,
+    };
+    let next = ui.dock.with_untracked(|d| d.reordered(v, before));
+    if ui.dock.with_untracked(|d| *d != next) {
+        ui.dock.set(next);
+    }
 }
 
 /// A group named as a menu says it: the side bar, the panel, else by the view it shows.
@@ -367,7 +387,7 @@ pub fn view_items(ui: Ui, v: View) -> Vec<Item> {
         );
         items.push(entry("Move to Panel", move || move_to_panel(ui, v)).enabled(group != panel).into());
         if group.is_some() && group == side_bar {
-            let order = floem::reactive::untrack(|| views(ui));
+            let order = listed_untracked(ui);
             let at = order.iter().position(|x| *x == v).unwrap_or(0);
             items.push(entry("Move Up", move || nudge(ui, v, -1)).enabled(at > 0).into());
             items.push(entry("Move Down", move || nudge(ui, v, 1)).enabled(at + 1 < order.len()).into());
@@ -652,7 +672,9 @@ pub fn register(_ui: Ui, _send: &Send) {
 /// The session's messages that are this part's, taken in: the folder's layout, read back. Never taken away from
 /// the rest of the window (false).
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
-    if m["type"] == "state" && m["view_state"].is_object() {
+    let restored = ui.state::<Bar>().restored;
+    if m["type"] == "state" && !restored.get_untracked() {
+        restored.set(true);
         restore(ui, &m["view_state"]["activity_bar"]);
     }
     false
@@ -721,6 +743,23 @@ mod tests {
     }
 
     #[test]
+    fn the_bar_is_read_back_from_the_first_state_only() {
+        let ui = Ui::new();
+        set_location(ui, Location::Top);
+        set_pinned(ui, View::Search, false);
+        let kept = ui.view_state();
+        let send: Send = std::rc::Rc::new(|_| {});
+        let again = Ui::new();
+        take(again, &json!({"type": "state", "view_state": kept}), &send);
+        assert_eq!(location(again), Location::Top);
+        assert!(!pinned(again, View::Search));
+        // A later state of the same session, kept before or without the bar's, leaves it as it is.
+        take(again, &json!({"type": "state", "view_state": {}}), &send);
+        assert_eq!(location(again), Location::Top);
+        assert!(!pinned(again, View::Search));
+    }
+
+    #[test]
     fn a_view_dropped_on_the_bar_goes_where_the_line_shows() {
         use View::*;
         let rect = |i: f64| Rect::new(0.0, i * 48.0, 48.0, i * 48.0 + 48.0);
@@ -738,9 +777,19 @@ mod tests {
         set_pinned(ui, Outline, false);
         dropped(ui, Outline, Some(Search));
         assert_eq!(listed(ui), [Files, Outline, Search, Changes]);
-        assert!(ui.view_shown(Outline) && pinned(ui, Outline));
+        assert!(ui.view_shown(Files) && pinned(ui, Outline));
+        // From another group: docked in the side bar and shown.
         dropped(ui, Agent, None);
         assert_eq!(listed(ui), [Files, Outline, Search, Changes, Agent]);
+        assert!(ui.view_shown(Agent));
+        // Up and down among the icons listed, passing over a hidden one.
+        set_pinned(ui, Search, false);
+        nudge(ui, Changes, -1);
+        assert_eq!(views(ui), [Files, Changes, Outline, Search, Agent]);
+        nudge(ui, Files, 1);
+        assert_eq!(views(ui), [Changes, Files, Outline, Search, Agent]);
+        nudge(ui, Agent, 1);
+        assert_eq!(views(ui), [Changes, Files, Outline, Search, Agent]);
     }
 
     #[test]
