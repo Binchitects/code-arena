@@ -759,6 +759,12 @@ Sections used:
 - **The agent carries on when a long command ends.** When a job with no time limit ends while
   nothing runs, the thread says 'Job N ended with exit code 0.' and the model carries on from its
   output in a turn of its own, as in the terminal. A job you stopped only gets the notice.
+- **Right-to-left and mixed text in the chat.** Persian, Arabic and Hebrew stand on the right: the
+  box and the request bubbles lay out each line by its own words, an answer's paragraphs, headings
+  and quotes follow their first strong letters (a quote's bar moves to the right), a list puts its
+  bullets on the side of its first item, and code blocks stay left to right. Thinking, queued
+  requests and quotes do the same, and plan step and session titles are isolated so they do not
+  reorder the words around them.
 
 
 ### :bug: Bugs fixed
