@@ -54,6 +54,9 @@ pub struct Notice {
     pub detail: String,
 }
 
+/// Where the ids of virtual machines' sign-ins begin among the waiting bubbles' (far past any call's).
+const VM_LOGIN: u64 = 1 << 48;
+
 /// What a message from the session tells the person, when it tells them anything: a call to allow, the turn ended
 /// (a turn the person stopped tells them nothing).
 pub fn said(m: &Value) -> Option<(What, String, String)> {
@@ -63,6 +66,12 @@ pub fn said(m: &Value) -> Option<(What, String, String)> {
             What::Waiting { call: m["id"].as_u64().unwrap_or(0) },
             format!("Waiting for you: {}", s("tool")),
             s("subject"),
+        )),
+        // A virtual machine's sign-in (`vm_login.rs`), told apart from the calls by its own range of ids.
+        "vm_login" => Some((
+            What::Waiting { call: VM_LOGIN + m["id"].as_u64().unwrap_or(0) },
+            format!("Waiting for you: sign in to {}", s("vm")),
+            format!("The agent's tools need the guest's user and password ({}).", s("hypervisor")),
         )),
         "turn_end" if m["ok"] == true => Some((
             What::Ready,
@@ -476,6 +485,7 @@ pub fn register(_ui: Ui, _send: &Send) {
 pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
     match m["type"].as_str().unwrap_or("") {
         "answered" => answered(ui, m["id"].as_u64().unwrap_or(0)),
+        "vm_login_done" => answered(ui, VM_LOGIN + m["id"].as_u64().unwrap_or(0)),
         "turn_end" => {
             // The calls not answered are no longer asked (the thread says so): their bubbles go.
             let waiting: Vec<u64> = ui.state::<Notices>().list.with_untracked(|l| {

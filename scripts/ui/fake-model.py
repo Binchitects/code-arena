@@ -6,7 +6,8 @@
 #
 # The last user message decides: "delegate" starts two sub-agents (each thinks, reads src/main.rs and reports),
 # "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a command that needs an approval
-# in ask mode, "picture" runs a command that makes a picture in .code-arena/media/,
+# in ask mode, "guest" runs `uname -a` in the VM test-vm (vm_run: a fake VBoxManage on PATH has it ask the sign-in),
+# "picture" runs a command that makes a picture in .code-arena/media/,
 # "build" runs a command with no time limit (some seconds of output; its end is answered with a line),
 # "persian" answers in right-to-left and mixed text,
 # "think" thinks for some seconds before it answers (with its usage),
@@ -175,6 +176,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif "picture" in text:
             ev({"content": "Drawing it."})
             call("run_shell", {"command": PICTURE})
+        elif "guest" in text:
+            ev({"content": "I'll look in the guest."})
+            call("vm_run", {"vm": "test-vm", "command": "uname -a"})
         elif "edit" in text:
             ev({"content": "Changing the greeting."})
             call("edit_file", {"path": "src/main.rs", "old_string": "\"hello\"", "new_string": "\"hello, world\""})

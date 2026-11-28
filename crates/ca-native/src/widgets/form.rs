@@ -157,6 +157,76 @@ impl Form {
         .into_any()
     }
 
+    /// A one-line input whose text is a secret (a password): drawn as dots, never in a text box, which would draw
+    /// it and copy it. Its keys are taken here; `enter` is what Enter does in it.
+    pub fn secret(self, ui: Ui, text: RwSignal<String>, enter: impl Fn() + 'static) -> AnyView {
+        let t = ui.colors;
+        let focused = ui.scope.create_rw_signal(false);
+        let dots = h_stack((
+            label(move || "\u{2022}".repeat(text.with(|x| x.chars().count()).min(80))),
+            empty().style(move |s| {
+                s.width(1.0).height(16.0).background(t.get().cursor).apply_if(!focused.get(), |s| s.hide())
+            }),
+        ))
+        .style(|s| s.items_center().height_full());
+        let view = container(dots).keyboard_navigable();
+        let id = view.id();
+        self.fields.update(|f| f.push(id));
+        view.on_event(EventListener::KeyDown, move |e| {
+            let Event::KeyDown(k) = e else { return EventPropagation::Continue };
+            let (key, m) = (&k.key.logical_key, k.modifiers);
+            match key {
+                Key::Named(NamedKey::Enter) => enter(),
+                Key::Named(NamedKey::Escape) => self.close(),
+                Key::Named(NamedKey::Tab) => self.tab(id, m.shift()),
+                _ => {
+                    let typed = text.with_untracked(|was| {
+                        crate::widgets::quick::secret_key(was, key, m, || floem::Clipboard::get_contents().ok())
+                            .filter(|now| now != was)
+                    });
+                    if let Some(now) = typed {
+                        text.set(now);
+                    }
+                }
+            }
+            EventPropagation::Stop
+        })
+        .on_event_cont(EventListener::FocusGained, move |_| {
+            focused.set(true);
+            self.gained();
+        })
+        .on_event_cont(EventListener::FocusLost, move |_| {
+            focused.set(false);
+            self.lost();
+        })
+        .on_event_stop(EventListener::PointerDown, move |_| id.request_focus())
+        .takes_keys(Focus::Input)
+        .style(move |s| {
+            let c = t.get();
+            s.width_full()
+                .min_width(0.0)
+                .height(26.0)
+                .padding_horiz(6.0)
+                .border(1.0)
+                .border_radius(2.0)
+                .border_color(if focused.get() { c.focus } else { c.input_border })
+                .background(c.input_bg)
+                .color(c.input_fg)
+                .cursor(CursorStyle::Text)
+        })
+        .into_any()
+    }
+
+    /// Tab (`back`: Shift+Tab) in the input `id`: the next input shown, or the one before, around the ends.
+    fn tab(self, id: ViewId, back: bool) {
+        let all: Vec<ViewId> =
+            self.fields.get_untracked().into_iter().filter(|f| *f == id || !f.is_hidden_recursive()).collect();
+        if let Some(i) = all.iter().position(|f| *f == id) {
+            let n = all.len();
+            all[if back { (i + n - 1) % n } else { (i + 1) % n }].request_focus();
+        }
+    }
+
     /// A field's name over it.
     pub fn named(self, ui: Ui, name: &'static str, field: AnyView) -> AnyView {
         let t = ui.colors;
