@@ -134,11 +134,28 @@ fn setting(s: &Settings) -> Value {
 /// The ids the `codeArena.languageServers.*` settings turn off.
 fn off(s: &Settings, setting: &Value) -> Vec<String> {
     let all = s.ide("codeArena.languageServers.enabled", None).as_bool() == Some(false);
-    catalog::entries(setting)
-        .into_iter()
-        .filter(|e| all || s.ide(&format!("codeArena.languageServers.{}.enabled", e.id), None).as_bool() == Some(false))
-        .map(|e| e.id)
-        .collect()
+    catalog::entries(setting).into_iter().filter(|e| all || !own_on(s, &e.id)).map(|e| e.id).collect()
+}
+
+/// Whether a server's own setting leaves it on: each built-in has one; the person's own have none, and are on.
+fn own_on(s: &Settings, id: &str) -> bool {
+    let v = match id {
+        "typescript" => s.ide("codeArena.languageServers.typescript.enabled", None),
+        "pyright" => s.ide("codeArena.languageServers.pyright.enabled", None),
+        "basedpyright" => s.ide("codeArena.languageServers.basedpyright.enabled", None),
+        "pylsp" => s.ide("codeArena.languageServers.pylsp.enabled", None),
+        "gopls" => s.ide("codeArena.languageServers.gopls.enabled", None),
+        "rust-analyzer" => s.ide("codeArena.languageServers.rust-analyzer.enabled", None),
+        "clangd" => s.ide("codeArena.languageServers.clangd.enabled", None),
+        "csharp-ls" => s.ide("codeArena.languageServers.csharp-ls.enabled", None),
+        "json" => s.ide("codeArena.languageServers.json.enabled", None),
+        "css" => s.ide("codeArena.languageServers.css.enabled", None),
+        "html" => s.ide("codeArena.languageServers.html.enabled", None),
+        "yaml" => s.ide("codeArena.languageServers.yaml.enabled", None),
+        "bash" => s.ide("codeArena.languageServers.bash.enabled", None),
+        _ => Value::Null,
+    };
+    v.as_bool() != Some(false)
 }
 
 /// The environment's names a server is given: none of the driver's keys.
