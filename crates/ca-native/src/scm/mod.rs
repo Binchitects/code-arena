@@ -570,20 +570,13 @@ fn count(t: crate::widgets::Theme, n: usize) -> impl IntoView {
     })
 }
 
-/// A row's content: a group's title and count, or a file's icon, name (struck through when deleted), folder and
-/// letter.
+/// A row's content: a group's title, or a file's icon, name (struck through when deleted) and folder.
 fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
     let t = ui.colors;
     let me = state(ui);
     match row_of(&node.id) {
         Some(Row::Group(g)) => {
-            let n = me.status.with_untracked(|s| s.as_ref().map(|s| s.of_group(g).len()).unwrap_or(0));
-            h_stack((
-                label(move || g.title()).style(|s| s.flex_grow(1.0_f32).font_bold().text_ellipsis().min_width(0.0)),
-                count(t, n),
-            ))
-            .style(|s| s.width_full().items_center())
-            .into_any()
+            label(move || g.title()).style(|s| s.width_full().font_bold().text_ellipsis().min_width(0.0)).into_any()
         }
         Some(Row::File(g, path)) => {
             let f =
@@ -621,18 +614,35 @@ fn row_content(ui: Ui, node: &wt::Node) -> floem::AnyView {
                 label(move || dir.clone()).style(move |s| {
                     s.font_size(12.0).color(t.get().desc).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)
                 }),
-                empty().style(|s| s.flex_grow(1.0_f32)),
-                label(move || letter.to_string()).style(move |s| {
-                    let c = t.get();
-                    s.font_size(12.0)
-                        .width(12.0)
-                        .margin_right(10.0)
-                        .color(letter_colour(&c, letter))
-                        .flex_shrink(0.0_f32)
-                }),
             ))
-            .style(|s| s.width_full().items_center().gap(6.0))
+            .style(|s| s.width_full().min_width(0.0).items_center().gap(6.0))
             .into_any()
+        }
+        None => empty().into_any(),
+    }
+}
+
+/// What a row shows at its right, right of its actions: a group's count, a file's letter. In one column whatever
+/// the names' widths, and still while the actions are shown, as VS Code's.
+fn row_decoration(ui: Ui, node: &wt::Node) -> floem::AnyView {
+    let t = ui.colors;
+    let me = state(ui);
+    match row_of(&node.id) {
+        Some(Row::Group(g)) => {
+            let n = me.status.with_untracked(|s| s.as_ref().map(|s| s.of_group(g).len()).unwrap_or(0));
+            container(count(t, n)).style(|s| s.margin_right(8.0)).into_any()
+        }
+        Some(Row::File(g, path)) => {
+            let f =
+                me.status.with_untracked(|s| s.as_ref().and_then(|s| s.files.iter().find(|f| f.path == path).cloned()));
+            let Some(f) = f else { return empty().into_any() };
+            let letter = g.letter(&f);
+            label(move || letter.to_string())
+                .style(move |s| {
+                    let c = t.get();
+                    s.font_size(12.0).width(12.0).margin_right(10.0).color(letter_colour(&c, letter))
+                })
+                .into_any()
         }
         None => empty().into_any(),
     }
@@ -703,23 +713,47 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
         move |words| {
             let focused = create_rw_signal(false);
             let go = send.clone();
-            text_input(me.message)
-                .placeholder(words)
+            // The border and padding sit on the box that holds both the input and its placeholder.
+            // floem paints its own placeholder past the box's edge, so the words are a label under the input that
+            // ends in an ellipsis, hidden once something is typed.
+            let hint =
+                container(label(move || words.clone()).style(|s| s.text_ellipsis().min_width(0.0))).style(move |s| {
+                    s.absolute()
+                        .inset(0.0)
+                        .padding_horiz(6.0)
+                        .items_center()
+                        .color(t.get().desc)
+                        .apply_if(me.message.with(|m| !m.is_empty()), |s| s.hide())
+                });
+            let input = text_input(me.message)
                 .on_key_down(Key::Named(NamedKey::Enter), |m| m.control(), move |_| commit(ui, &go, false))
                 .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true))
                 .on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false))
                 .style(move |s| {
                     let c = t.get();
+                    // A width in percent: with none, floem gives the input a fixed width of so many characters.
+                    let s = s
+                        .width_full()
+                        .min_width(0.0)
+                        .border(0.0)
+                        .padding(0.0)
+                        .background(Color::TRANSPARENT)
+                        .color(c.input_fg)
+                        .cursor_color(floem::peniko::Brush::Solid(c.cursor));
+                    crate::widgets::steady_input(s, Color::TRANSPARENT, None)
+                });
+            stack((hint, input))
+                .style(move |s| {
+                    let c = t.get();
                     s.width_full()
                         .min_width(0.0)
                         .height(26.0)
+                        .items_center()
                         .padding_horiz(6.0)
                         .border(1.0)
                         .border_radius(2.0)
                         .border_color(if focused.get() { c.focus } else { c.input_border })
                         .background(c.input_bg)
-                        .color(c.input_fg)
-                        .cursor_color(floem::peniko::Brush::Solid(c.cursor))
                 })
                 .into_any()
         },
@@ -829,6 +863,7 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     let (acting, opened) = (send.clone(), send.clone());
     let changes = wt::tree(ui, me.tree, move || rows_now.get())
         .content(move |n| row_content(ui, n))
+        .decoration(move |n| row_decoration(ui, n))
         .actions(move |n| row_actions(ui, &acting, n))
         .multi()
         .on_toggle(move |id| {
@@ -855,7 +890,8 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         move || what.get(),
         move |w| {
             let say = move |text: String| {
-                label(move || text.clone()).style(move |s| s.padding_horiz(20.0).padding_vert(6.0).color(t.get().desc))
+                label(move || text.clone())
+                    .style(move |s| s.padding_horiz(20.0).padding_vert(6.0).line_height(1.4).color(t.get().desc))
             };
             match w {
                 Empty::NoRepo => {

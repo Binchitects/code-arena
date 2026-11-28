@@ -683,14 +683,16 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         })
         .style(move |s| {
             let c = t.get();
-            s.width_full()
+            let s = s
+                .width_full()
                 .height(24.0)
                 .padding_horiz(5.0)
                 .border(0.0)
                 .font_size(13.0)
                 .background(Color::TRANSPARENT)
                 .color(c.input_fg)
-                .cursor_color(Brush::Solid(c.cursor))
+                .cursor_color(Brush::Solid(c.cursor));
+            crate::widgets::steady_input(s, Color::TRANSPARENT, None)
         });
     let input_id = input.id();
     create_effect(move |_| match ui.quick.get() {

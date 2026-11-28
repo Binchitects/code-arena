@@ -597,7 +597,9 @@ fn table(ui: Ui, now: Memo<Option<Rc<Block>>>) -> impl IntoView {
         crate::icons::icon("search", 14.0).style(move |s| s.color(t.get().desc)),
         text_input(filter).placeholder("Filter rows").style(move |s| {
             let c = t.get();
-            s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).font_size(12.0).background(c.input_bg).color(c.input_fg)
+            let s =
+                s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).font_size(12.0).border(0.0).background(c.input_bg);
+            crate::widgets::steady_input(s.color(c.input_fg), c.input_bg, None)
         }),
     ))
     .style(move |s| {
@@ -861,7 +863,8 @@ pub(crate) fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + '
         })
         .style(move |s| {
             let c = t.get();
-            s.width_full()
+            let s = s
+                .width_full()
                 .height(24.0)
                 .padding_horiz(6.0)
                 .font_size(13.0)
@@ -869,7 +872,8 @@ pub(crate) fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + '
                 .border_radius(2.0)
                 .border_color(c.focus)
                 .background(c.input_bg)
-                .color(c.input_fg)
+                .color(c.input_fg);
+            crate::widgets::steady_input(s, c.input_bg, Some(c.focus))
         });
     let warning = label(move || format!("{} is there already: press Enter again to replace it.", path.get().trim()))
         .style(move |s| {

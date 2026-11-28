@@ -131,6 +131,19 @@ pub fn caps(s: Style) -> Style {
     s.font_size(11.0).selectable(false)
 }
 
+/// A text input's own background and border kept while it is pointed at or has the keys: floem's theme turns a
+/// hovered input near white (its light grey text then hard to read) and a focused one's border purple. `border` is
+/// the border's colour while it has the keys, as the input has none of its own when it is None.
+pub fn steady_input(s: Style, background: Color, border: Option<Color>) -> Style {
+    s.hover(|s| s.background(background)).focus(|s| {
+        let s = s.hover(|s| s.background(background));
+        match border {
+            Some(c) => s.border_color(c),
+            None => s.border(0.0),
+        }
+    })
+}
+
 pub fn bold(s: Style) -> Style {
     s.font_weight(Weight::BOLD)
 }

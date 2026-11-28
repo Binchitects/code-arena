@@ -772,10 +772,11 @@ impl Store {
             .optional()?)
     }
 
-    /// Messages of the folder's sessions that hold every word: (session, seq, a line of the text).
+    /// Messages of the folder's sessions that hold every word, or a word starting with it (so a word half typed
+    /// finds: "pars" finds "parser"): (session, seq, a line of the text).
     pub fn search(&self, folder: &str, words: &str, limit: usize) -> Result<Vec<(String, i64, String)>> {
         let query =
-            words.split_whitespace().map(|w| format!("\"{}\"", w.replace('"', ""))).collect::<Vec<_>>().join(" ");
+            words.split_whitespace().map(|w| format!("\"{}\"*", w.replace('"', ""))).collect::<Vec<_>>().join(" ");
         if query.is_empty() {
             return Ok(vec![]);
         }
@@ -915,6 +916,9 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].1, 4);
         assert!(s.search("/other", "parser", 10).expect("search").is_empty());
+        // A word half typed finds the words it starts.
+        assert_eq!(s.search("/w", "pars tes", 10).expect("search").len(), 1);
+        assert!(s.search("/w", "arser", 10).expect("search").is_empty());
 
         s.truncate(&id, 4).expect("rewind");
         assert_eq!(s.summary(&id).expect("s").messages, 4);

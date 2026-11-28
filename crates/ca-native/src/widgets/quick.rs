@@ -835,14 +835,16 @@ fn field(ui: Ui, serial: u64) -> AnyView {
         .on_event_cont(EventListener::FocusLost, move |_| lost())
         .style(move |s| {
             let c = t.get();
-            s.width_full()
+            let s = s
+                .width_full()
                 .height(24.0)
                 .padding_horiz(5.0)
                 .border(0.0)
                 .font_size(13.0)
                 .background(Color::TRANSPARENT)
                 .color(c.input_fg)
-                .cursor_color(Brush::Solid(c.cursor))
+                .cursor_color(Brush::Solid(c.cursor));
+            crate::widgets::steady_input(s, Color::TRANSPARENT, None)
         })
         .into_any()
     };

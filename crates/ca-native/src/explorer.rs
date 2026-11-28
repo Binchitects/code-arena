@@ -856,7 +856,8 @@ fn input_row(ui: Ui, send: Send, r: Row) -> impl IntoView {
         })
         .style(move |s| {
             let c = t.get();
-            s.flex_grow(1.0_f32)
+            let s = s
+                .flex_grow(1.0_f32)
                 .flex_basis(0.0)
                 .min_width(0.0)
                 .height(20.0)
@@ -865,7 +866,8 @@ fn input_row(ui: Ui, send: Send, r: Row) -> impl IntoView {
                 .font_size(13.0)
                 .background(Color::TRANSPARENT)
                 .color(c.input_fg)
-                .cursor_color(Brush::Solid(c.cursor))
+                .cursor_color(Brush::Solid(c.cursor));
+            crate::widgets::steady_input(s, Color::TRANSPARENT, None)
         });
     let id = input.id();
     // Once the row is in the tree, the input has the keys.

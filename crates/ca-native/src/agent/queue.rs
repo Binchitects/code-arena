@@ -360,7 +360,8 @@ fn field(ui: Ui, send: Send, me: u64, number: Option<u64>) -> impl IntoView {
         })
         .style(move |s| {
             let c = t.get();
-            s.width_full()
+            let s = s
+                .width_full()
                 .min_width(0.0)
                 .padding_horiz(4.0)
                 .padding_vert(2.0)
@@ -369,7 +370,8 @@ fn field(ui: Ui, send: Send, me: u64, number: Option<u64>) -> impl IntoView {
                 .border_color(c.focus)
                 .background(c.input_bg)
                 .color(c.input_fg)
-                .cursor_color(Brush::Solid(c.cursor))
+                .cursor_color(Brush::Solid(c.cursor));
+            crate::widgets::steady_input(s, c.input_bg, Some(c.focus))
         });
     let id = input.id();
     exec_after(Duration::ZERO, move |_| id.request_focus());
