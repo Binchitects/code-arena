@@ -408,8 +408,8 @@ async fn fetch(
             hash.update(piece);
             length += piece.len() as u64;
             let of = if size > 0 { size } else { said.unwrap_or(0) };
-            if of > 0 {
-                progress((length.saturating_mul(100) / of).min(100) as u8);
+            if let Some(pct) = length.saturating_mul(100).checked_div(of) {
+                progress(pct.min(100) as u8);
             }
             true
         })
