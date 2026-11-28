@@ -225,6 +225,8 @@ pub struct Colours {
     parsed: RefCell<Parsed>,
     id: Cell<u64>,
     look: RefCell<Look>,
+    /// How many columns a tab is drawn as: the file's indentation's (`indent.rs`).
+    tab: Cell<usize>,
     /// The file's path, by which its decorations are found (`decor.rs`).
     path: String,
 }
@@ -239,6 +241,7 @@ impl Colours {
             parsed: RefCell::new(Parsed { after: Vec::new() }),
             id: Cell::new(1),
             look: RefCell::new(Look::default()),
+            tab: Cell::new(4),
             path: path.to_string(),
         })
     }
@@ -267,6 +270,16 @@ impl Colours {
             ruler,
         };
         self.id.set(self.id.get() + 1);
+    }
+
+    /// A tab drawn `columns` wide; the editor drawn again with `update_styling`.
+    pub fn set_tab_width(&self, columns: usize) {
+        self.tab.set(columns.max(1));
+        self.id.set(self.id.get() + 1);
+    }
+
+    pub fn tab_width_is(&self, columns: usize) -> bool {
+        self.tab.get() == columns.max(1)
     }
 
     /// The text changed from `line` on: what was parsed before it stands.
@@ -337,7 +350,7 @@ impl Styling for Colours {
     }
 
     fn tab_width(&self, _: EditorId, _: usize) -> usize {
-        4
+        self.tab.get()
     }
 
     fn apply_attr_styles(&self, edid: EditorId, es: &EditorStyle, line: usize, default: Attrs, attrs: &mut AttrsList) {

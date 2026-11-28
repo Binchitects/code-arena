@@ -784,9 +784,8 @@ pub fn delete_pair(text: &Rope, sels: &[Sel]) -> Option<Change> {
 
 /// Enter, as `editor.autoIndent` says: `none` a new line alone; else with the line's indent, one more after an
 /// opened bracket, and between a pair (`{|}`) the closer on a line of its own under the caret's.
-pub fn newline(text: &Rope, sels: &[Sel], unit: &str, auto: &str, colon: bool) -> Option<Change> {
+pub fn newline(text: &Rope, sels: &[Sel], unit: &str, auto: &str, colon: bool, nl: &str) -> Option<Change> {
     let t = RopeTextRef::new(text);
-    let nl = ending(&t);
     let mut sorted = sels.to_vec();
     sorted.sort_by_key(|s| s.min());
     sorted.dedup_by_key(|s| (s.min(), s.max()));
@@ -885,12 +884,9 @@ fn lang(path: &str) -> Option<&'static str> {
     crate::complete::lang_of(path)
 }
 
-/// One indent: a tab, or `editor.tabSize` spaces (`editor.insertSpaces`).
+/// One indent of the file (`indent.rs`): a tab, or as many spaces as it is wide.
 fn unit(ui: Ui, path: &str) -> (String, usize) {
-    let l = lang(path);
-    let size = crate::settings::now(ui, "editor.tabSize", l).as_u64().unwrap_or(4).clamp(1, 32) as usize;
-    let spaces = crate::settings::now(ui, "editor.insertSpaces", l).as_bool().unwrap_or(true);
-    (if spaces { " ".repeat(size) } else { "\t".into() }, size)
+    crate::indent::unit(ui, path)
 }
 
 fn colon(path: &str) -> bool {
@@ -898,7 +894,7 @@ fn colon(path: &str) -> bool {
 }
 
 /// A command's work on the editor: what it changes, worked out from the text and selections.
-fn edit_with(ui: Ui, kind: EditType, work: impl FnOnce(&str, &Rope, &[Sel]) -> Option<Change>) {
+pub fn edit_with(ui: Ui, kind: EditType, work: impl FnOnce(&str, &Rope, &[Sel]) -> Option<Change>) {
     let Some((path, e)) = editor_of(ui) else { return };
     let (sels, _) = sels_of(&e);
     let text = e.doc().text();
@@ -1147,7 +1143,15 @@ pub fn key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
                 }
                 return true;
             }
-            false
+            // In a line: spaces to the next stop or a tab, as the file is indented.
+            if e.read_only.get_untracked() {
+                return false;
+            }
+            let before = |at: usize| text.slice_to_cow(t.offset_of_line(t.line_of_offset(at))..at).into_owned();
+            if let Some(c) = crate::indent::tab(before, &sels, crate::indent::indent(ui, &path)) {
+                apply(&e, c, EditType::InsertChars);
+            }
+            true
         }
         Key::Named(NamedKey::Enter) if plain && !shift => {
             let Some((path, e)) = editor_of(ui) else { return false };
@@ -1156,7 +1160,9 @@ pub fn key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
             }
             let auto =
                 crate::settings::now(ui, "editor.autoIndent", lang(&path)).as_str().unwrap_or("full").to_string();
-            edit_with(ui, EditType::InsertNewline, |p, t, s| newline(t, s, &unit(ui, p).0, &auto, colon(p)));
+            edit_with(ui, EditType::InsertNewline, |p, t, s| {
+                newline(t, s, &unit(ui, p).0, &auto, colon(p), crate::indent::eol(ui, p))
+            });
             true
         }
         Key::Named(NamedKey::Backspace) if mods.is_empty() => {
@@ -1383,12 +1389,12 @@ mod tests {
     #[test]
     fn enter_keeps_the_indent_and_opens_a_pair() {
         let text = "    a {}";
-        let (t, s) = run(text, newline(&r(text), &[Sel::caret(7)], "    ", "full", false));
+        let (t, s) = run(text, newline(&r(text), &[Sel::caret(7)], "    ", "full", false, "\n"));
         assert_eq!((t.as_str(), s), ("    a {\n        \n    }", vec![Sel::caret(16)]));
-        let (t, s) = run("  x", newline(&r("  x"), &[Sel::caret(3)], "  ", "full", false));
+        let (t, s) = run("  x", newline(&r("  x"), &[Sel::caret(3)], "  ", "full", false, "\n"));
         assert_eq!((t.as_str(), s), ("  x\n  ", vec![Sel::caret(6)]));
-        assert_eq!(run("  x", newline(&r("  x"), &[Sel::caret(3)], "  ", "none", false)).0, "  x\n");
-        assert_eq!(run("if a:", newline(&r("if a:"), &[Sel::caret(5)], "    ", "full", true)).0, "if a:\n    ");
+        assert_eq!(run("  x", newline(&r("  x"), &[Sel::caret(3)], "  ", "none", false, "\n")).0, "  x\n");
+        assert_eq!(run("if a:", newline(&r("if a:"), &[Sel::caret(5)], "    ", "full", true, "\n")).0, "if a:\n    ");
     }
 
     #[test]
@@ -1408,7 +1414,7 @@ mod tests {
         assert!(typed(&r("aéé"), &[Sel::caret(0)], '(', lang, lang, "\"").is_none());
         assert_eq!(run("é", typed(&r("é"), &[Sel::caret(2)], '(', lang, lang, "\"")).0, "é()");
         let long = "é".repeat(3000);
-        assert!(newline(&r(&long), &[Sel::caret(long.len())], "  ", "full", false).is_some());
+        assert!(newline(&r(&long), &[Sel::caret(long.len())], "  ", "full", false, "\n").is_some());
         assert!(typed(&r("é)"), &[Sel::caret(2)], ')', Close::Never, lang, "\"").is_none());
     }
 
