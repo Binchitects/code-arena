@@ -596,6 +596,23 @@ Sections used:
   into view, also when the window opens. The mouse wheel scrolls the tabs.
 - **Menu rows are no longer cut short.** The tab menu's longest row now reads "Copy Relative Path"
   in full.
+- **Source Control's message box fits the view.** Its placeholder ends in an ellipsis inside the box
+  instead of running past the Commit button. The box stays dark while you type in it.
+- **Source Control's and Changes' letters line up.** The M, U and D letters and the group counts sit
+  in one column at the right and stay put when a row's actions show.
+- **Commit is in Source Control's title after a restart.** Before, the check icon was missing until
+  the view was opened again.
+- **Text boxes stay readable under the pointer.** The command palette, Quick Open, the Search,
+  Sessions and Explorer inputs and the chat's edit boxes no longer turn white with light grey text
+  when the pointer is over them.
+- **A new terminal is named after the shell that runs in it.** It reads 'bash 2' instead of 'sh 2'
+  when `$SHELL` is not set.
+- **An ended terminal's message can be read.** 'The shell ended with exit code N. Press any key to
+  start a new one.' now wraps at the foot of the panel instead of being cut off below it.
+- **The chat box takes the keys after a new session.** Clicking anywhere in the centred box now lets
+  you type. Before, a click on its right side did nothing and the typing was lost.
+- **Session search finds a word as you type it.** 'greet' now finds 'greeting'; before, only whole
+  words matched, so the list said 'No results found.' while you were still typing.
 
 ## v0.5.0 (2026-11-26)
 
