@@ -498,18 +498,19 @@ Sections used:
   panel keeps its size. Tabs that do not fit go under a '…' menu.
 - **Activity bar foot buttons.** Terminal, Color Theme, Accounts, Manage, Help and About. Manage
   opens Command Palette, Color Theme and About until a part adds the Manage command.
-- **Zen mode.** Ctrl+K Z (View: Toggle Zen Mode, View > Zen Mode) hides every part but the editor and goes
-  full screen; pressing it again shows exactly what was there before, and a restart while in Zen shows the
-  layout from before it.
-- **Full screen.** F11 (View: Toggle Full Screen) fills the monitor and hides the title bar; F11 again puts
-  the window back where it was, maximized if it was. Where the window can't be placed (Wayland), it is
-  maximized instead.
-- **Panel position.** View: Move Panel Left, Move Panel Right, Move Panel To Bottom (also in the View menu,
-  dimmed where the panel already is) put the panel beside or under the editor, keeping its tabs.
-- **Title bar menus by keyboard.** Alt+F/E/S/V/G/R/T/H and F10 open the menus; the arrows, Home/End, Enter
-  and Escape work in them, Left/Right go to the next menu, and the keys go back to the editor when the menu
-  closes. Menus open under their own titles. Go > Go to File, Terminal > New/Kill Terminal and Help > Show
-  All Commands now run their commands.
+- **Zen mode.** Ctrl+K Z (View: Toggle Zen Mode, View > Zen Mode) hides every part but the editor
+  and goes full screen; pressing it again shows exactly what was there before, and a restart while
+  in Zen shows the layout from before it.
+- **Full screen.** F11 (View: Toggle Full Screen) fills the monitor and hides the title bar; F11
+  again puts the window back where it was, maximized if it was. Where the window can't be placed
+  (Wayland), it is maximized instead.
+- **Panel position.** View: Move Panel Left, Move Panel Right, Move Panel To Bottom (also in the
+  View menu, dimmed where the panel already is) put the panel beside or under the editor, keeping
+  its tabs.
+- **Title bar menus by keyboard.** Alt+F/E/S/V/G/R/T/H and F10 open the menus; the arrows, Home/End,
+  Enter and Escape work in them, Left/Right go to the next menu, and the keys go back to the editor
+  when the menu closes. Menus open under their own titles. Go > Go to File, Terminal > New/Kill
+  Terminal and Help > Show All Commands now run their commands.
 - **Window title.** The window is called '<folder> · Code Arena'.
 - **Ctrl+0** (View: Focus into Primary Side Bar) shows the primary side bar.
 - **A cheat code.** Type the Konami code where no box has the keys.
