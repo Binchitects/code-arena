@@ -1009,6 +1009,8 @@ Sections used:
 - **You can tell apart tabs with the same name.** When two open tabs share a file name (two skills'
   SKILL.md, for example), each now shows the folders that tell it apart, as VS Code does
   ('.../explain-module').
+- **The Extensions view's "No extensions found" message wraps.** A search with no result no longer
+  runs off the side bar's right edge.
 
 ## v0.5.0 (2026-11-26)
 
