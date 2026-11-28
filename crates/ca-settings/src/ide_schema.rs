@@ -1066,6 +1066,14 @@ pub static ALL: &[&Setting] = &[
         "Starts a language server for the folder's files of its languages (in a trusted folder): completions, hovers, definitions, references, rename, code actions, formatting and diagnostics.",
     ),
     &row(
+        "languageServers",
+        Kind::Object,
+        "{}",
+        Scope::User,
+        "Language Servers",
+        "Your own language servers, by id: {\"lua\": {\"command\": [\"lua-language-server\"], \"languages\": [\"lua\"]}}: the program (a full path, or a name on PATH) and its arguments, and the languages it serves. Also \"initializationOptions\" (what its initialize gets), \"settings\" (what it is answered with) and \"env\" (null takes a variable away). An entry named after a built-in one (typescript, pyright, basedpyright, pylsp, gopls, rust-analyzer, clangd, csharp-ls, json, css, html, yaml, bash) changes only what it gives; \"disabled\": true turns it off.",
+    ),
+    &row(
         "codeArena.languageServers.typescript.enabled",
         Kind::Bool,
         "true",
@@ -1343,7 +1351,7 @@ mod tests {
         for key in OLD {
             assert!(find(key).is_some(), "{key} is not in the schema");
         }
-        assert_eq!(ALL.len(), 150, "a row added here is added to the count; tests/settings_read.rs wants it read");
+        assert_eq!(ALL.len(), 151, "a row added here is added to the count; tests/settings_read.rs wants it read");
         for s in ALL {
             assert!(SECTIONS.contains(&s.section), "{} is under {:?}, which is no section", s.key, s.section);
             assert!(s.env.is_none(), "{} is not read from the environment", s.key);
