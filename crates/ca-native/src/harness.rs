@@ -783,8 +783,8 @@ pub fn register(_ui: Ui, _send: &Send) {
         }
     }));
     let title = Menu::ViewTitle(View::Harness);
-    crate::menus::add(title.clone(), item(DOCTOR).icon("pulse").group("navigation").order(1));
-    crate::menus::add(title.clone(), item(INSTALL).icon("add").group("navigation").order(2));
+    crate::menus::add(title, item(DOCTOR).icon("pulse").group("navigation").order(1));
+    crate::menus::add(title, item(INSTALL).icon("add").group("navigation").order(2));
     crate::menus::add(title, item(REFRESH).icon("refresh").group("navigation").order(3));
     kinds::add(kinds::kind("harness", |_, _| "Doctor".into(), doctor_view).icon("pulse"));
 }

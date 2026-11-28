@@ -289,7 +289,7 @@ pub async fn doctor(app: &App) -> anyhow::Result<()> {
 
 /// What `doctor` finds, each line given to `say` as it is found.
 pub async fn doctor_to(app: &App, ui: Ui, say: &mut (dyn FnMut(String) + Send)) -> anyhow::Result<()> {
-    say(format!("{}", ui.bold(&format!("{} {}", ca_core::PRODUCT, ca_core::VERSION))));
+    say(ui.bold(&format!("{} {}", ca_core::PRODUCT, ca_core::VERSION)));
     say(format!("  settings  {}", app.paths.config.display()));
     say(format!("  data      {}", app.paths.data.display()));
     say(format!("  edition   {}", app.edition().name()));
@@ -308,9 +308,9 @@ pub async fn doctor_to(app: &App, ui: Ui, say: &mut (dyn FnMut(String) + Send)) 
     }
     let Some(url) = &c.url else {
         if providers.is_empty() {
-            say(format!(
+            say(
                 "\nNothing to ask a model of yet: code-arena login --url https://YOUR-ARENA (the managed edition), or code-arena login --provider NAME (standalone: your own key)."
-            ));
+            .into());
         } else {
             say(format!(
                 "\n{}",
@@ -344,7 +344,7 @@ pub async fn doctor_to(app: &App, ui: Ui, say: &mut (dyn FnMut(String) + Send)) 
         Err(e) => say(format!("  server    {}", ui.red(&e.to_string()))),
     }
     if !c.signed_in() {
-        say(format!("\nNo API key: code-arena login"));
+        say("\nNo API key: code-arena login".into());
         return Ok(());
     }
     match arena.me().await {

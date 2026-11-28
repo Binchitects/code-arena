@@ -293,13 +293,9 @@ fn plugin_work(sh: &Shared, m: &Value) -> Result<String, String> {
             if source.is_empty() {
                 return Err("Say where the plugin is: a folder or a git URL.".into());
             }
-            let source = if source.starts_with("~/") {
-                match &sh.home {
-                    Some(h) => h.join(&source[2..]).to_string_lossy().into_owned(),
-                    None => source.to_string(),
-                }
-            } else {
-                source.to_string()
+            let source = match (source.strip_prefix("~/"), &sh.home) {
+                (Some(rest), Some(h)) => h.join(rest).to_string_lossy().into_owned(),
+                _ => source.to_string(),
             };
             let (p, parts) = crate::plugins::install(data, &source, &agents(sh)).map_err(|e| format!("{e:#}"))?;
             Ok(format!(
@@ -367,7 +363,7 @@ mod tests {
         assert!(set_rule(&mut rules, "run_shell(npm test*)", Some(true)).is_ok());
         assert_eq!(rules.written(), (vec!["run_shell(npm test*)".to_string()], vec![]));
         // Refusing an allowed rule moves it: a rule is in one list only.
-        assert!(set_rule(&mut rules, "run_shell(npm test*)", Some(false)).unwrap().starts_with("Refused"));
+        assert!(set_rule(&mut rules, "run_shell(npm test*)", Some(false)).expect("made").starts_with("Refused"));
         assert_eq!(rules.written(), (vec![], vec!["run_shell(npm test*)".to_string()]));
         assert!(set_rule(&mut rules, "run_shell(npm test*)", None).is_ok());
         assert_eq!(rules.written(), (vec![], vec![]));
@@ -385,9 +381,9 @@ mod tests {
 
     #[test]
     fn the_project_s_hooks_wait_until_trusted_and_run_once_they_are() {
-        let d = tempfile::tempdir().unwrap();
+        let d = tempfile::tempdir().expect("made");
         let (data, root) = (d.path().join("data"), d.path().join("project"));
-        std::fs::create_dir_all(root.join(".code-arena")).unwrap();
+        std::fs::create_dir_all(root.join(".code-arena")).expect("made");
         let agents = ca_core::compat::Agents::new(&[]);
         let none = hooks_reply(&[], &data, &root, &agents);
         assert_eq!((none["trusted"].clone(), none["waiting"].clone()), (Value::Null, json!([])));
@@ -395,7 +391,7 @@ mod tests {
             root.join(".code-arena/settings.json"),
             r#"{"hooks": {"PostToolUse": [{"matcher": "edit_file", "hooks": [{"type": "command", "command": "cargo fmt"}]}]}}"#,
         )
-        .unwrap();
+        .expect("made");
         let running = [("SessionStart".to_string(), "echo hi".to_string(), "your settings.json".to_string())];
         let v = hooks_reply(&running, &data, &root, &agents);
         assert_eq!(v["items"][0], json!({"event": "SessionStart", "command": "echo hi", "from": "your settings.json"}));
@@ -403,7 +399,7 @@ mod tests {
         assert_eq!(v["waiting"][0]["command"], "cargo fmt");
         assert_eq!(v["waiting"][0]["event"], "PostToolUse");
         let project = crate::session::project_hooks(&root, &agents);
-        ca_agent::hooks::trust(&data, &root, &project).unwrap();
+        ca_agent::hooks::trust(&data, &root, &project).expect("made");
         let v = hooks_reply(&[], &data, &root, &agents);
         assert_eq!((v["trusted"].clone(), v["waiting"].clone()), (json!(true), json!([])));
     }
@@ -414,26 +410,27 @@ mod tests {
         assert_eq!((v["on"].clone(), v["text"][0].clone()), (json!(true), json!("They cannot reach the network.")));
         let v = sandbox_reply(None);
         assert_eq!(v["on"], false);
-        assert!(v["text"][0].as_str().unwrap().starts_with("No sandbox:"));
+        assert!(v["text"][0].as_str().expect("made").starts_with("No sandbox:"));
     }
 
     #[test]
     fn a_plugin_is_installed_from_a_folder_turned_on_and_off_and_removed() {
-        let d = tempfile::tempdir().unwrap();
+        let d = tempfile::tempdir().expect("made");
         let (data, src) = (d.path().join("data"), d.path().join("mine"));
-        std::fs::create_dir_all(src.join(".code-arena-plugin")).unwrap();
-        std::fs::create_dir_all(src.join("commands")).unwrap();
-        std::fs::write(src.join(".code-arena-plugin/plugin.json"), r#"{"name": "mine", "version": "1.0"}"#).unwrap();
+        std::fs::create_dir_all(src.join(".code-arena-plugin")).expect("made");
+        std::fs::create_dir_all(src.join("commands")).expect("made");
+        std::fs::write(src.join(".code-arena-plugin/plugin.json"), r#"{"name": "mine", "version": "1.0"}"#)
+            .expect("made");
         let agents = ca_core::compat::Agents::new(&[]);
-        let (p, parts) = crate::plugins::install(&data, &src.to_string_lossy(), &agents).unwrap();
+        let (p, parts) = crate::plugins::install(&data, &src.to_string_lossy(), &agents).expect("made");
         assert_eq!((p.name.as_str(), parts), ("mine", vec!["commands"]));
         assert!(crate::plugins::turned(&data, "other", true, &[]).is_err());
-        let on = crate::plugins::turned(&data, "mine", true, &["a".into()]).unwrap();
+        let on = crate::plugins::turned(&data, "mine", true, &["a".into()]).expect("made");
         assert_eq!(on, ["a", "mine"]);
-        assert_eq!(crate::plugins::turned(&data, "mine", false, &on).unwrap(), ["a"]);
+        assert_eq!(crate::plugins::turned(&data, "mine", false, &on).expect("made"), ["a"]);
         // A name that is not a folder's is never taken as a path.
         assert!(crate::plugins::remove(&data, "../data", &on).is_err());
-        assert_eq!(crate::plugins::remove(&data, "mine", &on).unwrap(), ["a"]);
+        assert_eq!(crate::plugins::remove(&data, "mine", &on).expect("made"), ["a"]);
         assert!(crate::plugins::installed(&data, &agents).is_empty());
     }
 
