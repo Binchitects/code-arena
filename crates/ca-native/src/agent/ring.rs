@@ -15,7 +15,6 @@ use floem::kurbo::{Arc, Cap, Circle, Stroke};
 use floem::peniko::Color;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo};
 use floem::style::CursorStyle;
-use floem::text::Weight;
 use floem::views::{
     Decorators, container, dyn_container, empty, h_stack, h_stack_from_iter, label, v_stack, v_stack_from_iter,
 };
