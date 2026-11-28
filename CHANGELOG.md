@@ -1002,6 +1002,16 @@ Sections used:
 - **Prettier settings.** prettier.printWidth, tabWidth, useTabs, semi, singleQuote, trailingComma,
   bracketSpacing, arrowParens and endOfLine apply when the folder has no Prettier configuration of
   its own.
+- **Inline AI code completion.** Pause typing for 300 ms and the model's suggestion shows as grey
+  ghost text at the cursor. Tab takes it; Escape or moving the caret drops it, and typing its next
+  letters keeps the rest. It uses the session's model with that model family's fill-in-the-middle
+  tokens (Qwen, DeepSeek, CodeLlama, StarCoder) and sends 6000 characters before the cursor and 2000
+  after. It is never asked after only blanks, in files over 1 MB, or while the agent works. Answers
+  are cached, older requests are dropped, and after a refusal (429) it waits 30 s before asking
+  again.
+- **Status bar: Complete.** Click `Complete` / `Complete off` to turn code completion on or off
+  (`codeArena.inlineCompletion.enabled`, your own setting, with `editor.inlineSuggest.enabled`). The
+  item pulses while an answer is on its way, and its tooltip shows the last failure.
 
 
 ### :bug: Bugs fixed
