@@ -1,0 +1,130 @@
+%YAML 1.2
+---
+# PowerShell, written for Code Arena: a token at a time, with the scopes VS Code's PowerShell grammar gives.
+name: PowerShell
+file_extensions: [ps1, psm1, psd1, pssc, psrc]
+first_line_match: '^#!.*\b(pwsh|powershell)\b'
+scope: source.powershell
+contexts:
+  main:
+    - include: code
+
+  code:
+    - match: '<#'
+      scope: punctuation.definition.comment.block.begin.powershell
+      push:
+        - meta_scope: comment.block.powershell
+        - match: '#>'
+          scope: punctuation.definition.comment.block.end.powershell
+          pop: true
+        - match: '^\s*\.[A-Z]+\b'
+          scope: keyword.operator.documentation.powershell
+    - match: '(#).*$\n?'
+      scope: comment.line.number-sign.powershell
+      captures:
+        1: punctuation.definition.comment.powershell
+    - match: '@"\s*$'
+      scope: punctuation.definition.string.begin.powershell
+      push:
+        - meta_scope: string.quoted.double.heredoc.powershell
+        - match: '^"@'
+          scope: punctuation.definition.string.end.powershell
+          pop: true
+        - include: interpolation
+    - match: "@'\\s*$"
+      scope: punctuation.definition.string.begin.powershell
+      push:
+        - meta_scope: string.quoted.single.heredoc.powershell
+        - match: "^'@"
+          scope: punctuation.definition.string.end.powershell
+          pop: true
+    - match: '"'
+      scope: punctuation.definition.string.begin.powershell
+      push:
+        - meta_scope: string.quoted.double.powershell
+        - match: '""'
+          scope: constant.character.escape.powershell
+        - match: '"'
+          scope: punctuation.definition.string.end.powershell
+          pop: true
+        - include: interpolation
+    - match: "'"
+      scope: punctuation.definition.string.begin.powershell
+      push:
+        - meta_scope: string.quoted.single.powershell
+        - match: "''"
+          scope: constant.character.escape.powershell
+        - match: "'"
+          scope: punctuation.definition.string.end.powershell
+          pop: true
+    - match: '(?i)\b(function|filter|workflow|configuration)\s+([\w-]+(?::[\w-]+)?)'
+      captures:
+        1: storage.type.powershell
+        2: entity.name.function.powershell
+    - match: '(?i)\b(class)\s+(\w+)'
+      captures:
+        1: storage.type.class.powershell
+        2: entity.name.type.class.powershell entity.name.class.powershell
+    - match: '(?i)\b(enum)\s+(\w+)'
+      captures:
+        1: storage.type.enum.powershell
+        2: entity.name.type.enum.powershell entity.name.enum.powershell
+    - match: '(?i)\b(begin|process|end|if|elseif|else|switch|foreach|for|while|do|until|break|continue|return|throw|trap|try|catch|finally|exit|in|param|dynamicparam|data)\b'
+      scope: keyword.control.powershell
+    - match: '(?i)-[ci]?(?:eq|ne|gt|ge|lt|le|like|notlike|match|notmatch|contains|notcontains|in|notin|replace)\b|(?i)-(?:split|join|is|isnot|as|and|or|not|xor|band|bor|bxor|bnot|shl|shr|f)\b'
+      scope: keyword.operator.comparison.powershell
+    - match: '\$(?i:true|false|null)\b'
+      scope: constant.language.powershell
+    - match: '(\$)(?i:_|args|input|this|PSItem|PSScriptRoot|PSCommandPath|MyInvocation|PSBoundParameters|Error|Host|Home|PSVersionTable|LASTEXITCODE)\b'
+      scope: support.variable.automatic.powershell
+      captures:
+        1: punctuation.definition.variable.powershell
+    - include: variables
+    - match: '(\[)([\w.]+(?:\[\])?)(\])'
+      captures:
+        1: punctuation.section.bracket.begin.powershell
+        2: storage.type.powershell
+        3: punctuation.section.bracket.end.powershell
+    - match: '\b[A-Za-z]+-[A-Za-z]\w*\b'
+      scope: support.function.powershell
+    - match: '(?<=\s)(-)[A-Za-z]\w*'
+      scope: variable.parameter.powershell
+    - match: '\b(?:0x\h+|\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?i:kb|mb|gb|tb|pb|l|d)?\b'
+      scope: constant.numeric.powershell
+    - match: '\||&&|\|\||[-+*/%]?=|[-+*/%!]'
+      scope: keyword.operator.powershell
+
+  variables:
+    - match: '(\$)(?:(?i:global|local|private|script|using|env):)?\w+'
+      scope: variable.other.readwrite.powershell
+      captures:
+        1: punctuation.definition.variable.powershell
+    - match: '(\$)\{[^}]+\}'
+      scope: variable.other.readwrite.powershell
+      captures:
+        1: punctuation.definition.variable.powershell
+
+  interpolation:
+    - match: '`.'
+      scope: constant.character.escape.powershell
+    - match: '""'
+      scope: constant.character.escape.powershell
+    - match: '\$\('
+      scope: punctuation.section.embedded.substatement.begin.powershell
+      push:
+        - clear_scopes: 1
+        - meta_scope: meta.embedded.substatement.powershell
+        - match: '\)'
+          scope: punctuation.section.embedded.substatement.end.powershell
+          pop: true
+        - match: '\('
+          push: parens
+        - include: code
+    - include: variables
+
+  parens:
+    - match: '\)'
+      pop: true
+    - match: '\('
+      push: parens
+    - include: code

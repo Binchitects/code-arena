@@ -1,0 +1,98 @@
+%YAML 1.2
+---
+# Terraform and HCL, written for Code Arena: blocks, their labels, attributes, strings with `${…}`, heredocs and
+# comments, with the scopes VS Code's Terraform grammar gives.
+name: Terraform
+file_extensions: [tf, tfvars, hcl]
+scope: source.hcl.terraform
+variables:
+  id: '[[:alpha:]_][-\w]*'
+contexts:
+  main:
+    - include: comments
+    - match: '^\s*({{id}})(?=(?:\s+(?:"[^"]*"|{{id}}))*\s*\{)'
+      captures:
+        1: storage.type.block.terraform
+      push: labels
+    - include: expressions
+
+  # A block's labels (`resource "aws_s3_bucket" "logs" {`), up to its `{`.
+  labels:
+    - match: '(?=\{)'
+      pop: true
+    - match: '"'
+      scope: punctuation.definition.string.begin.terraform
+      push:
+        - meta_scope: string.quoted.double.terraform
+        - match: '"'
+          scope: punctuation.definition.string.end.terraform
+          pop: true
+    - match: '{{id}}'
+      scope: entity.name.label.terraform
+
+  comments:
+    - match: '(#|//).*$\n?'
+      scope: comment.line.terraform
+    - match: '/\*'
+      scope: punctuation.definition.comment.terraform
+      push:
+        - meta_scope: comment.block.terraform
+        - match: '\*/'
+          scope: punctuation.definition.comment.terraform
+          pop: true
+
+  expressions:
+    - include: comments
+    - match: '({{id}})\s*(=)(?![=>])'
+      captures:
+        1: variable.other.readwrite.terraform
+        2: keyword.operator.assignment.terraform
+    - match: '"'
+      scope: punctuation.definition.string.begin.terraform
+      push: string
+    - match: '(<<-?)\s*(\w+)\s*$'
+      captures:
+        1: keyword.operator.heredoc.terraform
+        2: keyword.control.heredoc.terraform
+      push: heredoc
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.terraform
+    - match: '\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b'
+      scope: constant.numeric.terraform
+    - match: '\b(for|in|if|endfor|endif)\b'
+      scope: keyword.control.terraform
+    - match: '\b(var|local|module|data|path|terraform|each|count|self)\b(?=\.)'
+      scope: support.constant.terraform
+    - match: '({{id}})(?=\()'
+      scope: support.function.builtin.terraform
+    - match: '==|!=|<=|>=|&&|\|\||=>|[-+*/%!<>?:]'
+      scope: keyword.operator.terraform
+
+  string:
+    - meta_scope: string.quoted.double.terraform
+    - match: '"'
+      scope: punctuation.definition.string.end.terraform
+      pop: true
+    - match: '\\.'
+      scope: constant.character.escape.terraform
+    - include: interpolation
+    - match: '\n'
+      pop: true
+
+  heredoc:
+    - meta_scope: string.unquoted.heredoc.terraform
+    - match: '^\s*\2\s*$'
+      scope: keyword.control.heredoc.terraform
+      pop: true
+    - include: interpolation
+
+  interpolation:
+    - match: '[$%]\{~?'
+      scope: punctuation.section.interpolation.begin.terraform
+      push:
+        - clear_scopes: 1
+        - meta_scope: meta.interpolation.terraform
+        - match: '~?\}'
+          scope: punctuation.section.interpolation.end.terraform
+          pop: true
+        - include: expressions

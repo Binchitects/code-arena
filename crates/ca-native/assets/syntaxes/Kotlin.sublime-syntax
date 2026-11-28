@@ -1,0 +1,162 @@
+%YAML 1.2
+---
+# Kotlin, written for Code Arena: a token at a time, with the scopes VS Code's Kotlin grammar gives.
+name: Kotlin
+file_extensions: [kt, kts]
+scope: source.kotlin
+variables:
+  id: '(?:[_[:alpha:]][_[:alnum:]]*|`[^`]+`)'
+contexts:
+  main:
+    - include: code
+
+  code:
+    - include: comments
+    - include: strings
+    - include: declarations
+    - include: keywords
+    - include: literals
+    - include: names
+
+  comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.kotlin
+      push: block-comment
+    - match: '(//).*$\n?'
+      scope: comment.line.double-slash.kotlin
+      captures:
+        1: punctuation.definition.comment.kotlin
+
+  # Kotlin's block comments nest.
+  block-comment:
+    - meta_scope: comment.block.kotlin
+    - match: '/\*'
+      push: block-comment
+    - match: '\*/'
+      scope: punctuation.definition.comment.kotlin
+      pop: true
+
+  strings:
+    - match: '"""'
+      scope: punctuation.definition.string.begin.kotlin
+      push:
+        - meta_scope: string.quoted.triple.kotlin
+        - match: '"""(?!")'
+          scope: punctuation.definition.string.end.kotlin
+          pop: true
+        - include: templates
+    - match: '"'
+      scope: punctuation.definition.string.begin.kotlin
+      push:
+        - meta_scope: string.quoted.double.kotlin
+        - match: '"'
+          scope: punctuation.definition.string.end.kotlin
+          pop: true
+        - match: '\n'
+          scope: invalid.illegal.newline.kotlin
+          pop: true
+        - match: '\\(?:u\h{4}|.)'
+          scope: constant.character.escape.kotlin
+        - include: templates
+    - match: "'(?:\\\\(?:u\\h{4}|.)|[^'\\\\])'"
+      scope: string.quoted.single.kotlin
+
+  templates:
+    - match: '(\$)[_[:alpha:]][_[:alnum:]]*'
+      scope: meta.template.expression.kotlin variable.other.kotlin
+      captures:
+        1: punctuation.definition.template-expression.begin.kotlin
+    - match: '\$\{'
+      scope: punctuation.definition.template-expression.begin.kotlin
+      push: template-expression
+
+  template-expression:
+    - clear_scopes: 1
+    - meta_scope: meta.template.expression.kotlin
+    - match: '\}'
+      scope: punctuation.definition.template-expression.end.kotlin
+      pop: true
+    - match: '\{'
+      push: braces
+    - include: code
+
+  braces:
+    - match: '\}'
+      pop: true
+    - match: '\{'
+      push: braces
+    - include: code
+
+  declarations:
+    - match: '\b(fun)\s+(?:<[^>]*>\s*)?(?:({{id}}(?:<[^>]*>)?)\s*\.\s*)?({{id}})'
+      captures:
+        1: storage.type.function.kotlin keyword.other.fun.kotlin
+        2: support.class.kotlin
+        3: entity.name.function.kotlin
+    - match: '\b(interface)\s+({{id}})'
+      captures:
+        1: storage.type.interface.kotlin
+        2: entity.name.type.interface.kotlin entity.name.interface.kotlin
+    - match: '\b(enum)\s+(class)\s+({{id}})'
+      captures:
+        1: storage.modifier.kotlin
+        2: storage.type.class.kotlin
+        3: entity.name.type.enum.kotlin entity.name.enum.kotlin
+    - match: '\b(class|object)\s+({{id}})'
+      captures:
+        1: storage.type.class.kotlin
+        2: entity.name.type.class.kotlin entity.name.class.kotlin
+    - match: '\b(typealias)\s+({{id}})'
+      captures:
+        1: storage.type.alias.kotlin
+        2: entity.name.type.alias.kotlin
+    - match: '\b(package)\s+([\w.]+)'
+      captures:
+        1: keyword.other.package.kotlin
+        2: entity.name.type.module.kotlin entity.name.package.kotlin
+    - match: '\b(import)\s+([\w.*]+)'
+      captures:
+        1: keyword.other.import.kotlin
+        2: meta.path.kotlin
+    - match: '\b(val)\s+({{id}})'
+      captures:
+        1: storage.type.kotlin
+        2: variable.other.constant.kotlin
+    - match: '\b(var)\s+({{id}})'
+      captures:
+        1: storage.type.kotlin
+        2: variable.other.readwrite.kotlin
+    - match: '(@)({{id}}(?:\.{{id}})*)(?::{{id}})?'
+      captures:
+        1: punctuation.definition.annotation.kotlin
+        2: meta.annotation.kotlin entity.name.decorator.kotlin
+
+  keywords:
+    - match: '\b(if|else|when|for|while|do|try|catch|finally|throw|return|break|continue)\b(@\w+)?'
+      scope: keyword.control.kotlin
+    - match: '\b(is|in|as)\b'
+      scope: keyword.operator.kotlin
+    - match: '\b(fun|val|var|class|interface|object|typealias|constructor|init|companion|by|where|get|set|field)\b'
+      scope: storage.type.kotlin
+    - match: '\b(public|private|protected|internal|open|final|abstract|sealed|data|inline|value|enum|annotation|override|lateinit|const|suspend|tailrec|operator|infix|external|reified|crossinline|noinline|vararg|inner|expect|actual|out)\b'
+      scope: storage.modifier.kotlin
+    - match: '\b(this|super)\b(@\w+)?'
+      scope: variable.language.this.kotlin
+    - match: '->|\?:|!!|\?\.|::|\.\.<?|===?|!==?|<=|>=|&&|\|\||\+\+|--|[-+*/%!]=?|[<>]'
+      scope: keyword.operator.kotlin
+
+  literals:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.kotlin
+    - match: '\bnull\b'
+      scope: constant.language.null.kotlin
+    - match: '\b(?:0[xX][\h_]+|0[bB][01_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)(?:[fFL]|[uU]L?)?\b'
+      scope: constant.numeric.kotlin
+
+  names:
+    - match: '\b[A-Z][A-Z0-9_]+\b'
+      scope: variable.other.constant.kotlin
+    - match: '({{id}})(?=\s*(?:<[^<>()]*>)?\s*[({])'
+      scope: meta.function-call.kotlin support.function.kotlin
+    - match: '\b[A-Z][_[:alnum:]]*\b'
+      scope: support.type.kotlin

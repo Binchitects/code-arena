@@ -1,0 +1,236 @@
+%YAML 1.2
+---
+# TypeScript, written for Code Arena: a token at a time, with the scopes VS Code's own grammar gives (so a theme's
+# token colours colour it as they colour VS Code's). JavaScript is TypeScript without the types, so `.js` files may
+# use it too.
+name: TypeScript
+file_extensions: [ts, mts, cts]
+first_line_match: '^#!.*\b(deno|ts-node|tsx|bun)\b'
+scope: source.ts
+variables:
+  id: '[_$[:alpha:]][_$[:alnum:]]*'
+  modifiers: '(?:(?:public|private|protected|static|readonly|abstract|override|async|declare|accessor|get|set)\s+)*'
+  not_keyword: '(?!(?:if|for|while|switch|catch|return|function|new|typeof|await|super|this|constructor)\b)'
+contexts:
+  main:
+    - include: code
+
+  code:
+    - include: comments
+    - include: strings
+    - include: declarations
+    - include: keywords
+    - include: literals
+    - include: names
+
+  comments:
+    - match: '/\*\*(?!/)'
+      scope: punctuation.definition.comment.ts
+      push: doc-comment
+    - match: '/\*'
+      scope: punctuation.definition.comment.ts
+      push: block-comment
+    - match: '(//).*$\n?'
+      scope: comment.line.double-slash.ts
+      captures:
+        1: punctuation.definition.comment.ts
+
+  block-comment:
+    - meta_scope: comment.block.ts
+    - match: '\*/'
+      scope: punctuation.definition.comment.ts
+      pop: true
+
+  doc-comment:
+    - meta_scope: comment.block.documentation.ts
+    - match: '\*/'
+      scope: punctuation.definition.comment.ts
+      pop: true
+    - match: '@[[:alpha:]]+\b'
+      scope: storage.type.class.jsdoc.ts
+
+  strings:
+    - match: "'"
+      scope: punctuation.definition.string.begin.ts
+      push: single-string
+    - match: '"'
+      scope: punctuation.definition.string.begin.ts
+      push: double-string
+    - match: '({{id}})?(`)'
+      captures:
+        1: support.function.tagged-template.ts
+        2: punctuation.definition.string.template.begin.ts
+      push: template
+    - match: '(?<=[=(,:;!&|?{}\[])\s*(/)(?![/*])'
+      captures:
+        1: punctuation.definition.string.begin.ts
+      push: regexp
+
+  escapes:
+    - match: '\\(?:x\h{2}|u\h{4}|u\{\h+\}|[0-7]{1,3}|.)'
+      scope: constant.character.escape.ts
+
+  single-string:
+    - meta_scope: string.quoted.single.ts
+    - match: "'"
+      scope: punctuation.definition.string.end.ts
+      pop: true
+    - match: '\n'
+      scope: invalid.illegal.newline.ts
+      pop: true
+    - include: escapes
+
+  double-string:
+    - meta_scope: string.quoted.double.ts
+    - match: '"'
+      scope: punctuation.definition.string.end.ts
+      pop: true
+    - match: '\n'
+      scope: invalid.illegal.newline.ts
+      pop: true
+    - include: escapes
+
+  template:
+    - meta_scope: string.template.ts
+    - match: '`'
+      scope: punctuation.definition.string.template.end.ts
+      pop: true
+    - include: escapes
+    - match: '\$\{'
+      scope: punctuation.definition.template-expression.begin.ts
+      push: template-expression
+
+  template-expression:
+    - clear_scopes: 1
+    - meta_scope: meta.template.expression.ts
+    - match: '\}'
+      scope: punctuation.definition.template-expression.end.ts
+      pop: true
+    - include: braced
+
+  # What a `{` opens inside a template's `${…}`, so its `}` is not taken for the expression's end.
+  braced:
+    - match: '\{'
+      scope: punctuation.definition.block.ts
+      push: braces
+    - include: code
+
+  braces:
+    - match: '\}'
+      scope: punctuation.definition.block.ts
+      pop: true
+    - include: braced
+
+  regexp:
+    - meta_scope: string.regexp.ts
+    - match: '(/)([dgimsuyv]*)'
+      captures:
+        1: punctuation.definition.string.end.ts
+        2: keyword.other.ts
+      pop: true
+    - match: '\n'
+      pop: true
+    - match: '\\.'
+      scope: constant.character.escape.backslash.regexp
+    - match: '\['
+      push:
+        - meta_scope: constant.other.character-class.set.regexp
+        - match: '\\.'
+          scope: constant.character.escape.backslash.regexp
+        - match: '\]|(?=\n)'
+          pop: true
+
+  declarations:
+    - match: '\b(function)\b\s*(\*)?\s*({{id}})?'
+      captures:
+        1: storage.type.function.ts
+        2: keyword.generator.asterisk.ts
+        3: meta.definition.function.ts entity.name.function.ts
+    - match: '\b(class)\s+({{id}})'
+      captures:
+        1: storage.type.class.ts
+        2: entity.name.type.class.ts entity.name.class.ts
+    - match: '\b(interface)\s+({{id}})'
+      captures:
+        1: storage.type.interface.ts
+        2: entity.name.type.interface.ts entity.name.interface.ts
+    - match: '\b(enum)\s+({{id}})'
+      captures:
+        1: storage.type.enum.ts
+        2: entity.name.type.enum.ts entity.name.enum.ts
+    - match: '\b(type)\s+({{id}})(?=\s*[=<])'
+      captures:
+        1: storage.type.type.ts
+        2: entity.name.type.alias.ts
+    - match: '\b(namespace|module)\s+({{id}}(?:\.{{id}})*)'
+      captures:
+        1: storage.type.namespace.ts
+        2: entity.name.type.module.ts entity.name.namespace.ts
+    # A name bound to a function (`const go = async (a) => …`) is a function, as VS Code's outline has it.
+    - match: '\b(const|let|var)\s+({{id}})(?=\s*(?::[^=]+)?=\s*(?:async\s+)?(?:function\b|\([^()]*\)\s*(?::\s*[^=]+)?=>|{{id}}\s*=>))'
+      captures:
+        1: storage.type.ts
+        2: meta.definition.variable.ts entity.name.function.ts
+    - match: '\b(const)\s+({{id}})'
+      captures:
+        1: storage.type.ts
+        2: meta.definition.variable.ts variable.other.constant.ts
+    - match: '\b(let|var)\s+({{id}})'
+      captures:
+        1: storage.type.ts
+        2: meta.definition.variable.ts variable.other.readwrite.ts
+    # A method: a name at a line's start whose parameters and body follow on that line.
+    - match: '^\s*{{modifiers}}(\*\s*)?{{not_keyword}}(#?{{id}})(?=\s*\??\s*(?:<[^>]*>)?\s*\([^()]*(?:\([^()]*\)[^()]*)*\)\s*(?::\s*[^={;]+)?\s*\{)'
+      captures:
+        2: meta.definition.method.ts entity.name.function.method.ts
+    - match: '\b(constructor)\b'
+      scope: storage.type.ts
+    - match: '(@)({{id}}(?:\.{{id}})*)'
+      captures:
+        1: punctuation.decorator.ts
+        2: meta.decorator.ts entity.name.decorator.ts
+
+  keywords:
+    - match: '\b(if|else|for|while|do|switch|case|default|break|continue|return|throw|try|catch|finally|await|yield|import|export|from|with|goto)\b'
+      scope: keyword.control.ts
+    - match: '\b(as|satisfies)\b'
+      scope: keyword.control.as.ts
+    - match: '\bnew\b'
+      scope: keyword.operator.new.ts
+    - match: '\b(typeof|instanceof|keyof|in|of|delete|void|infer|is|asserts|unique)\b'
+      scope: keyword.operator.expression.ts
+    - match: '\b(const|let|var|function|class|interface|type|enum|namespace|module|using)\b'
+      scope: storage.type.ts
+    - match: '\b(public|private|protected|static|readonly|abstract|override|async|declare|extends|implements|accessor|get|set)\b(?=\s+[_$[:alpha:]#*\[{(])'
+      scope: storage.modifier.ts
+    - match: '\b(extends|implements)\b'
+      scope: storage.modifier.ts
+    - match: '\b(this|super)\b'
+      scope: variable.language.this.ts
+    - match: '\b(string|number|boolean|any|unknown|never|object|symbol|bigint)\b(?!\s*[:(])'
+      scope: support.type.primitive.ts
+    - match: '=>'
+      scope: storage.type.function.arrow.ts
+    - match: '===?|!==?|<=|>=|&&|\|\||\?\?|\?\.|\+\+|--|\*\*|[-+*/%&|^~!]=?|[<>]=?'
+      scope: keyword.operator.ts
+
+  literals:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.ts
+    - match: '\b(null|undefined|NaN|Infinity)\b'
+      scope: constant.language.ts
+    - match: '\b(?:0[xX][\h_]+|0[bB][01_]+|0[oO][0-7_]+|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?\d+)?)n?\b|\.\d[\d_]*(?:[eE][+-]?\d+)?\b'
+      scope: constant.numeric.ts
+
+  names:
+    - match: '\b[A-Z][A-Z0-9_]+\b'
+      scope: variable.other.constant.ts
+    - match: '(#?{{id}})(?=\s*(?:<[^<>()]*>)?\s*\()'
+      scope: meta.function-call.ts support.function.ts
+    - match: '(?<=\.)\s*(#?{{id}})'
+      captures:
+        1: variable.other.property.ts
+    - match: '\b[A-Z][_$[:alnum:]]*\b(?!\s*\.)'
+      scope: support.type.ts
+    - match: '#?{{id}}'
+      scope: variable.other.readwrite.ts

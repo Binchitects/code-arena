@@ -1,0 +1,93 @@
+%YAML 1.2
+---
+# Dockerfile, written for Code Arena: its instructions, their flags, variables, strings and comments, as VS Code's
+# grammar scopes them; a `RUN`'s command is the shell's.
+name: Dockerfile
+file_extensions: [Dockerfile, dockerfile, Containerfile, containerfile]
+scope: source.dockerfile
+contexts:
+  main:
+    - match: '^\s*(#)\s*(syntax|escape|check)(=)(.*)$'
+      captures:
+        1: comment.line.number-sign.dockerfile punctuation.definition.comment.dockerfile
+        2: keyword.other.directive.dockerfile
+        3: keyword.operator.assignment.dockerfile
+        4: string.unquoted.directive.dockerfile
+    - match: '^\s*(#).*$\n?'
+      scope: comment.line.number-sign.dockerfile
+      captures:
+        1: punctuation.definition.comment.dockerfile
+    - match: '(?i)^\s*(ONBUILD\s+)?(RUN|CMD|ENTRYPOINT|SHELL|HEALTHCHECK)\b'
+      captures:
+        1: keyword.other.special-method.dockerfile
+        2: keyword.other.special-method.dockerfile
+      push: shell
+    - match: '(?i)^\s*(ONBUILD\s+)?(FROM|MAINTAINER|EXPOSE|ENV|ADD|COPY|VOLUME|USER|WORKDIR|ARG|STOPSIGNAL|LABEL)\b'
+      captures:
+        1: keyword.other.special-method.dockerfile
+        2: keyword.other.special-method.dockerfile
+      push: arguments
+    - match: '(?i)\bAS\b'
+      scope: keyword.control.dockerfile
+
+  # The rest of an instruction, to its line's end (or past it, after a `\`).
+  arguments:
+    - match: '\\\s*$\n?'
+      scope: constant.character.escape.dockerfile
+    - match: '\n'
+      pop: true
+    - match: '(?i)\s(AS)\s+(\S+)'
+      captures:
+        1: keyword.control.dockerfile
+        2: entity.name.type.stage.dockerfile
+    - include: values
+
+  shell:
+    - match: '\\\s*$\n?'
+      scope: constant.character.escape.dockerfile
+    - match: '\n'
+      pop: true
+    - match: '^\s*(#).*$'
+      scope: comment.line.number-sign.dockerfile
+    - match: '\b(if|then|else|elif|fi|for|in|do|done|while|until|case|esac|function)\b'
+      scope: keyword.control.shell
+    - match: '&&|\|\||[|;]'
+      scope: keyword.operator.list.shell
+    - include: values
+
+  values:
+    - match: '(--)([\w-]+)(=)?'
+      captures:
+        1: punctuation.definition.flag.dockerfile
+        2: variable.parameter.flag.dockerfile
+        3: keyword.operator.assignment.dockerfile
+    - match: '"'
+      scope: punctuation.definition.string.begin.dockerfile
+      push:
+        - meta_scope: string.quoted.double.dockerfile
+        - match: '"'
+          scope: punctuation.definition.string.end.dockerfile
+          pop: true
+        - match: '\\.'
+          scope: constant.character.escaped.dockerfile
+        - include: variables
+        - match: '(?=\n)'
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.dockerfile
+      push:
+        - meta_scope: string.quoted.single.dockerfile
+        - match: "'"
+          scope: punctuation.definition.string.end.dockerfile
+          pop: true
+        - match: '(?=\n)'
+          pop: true
+    - include: variables
+    - match: '\b([A-Za-z_][\w.-]*)(=)'
+      captures:
+        1: variable.other.dockerfile
+        2: keyword.operator.assignment.dockerfile
+
+  variables:
+    - match: '(\$)\{[^}]*\}|(\$)[A-Za-z_]\w*'
+      scope: variable.other.dockerfile

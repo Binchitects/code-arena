@@ -1,0 +1,77 @@
+%YAML 1.2
+---
+# Svelte components, written for Code Arena: HTML's grammar, with the `<script>` block as TypeScript (or JavaScript,
+# which it also reads), the `<style>` block as CSS, and the template's `{…}` blocks (`{#if}`, `{:else}`, `{/each}`,
+# `{@html}`) and expressions.
+name: Svelte
+file_extensions: [svelte]
+scope: source.svelte
+contexts:
+  main:
+    - match: '(\{)\s*([#:/@])(\w+)'
+      captures:
+        1: punctuation.section.embedded.begin.svelte
+        2: keyword.control.svelte
+        3: keyword.control.svelte
+      push: expression
+    - match: '\{'
+      scope: punctuation.section.embedded.begin.svelte
+      push: expression
+    - match: '(<)(?i:(script))\b'
+      captures:
+        1: punctuation.definition.tag.begin.html
+        2: entity.name.tag.script.html
+      push: script
+    - match: '(<)(?i:(style))\b'
+      captures:
+        1: punctuation.definition.tag.begin.html
+        2: entity.name.tag.style.html
+      push: style
+    - include: scope:text.html.basic
+
+  expression:
+    - meta_content_scope: meta.embedded.expression.svelte source.ts
+    - match: '\}'
+      scope: punctuation.section.embedded.end.svelte
+      pop: true
+    - match: '\b(as|then|catch)\b'
+      scope: keyword.control.svelte
+    - include: scope:source.ts#braced
+
+  script:
+    - meta_scope: meta.tag.script.html
+    - match: '(</)(?i:(script))\s*(>)'
+      captures:
+        1: punctuation.definition.tag.begin.html
+        2: entity.name.tag.script.html
+        3: punctuation.definition.tag.end.html
+      pop: true
+    - match: '>'
+      scope: punctuation.definition.tag.end.html
+      embed: scope:source.ts
+      embed_scope: source.ts.embedded.html
+      escape: '(?i)(?=</script\s*>)'
+    - include: attributes
+
+  style:
+    - meta_scope: meta.tag.style.html
+    - match: '(</)(?i:(style))\s*(>)'
+      captures:
+        1: punctuation.definition.tag.begin.html
+        2: entity.name.tag.style.html
+        3: punctuation.definition.tag.end.html
+      pop: true
+    - match: '>'
+      scope: punctuation.definition.tag.end.html
+      embed: scope:source.css
+      embed_scope: source.css.embedded.html
+      escape: '(?i)(?=</style\s*>)'
+    - include: attributes
+
+  attributes:
+    - match: '[^\s"''<>/=]+'
+      scope: entity.other.attribute-name.html
+    - match: '='
+      scope: punctuation.separator.key-value.html
+    - match: '"[^"]*"|''[^'']*'''
+      scope: string.quoted.html
