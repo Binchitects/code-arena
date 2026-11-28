@@ -162,7 +162,8 @@ impl Schema {
     /// What a tab's file holds that is no setting.
     fn unknown_in(&self, target: Target) -> Vec<String> {
         let of = |layer: &str| {
-            self.unknown[layer].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string)
+            let keys = self.unknown.get(layer).and_then(Value::as_array);
+            keys.into_iter().flatten().filter_map(Value::as_str).map(str::to_string)
         };
         match target {
             Target::User => of("user").collect(),
@@ -570,11 +571,19 @@ fn typed(ui: Ui, send: Send, shown: Memo<Option<Shown>>) -> AnyView {
         let text = buffer.get();
         shown.with(|s| s.as_ref().and_then(|s| parse(&s.entry, &text).err()))
     });
+    // What was sent last, with the value it was sent over: Enter then the keys lost send it once.
+    let sent = create_rw_signal(None::<(Value, Value)>);
     let commit = move || {
         let Some(sh) = shown.get_untracked() else { return };
         let text = buffer.get_untracked();
         match parse(&sh.entry, &text) {
-            Ok(v) if v != sh.value && sh.entry.locked.is_none() => send(set_message(&sh.entry, &v, sh.target, sh.lang.as_deref())),
+            Ok(v) if v != sh.value && sh.entry.locked.is_none() => {
+                let now = Some((v.clone(), sh.value.clone()));
+                if sent.with_untracked(|s| *s != now) {
+                    send(set_message(&sh.entry, &v, sh.target, sh.lang.as_deref()));
+                    sent.set(now);
+                }
+            }
             Ok(_) => {}
             // Not taken: the box shows what is kept.
             Err(_) => buffer.set(as_text(&sh.value)),
@@ -628,7 +637,7 @@ fn typed(ui: Ui, send: Send, shown: Memo<Option<Shown>>) -> AnyView {
             .color(c.editor_fg)
             .apply_if(error.with(Option::is_none), |s| s.hide())
     });
-    v_stack((input, message)).style(|s| s.items_start()).into_any()
+    v_stack((input, message)).style(|s| s.items_start().width_full().min_width(0.0)).into_any()
 }
 
 /// A link of the row's: VS Code's `textLink`.
@@ -757,7 +766,7 @@ fn setting_row(ui: Ui, send: Send, key: String) -> AnyView {
             .into_any()
         }
     };
-    let control = container(control).style(|s| s.margin_top(8.0));
+    let control = container(control).style(|s| s.margin_top(8.0).width_full().min_width(0.0));
     // What wins over it, and what in a file was not taken.
     let k = key.clone();
     let warning = label(move || {
@@ -1241,6 +1250,8 @@ mod tests {
         );
         assert_eq!(s.unknown_in(Target::User), ["my.own"]);
         assert!(s.unknown_in(Target::Workspace).is_empty());
+        // Nothing said yet: nothing unknown.
+        assert!(Schema::default().unknown_in(Target::Workspace).is_empty());
     }
 
     #[test]
