@@ -163,18 +163,29 @@ impl Detail {
         if v.get("status").is_none() {
             return None;
         }
-        let steps = v["work"]
+        let mut steps: Vec<Vec<Piece>> = v["work"]
             .as_array()
             .into_iter()
             .flatten()
             .map(|s| s.as_array().into_iter().flatten().filter_map(piece_of).collect::<Vec<_>>())
             .filter(|s: &Vec<Piece>| !s.is_empty())
             .collect();
+        // Its last words are its report, shown under its own heading: not twice.
+        let report = text(v, "report");
+        if !report.trim().is_empty()
+            && let Some(last) = steps.last_mut()
+            && matches!(last.last(), Some(Piece::Text(w)) if w.trim() == report.trim())
+        {
+            last.pop();
+            if last.is_empty() {
+                steps.pop();
+            }
+        }
         Some(Detail {
             task: Task::from_json(v),
             prompt: text(v, "prompt"),
             tools: v["tools"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(str::to_string)).collect(),
-            report: text(v, "report"),
+            report,
             error: v["error"].as_str().filter(|e| !e.is_empty()).map(str::to_string),
             steps,
             kept: true,
@@ -588,8 +599,9 @@ fn detail(ui: Ui, send: Send) -> impl IntoView {
     });
     let status_line = h_stack((
         status_icon(ui, status),
-        label(move || line.get())
-            .style(move |s| s.font_size(12.0).color(t.get().desc).text_overflow(TextOverflow::Wrap).min_width(0.0)),
+        label(move || line.get()).style(move |s| {
+            s.font_size(12.0).line_height(1.4).color(t.get().desc).text_overflow(TextOverflow::Wrap).min_width(0.0)
+        }),
     ))
     .style(|s| s.gap(6.0).items_center().width_full());
     let prompt = create_memo(move |_| d().with(|d| d.as_ref().map(|d| d.prompt.clone()).unwrap_or_default()));
@@ -603,6 +615,7 @@ fn detail(ui: Ui, send: Send) -> impl IntoView {
     let tools = create_memo(move |_| d().with(|d| d.as_ref().map(|d| d.tools.join(", ")).unwrap_or_default()));
     let tools_line = label(move || format!("Tools: {}", tools.get())).style(move |s| {
         s.font_size(12.0)
+            .line_height(1.4)
             .color(t.get().desc)
             .text_overflow(TextOverflow::Wrap)
             .min_width(0.0)
@@ -1032,6 +1045,15 @@ mod tests {
         assert!(
             Detail::from_json(&json!({"type": "agent_task", "id": "c1", "error": "There is no such task."})).is_none()
         );
+    }
+
+    #[test]
+    fn its_last_words_are_shown_once_as_its_report() {
+        let v = json!({"type": "agent_task", "id": "c1", "status": "done", "report": "All good.", "work": [
+            [{"kind": "thinking", "text": "Hmm"}], [{"kind": "text", "text": "All good. "}]]});
+        let d = Detail::from_json(&v).expect("a detail");
+        assert_eq!(d.steps, [vec![Piece::Thinking("Hmm".into())]]);
+        assert_eq!(d.report, "All good.");
     }
 
     #[test]

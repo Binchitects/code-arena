@@ -97,6 +97,8 @@ pub struct Task {
     error: Option<String>,
     /// Its steps, each its pieces.
     work: Vec<Vec<Value>>,
+    /// Its last step's answer is complete: its calls are still that step's, its next words begin another.
+    step_ended: bool,
     stop: Arc<Stop>,
 }
 
@@ -169,18 +171,22 @@ fn begun(b: Begun, session: &str) -> Task {
         report: String::new(),
         error: None,
         work: vec![vec![]],
+        step_ended: false,
         stop: b.stop,
     }
 }
 
-/// A piece of work, put in its step: thinking and words that follow their own kind are one piece.
+/// A piece of work, put in its step: thinking and words that follow their own kind are one piece. A step's calls
+/// run once its answer is complete, so the next step begins with the next thinking, words or notice.
 fn step(t: &mut Task, work: Work) {
     if t.status != "working" {
         return;
     }
     t.ms = t.began.elapsed().as_millis() as u64;
-    if t.work.is_empty() {
+    let begins = matches!(work, Work::Thinking(_) | Work::Text(_) | Work::Notice(_));
+    if t.work.is_empty() || (begins && t.step_ended) {
         t.work.push(vec![]);
+        t.step_ended = false;
     }
     let Some(pieces) = t.work.last_mut() else { return };
     let mut said = |kind: &str, text: String| match pieces.last_mut() {
@@ -216,7 +222,7 @@ fn step(t: &mut Task, work: Work) {
         }
         Work::StepEnd { tokens } => {
             t.tokens = t.tokens.max(tokens);
-            t.work.push(vec![]);
+            t.step_ended = true;
         }
     }
 }
@@ -230,10 +236,7 @@ fn ended(t: &mut Task, end: End) {
     t.now = String::new();
     t.report = cut(&end.report);
     t.error = end.error;
-    // A step begun and left empty is no step.
-    if t.work.last().is_some_and(Vec::is_empty) {
-        t.work.pop();
-    }
+    t.work.retain(|s| !s.is_empty());
 }
 
 /// A task as its row shows it, and as its `agent` event says it.
@@ -332,6 +335,8 @@ mod tests {
         );
         hear(&mut b, "s1", step_of("c1", Work::Thinking("Let me ".into())));
         hear(&mut b, "s1", step_of("c1", Work::Thinking("look.".into())));
+        // The answer is complete before its calls run.
+        hear(&mut b, "s1", step_of("c1", Work::StepEnd { tokens: 3400 }));
         let e = hear(
             &mut b,
             "s1",
@@ -347,7 +352,6 @@ mod tests {
             "s1",
             step_of("c1", Work::ToolEnd { id: "r1".into(), ok: true, text: "fn parse()".into(), ms: 12 }),
         );
-        hear(&mut b, "s1", step_of("c1", Work::StepEnd { tokens: 3400 }));
         hear(&mut b, "s1", step_of("c1", Work::Text("It is fine.".into())));
         let e = hear(
             &mut b,
@@ -369,7 +373,7 @@ mod tests {
             json!({"kind": "thinking", "text": "Let me look."}),
             "thinking in a row is one piece"
         );
-        assert_eq!(d["work"][0][1]["ok"], true);
+        assert_eq!(d["work"][0][1]["ok"], true, "a step's calls are that step's");
         assert_eq!(d["work"][1][0]["kind"], "text");
         assert_eq!(d["work"].as_array().map(Vec::len), Some(2));
         // A step after its end changes nothing.
