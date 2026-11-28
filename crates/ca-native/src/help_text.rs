@@ -556,7 +556,7 @@ pub const KEYS: &[(&[&str], &str, &str)] = &[
         "Ctrl+B, Ctrl+J",
         "Show or hide the side bar, the panel",
     ),
-    (&[crate::manage::OPEN_SETTINGS], "Ctrl+,", "Settings (settings.json, as VS Code's)"),
+    (&[crate::manage::OPEN_SETTINGS], "Ctrl+,", "Settings (the Settings editor, as VS Code's)"),
     (
         &["workbench.action.openGlobalKeybindings"],
         "Ctrl+K Ctrl+S",

@@ -4,6 +4,15 @@
 //!   in force ([`message`]), each language's own, where each one that is not its default comes from, and what in
 //!   the files was not taken. It is said again, unasked, whenever one of the settings files changes: saved from the
 //!   window (`set_setting`, `save_user`), or changed on disk by anything else (they are looked at twice a second).
+//! - `settings_schema` [T] is answered with `settings_schema{entries, problems, unknown, files}`: every setting with
+//!   its kind, bounds, default, description, section and scope, its value in force and where it comes from, what
+//!   each file sets it to itself, and why this edition cannot change it ([`schema_message`]). The Settings editor
+//!   asks it when it opens and again each time `settings` is said.
+//! - `vscode_settings` [T] is answered with `vscode_settings{found, path, entries:[{key, value}]}`: VS Code's own
+//!   settings file on this computer ([`vscode_file`]), and what of it Code Arena can take ([`vscode_entries`]: the
+//!   IDE's settings, each of its kind, that the person's file does not hold so). `vscode_import{keys}` [Q] writes
+//!   those of them into the person's settings.json and is answered with `vscode_imported{keys}` (or `error`), the
+//!   settings said again.
 //! - `user_file{name}` [T] is answered with `user_file{name, text, modified, path}` and `save_user{name, text}` [T]
 //!   with `saved_user{name, modified, path}` (or `error`), for the files in Code Arena's settings folder that are
 //!   the person's to write: `settings.json`, `keybindings.json` and `snippets/NAME` ([`user_path`]). `settings.json`
@@ -117,6 +126,161 @@ pub fn message(s: &Settings, files: &Files) -> Value {
             "workspace": files.workspace.display().to_string(),
         },
     })
+}
+
+/// A setting's kind as the Settings editor names it.
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Bool => "bool",
+        Kind::String => "string",
+        Kind::Integer { .. } => "integer",
+        Kind::Number { .. } => "number",
+        Kind::Enum(_) => "enum",
+        Kind::BoolOr(_) => "bool_or",
+        Kind::StringList => "string_list",
+        Kind::NumberList => "number_list",
+        Kind::Object => "object",
+    }
+}
+
+/// The layers' names, as `set_setting`'s `where` and the Settings editor's tabs say them.
+const LAYERS: [(Layer, &str); 3] =
+    [(Layer::User, "user"), (Layer::Project, "project"), (Layer::Workspace, "workspace")];
+
+/// The `settings_schema` message: what the Settings editor is drawn from.
+///
+/// - `entries`: every setting, in the editor's order (the IDE's sections first, then the agent's), each with its
+///   `key`, `kind`, `enum` (the words of a choice), `min` and `max` (null: no bound), `default`, `description`,
+///   `section`, `scope` (`user`, `project`, `language`), `env` (the variable that overrides it), `value` (in force),
+///   `source` (`default`, `user`, `project`, `workspace`, `env:NAME`, `flag`), `written` (what each file sets it to
+///   itself, by layer), `in` (the layers whose files set it) and `locked` (why this edition cannot change it).
+///   The agent's own settings that are objects (the MCP servers, the hooks, the permissions) have no `value` and
+///   no `written` values, as in [`message`]: they may hold a token, and are edited in `settings.json`.
+/// - `problems`: as [`message`]'s. `unknown`: by layer, the keys each file holds that are no setting.
+/// - `files`: the three files' paths.
+pub fn schema_message(s: &Settings, files: &Files, edition: ca_settings::Edition) -> Value {
+    let ide = ide_schema::ALL.iter().map(|s| (*s, true));
+    let mut entries = Vec::new();
+    for (setting, ide) in ide.chain(schema::ALL.iter().map(|s| (*s, false))) {
+        let open = ide || !matches!(setting.kind, Kind::Object);
+        let (value, source) = s.resolve(setting);
+        let source = match source {
+            Source::Default => "default".to_string(),
+            Source::User(_) => "user".to_string(),
+            Source::Project(f) if f == files.workspace => "workspace".to_string(),
+            Source::Project(_) => "project".to_string(),
+            Source::Env(name) => format!("env:{name}"),
+            Source::Flag => "flag".to_string(),
+        };
+        let (mut written, mut layers) = (Map::new(), Vec::new());
+        for (layer, name) in LAYERS {
+            if let Some(v) = s.written(layer, setting.key) {
+                layers.push(Value::from(name));
+                if open {
+                    written.insert(name.to_string(), v.clone());
+                }
+            }
+        }
+        let words = match setting.kind {
+            Kind::Enum(w) | Kind::BoolOr(w) => json!(w),
+            _ => Value::Null,
+        };
+        let (min, max) = setting.bounds();
+        let scope = match setting.scope {
+            schema::Scope::User => "user",
+            schema::Scope::Project => "project",
+            schema::Scope::Language => "language",
+        };
+        entries.push(json!({
+            "key": setting.key,
+            "kind": kind_name(setting.kind),
+            "enum": words,
+            "min": min,
+            "max": max,
+            "default": setting.default_value(),
+            "description": setting.description,
+            "section": setting.section,
+            "scope": scope,
+            "env": setting.env,
+            "value": if open { value } else { Value::Null },
+            "source": source,
+            "written": written,
+            "in": layers,
+            "locked": crate::edition::setting_locked(edition, setting.key),
+        }));
+    }
+    let problems: Vec<Value> = s
+        .problems
+        .iter()
+        .chain(&s.ide_problems)
+        .map(|p| json!({"key": p.key, "file": p.file.display().to_string(), "error": p.message}))
+        .collect();
+    let unknown: Map<String, Value> =
+        LAYERS.iter().map(|(layer, name)| (name.to_string(), json!(s.unknown(*layer)))).collect();
+    json!({
+        "type": "settings_schema",
+        "entries": entries,
+        "problems": problems,
+        "unknown": unknown,
+        "files": {
+            "user": files.user.display().to_string(),
+            "project": files.project.display().to_string(),
+            "workspace": files.workspace.display().to_string(),
+        },
+    })
+}
+
+/// Where VS Code keeps the person's settings on this system, from their home.
+pub fn vscode_file(home: &Path) -> PathBuf {
+    if cfg!(windows) {
+        // %APPDATA%, where Windows keeps it for every account.
+        home.join("AppData").join("Roaming").join("Code").join("User").join("settings.json")
+    } else if cfg!(target_os = "macos") {
+        home.join("Library").join("Application Support").join("Code").join("User").join("settings.json")
+    } else {
+        home.join(".config").join("Code").join("User").join("settings.json")
+    }
+}
+
+/// What of VS Code's settings Code Arena can take, in the file's order: the IDE's own settings (none of the
+/// agent's), each of its kind, that the person's settings.json does not hold as they are.
+pub fn vscode_entries(text: &str, s: &Settings) -> Vec<(String, Value)> {
+    let Ok(Value::Object(theirs)) = ca_settings::jsonc::parse(text) else { return Vec::new() };
+    theirs
+        .into_iter()
+        .filter(|(key, value)| {
+            ide_schema::ALL.iter().any(|row| row.key == key && row.accepts(value))
+                && s.written(Layer::User, key) != Some(value)
+        })
+        .collect()
+}
+
+/// The `vscode_settings` message: whether VS Code's settings file is there, where, and what of it could be taken.
+pub fn vscode_message(file: &Path, s: &Settings) -> Value {
+    let text = std::fs::metadata(file)
+        .ok()
+        .filter(|m| m.is_file() && m.len() <= MOST)
+        .and_then(|_| std::fs::read_to_string(file).ok());
+    let entries: Vec<Value> = text
+        .as_deref()
+        .map(|t| vscode_entries(t, s))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(key, value)| json!({"key": key, "value": value}))
+        .collect();
+    json!({"type": "vscode_settings", "found": text.is_some(), "path": file.display().to_string(), "entries": entries})
+}
+
+/// VS Code's settings of these keys written into the person's settings.json (those that can be taken), the file's
+/// comments kept: the keys written, or why the file could not be.
+pub fn import(from: &Path, to: &Path, s: &Settings, keys: &[&str]) -> Result<Vec<String>, String> {
+    let text = std::fs::read_to_string(from).map_err(|e| format!("{}: {e}", from.display()))?;
+    let mut done = Vec::new();
+    for (key, value) in vscode_entries(&text, s).into_iter().filter(|(k, _)| keys.contains(&k.as_str())) {
+        ca_settings::settings::keep(to, &key, &value).map_err(|e| format!("{}: {e}", to.display()))?;
+        done.push(key);
+    }
+    Ok(done)
 }
 
 /// Where one of the person's own files is, by its name: `settings.json`, `keybindings.json`, `snippets/NAME` (one
@@ -315,6 +479,9 @@ pub struct Here;
 impl Area for Here {
     const MESSAGES: &'static [(&'static str, Rule)] = &[
         ("settings", Rule::Turn),
+        ("settings_schema", Rule::Turn),
+        ("vscode_settings", Rule::Turn),
+        ("vscode_import", Rule::Queue),
         ("user_file", Rule::Turn),
         ("save_user", Rule::Turn),
         ("workspace_settings", Rule::Side),
@@ -364,6 +531,17 @@ impl Area for Here {
         match kind(m) {
             // From what is read already: no file is touched.
             "settings" => send(&sh.out, message(&current(sh), &watched(sh).0)),
+            "settings_schema" => send(&sh.out, schema_message(&current(sh), &watched(sh).0, sh.edition)),
+            "vscode_settings" => {
+                let (from, now, out) = (sh.home.as_deref().map(vscode_file), current(sh), sh.out.clone());
+                tokio::task::spawn_blocking(move || {
+                    let reply = match from {
+                        Some(file) => vscode_message(&file, &now),
+                        None => json!({"type": "vscode_settings", "found": false, "path": "", "entries": []}),
+                    };
+                    send(&out, reply);
+                });
+            }
             "user_file" => {
                 let (config, out) = (sh.paths.config.clone(), sh.out.clone());
                 tokio::task::spawn_blocking(move || send(&out, read_user(&config, &name)));
@@ -383,11 +561,30 @@ impl Area for Here {
 
     /// The settings read again while the session was busy or stood still become the session's own.
     async fn idle(ctx: &mut Ctx<'_>, m: &Value) -> bool {
-        if kind(m) != "_settings_read" {
-            return false;
-        }
-        if let Some(now) = ctx.sh.kept.of::<Live>().seen().now.clone() {
-            ctx.app.settings = (*now).clone();
+        match kind(m) {
+            "_settings_read" => {
+                if let Some(now) = ctx.sh.kept.of::<Live>().seen().now.clone() {
+                    ctx.app.settings = (*now).clone();
+                }
+            }
+            "vscode_import" => {
+                let keys: Vec<&str> = m["keys"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                let files = watched(ctx.sh).0;
+                let from = ctx.sh.home.as_deref().map(vscode_file);
+                let reply = match from.map(|f| import(&f, &files.user, &ctx.app.settings, &keys)) {
+                    Some(Ok(done)) => {
+                        ctx.app.settings = files.read(&ctx.app.settings);
+                        kept(ctx.sh, &ctx.app.settings);
+                        json!({"type": "vscode_imported", "keys": done})
+                    }
+                    Some(Err(e)) => json!({"type": "vscode_imported", "keys": [], "error": e}),
+                    None => {
+                        json!({"type": "vscode_imported", "keys": [], "error": "there is no home folder to look in"})
+                    }
+                };
+                send(&ctx.sh.out, reply);
+            }
+            _ => return false,
         }
         true
     }
@@ -473,6 +670,107 @@ mod tests {
         assert_eq!(again["values"]["editor.wordWrap"], "bounded");
         assert_eq!(again["values"]["agent.mode"], "plan");
         assert_eq!(again["by_lang"], json!({"python": {"editor.tabSize": 2}}));
+    }
+
+    #[test]
+    fn the_settings_editor_is_told_each_setting_with_what_each_file_sets_it_to() {
+        let (_d, _paths, files) = folders(
+            r#"{
+                "editor.fontSize": 15,
+                "editor.tabSize": "wide",
+                "mcpServers": {"mine": {"command": "serve", "env": {"TOKEN": "not-a-real-one"}}},
+                "my.own": 1
+            }"#,
+            r#"{"editor.fontSize": 16}"#,
+            r#"{"editor.wordWrap": "on", "editor.fontSize": 17}"#,
+        );
+        let env = Env::from_pairs([("CODE_ARENA_MODE", "plan")]);
+        let s = Settings::load(&files.user, Some(&files.project), env);
+        let m = schema_message(&s, &files, ca_settings::Edition::Standalone);
+        assert_eq!(m["type"], "settings_schema");
+        let entries = m["entries"].as_array().expect("entries");
+        assert_eq!(entries.len(), ide_schema::ALL.len() + schema::ALL.len());
+        // The IDE's first, in their order.
+        assert_eq!(entries[0]["key"], ide_schema::ALL[0].key);
+        let of = |key: &str| entries.iter().find(|e| e["key"] == key).expect(key).clone();
+        let size = of("editor.fontSize");
+        assert_eq!(
+            (size["kind"].as_str(), size["min"].as_i64(), size["max"].as_i64()),
+            (Some("number"), Some(6), Some(100))
+        );
+        assert_eq!(
+            (size["value"].as_i64(), size["source"].as_str(), size["scope"].as_str()),
+            (Some(17), Some("workspace"), Some("language"))
+        );
+        assert_eq!(size["written"], json!({"user": 15, "project": 16, "workspace": 17}));
+        assert_eq!(size["in"], json!(["user", "project", "workspace"]));
+        assert_eq!(size["default"], 13);
+        let wrap = of("editor.wordWrap");
+        assert!(wrap["enum"].as_array().is_some_and(|w| w.contains(&json!("bounded"))), "{wrap}");
+        // A value not taken is no value of the file's: its problem says it.
+        assert_eq!(of("editor.tabSize")["in"], json!([]));
+        let mode = of("agent.mode");
+        assert_eq!(
+            (mode["source"].as_str(), mode["env"].as_str()),
+            (Some("env:CODE_ARENA_MODE"), Some("CODE_ARENA_MODE"))
+        );
+        assert_eq!(mode["scope"], "user");
+        // The agent's own objects: where they are set, never what they hold.
+        let servers = of("mcpServers");
+        assert_eq!(
+            (servers["kind"].as_str(), &servers["value"], &servers["written"]),
+            (Some("object"), &Value::Null, &json!({}))
+        );
+        assert_eq!(servers["in"], json!(["user"]));
+        assert!(!m.to_string().contains("not-a-real-one"));
+        // This edition's locks, what was not taken, and what is no setting.
+        assert!(of("arena.syncChats")["locked"].as_str().is_some_and(|w| w.contains("Farzan Arena")));
+        assert!(size["locked"].is_null());
+        assert_eq!(m["problems"][0]["key"], "editor.tabSize");
+        assert_eq!(m["unknown"], json!({"user": ["my.own"], "project": [], "workspace": []}));
+        assert_eq!(m["files"]["workspace"], files.workspace.display().to_string());
+    }
+
+    #[test]
+    fn vs_codes_settings_are_offered_when_code_arena_has_them_and_brought_over_into_the_persons_file() {
+        let (d, _paths, files) = folders("{\n  // mine\n  \"editor.tabSize\": 2\n}\n", "", "");
+        let theirs = vscode_file(&d.path().join("me"));
+        assert!(theirs.ends_with(Path::new("Code").join("User").join("settings.json")));
+        let s = Settings::load(&files.user, Some(&files.project), Env::from_pairs([]));
+        assert_eq!(
+            vscode_message(&theirs, &s),
+            json!({"type": "vscode_settings", "found": false, "path": theirs.display().to_string(), "entries": []})
+        );
+        std::fs::create_dir_all(theirs.parent().expect("folder")).expect("folder");
+        std::fs::write(
+            &theirs,
+            r#"{
+                // VS Code's
+                "editor.fontSize": 15,
+                "editor.tabSize": 2,
+                "editor.wordWrap": "sideways",
+                "agent.mode": "auto",
+                "python.defaultInterpreterPath": "/usr/bin/python3",
+                "files.associations": {"*.inc": "php"},
+            }"#,
+        )
+        .expect("write");
+        // What is the IDE's, of its kind, and not already the person's.
+        let m = vscode_message(&theirs, &s);
+        assert_eq!(m["found"], true);
+        assert_eq!(
+            m["entries"],
+            json!([{"key": "editor.fontSize", "value": 15}, {"key": "files.associations", "value": {"*.inc": "php"}}])
+        );
+        assert_eq!(
+            import(&theirs, &files.user, &s, &["editor.fontSize", "agent.mode"]),
+            Ok(vec!["editor.fontSize".to_string()])
+        );
+        let now = std::fs::read_to_string(&files.user).expect("read");
+        assert!(
+            now.contains("// mine") && now.contains("\"editor.fontSize\": 15") && !now.contains("files.associations"),
+            "{now}"
+        );
     }
 
     #[test]
