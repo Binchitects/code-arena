@@ -171,7 +171,8 @@ pub fn save(ui: Ui, path: &str, send: &Send, how: How) {
     ui.state::<Saves>().sent.update(|s| {
         s.insert(path.to_string(), (hash_of(&text), how == How::Auto));
     });
-    let mut m = json!({"type": "save", "path": path, "text": text});
+    // Written with the file's line ending (`indent.rs`), which its document cannot change.
+    let mut m = json!({"type": "save", "path": path, "text": crate::indent::written(ui, path, text.clone())});
     if let Some(at) = ui.modified.with_untracked(|k| k.get(path).copied()) {
         m["modified"] = json!(at);
     }

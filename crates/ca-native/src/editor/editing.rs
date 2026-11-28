@@ -885,12 +885,9 @@ fn lang(path: &str) -> Option<&'static str> {
     crate::complete::lang_of(path)
 }
 
-/// One indent: a tab, or `editor.tabSize` spaces (`editor.insertSpaces`).
+/// One indent of the file (`indent.rs`): a tab, or as many spaces as it is wide.
 fn unit(ui: Ui, path: &str) -> (String, usize) {
-    let l = lang(path);
-    let size = crate::settings::now(ui, "editor.tabSize", l).as_u64().unwrap_or(4).clamp(1, 32) as usize;
-    let spaces = crate::settings::now(ui, "editor.insertSpaces", l).as_bool().unwrap_or(true);
-    (if spaces { " ".repeat(size) } else { "\t".into() }, size)
+    crate::indent::unit(ui, path)
 }
 
 fn colon(path: &str) -> bool {
@@ -898,7 +895,7 @@ fn colon(path: &str) -> bool {
 }
 
 /// A command's work on the editor: what it changes, worked out from the text and selections.
-fn edit_with(ui: Ui, kind: EditType, work: impl FnOnce(&str, &Rope, &[Sel]) -> Option<Change>) {
+pub fn edit_with(ui: Ui, kind: EditType, work: impl FnOnce(&str, &Rope, &[Sel]) -> Option<Change>) {
     let Some((path, e)) = editor_of(ui) else { return };
     let (sels, _) = sels_of(&e);
     let text = e.doc().text();
@@ -1147,7 +1144,15 @@ pub fn key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
                 }
                 return true;
             }
-            false
+            // In a line: spaces to the next stop or a tab, as the file is indented.
+            if e.read_only.get_untracked() {
+                return false;
+            }
+            let before = |at: usize| text.slice_to_cow(t.offset_of_line(t.line_of_offset(at))..at).into_owned();
+            if let Some(c) = crate::indent::tab(before, &sels, crate::indent::indent(ui, &path)) {
+                apply(&e, c, EditType::InsertChars);
+            }
+            true
         }
         Key::Named(NamedKey::Enter) if plain && !shift => {
             let Some((path, e)) = editor_of(ui) else { return false };
