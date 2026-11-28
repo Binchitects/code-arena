@@ -25,7 +25,7 @@ pub struct LoginArgs {
 }
 
 /// This machine's name, for the key a password sign-in makes ("Code Arena on NAME").
-fn machine_name() -> String {
+pub(crate) fn machine_name() -> String {
     std::process::Command::new("hostname")
         .output()
         .ok()

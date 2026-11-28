@@ -2573,3 +2573,77 @@ async fn an_extension_is_installed_from_a_vsix_the_ide_is_given_and_listed_to_ev
         said["recommendations"].as_array().expect("list").iter().filter_map(|r| r["status"].as_str()).collect();
     assert_eq!(stands, ["installed", "unknown"]);
 }
+
+/// `ide --connect`: Arena's connect route is dialled with the person's key and the folder's id, and the next run
+/// dials with the same id; without Arena it is refused.
+#[tokio::test]
+async fn ide_connect_dials_code_studio_with_the_folder_kept() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    let out = code_arena(home.path()).args(["ide", "--connect", "-C"]).arg(folder.path()).output().expect("runs");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("Code Studio is Arena's: sign in first"), "{out:?}");
+
+    let gateway = MockServer::start().await;
+    let arena = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = arena.local_addr().expect("addr").port();
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let child = code_arena(home.path())
+            .args(["ide", "--connect", "-C"])
+            .arg(folder.path())
+            .env("ARENA_URL", format!("http://127.0.0.1:{port}"))
+            .env("ARENA_API_KEY", "sk-test-only")
+            .env("ARENA_GATEWAY_URL", gateway.uri())
+            .env("ARENA_MODEL", "qwen")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("runs");
+        struct Kill(std::process::Child);
+        impl Drop for Kill {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let _child = Kill(child);
+        // Arena's other calls (whose the key is, its settings) are answered "not here": the dial is the one looked for.
+        let head = loop {
+            let (mut s, _) = tokio::time::timeout(std::time::Duration::from_secs(60), arena.accept())
+                .await
+                .expect("dialled")
+                .expect("ok");
+            let mut head = Vec::new();
+            let mut b = [0u8; 1024];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = tokio::time::timeout(std::time::Duration::from_secs(10), s.read(&mut b))
+                    .await
+                    .expect("head")
+                    .expect("read");
+                if n == 0 {
+                    break;
+                }
+                head.extend_from_slice(&b[..n]);
+            }
+            let head = String::from_utf8_lossy(&head).to_lowercase();
+            if head.starts_with("get /api/code-arena/connect?") {
+                break head;
+            }
+            let _ = s.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+        };
+        assert!(head.starts_with("get /api/code-arena/connect?id="), "{head}");
+        assert!(head.contains("authorization: bearer sk-test-only"), "{head}");
+        assert!(head.contains("upgrade: websocket"), "{head}");
+        let id = head["get /api/code-arena/connect?id=".len()..].split('&').next().expect("id").to_string();
+        assert_eq!(id.len(), 32, "{head}");
+        ids.push(id);
+    }
+    assert_eq!(ids[0], ids[1], "the folder keeps its id");
+}
