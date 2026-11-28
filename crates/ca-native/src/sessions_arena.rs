@@ -331,8 +331,11 @@ pub fn section(ui: Ui, send: Send) -> AnyView {
     };
     let over = create_rw_signal(false);
     let head = h_stack((
-        container(dyn_container(move || st.open.get(), |o| icon(if o { "chevron-down" } else { "chevron-right" }, 16.0)))
-            .style(|s| s.flex_shrink(0.0_f32)),
+        container(dyn_container(
+            move || st.open.get(),
+            |o| icon(if o { "chevron-down" } else { "chevron-right" }, 16.0),
+        ))
+        .style(|s| s.flex_shrink(0.0_f32)),
         label(move || st.account.with(|a| heading(a.as_deref())).to_uppercase())
             .style(|s| bold(caps(s)).flex_grow(1.0_f32).min_width(0.0).text_ellipsis()),
         container(acts).style(move |s| s.flex_shrink(0.0_f32).apply_if(!over.get() || !st.open.get(), |s| s.hide())),
@@ -451,7 +454,12 @@ fn chat_row(ui: Ui, send: Send, c: Chat) -> impl IntoView {
         container(mark).style(|s| s.width(16.0).items_center().justify_center().flex_shrink(0.0_f32)),
         label(move || title.clone()).style(|s| s.min_width(0.0).flex_shrink(1.0_f32).text_ellipsis()),
         label(move || place.clone()).style(move |s| {
-            s.min_width(0.0).flex_shrink(10.0_f32).flex_grow(1.0_f32).text_ellipsis().font_size(12.0).color(t.get().desc)
+            s.min_width(0.0)
+                .flex_shrink(10.0_f32)
+                .flex_grow(1.0_f32)
+                .text_ellipsis()
+                .font_size(12.0)
+                .color(t.get().desc)
         }),
     ))
     .on_click_stop(move |_| open_chat(ui, &send, &id))

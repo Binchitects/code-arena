@@ -178,9 +178,8 @@ async fn continue_here(ctx: &mut Ctx<'_>, id: &str) -> Result<(), String> {
     if ctx.p.sync.is_none() {
         return Err("Chats are kept with Arena only with arena.syncChats on.".into());
     }
-    let chosen = lock(&ctx.sh.kept.of::<Kept>().chats)
-        .as_ref()
-        .and_then(|(_, l)| l.iter().find(|c| c.id == id).cloned());
+    let chosen =
+        lock(&ctx.sh.kept.of::<Kept>().chats).as_ref().and_then(|(_, l)| l.iter().find(|c| c.id == id).cloned());
     let (title, model) = chosen.map(|c| (c.title, c.model)).unwrap_or_default();
     // A session of this folder's that is kept with it already: taken up; else a new one, filled from the web.
     let (session, fresh) = {
@@ -189,7 +188,8 @@ async fn continue_here(ctx: &mut Ctx<'_>, id: &str) -> Result<(), String> {
             Some(s) if store.summary(&s).is_ok_and(|x| x.folder == ctx.p.folder) => (s, false),
             _ => {
                 let model = model.unwrap_or_else(|| ctx.p.agent.model.clone());
-                let made = store.create(&ctx.p.folder, &model, ctx.p.agent.policy.mode.name()).map_err(|e| e.to_string())?;
+                let made =
+                    store.create(&ctx.p.folder, &model, ctx.p.agent.policy.mode.name()).map_err(|e| e.to_string())?;
                 store.link_chat(&made, id).map_err(|e| e.to_string())?;
                 (made, true)
             }
@@ -210,7 +210,11 @@ async fn continue_here(ctx: &mut Ctx<'_>, id: &str) -> Result<(), String> {
     let count = ctx.p.store.lock().ok().and_then(|s| s.summary(&ctx.p.session).ok()).map(|s| s.messages).unwrap_or(0);
     let name = if title.trim().is_empty() { String::new() } else { format!(" \"{}\"", title.trim()) };
     let n = if count == 1 { "1 message".to_string() } else { format!("{count} messages") };
-    notice(&ctx.sh.out, false, &format!("{} the web chat{name} here: {n}.", if fresh { "Continuing" } else { "Back in" }));
+    notice(
+        &ctx.sh.out,
+        false,
+        &format!("{} the web chat{name} here: {n}.", if fresh { "Continuing" } else { "Back in" }),
+    );
     Ok(())
 }
 
@@ -277,8 +281,15 @@ pub fn sent_words(sent: usize, messages: usize, failed: usize) -> String {
     let of = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
     match (sent, failed) {
         (0, 0) => "Arena has every session of this folder.".into(),
-        (0, f) => format!("{} could not be sent now: Arena is out of reach, or the web is answering.", of(f, "session", "sessions")),
-        (s, 0) => format!("Sent {} of {} to their chats in Arena.", of(messages, "message", "messages"), of(s, "session", "sessions")),
+        (0, f) => format!(
+            "{} could not be sent now: Arena is out of reach, or the web is answering.",
+            of(f, "session", "sessions")
+        ),
+        (s, 0) => format!(
+            "Sent {} of {} to their chats in Arena.",
+            of(messages, "message", "messages"),
+            of(s, "session", "sessions")
+        ),
         (s, f) => format!(
             "Sent {} of {} to their chats in Arena; {} could not be sent now.",
             of(messages, "message", "messages"),
@@ -432,7 +443,10 @@ mod tests {
     fn sending_the_others_says_what_it_came_to() {
         assert_eq!(sent_words(0, 0, 0), "Arena has every session of this folder.");
         assert_eq!(sent_words(2, 7, 0), "Sent 7 messages of 2 sessions to their chats in Arena.");
-        assert_eq!(sent_words(1, 1, 1), "Sent 1 message of 1 session to their chats in Arena; 1 session could not be sent now.");
+        assert_eq!(
+            sent_words(1, 1, 1),
+            "Sent 1 message of 1 session to their chats in Arena; 1 session could not be sent now."
+        );
         assert!(sent_words(0, 0, 2).starts_with("2 sessions could not be sent now"));
     }
 }
