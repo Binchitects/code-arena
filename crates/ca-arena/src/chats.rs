@@ -510,7 +510,12 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
-        Mock::given(method("DELETE")).and(path(at)).respond_with(ResponseTemplate::new(204)).expect(1).mount(&server).await;
+        Mock::given(method("DELETE"))
+            .and(path(at))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
         let c = ArenaClient::new(&server.uri(), Some(ca_core::Secret::new("sk-test")), None).expect("client");
         c.rate("c1", "m2", Some(&down)).await.expect("rated");
         c.rate("c1", "m2", None).await.expect("taken back");

@@ -51,8 +51,8 @@ pub fn asked(sh: &Shared, m: &Value) -> bool {
 
 /// Whether the session's answers can be rated: it is kept with a chat in Arena.
 pub fn state(sh: &Shared, v: &mut Value) {
-    let kept = sh.sync.is_some()
-        && sh.store.lock().ok().and_then(|s| s.chat_link(&sh.session).ok()).is_some_and(|l| !l.off);
+    let kept =
+        sh.sync.is_some() && sh.store.lock().ok().and_then(|s| s.chat_link(&sh.session).ok()).is_some_and(|l| !l.off);
     v["rating"] = json!(kept);
 }
 
@@ -79,15 +79,18 @@ mod tests {
 
     #[test]
     fn a_rating_keeps_only_what_arena_takes() {
-        let down = json!({"type": "rate", "q": 2, "up": false, "reason": "wrong", "comment": "  not so \n", "share": true});
+        let down =
+            json!({"type": "rate", "q": 2, "up": false, "reason": "wrong", "comment": "  not so \n", "share": true});
         assert_eq!(rating_of(&down), Some(json!({"up": false, "reason": "wrong", "comment": "not so", "share": true})));
         // A reason goes with a down vote only, and only one Arena knows; empty words are none.
         let up = json!({"q": 2, "up": true, "reason": "wrong", "comment": " "});
         assert_eq!(rating_of(&up), Some(json!({"up": true, "share": false})));
         assert_eq!(rating_of(&json!({"up": false, "reason": "rude"})), Some(json!({"up": false, "share": false})));
         let long = "x".repeat(1200);
-        assert_eq!(rating_of(&json!({"up": true, "comment": long}))
-            .and_then(|r| r["comment"].as_str().map(str::len)), Some(1000));
+        assert_eq!(
+            rating_of(&json!({"up": true, "comment": long})).and_then(|r| r["comment"].as_str().map(str::len)),
+            Some(1000)
+        );
         // Taken back, or no vote said.
         assert_eq!(rating_of(&json!({"q": 2, "clear": true, "up": true})), None);
         assert_eq!(rating_of(&json!({"q": 2})), None);

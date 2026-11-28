@@ -1835,7 +1835,9 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     assert_eq!((rated["q"].as_u64(), rated["up"].as_bool(), rated["key"].as_u64()), (Some(1), Some(false), Some(7)));
     page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
     let st = until(&mut page, "state").await;
-    let rating = st["messages"].as_array().and_then(|l| l.iter().rev().find(|m| m["role"] == "assistant"))
+    let rating = st["messages"]
+        .as_array()
+        .and_then(|l| l.iter().rev().find(|m| m["role"] == "assistant"))
         .map(|m| m["rating"].clone());
     assert_eq!(rating, Some(json!(false)), "{st}");
     page.send(Message::text(json!({"type": "rate", "q": 1, "clear": true}).to_string())).await.expect("send");
