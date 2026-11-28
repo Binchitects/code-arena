@@ -791,6 +791,17 @@ Sections used:
   no longer disappears after 20 seconds while its Reply field has the keys or holds words.
 - **A command of several lines fits on its card's head.** A call whose command runs over several
   lines now shows its first line and '…' in one row, not a tall, half-empty card.
+- **Opening a Markdown file no longer stops the window where no italic font exists.** Italic text in
+  the editor, chat answers, the Markdown preview and the terminal is drawn upright on such a system.
+- **Headings stay in the UI font.** Headings in answers and the Markdown preview, table headers and
+  the Context titles came out in the monospace font when the UI font had no semibold face. They are
+  now bold.
+- **An attached file's X removes it.** Before, the X on a chip above the chat box did nothing when
+  clicked.
+- **An upload's error can be read whole.** The chip cuts its line short; hover over the line to see
+  all of it.
+- **The notes under the chat box and on a diagram are readable.** 'No file dialog was found…' and
+  'Nothing here draws diagrams…' wrap with normal line spacing instead of lines pressed together.
 
 ## v0.5.0 (2026-11-26)
 
