@@ -189,16 +189,19 @@ fn keyed(mut v: Value, key: &Value) -> Value {
     v
 }
 
-/// What a change said, as a corner bubble's `notice`: a sentence begun with a capital and ended with a stop.
+/// A sentence begun with a capital (the shell's errors begin small).
+fn capital(text: &str) -> String {
+    let mut c = text.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// What a change said, as a corner bubble's `notice`: a sentence ended with a stop.
 fn notice(of: &str, key: &Value, said: Result<String, String>) -> Value {
     let (text, error) = match said {
         Ok(t) => (t, false),
         Err(e) => (e, true),
     };
     let mut text = text.trim().to_string();
-    if let Some(first) = text.chars().next() {
-        text = first.to_uppercase().chain(text.chars().skip(1)).collect();
-    }
     if !text.ends_with(['.', '!', '?', ')']) {
         text.push('.');
     }
@@ -279,7 +282,7 @@ fn saved(config: &Path, m: &Value) -> Result<String, String> {
             model: m["model"].as_str().map(str::to_string),
         },
     )
-    .map_err(|e| format!("{e:#}"))?;
+    .map_err(|e| capital(&format!("{e:#}")))?;
     let said = format!(
         "Schedule {} added: it runs {}, next {}",
         s.name,
@@ -456,7 +459,11 @@ mod tests {
         let c = config.path();
         let said = saved(c, &save_msg(work.path(), "nightly", "1d")).expect("saved");
         assert!(said.starts_with("Schedule nightly added: it runs every 1d at 09:00, next "), "{said}");
-        assert!(saved(c, &save_msg(work.path(), "nightly", "1d")).expect_err("twice").contains("already"));
+        assert!(
+            saved(c, &save_msg(work.path(), "nightly", "1d"))
+                .expect_err("twice")
+                .starts_with("There is a schedule nightly already")
+        );
         assert!(saved(c, &save_msg(work.path(), "x", "often")).expect_err("every").contains("How often"));
         let v = listed(c, Some("/w"), &json!(7));
         assert_eq!((v["key"].clone(), v["folder"].clone()), (json!(7), json!("/w")));
@@ -494,7 +501,7 @@ mod tests {
         let n = notice("schedule_run", &json!("k"), Err("once failed".into()));
         assert_eq!(
             n,
-            json!({"type": "notice", "text": "Once failed.", "of": "schedule_run", "error": true, "key": "k"})
+            json!({"type": "notice", "text": "once failed.", "of": "schedule_run", "error": true, "key": "k"})
         );
     }
 

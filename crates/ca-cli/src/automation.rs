@@ -27,6 +27,9 @@ pub async fn usable(paths: &ca_core::Paths, arena: &ArenaClient, f: Feature) -> 
         State::On => Ok(()),
         State::Absent => Err(format!("This Arena does not give Code Arena its {what} (Arena 8.1 on does).")),
         State::Off(w) | State::Denied(w) if !w.is_empty() => Err(w),
+        State::Unknown(w) if !w.is_empty() => {
+            Err(format!("This Arena's {what} cannot be used now: {}.", w.trim_end_matches('.')))
+        }
         s => Err(format!("This Arena's {what} cannot be used now: {s:?}.")),
     }
 }
