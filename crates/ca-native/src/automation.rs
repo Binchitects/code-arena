@@ -413,8 +413,9 @@ fn refresh(send: &Send) {
 /// The New schedule form opened, its folder the session's.
 fn new_schedule(ui: Ui) {
     let st = state(ui);
+    // Opened afresh, it offers the session's folder now (another may have been opened since).
     let folder = st.folder.get_untracked();
-    if st.dir.with_untracked(String::is_empty) && !folder.is_empty() {
+    if !st.form.open.get_untracked() && !folder.is_empty() && st.dir.with_untracked(|d| *d != folder) {
         st.dir.set(folder);
     }
     st.form.show(None);

@@ -505,6 +505,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn only_those_due_and_on_run_when_the_driver_looks() {
+        let (config, work) = (tempfile::tempdir().expect("config"), tempfile::tempdir().expect("work"));
+        let c = config.path();
+        for name in ["due", "off", "later"] {
+            saved(c, &save_msg(work.path(), name, "2h")).expect("saved");
+        }
+        let mut all = schedules::load(c);
+        for s in &mut all {
+            s.added -= if s.name == "later" { 60 } else { 3 * 3600 };
+            s.off = s.name == "off";
+        }
+        schedules::save(c, &all).expect("save");
+        assert_eq!(run_due(c, Path::new("/no/such/code-arena")), 1);
+        let after = schedules::load(c);
+        let status = |n: &str| after.iter().find(|s| s.name == n).and_then(|s| s.last_status.clone());
+        assert_eq!(status("due").as_deref(), Some("failed (exit code -1)"));
+        assert_eq!((status("off"), status("later")), (None, None));
+        assert_eq!(run_due(c, Path::new("/no/such/code-arena")), 0, "it ran just now: not due again");
+    }
+
     #[tokio::test]
     async fn an_agent_is_run_with_what_it_is_given_and_its_steps_followed() {
         let s = MockServer::start().await;

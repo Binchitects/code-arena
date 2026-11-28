@@ -102,8 +102,9 @@ impl Schedule {
         let when = chrono::DateTime::from_timestamp(self.next(), 0)
             .map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string())
             .unwrap_or_default();
+        let when = if self.off { "off".to_string() } else { format!("next {when}") };
         format!(
-            "{}  every {}{}  {}  in {}  ({}; next {when}): {}",
+            "{}  every {}{}  {}  in {}  ({}; {when}): {}",
             self.name,
             interval_words(self.every),
             self.at.as_ref().map(|a| format!(" at {a}")).unwrap_or_default(),
