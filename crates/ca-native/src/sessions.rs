@@ -323,7 +323,8 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         .on_event_cont(EventListener::FocusLost, move |_| focused.set(false))
         .style(move |s| {
             let c = t.get();
-            s.flex_grow(1.0_f32)
+            let s = s
+                .flex_grow(1.0_f32)
                 .min_width(0.0)
                 .height(26.0)
                 .padding_horiz(6.0)
@@ -332,10 +333,8 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
                 .border_color(if focused.get() { c.focus } else { c.input_border })
                 .background(c.input_bg)
                 .color(c.input_fg)
-                .cursor_color(floem::peniko::Brush::Solid(c.cursor))
-                // floem's own theme turns a hovered input white and a focused one's border purple.
-                .hover(|s| s.background(c.input_bg))
-                .focus(|s| s.border_color(c.focus).hover(|s| s.background(c.input_bg)))
+                .cursor_color(floem::peniko::Brush::Solid(c.cursor));
+            crate::widgets::steady_input(s, c.input_bg, Some(c.focus))
         });
     let top = container(search).style(|s| s.width_full().padding_horiz(12.0).padding_vert(6.0));
     let items = move || {

@@ -711,16 +711,15 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
             // The border and padding sit on the box that holds both the input and its placeholder.
             // floem paints its own placeholder past the box's edge, so the words are a label under the input that
             // ends in an ellipsis, hidden once something is typed.
-            let hint = container(label(move || words.clone()).style(|s| s.text_ellipsis().min_width(0.0))).style(
-                move |s| {
+            let hint =
+                container(label(move || words.clone()).style(|s| s.text_ellipsis().min_width(0.0))).style(move |s| {
                     s.absolute()
                         .inset(0.0)
                         .padding_horiz(6.0)
                         .items_center()
                         .color(t.get().desc)
                         .apply_if(me.message.with(|m| !m.is_empty()), |s| s.hide())
-                },
-            );
+                });
             let input = text_input(me.message)
                 .on_key_down(Key::Named(NamedKey::Enter), |m| m.control(), move |_| commit(ui, &go, false))
                 .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true))
@@ -728,16 +727,15 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
                 .style(move |s| {
                     let c = t.get();
                     // A width in percent: with none, floem gives the input a fixed width of so many characters.
-                    s.width_full()
+                    let s = s
+                        .width_full()
                         .min_width(0.0)
                         .border(0.0)
                         .padding(0.0)
                         .background(Color::TRANSPARENT)
-                        // floem's own theme turns a hovered input white and gives a focused one a border.
-                        .hover(|s| s.background(Color::TRANSPARENT))
-                        .focus(|s| s.border(0.0).hover(|s| s.background(Color::TRANSPARENT)))
                         .color(c.input_fg)
-                        .cursor_color(floem::peniko::Brush::Solid(c.cursor))
+                        .cursor_color(floem::peniko::Brush::Solid(c.cursor));
+                    crate::widgets::steady_input(s, Color::TRANSPARENT, None)
                 });
             stack((hint, input))
                 .style(move |s| {
@@ -886,7 +884,8 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         move || what.get(),
         move |w| {
             let say = move |text: String| {
-                label(move || text.clone()).style(move |s| s.padding_horiz(20.0).padding_vert(6.0).line_height(1.4).color(t.get().desc))
+                label(move || text.clone())
+                    .style(move |s| s.padding_horiz(20.0).padding_vert(6.0).line_height(1.4).color(t.get().desc))
             };
             match w {
                 Empty::NoRepo => {

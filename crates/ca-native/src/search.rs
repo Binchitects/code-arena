@@ -331,13 +331,15 @@ fn input(ui: Ui, text: RwSignal<String>, hint: &'static str, focused: RwSignal<b
         .on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false))
         .style(move |s| {
             let c = t.get();
-            s.flex_grow(1.0_f32)
+            let s = s
+                .flex_grow(1.0_f32)
                 .min_width(0.0)
                 .padding_horiz(4.0)
                 .border(0.0)
                 .background(Color::TRANSPARENT)
                 .color(c.input_fg)
-                .cursor_color(floem::peniko::Brush::Solid(c.cursor))
+                .cursor_color(floem::peniko::Brush::Solid(c.cursor));
+            crate::widgets::steady_input(s, Color::TRANSPARENT, None)
         })
 }
 

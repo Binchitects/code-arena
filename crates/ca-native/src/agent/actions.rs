@@ -403,7 +403,8 @@ fn editor(ui: Ui, send: Send, q: u64) -> impl IntoView {
         })
         .style(move |s| {
             let c = t.get();
-            s.width_full()
+            let s = s
+                .width_full()
                 .padding_horiz(8.0)
                 .padding_vert(6.0)
                 .font_size(13.0)
@@ -411,7 +412,8 @@ fn editor(ui: Ui, send: Send, q: u64) -> impl IntoView {
                 .border_radius(4.0)
                 .border_color(c.focus)
                 .background(c.input_bg)
-                .color(c.input_fg)
+                .color(c.input_fg);
+            crate::widgets::steady_input(s, c.input_bg, Some(c.focus))
         });
     let buttons = h_stack((
         label(|| "A new version of the question: what came after it goes.").style(move |s| {
