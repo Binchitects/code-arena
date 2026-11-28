@@ -328,9 +328,10 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
             .into_any(),
         Kind::Error(text) => h_stack((
             icon("error", 16.0).style(move |s| s.color(t.get().error)),
-            label(move || text.clone()).style(move |s| s.color(t.get().error).text_overflow(TextOverflow::Wrap)),
+            label(move || text.clone())
+                .style(move |s| s.color(t.get().error).min_width(0.0).text_overflow(TextOverflow::Wrap)),
         ))
-        .style(|s| s.gap(6.0))
+        .style(|s| s.gap(6.0).width_full())
         .into_any(),
         Kind::Ask { id, tool, subject, answer } => super::ask::card(ui, send, id, tool, subject, answer).into_any(),
     }
@@ -347,9 +348,15 @@ fn notices(ui: Ui, item: &Item) -> floem::AnyView {
             h_stack((
                 icon("warning", 14.0).style(move |s| s.color(t.get().warning).flex_shrink(0.0_f32)),
                 label(move || text.clone())
-                    .style(move |s| s.color(t.get().desc).font_size(12.0).text_overflow(TextOverflow::Wrap)),
+                    .style(move |s| {
+                        s.color(t.get().desc)
+                            .font_size(12.0)
+                            .line_height(1.4)
+                            .min_width(0.0)
+                            .text_overflow(TextOverflow::Wrap)
+                    }),
             ))
-            .style(|s| s.gap(6.0).items_start())
+            .style(|s| s.gap(6.0).items_start().width_full())
         },
     )
     .style(move |s| s.flex_col().gap(4.0).margin_bottom(6.0).apply_if(list.with(Vec::is_empty), |s| s.hide()))
