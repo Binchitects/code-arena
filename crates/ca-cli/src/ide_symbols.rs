@@ -1,6 +1,6 @@
 //! The project's symbols by name (Go to Symbol in Workspace, Ctrl+T and "#" in Quick Open).
 //!
-//! `symbols{q, limit}` is answered with `symbols{q, items: [{name, kind, container, path, line, end}], building}`:
+//! `symbols{q, limit}` is answered with `symbols{q, items: [{name, kind, container, path, line, col, end}], building}`:
 //! the declarations whose names match what was typed, best first. They come from a scan of the files git would
 //! list (its ignores kept), each read by the declaration patterns of its language, kept for the folder and looked
 //! at again when it is a few seconds old (only the files changed since are read again). A scan stops after three
@@ -65,6 +65,8 @@ pub struct Sym {
     pub kind: &'static str,
     pub container: String,
     pub line: usize,
+    /// The column its name starts at, in characters, from 1.
+    pub col: usize,
     pub end: usize,
 }
 
@@ -177,7 +179,7 @@ pub fn find(index: &Index, q: &str, limit: usize) -> (Vec<Value>, bool) {
     let items = rank(all, q, limit)
         .into_iter()
         .map(|(path, s)| {
-            json!({"name": s.name, "kind": s.kind, "container": s.container, "path": path, "line": s.line, "end": s.end})
+            json!({"name": s.name, "kind": s.kind, "container": s.container, "path": path, "line": s.line, "col": s.col, "end": s.end})
         })
         .collect();
     (items, building)
@@ -431,19 +433,23 @@ pub fn declarations(path: &str, text: &str) -> Vec<Sym> {
             if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
                 fenced = !fenced;
             }
-            heading(line).filter(|_| !fenced)
+            heading(line).filter(|_| !fenced).map(|(depth, words, kind)| {
+                let col = line.find(&words).map_or(1, |at| line[..at].chars().count() + 1);
+                (depth, words, kind, col)
+            })
         } else {
             // Inside a class: the nearest declaration open around the line's indent holds others.
             let d = width(&line[..line.len() - line.trim_start().len()]);
             let inside = open.iter().rev().find(|o| o.0 < d).is_some_and(|o| holds(o.3));
             pats(lang).iter().filter(|p| !p.member || inside).find_map(|p| {
                 let c = p.re.captures(line)?;
-                let name = c.get(2)?.as_str();
+                let name = c.get(2)?;
                 let depth = c.get(1).map_or(0, |i| width(i.as_str()));
-                (!NOT_NAMES.contains(&name)).then(|| (depth, name.to_string(), p.kind))
+                let col = line[..name.start()].chars().count() + 1;
+                (!NOT_NAMES.contains(&name.as_str())).then(|| (depth, name.as_str().to_string(), p.kind, col))
             })
         };
-        let Some((depth, name, kind)) = found else { continue };
+        let Some((depth, name, kind, col)) = found else { continue };
         while open.last().is_some_and(|o| o.0 >= depth) {
             if let Some((_, Some(i), ..)) = open.pop() {
                 out[i].end = n.max(out[i].line);
@@ -456,7 +462,7 @@ pub fn declarations(path: &str, text: &str) -> Vec<Sym> {
             k => k,
         };
         let at = (kind != "impl").then(|| {
-            out.push(Sym { name: name.clone(), kind, container, line: n + 1, end: n + 1 });
+            out.push(Sym { name: name.clone(), kind, container, line: n + 1, col, end: n + 1 });
             out.len() - 1
         });
         open.push((depth, at, name, kind));
@@ -493,7 +499,7 @@ mod tests {
     }
 
     fn sym(name: &str) -> Sym {
-        Sym { name: name.into(), kind: "function", container: String::new(), line: 1, end: 1 }
+        Sym { name: name.into(), kind: "function", container: String::new(), line: 1, col: 1, end: 1 }
     }
 
     #[test]
@@ -536,6 +542,8 @@ mod tests {
         );
         assert_eq!((syms[0].line, syms[0].end), (1, 4));
         assert_eq!((syms[4].line, syms[4].end), (11, 13));
+        // The caret goes to the name, as VS Code puts it.
+        assert_eq!((syms[0].col, syms[1].col, syms[4].col), (12, 12, 4));
     }
 
     #[test]
@@ -613,7 +621,7 @@ mod tests {
         assert_eq!(last["building"], false);
         assert_eq!(
             last["items"],
-            json!([{"name": "run_tools_async", "kind": "function", "container": "", "path": "src/run.rs", "line": 1, "end": 1}])
+            json!([{"name": "run_tools_async", "kind": "function", "container": "", "path": "src/run.rs", "line": 1, "col": 8, "end": 1}])
         );
     }
 }

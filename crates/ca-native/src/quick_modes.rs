@@ -462,6 +462,8 @@ pub struct Found {
     pub container: String,
     pub path: String,
     pub line: usize,
+    /// The column its name starts at (1 when the session did not say).
+    pub col: usize,
 }
 
 /// The session's last answer for "#": what it was asked, what it found, and whether it is still reading the folder.
@@ -485,6 +487,7 @@ impl Got {
                 container: s(i, "container"),
                 path: s(i, "path"),
                 line: i["line"].as_u64().unwrap_or(1).max(1) as usize,
+                col: i["col"].as_u64().unwrap_or(1).max(1) as usize,
             })
             .filter(|f| !f.name.is_empty() && !f.path.is_empty())
             .collect();
@@ -575,7 +578,7 @@ pub fn workspace_rows(got: &Got, rest: &str) -> Vec<Row> {
         .map(|f| {
             let at = format!("{}:{}", f.path, f.line);
             let detail = if f.container.is_empty() { at } else { format!("{}  {at}", f.container) };
-            let row = Row::new(&f.name, &detail, positions(&f.name, &q), "", Pick::FileAt(f.path.clone(), f.line, 1));
+            let row = Row::new(&f.name, &detail, positions(&f.name, &q), "", Pick::FileAt(f.path.clone(), f.line, f.col));
             match f.kind {
                 Some(k) => row.kind(k),
                 None => row,
@@ -841,7 +844,7 @@ mod tests {
         // Not asked until the typing stops (the timer is the window's own); nothing sent yet.
         assert!(sent.borrow().iter().all(|m| m["type"] != "symbols"));
         let answer = json!({"type": "symbols", "q": "rta", "building": false, "items": [
-            {"name": "RunToolsAsync", "kind": "method", "container": "Runner", "path": "src/Runner.cs", "line": 7, "end": 9},
+            {"name": "RunToolsAsync", "kind": "method", "container": "Runner", "path": "src/Runner.cs", "line": 7, "col": 17, "end": 9},
             {"name": "readTheAnswer", "kind": "nonsense", "container": "", "path": "web/a.ts", "line": 2, "end": 2}
         ]});
         // An answer for another query is passed over; the one for what is typed is listed.
@@ -853,7 +856,8 @@ mod tests {
         assert_eq!(rows[0].detail, "Runner  src/Runner.cs:7");
         assert_eq!(rows[1].detail, "web/a.ts:2");
         assert_eq!((rows[0].kind, rows[1].kind), (Some(Kind::Method), None));
-        assert!(matches!(&rows[0].pick, Pick::FileAt(p, 7, 1) if p == "src/Runner.cs"));
+        assert!(matches!(&rows[0].pick, Pick::FileAt(p, 7, 17) if p == "src/Runner.cs"));
+        assert!(matches!(&rows[1].pick, Pick::FileAt(_, 2, 1)), "no column said: the line's start");
         // None found, and still reading.
         let none = Got { q: Some("zz".into()), items: Vec::new(), building: false };
         assert_eq!(names(&workspace_rows(&none, "zz")), ["No matching workspace symbols"]);
