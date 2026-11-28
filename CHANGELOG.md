@@ -613,6 +613,12 @@ Sections used:
   Arena.
 - **A question shows its files.** Under the bubble: pictures as small pictures, other files as chips
   with their size, kept with the session.
+- **Diagrams in answers.** A ```mermaid (or ```mmd) block in an answer is drawn as a diagram where
+  it is written, in the window's theme, once its fence is closed. It is drawn by mermaid-cli (the
+  project's own or on PATH) or else by a headless Chrome/Chromium with a local mermaid.js. Show Code
+  and Show Diagram switch between the drawing and its source, and Open in Browser opens a page that
+  draws it. A diagram that does not parse shows Mermaid's error over its code. Where nothing can
+  draw diagrams, the block says what to install and Open in Browser still shows it.
 
 
 ### :bug: Bugs fixed
@@ -723,6 +729,8 @@ Sections used:
   question with the input's own hint after it.
 - **A long notice or error in the chat wraps.** "Reading the plan again with fresh eyes before your
   review" and errors no longer run past the chat panel's edge.
+- **SVG text in previews.** SVG files opened in a preview tab now draw their text in the system's
+  fonts.
 
 ## v0.5.0 (2026-11-26)
 
