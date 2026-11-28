@@ -16,6 +16,11 @@
 //!   tried again by itself. Said again by itself whenever a server's state changes.
 //! - `servers_retry{name?}` [T] → `servers{...}`: tries one server again now (none: every one not connected).
 //!   Answered at once, a turn running or not: it only wakes the server's connecting.
+//! - `state.tool_mode{value, set, arena}`: how the model is given its tools now (`direct`, `code` or `both`),
+//!   whether the person chose it (`tools.mode` in their settings), and Arena's word for the model (null: none).
+//! - `tool_mode{value, key?}` [Q] → `tool_mode{key, value, set, arena}`: keeps the person's choice in their
+//!   settings (`value` null forgets it, to follow Arena's word again), or `refused{of, key, reason}` for a word
+//!   that is not a mode. The session's next request is made in the new mode.
 //!
 //! A server's `url` is shown without its user, password and query, and a server run as a program shows its command
 //! only: what may hold a secret is never said.
@@ -40,7 +45,13 @@ pub struct Here;
 
 impl Area for Here {
     const MESSAGES: &'static [(&'static str, Rule)] =
-        &[("tools", Rule::Turn), ("tools_set", Rule::Queue), ("servers", Rule::Turn), ("servers_retry", Rule::Turn)];
+        &[
+        ("tools", Rule::Turn),
+        ("tools_set", Rule::Queue),
+        ("servers", Rule::Turn),
+        ("servers_retry", Rule::Turn),
+        ("tool_mode", Rule::Queue),
+    ];
 
     fn start(sh: &Shared) {
         watch(sh);
@@ -67,6 +78,10 @@ impl Area for Here {
     }
 
     async fn idle(ctx: &mut Ctx<'_>, m: &Value) -> bool {
+        if kind(m) == "tool_mode" {
+            set_tool_mode(ctx, m);
+            return true;
+        }
         if kind(m) != "tools_set" {
             return false;
         }
@@ -101,6 +116,8 @@ impl Area for Here {
     }
 
     async fn before_turn(ctx: &mut Ctx<'_>, _message: &str) {
+        // The settings as they are now: a mode written in the file by hand counts too.
+        ctx.p.agent.tool_mode = crate::session::tool_mode(&ctx.app.settings);
         // What joined since is taken in first, so that a group turned off keeps its late tools off too.
         joined(ctx);
         apply_off(ctx.p, &ctx.sh.kept.of::<Off>().of(&ctx.sh.session));
@@ -113,10 +130,11 @@ impl Area for Here {
         keep(ctx.sh, ctx.p);
     }
 
-    fn state(sh: &Shared, p: Option<&Prepared>, _v: &mut Value) {
+    fn state(sh: &Shared, p: Option<&Prepared>, v: &mut Value) {
         if let Some(p) = p {
             keep(sh, p);
         }
+        v["tool_mode"] = tool_mode_of(&sh.settings);
     }
 
     fn status(sh: &Shared, p: Option<&Prepared>, _v: &mut Value) {
@@ -124,6 +142,38 @@ impl Area for Here {
             keep(sh, p);
         }
     }
+}
+
+/// How the model is given its tools, as `state.tool_mode` and the `tool_mode` reply say it.
+fn tool_mode_of(settings: &ca_settings::Settings) -> Value {
+    json!({
+        "value": crate::session::tool_mode(settings).name(),
+        "set": settings.given(&ca_settings::schema::TOOL_MODE),
+        "arena": Value::Null,
+    })
+}
+
+/// The person chose how the model is given its tools (null: as Arena says): kept in their settings, and the
+/// session's next request made so.
+fn set_tool_mode(ctx: &mut Ctx<'_>, m: &Value) {
+    let asked = json!({"type": "tool_mode", "key": m["key"]});
+    let value = &m["value"];
+    if !value.is_null() && value.as_str().and_then(ca_agent::code_mode::ToolMode::parse).is_none() {
+        refuse(&ctx.sh.out, &asked, &format!("Tools are direct, code or both (or null, to follow Arena's word), not {value}."));
+        return;
+    }
+    let root = ctx.p.agent.ctx.workspace.root().to_path_buf();
+    let key = ca_settings::schema::TOOL_MODE.key;
+    if let Err(e) = crate::ide::keep_setting(ctx.app, &root, key, value, ca_settings::Layer::User, None) {
+        refuse(&ctx.sh.out, &asked, &format!("The tools' mode was not kept: {e}"));
+        return;
+    }
+    ctx.p.agent.tool_mode = crate::session::tool_mode(&ctx.app.settings);
+    crate::ide_settings::kept(ctx.sh, &ctx.app.settings);
+    let mut v = tool_mode_of(&ctx.app.settings);
+    v["type"] = json!("tool_mode");
+    v["key"] = m["key"].clone();
+    send(&ctx.sh.out, v);
 }
 
 /// Takes in the tools of servers that connected since, and says so in the thread as a turn's step does.
