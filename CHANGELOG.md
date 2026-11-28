@@ -1173,6 +1173,16 @@ Sections used:
   settings.json with Bring Over.
 - **Open User Settings, Open Workspace Settings.** VS Code's commands open the Settings editor on
   your settings or on the project's .vscode/settings.json.
+- **Stage, unstage and revert selected lines.** In the compare editor, put the caret in a change or
+  select lines, then use Git: Stage Selected Ranges (Ctrl+K Ctrl+Alt+S), Unstage Selected Ranges
+  (Ctrl+K Ctrl+N, Ctrl+K Ctrl+Alt+N) or Revert Selected Ranges (Ctrl+K Ctrl+R, undone in one step).
+  Toolbar buttons do the same. As in VS Code, only the lines you touch are acted on.
+- **Accept part of the agent's change.** In a compare of the file before the agent, Accept the
+  Agent's Selected Changes (Ctrl+K Ctrl+Alt+A) accepts only the changes the caret or the selection
+  touches.
+- **Source Control opens the compare editor.** Clicking a modified file now shows 'a.rs (Index) ↔
+  a.rs' for Changes and 'a.rs (HEAD) ↔ a.rs (Index)' for Staged Changes, side by side. Both sides
+  are read from git again after every status.
 
 
 ### :bug: Bugs fixed
