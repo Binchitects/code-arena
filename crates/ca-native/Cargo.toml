@@ -32,6 +32,8 @@ serde_json.workspace = true
 similar.workspace = true
 syntect = { version = "5.3.0", default-features = false, features = ["default-fancy"] }
 tokio.workspace = true
+# A text's direction from its first strong letter (`bidi.rs`), as the shaper finds it (cosmic-text locks it).
+unicode-bidi = "0.3"
 
 [lints]
 workspace = true
