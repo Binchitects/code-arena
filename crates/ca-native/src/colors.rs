@@ -209,6 +209,9 @@ colors! {
     key_bg: ["keybindingLabel.background"], "#8080802B", "#DDDDDD66";
     key_fg: ["keybindingLabel.foreground"], "#CCCCCC", "#555555";
     key_border: ["keybindingLabel.border"], "#33333399", "#CCCCCC66";
+    key_bottom: ["keybindingLabel.bottomBorder"], "#44444499", "#BBBBBB66";
+    key_table_header: ["keybindingTable.headerBackground"], "#CCCCCC0A", "#6161610A";
+    key_table_rows: ["keybindingTable.rowsBackground"], "#CCCCCC0A", "#6161610A";
     symbol_class: ["symbolIcon.classForeground"], "#EE9D28", "#D67E00";
     symbol_enum: ["symbolIcon.enumeratorForeground"], "#EE9D28", "#D67E00";
     symbol_function: ["symbolIcon.functionForeground"], "#B180D7", "#652D90";

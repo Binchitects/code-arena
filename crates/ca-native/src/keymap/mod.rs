@@ -355,24 +355,7 @@ impl Table {
         if !std::mem::take(&mut self.stale) {
             return;
         }
-        let os = os();
-        let mac = |keys: Vec<Chord>| if os == Os::Mac { for_mac(&keys) } else { keys };
-        let mut rules = defaults::rules(os);
-        for c in commands::all() {
-            for text in &c.keys {
-                if let Some(keys) = parse_keys(text) {
-                    rules.push(Rule {
-                        keys: mac(keys),
-                        command: c.id.clone(),
-                        when: None,
-                        when_text: String::new(),
-                        source: Source::Default,
-                        written: Some(text.clone()),
-                    });
-                }
-            }
-        }
-        self.rules = with_user(rules, &self.user);
+        self.rules = with_user(given(os()), &self.user);
         self.by_first.clear();
         self.by_command.clear();
         for (at, r) in self.rules.iter().enumerate() {
@@ -380,6 +363,36 @@ impl Table {
             self.by_command.entry(r.command.clone()).or_default().push(at);
         }
     }
+}
+
+/// The rules before the person's: the default table's, then the commands' own keys, in order.
+pub fn given(os: Os) -> Vec<Rule> {
+    let mac = |keys: Vec<Chord>| if os == Os::Mac { for_mac(&keys) } else { keys };
+    let mut rules = defaults::rules(os);
+    for c in commands::all() {
+        for text in &c.keys {
+            if let Some(keys) = parse_keys(text) {
+                rules.push(Rule {
+                    keys: mac(keys),
+                    command: c.id.clone(),
+                    when: None,
+                    when_text: String::new(),
+                    source: Source::Default,
+                    written: Some(text.clone()),
+                });
+            }
+        }
+    }
+    rules
+}
+
+/// The rules in force now, in order (the later winning), the person's among them.
+pub fn rules() -> Vec<Rule> {
+    TABLE.with(|t| {
+        let mut t = t.borrow_mut();
+        t.make();
+        t.rules.clone()
+    })
 }
 
 /// Which part of the window has the keys, as the views that take them say.
