@@ -136,6 +136,7 @@ impl Notebook {
     }
 
     /// What its kernel is called in its metadata (none: it names none).
+    #[allow(dead_code)] // Read by the notebook kernel's part.
     pub fn kernel_name(&self) -> Option<String> {
         let m = self.rest.get("metadata")?;
         m["kernelspec"]["display_name"].as_str().filter(|n| !n.is_empty()).map(str::to_string)
