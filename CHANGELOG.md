@@ -619,6 +619,16 @@ Sections used:
   and Show Diagram switch between the drawing and its source, and Open in Browser opens a page that
   draws it. A diagram that does not parse shows Mermaid's error over its code. Where nothing can
   draw diagrams, the block says what to install and Open in Browser still shows it.
+- **The approval card says what you are allowing.** Before a call runs, the card's title says what
+  it does ('Run this command?', 'Allow edit_file to change this file?'). It says when a command has
+  no time limit or runs in the background, and the sentence under the buttons says what 'Always for
+  this session' spares you. A call that asks every time (stopping a command, a hook's ask) offers no
+  Always.
+- **Laya reads commands before they run.** When you are signed in to an Arena that has Laya, the
+  card shows Laya's line ('Laya: destructive 96%, outside the workspace 93%, network 3%'). A command
+  at 60% or more asks even in yolo mode and past an allow rule, and a -p run refuses it. If the
+  Arena has no Laya, or gives no answer within 3 seconds, commands are asked about exactly as
+  before.
 
 
 ### :bug: Bugs fixed
