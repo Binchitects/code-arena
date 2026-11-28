@@ -879,6 +879,20 @@ Sections used:
 - **After each turn, as in the terminal.** git.autoCommit commits what the turn changed, your
   statusLine command's line shows in the status bar, what background work said shows as toasts, and
   after a long turn the agent is reminded to keep what it worked out.
+- **Chats in Arena under the sessions.** The Sessions view lists your Arena chats ("ALI'S CHATS"),
+  newest first, with a Find a chat box that matches title or folder words. It shows at most 200,
+  then "N more: find one by its title." Chats already kept with a session of this folder are left
+  out. Code Arena's own chats have the terminal icon. A click continues the chat here, in its
+  session or in a new one filled with its history, with a spinner on the row while it opens.
+- **Send the other sessions to Arena.** The section's title has Send the Other Sessions Here: each
+  session of the folder that Arena lacks goes to its chat, and a toast says what it came to.
+- **Sync mark in the chat header.** The chat header says where the session stands with its Arena
+  chat: In step, N to send, Web news or Not in step, with the full words on hover. A click shows the
+  sessions.
+- **Web news taken in while idle.** Between turns, what the web chat adds comes in at once, and the
+  thread and the list are drawn again. The session's notices (Arena out of reach and back, messages
+  taken in) show once, as toasts. After each turn the chat in Arena is let go in the background, and
+  closing the window sends what Arena still lacks.
 
 
 ### :bug: Bugs fixed
