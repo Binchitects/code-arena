@@ -11,7 +11,7 @@
 //!   `task_ended{label, terminal, code}`; or `task_needs{label, inputs}` (the `${input:id}` to ask for, sent again
 //!   with `inputs: {id: answer}`), `task_untrusted{label, commands}` (the folder is not trusted: what would run,
 //!   sent again with `allow: true` once the person says so), `task_pick{group, items}` (no default in the group:
-//!   which one) or `task_failed{label | group, error}`. `context` is the editor's `{file, line, selected}`.
+//!   which one) or `task_failed{label | group, error}`. `context` is the editor's `{file, line, selected}` (`file` from the project's top, `line` from 1).
 //! - `task_stop{label}` [T] ends a task that runs (`task_stop{label}`, then its `task_ended`).
 //! - `build_configuration{value?}` [T] keeps the folder's build configuration (Debug or Release) and says it to
 //!   every face as `build_configuration{folder, value}`.
@@ -855,9 +855,11 @@ async fn run_asked(sh: Shared, m: Value) {
         return;
     }
     let c = &m["context"];
+    // The editor's file is named from the project's top, as the window names its tabs.
+    let file = c["file"].as_str().filter(|f| !f.is_empty()).map(|f| root.join(f).display().to_string());
     let cx = Context {
         folder: root,
-        file: c["file"].as_str().filter(|f| !f.is_empty()).map(str::to_string),
+        file,
         line: c["line"].as_u64(),
         selected: c["selected"].as_str().unwrap_or("").to_string(),
         build,

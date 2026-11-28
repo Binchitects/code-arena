@@ -1099,6 +1099,34 @@ fn close(ui: Ui, send: &Send, id: u64) {
     }
 }
 
+/// A terminal's tab shown, the panel revealed (Show Running Tasks).
+pub fn show_tab(ui: Ui, id: u64) {
+    if ui.terms.with_untracked(|l| l.iter().any(|s| s.id == id)) {
+        ui.reveal(Part::Terminal);
+        show(ui, id);
+    }
+}
+
+/// A task's terminal used again, as VS Code does: the new run's tab (`new`) takes the place of the last run's
+/// (`old`) when that one has ended, so a task run again has one tab where it had.
+pub fn reuse(ui: Ui, send: &Send, old: u64, new: u64) {
+    let ended = ui.terms.with_untracked(|l| l.iter().any(|s| s.id == old && s.ended.is_some()));
+    if old == new || !ended {
+        return;
+    }
+    EMULATORS.with(|e| e.borrow_mut().remove(&old));
+    send(json!({"type": "term_close", "id": old}));
+    ui.terms.update(|l| {
+        let (Some(at), Some(n)) = (l.iter().position(|s| s.id == old), l.iter().position(|s| s.id == new)) else {
+            return;
+        };
+        let shell = l.remove(n);
+        let at = if n < at { at - 1 } else { at };
+        l[at] = shell;
+    });
+    show(ui, new);
+}
+
 /// Every terminal let go of, as when another folder is opened: their shells were the side's that is gone, so
 /// nothing is sent.
 /// One new shell is begun in their place (in the new folder), not given the keys.
