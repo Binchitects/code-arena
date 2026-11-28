@@ -51,6 +51,8 @@ pub struct Started {
     pub from_page: mpsc::UnboundedReceiver<FromPage>,
     /// What every page connected is sent (JSON text).
     pub to_pages: broadcast::Sender<String>,
+    /// The way in for the relay ([`relay::run`]): its pages join the session as these do.
+    pub local: relay::Local,
 }
 
 struct Shared {
@@ -83,6 +85,7 @@ pub async fn start(port: u16, page: &'static [(&'static str, &'static [u8])]) ->
         to_pages: out.clone(),
         next: AtomicU64::new(1),
     });
+    let local = relay::Local(shared.clone());
     tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let shared = shared.clone();
@@ -98,7 +101,7 @@ pub async fn start(port: u16, page: &'static [(&'static str, &'static [u8])]) ->
             });
         }
     });
-    Ok(Started { url: format!("http://127.0.0.1:{port}/?k={key}"), port, from_page: rx, to_pages: out })
+    Ok(Started { url: format!("http://127.0.0.1:{port}/?k={key}"), port, from_page: rx, to_pages: out, local })
 }
 
 fn same(a: &str, b: &str) -> bool {
