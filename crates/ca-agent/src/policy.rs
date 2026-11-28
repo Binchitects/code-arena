@@ -387,7 +387,14 @@ pub fn always_text(tool: &str, kind: Kind, subject: &str) -> Option<String> {
     }
     let what = match kind {
         Kind::Edit => "about file edits".to_string(),
-        Kind::Shell if tool == "run_shell" => format!("for commands that start with \"{}\"", first_words(subject)),
+        Kind::Shell if tool == "run_shell" => {
+            let how = match waits(subject) {
+                (true, _, _) => " with no time limit",
+                (_, true, _) => " in the background",
+                _ => "",
+            };
+            format!("for commands that start with \"{}\"{how}", first_words(subject))
+        }
         _ => format!("for {tool}"),
     };
     Some(format!("Always for this session: no more questions {what}."))
@@ -402,7 +409,11 @@ fn first_words(subject: &str) -> String {
 fn always_key(tool: &str, kind: Kind, subject: &str) -> String {
     match kind {
         Kind::Edit => "edit".into(),
-        Kind::Shell if tool == "run_shell" => format!("run_shell:{}", first_words(subject)),
+        // How it waits stays in the key: "always" for one way of waiting does not cover another.
+        Kind::Shell if tool == "run_shell" => {
+            let how = &subject[..subject.len() - waits(subject).2.len()];
+            format!("run_shell:{how}{}", first_words(subject))
+        }
         _ => tool.to_string(),
     }
 }
@@ -482,14 +493,21 @@ mod tests {
     }
 
     #[test]
-    fn always_says_what_it_spares_and_how_a_command_waits_is_no_part_of_it() {
+    fn always_says_what_it_spares_and_covers_one_way_of_waiting() {
         let mut p = Policy::new(Mode::Ask, Rules::default());
         p.remember("run_shell", Kind::Shell, "[no time limit] npm test");
-        assert_eq!(p.decide("run_shell", Kind::Shell, "npm test -- a"), Decision::Run);
+        assert_eq!(p.decide("run_shell", Kind::Shell, "[no time limit] npm test -- a"), Decision::Run);
+        assert_eq!(p.decide("run_shell", Kind::Shell, "npm test -- a"), Decision::Ask);
         assert_eq!(p.decide("run_shell", Kind::Shell, "[no time limit] cargo build"), Decision::Ask);
         assert_eq!(
             always_text("run_shell", Kind::Shell, "[in the background] npm run dev").as_deref(),
-            Some("Always for this session: no more questions for commands that start with \"npm run\".")
+            Some(
+                "Always for this session: no more questions for commands that start with \"npm run\" in the background."
+            )
+        );
+        assert_eq!(
+            always_text("run_shell", Kind::Shell, "npm test").as_deref(),
+            Some("Always for this session: no more questions for commands that start with \"npm test\".")
         );
         assert_eq!(
             always_text("edit_file", Kind::Edit, "a.rs").as_deref(),

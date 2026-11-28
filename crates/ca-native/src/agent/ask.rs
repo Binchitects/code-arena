@@ -70,7 +70,7 @@ impl Asked {
             .find_map(|p| raw.strip_prefix(p))
             .map(str::to_string)
             .unwrap_or(raw);
-        let title = m["title"].as_str().map(str::to_string).unwrap_or_else(|| format!("Run {tool}?"));
+        let title = s("title");
         Asked {
             title,
             subject,
@@ -222,8 +222,8 @@ mod tests {
         let bg =
             Asked::of(&json!({"tool": "run_shell", "subject": "[in the background] npm run dev", "background": true}));
         assert_eq!(
-            (bg.subject.as_str(), bg.waits(), bg.title.as_str()),
-            ("npm run dev", Some("In the background"), "Run run_shell?")
+            (bg.subject.as_str(), bg.waits(), bg.title.is_empty()),
+            ("npm run dev", Some("In the background"), true)
         );
         assert!(!Risk { destructive: 0.59, outside: 0.0, network: 0.1 }.asks());
         assert_eq!(said("always"), "Allowed for this session");
