@@ -11,11 +11,11 @@
 
 use std::time::Duration;
 
+use floem::IntoView;
 use floem::action::exec_after;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo};
 use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, container, h_stack, label, tooltip};
-use floem::IntoView;
 use serde_json::Value;
 
 use crate::agent::answer::{duration, usage_line, usage_tip};
@@ -100,11 +100,7 @@ fn mode_tip(mode: &str) -> String {
 
 /// The connection dot's tooltip.
 fn connection_tip(stopped: bool) -> &'static str {
-    if stopped {
-        "The session has stopped: the window no longer hears from it"
-    } else {
-        "Connected to the session"
-    }
+    if stopped { "The session has stopped: the window no longer hears from it" } else { "Connected to the session" }
 }
 
 /// The last turn's time and tokens as `turn_end` says them, the turn's own time when the tokens' has none; none
@@ -159,11 +155,12 @@ fn clickable(
 
 /// The remote item's pick: Open Folder and Open Recent, those that are there; a note when neither is.
 fn remote_pick(ui: Ui, send: &Send) {
-    let rows: Vec<quick::Item> = [(OPEN_FOLDER, "Open Folder...", "folder-opened"), (OPEN_RECENT, "Open Recent...", "history")]
-        .into_iter()
-        .filter(|(id, _, _)| commands::find(id).is_some())
-        .map(|(id, title, glyph)| quick::item(id, title).icon(glyph).detail(&commands::keys_of(id)))
-        .collect();
+    let rows: Vec<quick::Item> =
+        [(OPEN_FOLDER, "Open Folder...", "folder-opened"), (OPEN_RECENT, "Open Recent...", "history")]
+            .into_iter()
+            .filter(|(id, _, _)| commands::find(id).is_some())
+            .map(|(id, title, glyph)| quick::item(id, title).icon(glyph).detail(&commands::keys_of(id)))
+            .collect();
     if rows.is_empty() {
         toast::info(ui, "This window is local: it works on the session's folder on this machine.");
         return;
@@ -359,11 +356,7 @@ pub fn take(ui: Ui, m: &Value, _send: &Send) -> bool {
                 me.last.set(Some(u));
             }
         }
-        "driver_stopped" => {
-            if !me.stopped.get_untracked() {
-                me.stopped.set(true);
-            }
-        }
+        "driver_stopped" if !me.stopped.get_untracked() => me.stopped.set(true),
         _ => {}
     }
     false
@@ -381,17 +374,23 @@ mod tests {
 
     #[test]
     fn the_last_turn_line_says_its_time_and_tokens_and_leaves_out_what_is_not_said() {
-        assert_eq!(last_turn_line(&usage(8600, 6278, 1200, 12_000)), "12 s \u{b7} 8.6K in (73% cached) \u{b7} 1.2K out");
+        assert_eq!(
+            last_turn_line(&usage(8600, 6278, 1200, 12_000)),
+            "12 s \u{b7} 8.6K in (73% cached) \u{b7} 1.2K out"
+        );
         assert_eq!(last_turn_line(&usage(0, 0, 0, 3_000)), "3 s");
         assert_eq!(last_turn_line(&usage(900, 0, 40, 0)), "900 in \u{b7} 40 out");
-        assert!(last_turn_tip(&usage(8600, 6278, 1200, 12_000)).starts_with("The last turn took 12 s: 8,600 tokens in"));
+        assert!(
+            last_turn_tip(&usage(8600, 6278, 1200, 12_000)).starts_with("The last turn took 12 s: 8,600 tokens in")
+        );
     }
 
     #[test]
     fn a_turn_end_gives_its_usage_with_the_turns_own_time_and_a_failed_one_none() {
         let ok = json!({"type": "turn_end", "ok": true, "ms": 4000, "usage": {"prompt": 10, "completion": 2}});
         assert_eq!(usage_of(&ok), Some(usage(10, 0, 2, 4000)));
-        let own = json!({"type": "turn_end", "ok": true, "ms": 4000, "usage": {"prompt": 10, "completion": 2, "ms": 3500}});
+        let own =
+            json!({"type": "turn_end", "ok": true, "ms": 4000, "usage": {"prompt": 10, "completion": 2, "ms": 3500}});
         assert_eq!(usage_of(&own).map(|u| u.ms), Some(3500));
         assert_eq!(usage_of(&json!({"type": "turn_end", "ok": false, "ms": 10})), None);
         assert_eq!(usage_of(&json!({"type": "turn_end", "ok": true, "ms": 10})), None);
