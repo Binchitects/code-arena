@@ -453,6 +453,13 @@ impl Ui {
         }
         let tabs = self.tabs.get_untracked();
         let Some(at) = tabs.iter().position(|t| t.path == path) else { return };
+        // Its changes not saved are let go of, and so is what hot exit kept of them.
+        if tabs[at].is_file()
+            && tabs[at].dirty.get_untracked()
+            && let Some(send) = self.out.get_untracked()
+        {
+            crate::save::discarded(*self, path, &send);
+        }
         self.tabs.update(|t| {
             t.remove(at);
         });
@@ -472,13 +479,9 @@ impl Ui {
         }
     }
 
+    /// A tab saved as the person asks it to be (Save, the close question's Save): `save.rs`.
     pub fn save_tab(&self, path: &str, send: &Send) {
-        match self.tab(path) {
-            // A tab of a kind is saved its kind's way.
-            Some(tab) if tab.kind.is_some() => crate::editor::kinds::save(*self, send, &tab),
-            Some(tab) if tab.is_file() => send(json!({"type": "save", "path": path, "text": tab.text()})),
-            _ => {}
-        }
+        crate::save::save(*self, path, send, crate::save::How::Asked);
     }
 
     /// A file read again from disk: its text is taken when it comes, its tab left where it is.
@@ -493,6 +496,7 @@ impl Ui {
     pub fn take_disk(&self, path: &str, send: &Send) {
         if let Some(tab) = self.tab(path) {
             tab.dirty.set(false);
+            crate::save::discarded(*self, path, send);
             self.reload(path, send);
         }
     }
@@ -509,13 +513,21 @@ impl Ui {
     /// A tab's text made what is on disk, by the part that differs only (what is before and after it stands, and is
     /// not coloured again); the caret stays on its line.
     pub(crate) fn replace(&self, tab: &Tab, text: &str) {
+        floem::reactive::batch(|| {
+            self.edit_to(tab, text);
+            tab.dirty.set(false);
+        });
+    }
+
+    /// A tab's text made `text` by one edit of the part that differs (one undo), the caret kept on its line. The
+    /// tab has changes not saved after it, as after any edit.
+    pub(crate) fn edit_to(&self, tab: &Tab, text: &str) {
         let old = tab.text();
         let Some((from, to, with)) = changed(&old, text) else { return };
         let live = self.live.with_untracked(|l| l.as_ref().filter(|(p, _)| *p == tab.path).map(|(_, e)| e.clone()));
         floem::reactive::batch(|| {
             let caret = live.as_ref().map(|e| e.offset_to_line_col(e.cursor.with_untracked(|c| c.offset())));
             tab.doc.edit_single(Selection::region(from, to), with, EditType::Other);
-            tab.dirty.set(false);
             if let (Some(e), Some((line, col))) = (live, caret) {
                 let line = line.min(e.last_line());
                 let at = e.offset_of_line_col(line, col.min(e.line_end_col(line, true)));
@@ -823,7 +835,10 @@ mod tests {
         ui.close_saved.set(ui.closing.get_untracked());
         ui.closing.set(None);
         ui.save_tab("a.rs", &send);
-        assert_eq!(asked.borrow().last(), Some(&json!({"type": "save", "path": "a.rs", "text": "mine one\n"})));
+        assert_eq!(
+            asked.borrow().last(),
+            Some(&json!({"type": "save", "path": "a.rs", "text": "mine one\n", "modified": 5}))
+        );
         ui.take(&json!({"type": "saved", "path": "a.rs", "modified": 6}), &send);
         assert!(ui.tab("a.rs").is_none());
         assert_eq!(ui.active.get_untracked(), None);
