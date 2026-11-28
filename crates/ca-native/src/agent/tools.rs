@@ -187,6 +187,7 @@ fn card(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>, n: usize, tick: RwSignal
     let chip_of = create_memo(move |_| me.with(|m| if m.ok && m.diff.is_some() { None } else { Chip::of(m) }));
     let lone = create_memo(move |_| tools.with(|ts| super::diffs::lone(ts)));
     let diff_send = send.clone();
+    let media_send = send.clone();
     v_stack((
         v_stack((head, bar(ui, me, st, tick), body)).style(move |s| {
             let c = t.get();
@@ -205,6 +206,7 @@ fn card(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>, n: usize, tick: RwSignal
             },
         ),
         super::diffs::under(ui, diff_send, me),
+        super::media::under(ui, media_send, me),
     ))
     .style(|s| s.gap(4.0).width_full().min_width(0.0))
 }
