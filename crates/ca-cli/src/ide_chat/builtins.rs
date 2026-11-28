@@ -6,7 +6,7 @@
 //! | Command | In the IDE |
 //! |---|---|
 //! | `/help` | its list, as a notice |
-//! | `/tasks`, `/context`, `/projects`, `/loop`, `/goal [TEXT]` | open their views: `ui_action{open, text?}` (`/loop EVERY ...` and `/goal` with a word of its own or a `--` are `ide_goal`'s) |
+//! | `/tasks`, `/context`, `/projects`, `/loop`, `/goal TEXT` | open their views: `ui_action{open, text?}` (`/loop EVERY ...`, `/goal` alone and `/goal` with a word of its own or a `--` are `ide_goal`'s) |
 //! | `/resume` | opens the Sessions view; `/resume ID` switches to that session |
 //! | `/fork [N]` | `session_fork{before_q?}`, as the Sessions view sends it |
 //! | `/compact` | the driver's `compact` |
@@ -143,7 +143,7 @@ pub fn route(line: &str) -> Route {
         "/loop" => Route::Leave,
         "/goal" => {
             let first = rest.split_whitespace().next().unwrap_or("");
-            if matches!(first, "pause" | "resume" | "cancel" | "drop") || rest.contains("--") {
+            if rest.is_empty() || matches!(first, "pause" | "resume" | "cancel" | "drop") || rest.contains("--") {
                 Route::Leave
             } else {
                 Route::Open("goal", rest.to_string())
@@ -453,6 +453,7 @@ mod tests {
         }
         assert_eq!(route("/fix-tests now"), Route::Leave, "a command of the library's");
         assert_eq!(route("/loop 5m check"), Route::Leave, "ide_goal's");
+        assert_eq!(route("/goal"), Route::Leave, "where the goal stands, from ide_goal");
         assert_eq!(route("/goal pause"), Route::Leave);
         assert_eq!(route("/goal make it pass --check cargo test"), Route::Leave);
     }
@@ -460,7 +461,6 @@ mod tests {
     #[test]
     fn the_views_open_and_the_drivers_own_messages_are_sent() {
         assert_eq!(route("/goal make the tests pass"), Route::Open("goal", "make the tests pass".into()));
-        assert_eq!(route("/goal"), Route::Open("goal", String::new()));
         assert_eq!(route("/loop"), Route::Open("loops", String::new()));
         assert_eq!(route("/context"), Route::Open("context", String::new()));
         assert_eq!(route("/resume"), Route::Open("sessions", String::new()));
