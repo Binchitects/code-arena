@@ -293,16 +293,23 @@ fn buttons(ui: Ui) -> impl IntoView {
     let t = ui.colors;
     let me = ui.state::<Quotes>();
     let keys = commands::keys_of(REPLY);
-    let reply = button(ui, "reply", || "Reply".into(), move || {
-        if let Some(p) = me.picked.get_untracked() {
-            reply(ui, &p.text);
-        }
-    });
+    let reply = button(
+        ui,
+        "reply",
+        || "Reply".into(),
+        move || {
+            if let Some(p) = me.picked.get_untracked() {
+                reply(ui, &p.text);
+            }
+        },
+    );
     let tip = if keys.is_empty() { "Reply quoting this".to_string() } else { format!("Reply quoting this ({keys})") };
-    let reply = floem::views::tooltip(reply, move || label({
-        let tip = tip.clone();
-        move || tip.clone()
-    }));
+    let reply = floem::views::tooltip(reply, move || {
+        label({
+            let tip = tip.clone();
+            move || tip.clone()
+        })
+    });
     let ask_about = button(ui, "comment-discussion", || "Ask about this".into(), move || me.asking.set(true));
     let copy = button(
         ui,
@@ -396,14 +403,12 @@ fn chip(ui: Ui) -> impl IntoView {
         me.quote.get().filter(|q| q.session == session)
     });
     let x = floem::views::tooltip(
-        floem::views::container(icon("close", 14.0))
-            .on_click_stop(move |_| me.quote.set(None))
-            .style(move |s| {
-                s.padding(3.0)
-                    .border_radius(4.0)
-                    .cursor(CursorStyle::Pointer)
-                    .hover(|s| s.background(t.get().toolbar_hover))
-            }),
+        floem::views::container(icon("close", 14.0)).on_click_stop(move |_| me.quote.set(None)).style(move |s| {
+            s.padding(3.0)
+                .border_radius(4.0)
+                .cursor(CursorStyle::Pointer)
+                .hover(|s| s.background(t.get().toolbar_hover))
+        }),
         || label(|| "Remove the quote"),
     );
     h_stack((
@@ -413,7 +418,9 @@ fn chip(ui: Ui) -> impl IntoView {
             label(move || now.with(|q| q.as_ref().map(|q| super::question::two_lines(&q.text)).unwrap_or_default()))
                 .style(move |s| s.font_size(12.0).line_height(1.4).color(t.get().fg).text_overflow(TextOverflow::Wrap)),
             label(move || format!("Cut to {} characters.", super::answer::thousands(MOST as u64))).style(move |s| {
-                s.font_size(11.0).color(t.get().desc).apply_if(!now.with(|q| q.as_ref().is_some_and(|q| q.cut)), |s| s.hide())
+                s.font_size(11.0)
+                    .color(t.get().desc)
+                    .apply_if(!now.with(|q| q.as_ref().is_some_and(|q| q.cut)), |s| s.hide())
             }),
         ))
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).gap(1.0)),
