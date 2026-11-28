@@ -60,13 +60,14 @@ mod tests {
         let send: Send = Rc::new(|_| {});
         crate::workbench::register(ui, &send);
         crate::settings::register(ui, &send);
+        crate::settings::editor::register(ui, &send);
         crate::activity_bar::register(ui, &send);
         register(ui, &send);
         let rows = shown(ui);
         let at = |t: &str| rows.iter().position(|r| r.starts_with(t)).unwrap_or_else(|| panic!("{t} in {rows:?}"));
         assert!(at("Command Palette...") < at("Settings"));
         assert!(at("Settings") < at("Keyboard Shortcuts") && at("Keyboard Shortcuts") < at("Themes: Color Theme"));
-        // Open Settings is there (the settings.json for now), with VS Code's Ctrl+,; the Keyboard Shortcuts editor
+        // Open Settings is there (the Settings editor), with VS Code's Ctrl+,; the Keyboard Shortcuts editor
         // is not there yet.
         assert_eq!(rows.iter().filter(|r| r.starts_with("Settings")).count(), 1);
         assert_eq!(rows[at("Settings")], format!("Settings {}", crate::commands::keys_of(OPEN_SETTINGS)));
