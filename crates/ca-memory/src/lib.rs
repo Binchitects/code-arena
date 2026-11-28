@@ -40,6 +40,19 @@ struct State {
     given: Vec<String>,
 }
 
+/// One memory as the IDE lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Item {
+    pub text: String,
+    /// "person", "project" or "company".
+    pub scope: String,
+    /// What it is ("fact", "preference", ...), empty when it is not said.
+    pub kind: String,
+    pub pinned: bool,
+    /// The person's own: theirs to forget.
+    pub own: bool,
+}
+
 pub struct Memory {
     arena: Option<ArenaClient>,
     pub project_key: String,
@@ -225,6 +238,33 @@ impl Memory {
             self.files.read(true).into_iter().map(|t| (None, "person".to_string(), t)).collect();
         out.extend(self.files.read(false).into_iter().map(|t| (None, "project".to_string(), t)));
         out
+    }
+
+    /// What `/memory` lists, in its order (its numbers are theirs), with what else is known of each: the IDE's
+    /// Memory view shows them. The files' lines have no kind, are not pinned and are the person's own.
+    pub fn items(&self) -> Vec<Item> {
+        if self.online() {
+            return self
+                .state
+                .lock()
+                .map(|s| {
+                    s.listed
+                        .iter()
+                        .map(|m| Item {
+                            text: m.text.clone(),
+                            scope: m.scope.clone(),
+                            kind: m.kind.clone(),
+                            pinned: m.pinned,
+                            own: m.mine && m.scope != "company",
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+        self.listed()
+            .into_iter()
+            .map(|(_, scope, text)| Item { text, scope, kind: String::new(), pinned: false, own: true })
+            .collect()
     }
 
     /// Forgets the memory `/memory` lists at this place (from 1): the one forgotten.
