@@ -288,13 +288,9 @@ pub fn ask(send: &Send) {
     send(json!({"type": "context"}));
 }
 
-/// Compacts now: refused while an answer is written.
+/// Compacts now: refused while an answer is written or with too little to compact (`compaction.rs`).
 pub fn compact_now(ui: Ui, send: &Send) {
-    if ui.running.get_untracked() {
-        crate::widgets::toast::info(ui, "Compact when the answer is done.");
-        return;
-    }
-    send(json!({"type": "compact"}));
+    super::compaction::compact_now(ui, send);
 }
 
 /// The Context view shown, with what fills the window asked again.

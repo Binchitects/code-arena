@@ -127,7 +127,7 @@ pub fn register(_ui: Ui, _send: &Send) {
         .when(|ui| ui.view_shown(View::Agent)),
     );
     commands::add(
-        command(COMPACT, "Chat", "Compact the Conversation", |_, send| send(serde_json::json!({"type": "compact"})))
+        command(COMPACT, "Chat", "Compact the Conversation", |ui, send| super::compaction::compact_now(ui, send))
             .enabled(|ui| !ui.running.get_untracked()),
     );
     let float = crate::workbench::float_command(View::Agent);

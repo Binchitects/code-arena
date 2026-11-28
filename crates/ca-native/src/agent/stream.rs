@@ -27,6 +27,7 @@ pub fn thread_of(ui: Ui, m: &Value) -> Vec<Item> {
         match msg["role"].as_str() {
             Some("user") => items.extend(super::question::kept(ui, msg)),
             Some("assistant") => super::answer::kept(ui, msg, &mut items, m["running"] == true),
+            Some("mark") if msg["type"] == "compaction" => items.push(super::compaction::kept(ui, msg)),
             _ => {}
         }
     }

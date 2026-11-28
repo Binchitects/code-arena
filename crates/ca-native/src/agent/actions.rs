@@ -246,11 +246,29 @@ fn row(ui: Ui, send: Send, id: u64, q: &Question) -> impl IntoView {
     let n = q.q;
     let numbered = n > 0;
     let busy = move || ui.running.get();
+    // A question a compaction covers is not asked again: Edit and Answer again say so.
+    let covered = move |asks: bool| asks && super::compaction::covers(ui, n);
+    let covered_now = move |asks: bool| asks && super::compaction::covers_now(ui, n);
     // Each of the others, dimmed while an answer is written (and saying why when pressed).
-    let gated = move |name: &'static str, tip: &'static str, run: Rc<dyn Fn()>| {
-        let button = widgets::action(t, name, move || if ui.running.get_untracked() { busy_said(ui) } else { run() });
-        tipped(container(button).style(move |s| s.apply_if(busy(), |s| s.color(t.get().desc))), move || {
-            if ui.running.get_untracked() { BUSY.into() } else { tip.into() }
+    let gated = move |name: &'static str, tip: &'static str, asks: bool, run: Rc<dyn Fn()>| {
+        let button = widgets::action(t, name, move || {
+            if ui.running.get_untracked() {
+                busy_said(ui)
+            } else if covered_now(asks) {
+                toast::info(ui, super::compaction::COVERED);
+            } else {
+                run()
+            }
+        });
+        let dim = move || busy() || covered(asks);
+        tipped(container(button).style(move |s| s.apply_if(dim(), |s| s.color(t.get().desc))), move || {
+            if ui.running.get_untracked() {
+                BUSY.into()
+            } else if covered_now(asks) {
+                super::compaction::COVERED.into()
+            } else {
+                tip.into()
+            }
         })
         .style(move |s| s.apply_if(!numbered, |s| s.hide()))
     };
@@ -258,6 +276,7 @@ fn row(ui: Ui, send: Send, id: u64, q: &Question) -> impl IntoView {
     let edit = gated(
         "edit",
         "Edit: ask it again in new words (what came after it goes, and the files are put back)",
+        true,
         Rc::new(move || {
             a.words.set(edit_words.clone());
             a.quote.set(quote.clone());
@@ -270,6 +289,7 @@ fn row(ui: Ui, send: Send, id: u64, q: &Question) -> impl IntoView {
         gated(
             "refresh",
             "Answer again",
+            true,
             Rc::new(move || {
                 if let Some(at) = place.get() {
                     again_menu(ui, send.clone(), id, n, at);
@@ -281,7 +301,7 @@ fn row(ui: Ui, send: Send, id: u64, q: &Question) -> impl IntoView {
     place.set(Some(again.id()));
     let (quote, rewind_words) = (q.quote.clone(), words);
     let rewind =
-        gated("discard", REWIND, Rc::new(move || ask_rewind(ui, &send, n, rewind_words.clone(), quote.clone())));
+        gated("discard", REWIND, false, Rc::new(move || ask_rewind(ui, &send, n, rewind_words.clone(), quote.clone())));
     let shown = create_memo(move |_| a.hovered.get() == Some(id));
     container(h_stack((copy, edit, again, rewind)).style(move |s| s.gap(2.0).apply_if(!shown.get(), |s| s.hide())))
         .style(|s| s.width_full().height(24.0).margin_top(2.0).flex_row().justify_end().items_center())
