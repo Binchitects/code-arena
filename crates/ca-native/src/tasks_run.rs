@@ -499,6 +499,11 @@ mod tests {
         let ids: Vec<u64> = ui.terms.with_untracked(|l| l.iter().map(|s| s.id).collect());
         assert_eq!(ids, vec![1_000_003, 1_000_002]);
         assert!(all.borrow().contains(&json!({"type": "term_close", "id": 1_000_001})));
+        assert_eq!(
+            crate::terminal::task_ended_text(Some(3)),
+            "The terminal process terminated with exit code: 3. Terminal will be reused by tasks, press any key to \
+             close it."
+        );
         // One still running is not taken away.
         take(ui, &json!({"type": "task_started", "label": "b", "terminal": 1_000_004, "replaces": 1_000_002}), &send);
         assert_eq!(ui.terms.with_untracked(Vec::len), 2);
