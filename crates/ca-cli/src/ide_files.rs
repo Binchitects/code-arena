@@ -262,6 +262,17 @@ pub(crate) fn modified(meta: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+/// The project as the window shows it: the whole repository, also when the folder worked in is under its top (the
+/// Explorer lists the repository from its top, and a shell still begins in the folder worked in).
+fn whole_project(ws: Arc<ca_workspace::Workspace>) -> Arc<ca_workspace::Workspace> {
+    if ws.allowed().iter().any(|a| ws.root().starts_with(a)) {
+        return ws;
+    }
+    let mut added = ws.allowed().to_vec();
+    added.push(ws.root().to_path_buf());
+    ca_workspace::Workspace::open(ws.cwd(), &added).map(Arc::new).unwrap_or(ws)
+}
+
 impl Side {
     pub fn new(
         ws: Arc<ca_workspace::Workspace>,
@@ -271,6 +282,7 @@ impl Side {
         data: &Path,
     ) -> Side {
         let shell = shell.map(PathBuf::from).filter(|p| p.is_absolute());
+        let ws = whole_project(ws);
         let backups = data.join("ide-backups").join(name_of(&ws.root().to_string_lossy()));
         Side {
             ws,
@@ -1540,6 +1552,20 @@ mod tests {
         let ws = Arc::new(ca_workspace::Workspace::open(d.path(), &[]).expect("ws"));
         let (out, rx) = broadcast::channel(64);
         (d, Side::new(ws, Arc::default(), out, None, &std::env::temp_dir()), rx)
+    }
+
+    #[test]
+    fn a_folder_under_the_repository_top_still_lists_the_repository_and_its_shells_begin_there() {
+        let d = tempfile::tempdir().expect("temp");
+        std::fs::create_dir_all(d.path().join(".git")).expect("git");
+        std::fs::create_dir_all(d.path().join("src")).expect("dir");
+        std::fs::write(d.path().join("notes.txt"), "n\n").expect("w");
+        let ws = Arc::new(ca_workspace::Workspace::open(&d.path().join("src"), &[]).expect("ws"));
+        let (out, _rx) = broadcast::channel(8);
+        let s = Side::new(ws, Arc::default(), out, None, &std::env::temp_dir());
+        assert!(s.real("").is_ok());
+        assert!(s.real("notes.txt").is_ok());
+        assert!(s.workspace().cwd().ends_with("src"));
     }
 
     #[test]
