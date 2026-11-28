@@ -158,7 +158,13 @@ fn seq_of(questions: &[(usize, i64, String)], q: usize) -> Option<i64> {
 /// mode in force for a new one; the project's side made again when its folder is another. Nothing changes when it
 /// cannot be prepared (why is given back).
 pub async fn switch_session(ctx: &mut Ctx<'_>, resume: Resume) -> Result<(), String> {
-    let mut cwd = ctx.p.agent.ctx.workspace.cwd().to_path_buf();
+    switch_in(ctx, resume, None).await
+}
+
+/// [`switch_session`] in another folder (Open Folder): `None` keeps the folder worked in, and a session taken up by
+/// its id is always prepared in its own folder.
+pub async fn switch_in(ctx: &mut Ctx<'_>, resume: Resume, folder: Option<std::path::PathBuf>) -> Result<(), String> {
+    let mut cwd = folder.unwrap_or_else(|| ctx.p.agent.ctx.workspace.cwd().to_path_buf());
     if let Resume::Id(id) = &resume {
         let folder = ctx.p.store.lock().ok().and_then(|s| s.summary(id).ok()).map(|s| s.folder);
         match folder {

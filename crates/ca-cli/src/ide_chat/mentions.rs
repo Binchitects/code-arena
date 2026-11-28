@@ -19,7 +19,7 @@ use crate::ide_ext::{Ctx, Shared, send};
 const MOST: usize = 2000;
 
 /// A path as typed made whole: `~` the home folder.
-fn whole(path: &str, home: Option<&Path>) -> PathBuf {
+pub fn whole(path: &str, home: Option<&Path>) -> PathBuf {
     let path = match (path.strip_prefix('~'), home) {
         (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with(['/', '\\']) => {
             home.join(rest.trim_start_matches(['/', '\\']))
