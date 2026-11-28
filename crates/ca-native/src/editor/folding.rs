@@ -756,7 +756,10 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
             let Event::KeyDown(key_event) = event else { return };
             let key_text = key_event.key.text.clone();
             let Ok(press) = KeyPress::try_from(key_event) else { return };
-            keys(sig, &press, key_event.modifiers);
+            // A key a command took (a chord's second key, Ctrl+K D) is not typed too.
+            if keys(sig, &press, key_event.modifiers) == CommandExecuted::Yes {
+                return;
+            }
             let mut mods = key_event.modifiers;
             mods.set(Modifiers::SHIFT, false);
             mods.set(Modifiers::ALTGR, false);

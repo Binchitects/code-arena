@@ -672,8 +672,10 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             }
             true
         }
-        "stats" => {
-            for it in m["items"].as_array().into_iter().flatten() {
+        "stats" | "saved" => {
+            let saved = [m.clone()];
+            let items = if m["type"] == "saved" { &saved[..] } else { m["items"].as_array().map_or(&[][..], |a| a) };
+            for it in items.iter().filter(|it| it["error"].is_null()) {
                 let Some(path) = it["path"].as_str() else { continue };
                 let shown: Vec<String> = OPEN.with(|o| {
                     o.borrow()
@@ -709,5 +711,39 @@ mod tests {
         assert_eq!(Source::Before("x/y.py".into()).label(), "y.py (before the agent)");
         assert_eq!(Source::parse("empty"), Some(Source::Empty));
         assert_eq!(Source::parse("what:x"), None);
+    }
+
+    #[test]
+    fn compare_with_saved_reads_the_disk_and_reverts_into_the_files_own_text() {
+        let ui = Ui::new();
+        let asked = Rc::new(RefCell::new(Vec::<Value>::new()));
+        let kept = asked.clone();
+        let send: Send = Rc::new(move |v: Value| kept.borrow_mut().push(v));
+        register(ui, &send);
+        ui.take(&json!({"type": "file", "path": "a.rs", "text": "one\ntwo\nthree\n", "modified": 1}), &send);
+        let tab = ui.tab("a.rs").unwrap();
+        tab.doc.edit_single(Selection::region(4, 7), "2", EditType::Other);
+        assert!(tab.dirty.get_untracked());
+        asked.borrow_mut().clear();
+        open(ui, &send, Source::Saved("a.rs".into()), Source::Live("a.rs".into()));
+        let path = "compare:saved:a.rs ↔ live:a.rs";
+        assert_eq!(ui.active.get_untracked().as_deref(), Some(path));
+        assert_eq!(*asked.borrow(), [json!({"type": "open", "path": "a.rs"})], "the saved text is asked of the disk");
+        // The reply is the compare's: taken away, not the file's tab's.
+        let reply = json!({"type": "file", "path": "a.rs", "text": "one\ntwo\nthree\n", "modified": 1});
+        assert!(take(ui, &reply, &send));
+        let e = entry(path).unwrap();
+        assert_eq!(e.left.doc.text().to_string(), "one\ntwo\nthree\n");
+        assert!(Rc::ptr_eq(&e.right.doc, &tab.doc), "the modified side is the file's own text");
+        // Revert Block puts the saved line back into the file's text.
+        apply(ui, &e, align::compare("one\ntwo\nthree\n", "one\n2\nthree\n", true, None));
+        assert_eq!(e.compared.get_untracked().hunks.len(), 1);
+        revert_at(ui, path, 1);
+        assert_eq!(tab.text(), "one\ntwo\nthree\n");
+        // Save saves the file.
+        asked.borrow_mut().clear();
+        ui.save(&send);
+        assert_eq!(asked.borrow()[0]["type"], "save");
+        assert_eq!(asked.borrow()[0]["path"], "a.rs");
     }
 }
