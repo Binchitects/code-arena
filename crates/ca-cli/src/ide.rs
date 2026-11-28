@@ -1236,6 +1236,7 @@ async fn turn(
     let jobs = p.agent.ctx.jobs.clone();
     let mut events = PageEvents::new(out.clone(), Some(sh.clone()));
     let result = {
+        p.agent.attached = std::mem::take(&mut sent.attached);
         let running = p.agent.turn(&message, &mut events);
         tokio::pin!(running);
         loop {

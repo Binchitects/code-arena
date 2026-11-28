@@ -37,6 +37,11 @@ impl Infos {
     fn all(&self) -> Vec<ModelInfo> {
         self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
     }
+
+    /// The gateway said the model sees pictures (one it did not describe does not).
+    pub fn sees(&self, model: &str) -> bool {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().any(|m| m.id == model && m.vision)
+    }
 }
 
 /// One model's row, as a face reads it.
