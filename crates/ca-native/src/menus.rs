@@ -86,6 +86,8 @@ pub struct Item {
     /// A codicon, where the menu draws one.
     pub icon: &'static str,
     pub when: Option<Test>,
+    /// Whether it is drawn with a check (a setting that is on).
+    pub checked: Option<Test>,
 }
 
 /// An item running a command.
@@ -98,6 +100,7 @@ pub fn item(command: &str) -> Item {
         order: 0,
         icon: "",
         when: None,
+        checked: None,
     }
 }
 
@@ -137,6 +140,12 @@ impl Item {
         self.when = Some(std::rc::Rc::new(test));
         self
     }
+
+    /// Drawn with a check while the test holds, as VS Code's toggles in a menu.
+    pub fn checked(mut self, test: impl Fn(Ui) -> bool + 'static) -> Item {
+        self.checked = Some(std::rc::Rc::new(test));
+        self
+    }
 }
 
 thread_local! {
@@ -174,6 +183,8 @@ pub enum Row {
         icon: &'static str,
         /// The command a click runs; none while it may not run (drawn dimmed).
         command: Option<String>,
+        /// Drawn with a check.
+        checked: bool,
     },
 }
 
@@ -220,7 +231,8 @@ fn rows_where(ui: Ui, menu: Menu, keep: impl Fn(&str) -> bool) -> Vec<Row> {
             out.push(Row::Line);
         }
         last = Some(item.group.clone());
-        out.push(Row::Entry { title, keys, icon: item.icon, command: run });
+        let checked = item.checked.as_ref().is_some_and(|c| c(ui));
+        out.push(Row::Entry { title, keys, icon: item.icon, command: run, checked });
     }
     out
 }
