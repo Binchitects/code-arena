@@ -798,6 +798,7 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
         ((e.max_line_width() + room).max(vp.width()), rows.max(vp.height()) + beyond.max(0.0))
     });
     let caret_path = path.to_string();
+    let kept = Rc::new(RefCell::new(None));
     scroll(container(text).style(move |s| {
         let (w, h) = size.get();
         // Out of the flow, as Floem's own editor puts its text: in it, its size made the scroll view as wide as
@@ -811,6 +812,18 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
         let editor = sig.get_untracked();
         let cursor = cursor.get();
         editor.doc().cache_rev().track();
+        // Only for a caret moved or a text changed: the lines laid out again for their marks alone (`decor.rs` bumps
+        // the cache for them, as the lines scrolled to get theirs) leave the view where it was scrolled to (the
+        // minimap, the scroll bar), as the viewport itself is always visible.
+        let now = (cursor.offset(), cursor.is_insert(), editor.doc().text());
+        let same = kept.borrow().as_ref().is_some_and(|k: &(usize, bool, Rope)| {
+            k.0 == now.0 && k.1 == now.1 && k.2.ptr_eq(&now.2)
+        });
+        if same {
+            editor.es.track();
+            return viewport.get_untracked();
+        }
+        *kept.borrow_mut() = Some(now);
         let LineRegion { x, width, rvline } =
             cursor_caret(&editor, cursor.offset(), !cursor.is_insert(), cursor.affinity);
         let height = f64::from(editor.line_height(0));
