@@ -419,7 +419,8 @@ fn viewer(ui: Ui, send: Send) -> AnyView {
         })
         .style(|s| s.font_size(12.0)),
         label(move || {
-            picture.with(|p| p.as_ref().map(|p| format!("{} × {}  {}", p.width, p.height, files::bytes(p.size))))
+            picture
+                .with(|p| p.as_ref().map(|p| format!("{} × {}  {}", p.width, p.height, files::bytes(p.size))))
                 .unwrap_or_default()
         })
         .style(|s| s.font_size(12.0)),
@@ -527,12 +528,7 @@ fn viewer(ui: Ui, send: Send) -> AnyView {
                 _ => {}
             }
         })
-        .style(move |s| {
-            s.absolute()
-                .inset(0.0)
-                .background(t.get().editor_bg)
-                .apply_if(!open.get(), |s| s.hide())
-        })
+        .style(move |s| s.absolute().inset(0.0).background(t.get().editor_bg).apply_if(!open.get(), |s| s.hide()))
         .into_any()
 }
 
@@ -547,10 +543,7 @@ mod tests {
         let text = "(Saved image/png as /home/a/p/.code-arena/media/make_image-20261128-101500.png: tell the person \
                     where it is.)\n(Saved video/mp4 as C:\\p\\.code-arena\\media\\film-1-2.mp4: tell…)\n\
                     again .code-arena/media/make_image-20261128-101500.png. and .code-arena/media/.gitignore";
-        assert_eq!(
-            found(text),
-            [".code-arena/media/make_image-20261128-101500.png", ".code-arena/media/film-1-2.mp4"]
-        );
+        assert_eq!(found(text), [".code-arena/media/make_image-20261128-101500.png", ".code-arena/media/film-1-2.mp4"]);
         assert!(found("nothing made").is_empty());
         let t = Tool::from_json(&json!({"name": "x", "text": text}), true);
         assert_eq!(t.media.len(), 2, "read from the result when the session does not say");

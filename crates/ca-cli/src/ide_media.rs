@@ -229,10 +229,7 @@ mod tests {
         let text = "Done.\n(Saved image/png as /home/a/p/.code-arena/media/draw-20261128-101500.png: tell the person \
                     where it is.)\n(Saved audio/wav as C:\\p\\.code-arena\\media\\say-1-2.wav: tell…)\n\
                     again .code-arena/media/draw-20261128-101500.png. and .code-arena/media/.gitignore";
-        assert_eq!(
-            made(text),
-            [".code-arena/media/draw-20261128-101500.png", ".code-arena/media/say-1-2.wav"]
-        );
+        assert_eq!(made(text), [".code-arena/media/draw-20261128-101500.png", ".code-arena/media/say-1-2.wav"]);
         assert!(made("nothing made").is_empty());
     }
 
