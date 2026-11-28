@@ -123,12 +123,31 @@ impl Sandbox {
 
     /// `program args…` as the sandbox runs it, in `cwd`.
     pub fn wrap(&self, program: &str, args: &[String], cwd: &Path) -> (String, Vec<String>) {
+        self.wrap_reading(program, args, cwd, &[])
+    }
+
+    /// As [`Sandbox::wrap`], with folders under `/tmp` the command must still read (a folder opened from there, the
+    /// program in it): the sandbox's own `/tmp` would hide them. Reading anywhere else needs nothing.
+    pub fn wrap_reading(
+        &self,
+        program: &str,
+        args: &[String],
+        cwd: &Path,
+        readable: &[PathBuf],
+    ) -> (String, Vec<String>) {
         match &self.kind {
             Kind::Bubblewrap(bwrap) => {
                 let mut a: Vec<String> = ["--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp"]
                     .iter()
                     .map(|s| s.to_string())
                     .collect();
+                for r in readable {
+                    let r = std::fs::canonicalize(r).unwrap_or_else(|_| r.clone());
+                    if r.starts_with("/tmp") && r.exists() && !self.writable.iter().any(|w| r.starts_with(w)) {
+                        let p = r.display().to_string();
+                        a.extend(["--ro-bind".into(), p.clone(), p]);
+                    }
+                }
                 for w in &self.writable {
                     if w.exists() {
                         let p = w.display().to_string();
