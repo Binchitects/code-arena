@@ -330,7 +330,7 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
         }
         Kind::Compaction { .. } => super::compaction::view(ui, send, &i),
         Kind::Notice(text) => label(move || text.clone())
-            .style(move |s| s.color(t.get().desc).font_size(12.0).text_overflow(TextOverflow::Wrap))
+            .style(move |s| s.color(t.get().desc).font_size(12.0).line_height(1.4).text_overflow(TextOverflow::Wrap))
             .into_any(),
         Kind::Error(text) => h_stack((
             icon("error", 16.0).style(move |s| s.color(t.get().error)),
