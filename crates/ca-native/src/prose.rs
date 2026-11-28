@@ -62,15 +62,21 @@ pub fn answer_quoting(ui: Ui, text: RwSignal<String>, quoting: Option<Quoting>) 
     blocks_view(ui, blocks, quoting, None)
 }
 
+/// Where a link's address leads, as a document reads it.
+pub type Targeting = Box<dyn Fn(&str) -> Option<Target>>;
+
+/// A picture drawn, by its address and its words.
+pub type Picturing = Box<dyn Fn(&str, &str) -> AnyView>;
+
 /// What a document drawn by the answers' renderer (a Markdown file's preview) does that an answer does not: where
 /// its links lead and what a click on one does, how its pictures are drawn, and the view each of its blocks is.
 pub struct Doc {
     /// Where a link's address leads (a path is the document's own, read from its folder); none: nowhere.
-    pub target: Box<dyn Fn(&str) -> Option<Target>>,
+    pub target: Targeting,
     /// What a click on a link does.
     pub follow: Box<dyn Fn(&Target)>,
     /// A picture of it drawn, by its address and its words.
-    pub picture: Box<dyn Fn(&str, &str) -> AnyView>,
+    pub picture: Picturing,
     /// Told each block's view as it is made, by the block's place in the document.
     pub placed: Box<dyn Fn(usize, floem::ViewId)>,
 }
@@ -105,9 +111,9 @@ fn pictures_only(t: &Text) -> Option<Vec<(String, String)>> {
     for (r, _) in &t.pictures {
         rest[r.clone()].fill(b' ');
     }
-    rest.iter().all(u8::is_ascii_whitespace).then(|| {
-        t.pictures.iter().map(|(r, src)| (src.clone(), t.text[r.clone()].to_string())).collect()
-    })
+    rest.iter()
+        .all(u8::is_ascii_whitespace)
+        .then(|| t.pictures.iter().map(|(r, src)| (src.clone(), t.text[r.clone()].to_string())).collect())
 }
 
 /// What a block's view is made for: its kind, and what of it the view is built with. Its text is not of it, so a

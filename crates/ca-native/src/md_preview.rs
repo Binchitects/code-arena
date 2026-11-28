@@ -198,7 +198,10 @@ struct State {
 
 impl crate::ext::State for State {
     fn new(ui: Ui) -> Self {
-        State { entries: ui.scope.create_rw_signal(HashMap::new()), pictures: ui.scope.create_rw_signal(HashMap::new()) }
+        State {
+            entries: ui.scope.create_rw_signal(HashMap::new()),
+            pictures: ui.scope.create_rw_signal(HashMap::new()),
+        }
     }
 }
 
@@ -459,9 +462,7 @@ pub fn register(_ui: Ui, _send: &Send) {
         .keys("Ctrl+Shift+V")
         .when(|ui| preview_shown(ui).is_some()),
     );
-    breadcrumbs::end("open-preview", "Open Preview to the Side", |_ui, file| is_markdown(file), |ui, send, file| {
-        open_to_side(ui, send, file)
-    });
+    breadcrumbs::end("open-preview", "Open Preview to the Side", |_ui, file| is_markdown(file), open_to_side);
 }
 
 /// The pictures and the files on disk the previews asked for, as media. Never taken away from the parts after it.
@@ -556,7 +557,11 @@ mod tests {
         let at_line = Target::File(Ref { path: "src/main.rs".into(), line: Some(12), ..Ref::default() });
         assert_eq!(target("docs/a", "../../src/main.rs#L12"), Some(at_line));
         assert_eq!(target("docs", "/README.md"), file("README.md"), "from the project's top");
-        assert_eq!(target("docs", "./my%20notes.md#usage"), file("docs/my notes.md"), "another file's heading is its file");
+        assert_eq!(
+            target("docs", "./my%20notes.md#usage"),
+            file("docs/my notes.md"),
+            "another file's heading is its file"
+        );
         assert_eq!(target("docs", "#Getting-Started"), Some(Target::Heading("getting-started".into())));
         assert_eq!(target("", "https://x.dev/a"), Some(Target::Web("https://x.dev/a".into())));
         assert_eq!(target("", "mailto:a@b.c"), Some(Target::Web("mailto:a@b.c".into())));

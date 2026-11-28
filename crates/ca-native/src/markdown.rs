@@ -656,7 +656,11 @@ mod tests {
         assert_eq!(t.text, "See https://example.com/a_b?c=1. Or https://x.dev, or a picture");
         assert_eq!(runs(&t), [("https://example.com/a_b?c=1", LINK), ("https://x.dev", LINK), ("a picture", LINK)]);
         assert_eq!(t.pictures, [(54..63, "p.png".to_string())], "a picture is known as one, with its address");
-        assert_eq!(inline("![](a.svg) [x](b.png)").pictures, [(0..5, "a.svg".to_string())], "one without words, its address as its words");
+        assert_eq!(
+            inline("![](a.svg) [x](b.png)").pictures,
+            [(0..5, "a.svg".to_string())],
+            "one without words, its address as its words"
+        );
     }
 
     #[test]
