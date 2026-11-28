@@ -1102,6 +1102,15 @@ Sections used:
   Reopen Editor With... and Open as Notebook (at the breadcrumbs' end) switch views. A notebook that
   is not nbformat 4 opens as text. Create: New Jupyter Notebook makes one and never overwrites a
   file.
+- **The model can call its tools by writing Python.** run_code runs code in the chat's own
+  interpreter, which keeps its variables between calls and uses the project's .venv when there is
+  one. In it, `import arena` calls the session's tools as functions (arena.local.read_file,
+  arena.<server>.<tool>; arena.tools.search lists them). Each call is checked as a direct one is,
+  with at most 100 per run. The model reads what the program prints, the value of its last line,
+  its error, and the plots it saved in .code-arena/plots.
+- **Choose how the model is given its tools.** The Manage menu has '<model>'s tools': As Arena says,
+  Direct (no run_code), As code (the servers' tools only as functions of a run_code program), or
+  Both. The choice is kept as tools.mode in your settings.
 
 
 ### :bug: Bugs fixed
