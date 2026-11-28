@@ -20,7 +20,7 @@ use std::rc::Rc;
 use floem::IntoView;
 use floem::keyboard::{Key, Modifiers};
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo};
-use floem::style::{CursorStyle, FlexWrap, Position};
+use floem::style::{CursorStyle, FlexWrap, Position, TextOverflow};
 use floem::views::{Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, tooltip, v_stack};
 use serde_json::{Value, json};
 
@@ -354,8 +354,14 @@ fn chips(ui: Ui) -> impl IntoView {
             .color(t.get().desc)
             .apply_if(blind.with(Option::is_none), |s| s.hide())
     });
-    let note = label(move || me.note.get())
-        .style(move |s| s.font_size(11.0).color(t.get().error).apply_if(me.note.with(String::is_empty), |s| s.hide()));
+    let note = label(move || me.note.get()).style(move |s| {
+        s.font_size(12.0)
+            .line_height(1.4)
+            .min_width(0.0)
+            .text_overflow(TextOverflow::Wrap)
+            .color(t.get().error)
+            .apply_if(me.note.with(String::is_empty), |s| s.hide())
+    });
     let empty_all = create_memo(move |_| me.uploads.with(Vec::is_empty) && me.note.with(String::is_empty));
     v_stack((list, blind_line, note))
         .style(move |s| s.gap(6.0).margin_bottom(6.0).width_full().apply_if(empty_all.get(), |s| s.hide()))
