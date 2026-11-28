@@ -64,13 +64,13 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(command(TERMINATE, "Tasks", "Terminate Task", list("terminate")));
     add(command(SHOW_RUNNING, "Tasks", "Show Running Tasks", list("running")));
     add(command(BUILD_CONFIGURATION, "Tasks", "Select Build Configuration", list("build")));
-    let bar = |c: &str| item(c);
+    let bar = item;
     let terminal = Menu::TitleBar(crate::menus::TERMINAL);
-    crate::menus::add(terminal.clone(), bar(RUN_TASK).title("Run Task...").group("3_run").order(1));
-    crate::menus::add(terminal.clone(), bar(RUN_BUILD).title("Run Build Task...").group("3_run").order(2));
-    crate::menus::add(terminal.clone(), bar(RUN_TEST).title("Run Test Task...").group("3_run").order(3));
-    crate::menus::add(terminal.clone(), bar(SHOW_RUNNING).title("Show Running Tasks...").group("4_tasks").order(1));
-    crate::menus::add(terminal.clone(), bar(TERMINATE).title("Terminate Task...").group("4_tasks").order(2));
+    crate::menus::add(terminal, bar(RUN_TASK).title("Run Task...").group("3_run").order(1));
+    crate::menus::add(terminal, bar(RUN_BUILD).title("Run Build Task...").group("3_run").order(2));
+    crate::menus::add(terminal, bar(RUN_TEST).title("Run Test Task...").group("3_run").order(3));
+    crate::menus::add(terminal, bar(SHOW_RUNNING).title("Show Running Tasks...").group("4_tasks").order(1));
+    crate::menus::add(terminal, bar(TERMINATE).title("Terminate Task...").group("4_tasks").order(2));
     crate::menus::add(
         terminal,
         bar(BUILD_CONFIGURATION).title("Select Build Configuration...").group("5_configure").order(1),
@@ -144,9 +144,7 @@ pub fn ask_of(input: &Value) -> Option<Ask> {
     };
     let options = || input["options"].as_array().into_iter().flatten().filter_map(option).collect::<Vec<_>>();
     match input["type"].as_str()? {
-        "promptString" => {
-            Some(Ask::Text { id, prompt: words, value: default, password: input["password"] == true })
-        }
+        "promptString" => Some(Ask::Text { id, prompt: words, value: default, password: input["password"] == true }),
         "pickString" => Some(Ask::Pick { id, title: words, options: options(), active: default }),
         "pickProcess" => {
             let title = if words.is_empty() { "Select the process to attach to".to_string() } else { words };
@@ -186,14 +184,12 @@ fn next(ui: Ui, asks: Vec<Ask>, at: usize, mut answers: Map<String, Value>, done
                 .iter()
                 .map(|(label, value, detail)| quick::item(value, label).description(detail))
                 .collect::<Vec<_>>();
-            quick::pick(&title).placeholder(&title).items(items).active(&active).open(ui, move |picked| {
-                match picked {
-                    Some(item) => {
-                        answers.insert(id, json!(item.id));
-                        next(ui, asks, at + 1, answers, done);
-                    }
-                    None => done(None),
+            quick::pick(&title).placeholder(&title).items(items).active(&active).open(ui, move |picked| match picked {
+                Some(item) => {
+                    answers.insert(id, json!(item.id));
+                    next(ui, asks, at + 1, answers, done);
                 }
+                None => done(None),
             });
         }
     }
@@ -408,13 +404,19 @@ mod tests {
     #[test]
     fn a_prompt_string_is_asked_in_an_input_box() {
         let a = ask_of(&json!({"id": "name", "type": "promptString", "description": "Name?", "default": "web"}));
-        assert_eq!(a, Some(Ask::Text { id: "name".into(), prompt: "Name?".into(), value: "web".into(), password: false }));
+        assert_eq!(
+            a,
+            Some(Ask::Text { id: "name".into(), prompt: "Name?".into(), value: "web".into(), password: false })
+        );
     }
 
     #[test]
     fn a_password_is_asked_as_a_secret() {
         let a = ask_of(&json!({"id": "pw", "type": "promptString", "description": "Token", "password": true}));
-        assert_eq!(a, Some(Ask::Text { id: "pw".into(), prompt: "Token".into(), value: String::new(), password: true }));
+        assert_eq!(
+            a,
+            Some(Ask::Text { id: "pw".into(), prompt: "Token".into(), value: String::new(), password: true })
+        );
     }
 
     #[test]
@@ -471,7 +473,10 @@ mod tests {
         let r = rows(&m, false);
         let labels: Vec<(&str, &str, &str)> =
             r.iter().map(|i| (i.label.as_str(), i.description.as_str(), i.group.as_str())).collect();
-        assert_eq!(labels, vec![("mine", "Mine", "configured tasks"), ("npm: build", "npm run build", "detected tasks")]);
+        assert_eq!(
+            labels,
+            vec![("mine", "Mine", "configured tasks"), ("npm: build", "npm run build", "detected tasks")]
+        );
         assert_eq!(rows(&m, true).len(), 1);
     }
 

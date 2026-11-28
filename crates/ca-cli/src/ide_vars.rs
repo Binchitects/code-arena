@@ -127,9 +127,8 @@ fn value(name: &str, cx: &Ctx) -> Result<Option<String>, String> {
     if name.starts_with("workspaceFolder:") {
         return Ok(Some(shown(folder)));
     }
-    let file = || {
-        cx.file.map(Path::new).ok_or_else(|| format!("Variable {name} can not be resolved. Please open an editor."))
-    };
+    let file =
+        || cx.file.map(Path::new).ok_or_else(|| format!("Variable {name} can not be resolved. Please open an editor."));
     let base = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let relative = |p: &Path| p.strip_prefix(folder).map(Path::to_path_buf).unwrap_or_else(|_| p.to_path_buf());
     let v = match name {
@@ -141,12 +140,8 @@ fn value(name: &str, cx: &Ctx) -> Result<Option<String>, String> {
         "relativeFile" => shown(&relative(file()?)),
         "relativeFileDirname" => relative(file()?).parent().map(shown).unwrap_or_default(),
         "fileBasename" => base(file()?),
-        "fileBasenameNoExtension" => {
-            file()?.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
-        }
-        "fileExtname" => {
-            file()?.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default()
-        }
+        "fileBasenameNoExtension" => file()?.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
+        "fileExtname" => file()?.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default(),
         "fileDirname" => file()?.parent().map(shown).unwrap_or_default(),
         "fileDirnameBasename" => file()?.parent().map(base).unwrap_or_default(),
         "lineNumber" => match cx.line {
@@ -224,7 +219,10 @@ mod tests {
     #[test]
     fn unknown_variables_stay_and_a_file_needs_an_editor() {
         with(None, json!({}), |cx| {
-            assert_eq!(expand("${nothing} ${defaultBuildTask} $x {y}", cx).as_deref(), Ok("${nothing} ${defaultBuildTask} $x {y}"));
+            assert_eq!(
+                expand("${nothing} ${defaultBuildTask} $x {y}", cx).as_deref(),
+                Ok("${nothing} ${defaultBuildTask} $x {y}")
+            );
             assert_eq!(expand("open ${", cx).as_deref(), Ok("open ${"));
             assert_eq!(
                 expand("${file}", cx),

@@ -66,10 +66,10 @@ impl Area for Here {
                 tokio::task::spawn_blocking(move || {
                     let (data, root) = (&sh.paths.data, sh.workspace.root());
                     let mut reply = json!({"type": "build_configuration", "folder": root.display().to_string()});
-                    if let Some(value) = m["value"].as_str() {
-                        if let Err(e) = set_build(data, root, value) {
-                            reply["error"] = json!(e);
-                        }
+                    if let Some(value) = m["value"].as_str()
+                        && let Err(e) = set_build(data, root, value)
+                    {
+                        reply["error"] = json!(e);
                     }
                     reply["value"] = json!(build_of(data, root));
                     send(&sh.out, reply);
@@ -390,8 +390,8 @@ pub fn choose(tasks: &[Task], group: &str) -> Chosen {
 /// An argument as the shell is to read it.
 fn quoted(a: &Arg) -> String {
     const SPECIAL: &[char] = &[
-        ' ', '\t', '\n', '\'', '"', '\\', '$', '`', '!', '*', '?', ';', '&', '|', '<', '>', '(', ')', '[', ']', '{', '}',
-        '#', '~',
+        ' ', '\t', '\n', '\'', '"', '\\', '$', '`', '!', '*', '?', ';', '&', '|', '<', '>', '(', ')', '[', ']', '{',
+        '}', '#', '~',
     ];
     let v = &a.value;
     let how = match a.quoting {
@@ -779,7 +779,11 @@ struct Context {
 
 impl Context {
     fn expand<R>(&self, f: impl FnOnce(&ide_vars::Ctx) -> R) -> R {
-        let config = |key: &str| self.settings.as_ref().map(|s| s.ide(key, None)).filter(|v| !v.is_null());
+        // Only the IDE's own settings, as VS Code's `${config:}` reads its own: never the connection's.
+        let config = |key: &str| {
+            let setting = ca_settings::ide_schema::ALL.iter().find(|s| s.key == key)?;
+            self.settings.as_ref().map(|s| s.resolve(setting).0).filter(|v| !v.is_null())
+        };
         let cx = ide_vars::Ctx {
             folder: &self.folder,
             file: self.file.as_deref(),
@@ -840,7 +844,11 @@ async fn run_asked(sh: Shared, m: Value) {
             Some(i) if matches!(i["type"].as_str(), Some("promptString" | "pickString")) => needed.push(i.clone()),
             Some(i) => {
                 let kind = i["type"].as_str().unwrap_or("");
-                return failed("label", &label, &format!("The input '{id}' is of the type '{kind}', which is not read."));
+                return failed(
+                    "label",
+                    &label,
+                    &format!("The input '{id}' is of the type '{kind}', which is not read."),
+                );
             }
             None => return failed("label", &label, &format!("The input '{id}' is not in tasks.json's \"inputs\".")),
         }
@@ -989,7 +997,10 @@ async fn ended(sh: &Shared, rx: &mut tokio::sync::broadcast::Receiver<String>, i
 fn stop(sh: &Shared, label: &str) {
     let r = runs(sh);
     let Some(run) = r.get(label).filter(|r| r.running) else {
-        send(&sh.out, json!({"type": "task_stop", "label": label, "error": format!("The task '{label}' is not running.")}));
+        send(
+            &sh.out,
+            json!({"type": "task_stop", "label": label, "error": format!("The task '{label}' is not running.")}),
+        );
         return;
     };
     r.set(label, Run { stopped: true, ..run });
@@ -1090,7 +1101,12 @@ mod tests {
     }
 
     fn t(label: &str, deps: &[&str]) -> Task {
-        Task { label: label.into(), command: "true".into(), depends_on: deps.iter().map(|d| d.to_string()).collect(), ..Task::default() }
+        Task {
+            label: label.into(),
+            command: "true".into(),
+            depends_on: deps.iter().map(|d| d.to_string()).collect(),
+            ..Task::default()
+        }
     }
 
     #[test]
@@ -1173,7 +1189,8 @@ mod tests {
         w("app.csproj", "<Project/>");
         w("CMakeLists.txt", "project(x)");
         w("pyproject.toml", "[tool.pytest.ini_options]");
-        let labels = |build: &str| detect(root, build).into_iter().map(|t| (t.label.clone(), line(&t))).collect::<Vec<_>>();
+        let labels =
+            |build: &str| detect(root, build).into_iter().map(|t| (t.label.clone(), line(&t))).collect::<Vec<_>>();
         let all = labels("Release");
         let has = |l: &str, c: &str| all.iter().any(|(a, b)| a == l && b == c);
         assert!(has("cargo: build", "cargo build --release"), "{all:?}");
