@@ -104,7 +104,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
             || label(|| "More Actions…"),
         )
     };
-    h_stack((goal, tasks, history, more)).style(|s| s.items_center().gap(2.0))
+    h_stack((crate::sessions_arena::mark(ui), goal, tasks, history, more)).style(|s| s.items_center().gap(2.0))
 }
 
 /// What it adds to the window's registries, once at start: the tasks' and the sessions' commands, and the
