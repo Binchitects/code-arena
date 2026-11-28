@@ -13,6 +13,7 @@
 //! - `session_new`, `session_resume{id}`, `session_fork{id?, before_q?}`: between turns only (refused while one
 //!   runs). The session is prepared again with the driver's approver and inbox; the driver then sends `state` and
 //!   `tasks` for it itself.
+//! - Arena's chats, the other sessions sent there, and the session's standing with its chat: see `arena`.
 
 use std::sync::Arc;
 
@@ -21,6 +22,8 @@ use serde_json::{Value, json};
 use crate::ide_ext::{Area, Ctx, Rule, Sent, Shared, send};
 use crate::ide_files::Side;
 use crate::session::{self, Opts, Resume};
+
+mod arena;
 
 /// This area in the driver.
 pub struct Here;
@@ -36,10 +39,38 @@ impl Area for Here {
         ("session_new", Rule::Refuse("start a new session")),
         ("session_resume", Rule::Refuse("take up another session")),
         ("session_fork", Rule::Refuse("fork the session")),
+        ("arena_chats", Rule::Turn),
+        ("arena_chat_open", Rule::Refuse("continue a chat from Arena")),
+        ("sessions_send_all", Rule::Queue),
+        ("_session_news", Rule::Latest),
     ];
+
+    fn start(sh: &Shared) {
+        arena::start(sh);
+    }
+
+    fn state(sh: &Shared, _p: Option<&session::Prepared>, v: &mut Value) {
+        v["sync"] = arena::told(sh);
+    }
+
+    fn status(sh: &Shared, _p: Option<&session::Prepared>, v: &mut Value) {
+        v["sync"] = arena::told(sh);
+    }
+
+    async fn before_turn(ctx: &mut Ctx<'_>, _message: &str) {
+        arena::before_turn(ctx.sh);
+    }
+
+    async fn after_turn(ctx: &mut Ctx<'_>, _end: &crate::ide_ext::TurnEnd) {
+        arena::after_turn(ctx);
+    }
 
     /// The list and the search: read from the store off the driver's loop, then said.
     fn shared(sh: &Shared, m: &Value) -> bool {
+        if crate::ide_ext::kind(m) == "arena_chats" {
+            arena::chats(sh, m);
+            return true;
+        }
         let (store, folder, current, out) = (sh.store.clone(), sh.folder.clone(), sh.session.clone(), sh.out.clone());
         let m = m.clone();
         tokio::task::spawn_blocking(move || {
@@ -65,6 +96,18 @@ impl Area for Here {
                 None => Err("Which session to take up?".to_string()),
             },
             "session_fork" => fork(ctx, m),
+            "arena_chat_open" => {
+                arena::open(ctx, m).await;
+                return true;
+            }
+            "sessions_send_all" => {
+                arena::send_all(ctx);
+                return true;
+            }
+            "_session_news" => {
+                arena::news(ctx, m).await;
+                return true;
+            }
             _ => return false,
         };
         match resume {

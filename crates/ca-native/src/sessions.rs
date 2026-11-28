@@ -343,6 +343,7 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
                 .with(|w| st.found.with(|f| shown(l.as_deref(), w, f.as_ref()).into_iter().collect::<im::Vector<_>>()))
         })
     };
+    let arena = crate::sessions_arena::section(ui, send.clone());
     let list = virtual_stack(
         VirtualDirection::Vertical,
         VirtualItemSize::Fixed(Box::new(|| 22.0)),
@@ -359,7 +360,7 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         },
     )
     .style(|s| s.flex_col().width_full());
-    v_stack((top, scroll(list).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).width_full()), foot(ui)))
+    v_stack((top, scroll(list).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).width_full()), arena, foot(ui)))
         .style(move |s| s.size_full().min_height(0.0).color(t.get().side_fg))
         .into_any()
 }
