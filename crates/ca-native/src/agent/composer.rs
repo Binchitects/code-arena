@@ -817,7 +817,9 @@ pub(super) fn input(ui: Ui, send: Send, anchor: RwSignal<Rect>) -> (AnyView, Vie
     tools.extend(slots::row(ui, &send, Slot::BoxRight).into_iter().map(whole));
     tools.push(whole(stop.into_any()));
     tools.push(whole(go.into_any()));
-    let toolbar = h_stack_from_iter(tools).style(|s| s.gap(2.0).items_center().width_full().min_width(0.0));
+    // The toolbar's own font: the pills' words were otherwise at times drawn in the editor's.
+    let toolbar = h_stack_from_iter(tools)
+        .style(|s| s.font_family(UI_FONT.clone()).gap(2.0).items_center().width_full().min_width(0.0));
     let dropping = send.clone();
     let frame = v_stack_from_iter([text, toolbar.into_any()]);
     // Files dropped on the box from the system go to the part that attaches them.

@@ -395,7 +395,12 @@ pub(super) fn pill(ui: Ui, which: Picker, anchor: RwSignal<Rect>) -> impl IntoVi
             .border_radius(5.0)
             .font_size(12.0)
             .selectable(false)
-            .apply_if(which == Picker::Mode, |s| s.flex_shrink(0.0_f32))
+            // Thinking's words give way first, the model's only once Thinking's are at their least.
+            .flex_shrink(match which {
+                Picker::Mode => 0.0_f32,
+                Picker::Thinking => 50.0,
+                _ => 1.0,
+            })
             .color(tone_color(&c, tone(which, &now), c.desc))
             .cursor(CursorStyle::Pointer)
             .apply_if(lit, |s| s.background(c.toolbar_hover))
