@@ -318,6 +318,8 @@ thread_local! {
     /// The character just typed and the offset before it: the caret moving past it opens the widget.
     static TYPED: Cell<Option<(char, usize)>> = const { Cell::new(None) };
     static SEQ: Cell<u64> = const { Cell::new(0) };
+    /// When a key that edits (a letter, Enter, Backspace, Delete, Tab) was last pressed in an editor.
+    static KEYED: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
     /// Each document's words, by path, as of its text's revision.
     static WORDS: RefCell<HashMap<String, Words>> = RefCell::new(HashMap::new());
 }
@@ -862,6 +864,22 @@ fn tab_complete(ui: Ui) -> bool {
 
 // ---- Ghost text. ----
 
+/// Whether a key edits the text as typing does (Ctrl+Backspace and Ctrl+Delete too).
+fn edits(key: &Key, plain: bool) -> bool {
+    match key {
+        Key::Character(_) => plain,
+        Key::Named(NamedKey::Backspace | NamedKey::Delete) => true,
+        Key::Named(NamedKey::Enter | NamedKey::Tab | NamedKey::Space) => plain,
+        _ => false,
+    }
+}
+
+/// Whether a key that edits was pressed in an editor within the last second: an edit then is typing, not a button's,
+/// an undo's or a reload's (an inline completion is asked only after typing, as in VS Code).
+pub fn typed_lately() -> bool {
+    KEYED.with(Cell::get).is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(1))
+}
+
 /// Shows an inline suggestion at a place of a file (line and column from 0, the column a byte in the line), in place
 /// of the one shown; only its first line is drawn, Tab takes it whole. None is shown while the suggestions widget is
 /// open, as in VS Code: Tab there takes the widget's suggestion, not the ghost.
@@ -924,6 +942,9 @@ fn take_ghost(ui: Ui) -> bool {
 pub fn key(ui: Ui, key: &Key, mods: Modifiers) -> bool {
     let ctrl = mods.contains(Modifiers::CONTROL);
     let plain = !mods.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::META);
+    if edits(key, plain) {
+        KEYED.with(|k| k.set(Some(std::time::Instant::now())));
+    }
     let bare = plain && !mods.contains(Modifiers::SHIFT);
     let s = ui.state::<Suggest>();
     let open = is_open(ui);
@@ -1307,6 +1328,18 @@ mod tests {
         ghost_clear(ui, path);
         assert!(ghost_shown().is_none());
         assert!(crate::decor::of(path).is_none_or(|m| m.lines.get(&1).is_none_or(|l| l.texts.is_empty())));
+    }
+
+    #[test]
+    fn only_keys_that_type_count_as_typing() {
+        assert!(edits(&Key::Character("a".into()), true));
+        assert!(!edits(&Key::Character("z".into()), false), "Ctrl+Z is an undo");
+        assert!(edits(&Key::Named(NamedKey::Backspace), false));
+        assert!(edits(&Key::Named(NamedKey::Enter), true));
+        assert!(!edits(&Key::Named(NamedKey::ArrowLeft), true));
+        let ui = Ui::new();
+        key(ui, &Key::Character("a".into()), Modifiers::empty());
+        assert!(typed_lately());
     }
 
     #[test]
