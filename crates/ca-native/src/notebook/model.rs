@@ -7,6 +7,7 @@
 //! The changes made to the cells (one added, deleted, moved, made Markdown, its outputs cleared) are each one step
 //! of `History`, taken back with Undo. Nothing here is of the window: it is read and written off its thread.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Map, Value, json};
@@ -45,8 +46,8 @@ pub struct Cell {
     pub key: u64,
     pub kind: Kind,
     pub source: String,
-    /// A code cell's outputs, as the file has them.
-    pub outputs: Vec<Value>,
+    /// A code cell's outputs, as the file has them: shared, not copied, by the steps of Undo and the window.
+    pub outputs: Arc<Vec<Value>>,
     pub count: Option<u64>,
     /// Everything else the cell has (its id, its metadata, its attachments), written back as it was.
     pub rest: Map<String, Value>,
@@ -121,7 +122,7 @@ impl Notebook {
             rest.insert("id".into(), Value::String(new_id()));
         }
         rest.insert("metadata".into(), json!({}));
-        Cell { key: next_key(), kind, source: source.to_string(), outputs: Vec::new(), count: None, rest }
+        Cell { key: next_key(), kind, source: source.to_string(), outputs: Arc::default(), count: None, rest }
     }
 
     /// The language its code is in, as its metadata says (Python when it says none).
@@ -178,10 +179,10 @@ pub fn parse(text: &str) -> Result<Notebook, String> {
 fn cell_of(mut o: Map<String, Value>) -> Cell {
     let kind = Kind::of(o.remove("cell_type").as_ref().and_then(Value::as_str).unwrap_or("code"));
     let source = o.remove("source").map(|s| text_of(&s)).unwrap_or_default();
-    let (mut outputs, mut count) = (Vec::new(), None);
+    let (mut outputs, mut count) = (Arc::default(), None);
     if kind == Kind::Code {
         if let Some(Value::Array(o)) = o.remove("outputs") {
-            outputs = o;
+            outputs = Arc::new(o);
         }
         count = o.remove("execution_count").and_then(|c| c.as_u64());
     }
@@ -228,7 +229,7 @@ pub fn write(nb: &Notebook) -> String {
             }
             if c.kind == Kind::Code {
                 o.insert("execution_count".into(), c.count.map_or(Value::Null, Value::from));
-                o.insert("outputs".into(), Value::Array(c.outputs.clone()));
+                o.insert("outputs".into(), Value::Array(c.outputs.to_vec()));
             }
             Value::Object(o)
         })
@@ -319,7 +320,7 @@ pub fn apply(nb: &mut Notebook, change: Change) -> bool {
             Some(at) if nb.cells[at].kind != kind => {
                 let c = &mut nb.cells[at];
                 c.kind = kind;
-                c.outputs.clear();
+                c.outputs = Arc::default();
                 c.count = None;
                 true
             }
@@ -329,7 +330,7 @@ pub fn apply(nb: &mut Notebook, change: Change) -> bool {
             let mut changed = false;
             for c in nb.cells.iter_mut().filter(|c| key.is_none_or(|k| c.key == k)) {
                 changed |= !c.outputs.is_empty() || c.count.is_some();
-                c.outputs.clear();
+                c.outputs = Arc::default();
                 c.count = None;
             }
             changed

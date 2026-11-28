@@ -24,6 +24,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use floem::event::{Event, EventListener, EventPropagation};
@@ -95,7 +96,7 @@ pub struct Live {
     pub kind: Kind,
     pub doc: Rc<TextDocument>,
     colours: Rc<Colours>,
-    pub outputs: RwSignal<Vec<Value>>,
+    pub outputs: RwSignal<Arc<Vec<Value>>>,
     pub count: RwSignal<Option<u64>>,
     pub run: RwSignal<Run>,
     /// A Markdown cell in its editor (false: drawn as it reads).
@@ -163,7 +164,7 @@ pub type OfNotebook = Rc<dyn Fn(Ui, &Send, &str)>;
 pub type Label = Rc<dyn Fn(Ui, &str) -> String>;
 
 /// How a code cell's outputs are drawn: given the notebook's path and the cell's outputs.
-pub type OutputsView = Rc<dyn Fn(Ui, &Send, &str, RwSignal<Vec<Value>>) -> AnyView>;
+pub type OutputsView = Rc<dyn Fn(Ui, &Send, &str, RwSignal<Arc<Vec<Value>>>) -> AnyView>;
 
 thread_local! {
     static KERNEL: RefCell<Option<Kernel>> = const { RefCell::new(None) };
@@ -313,7 +314,7 @@ impl Book {
             .map(|c| match old.get(&(c.key, c.kind)) {
                 Some(l) => {
                     fill(&l.doc, &c.source);
-                    if l.outputs.with_untracked(|o| *o != c.outputs) {
+                    if l.outputs.with_untracked(|o| !Arc::ptr_eq(o, &c.outputs) && **o != *c.outputs) {
                         l.outputs.set(c.outputs);
                     }
                     if l.count.get_untracked() != c.count {
@@ -557,11 +558,18 @@ fn change(ui: Ui, book: &Book, c: Change) -> bool {
 
 fn undo(ui: Ui, book: &Book, back: bool) {
     let now = book.cells_now();
+    // What was typed since is the editors' own undo's: a cell still there keeps its text.
+    let texts: HashMap<u64, String> = now.iter().map(|c| (c.key, c.source.clone())).collect();
     let to = {
         let mut h = book.history.borrow_mut();
         if back { h.undo(now) } else { h.redo(now) }
     };
-    if let Some(cells) = to {
+    if let Some(mut cells) = to {
+        for c in &mut cells {
+            if let Some(text) = texts.get(&c.key) {
+                c.source.clone_from(text);
+            }
+        }
         book.set_cells(ui, cells);
         dirty(ui, book);
     }
@@ -677,6 +685,11 @@ fn command_key(ui: Ui, send: &Send, book: &Rc<Book>, key: &Key, m: Modifiers) ->
     let ctrl = m.contains(Modifiers::CONTROL) || m.contains(Modifiers::META);
     let (shift, alt) = (m.contains(Modifiers::SHIFT), m.contains(Modifiers::ALT));
     let plain = !ctrl && !alt && !shift;
+    let (ctrl_only, shift_only) = (ctrl && !alt && !shift, shift && !ctrl && !alt);
+    // The second key of a chord (Ctrl+K M) is the workbench's.
+    if crate::commands::waiting().is_some() {
+        return false;
+    }
     let letter = |l: &str| matches!(key, Key::Character(c) if c.eq_ignore_ascii_case(l));
     let selected = book.selected.get_untracked();
     let at = selected.and_then(|k| book.at(k));
@@ -714,14 +727,12 @@ fn command_key(ui: Ui, send: &Send, book: &Rc<Book>, key: &Key, m: Modifiers) ->
         _ if plain && letter("m") => to_kind(ui, book, selected, Kind::Markdown),
         _ if plain && letter("y") => to_kind(ui, book, selected, Kind::Code),
         _ if plain && letter("r") => to_kind(ui, book, selected, Kind::Raw),
-        _ if (plain || ctrl && !shift) && letter("z") => undo(ui, book, true),
-        _ if (shift && !ctrl && letter("z")) || (ctrl && shift && letter("z")) || (ctrl && letter("y")) => {
-            undo(ui, book, false)
-        }
-        _ if (plain || ctrl) && letter("c") => copy(ui, book, selected, false),
-        _ if (plain || ctrl) && letter("x") => copy(ui, book, selected, true),
-        _ if (plain || ctrl) && letter("v") => paste(ui, book, selected),
-        _ if shift && !ctrl && letter("v") => paste(ui, book, selected.and_then(|k| prev_of(book, k)).or(None)),
+        _ if (plain || ctrl_only) && letter("z") => undo(ui, book, true),
+        _ if (shift_only || ctrl && shift && !alt) && letter("z") || ctrl_only && letter("y") => undo(ui, book, false),
+        _ if (plain || ctrl_only) && letter("c") => copy(ui, book, selected, false),
+        _ if (plain || ctrl_only) && letter("x") => copy(ui, book, selected, true),
+        _ if (plain || ctrl_only) && letter("v") => paste(ui, book, selected),
+        _ if shift_only && letter("v") => paste(ui, book, selected.and_then(|k| prev_of(book, k))),
         _ => return false,
     }
     true
@@ -1514,8 +1525,8 @@ pub fn set_run(ui: Ui, path: &str, key: u64, run: Run) {
 pub fn set_outputs(ui: Ui, path: &str, key: u64, outputs: Vec<Value>, count: Option<u64>) {
     let Some(b) = book(ui, path) else { return };
     let Some(l) = b.live(key) else { return };
-    if l.outputs.with_untracked(|o| *o != outputs) {
-        l.outputs.set(outputs);
+    if l.outputs.with_untracked(|o| **o != outputs) {
+        l.outputs.set(Arc::new(outputs));
     }
     if l.count.get_untracked() != count {
         l.count.set(count);
@@ -1627,7 +1638,17 @@ pub fn register(_ui: Ui, _send: &Send) {
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     let path = m["path"].as_str().unwrap_or("");
     match m["type"].as_str().unwrap_or("") {
-        "file" if is_notebook(path) && m["error"].is_null() => {
+        // A notebook whose tab waits for its file that could not be read: its tab goes, and the editor says why.
+        "file" if is_notebook(path) && !m["error"].is_null() => {
+            if book(ui, path).is_some_and(|b| b.load.get_untracked() == Load::Reading) {
+                forget(ui, path);
+                if ui.tab(&tab_of(path)).is_some() {
+                    ui.close(&tab_of(path));
+                }
+            }
+            false
+        }
+        "file" if is_notebook(path) => {
             let books = ui.state::<Books>();
             if books.as_text.with_untracked(|a| a.contains(path)) {
                 books.as_text.update(|a| {
@@ -1893,5 +1914,42 @@ mod tests {
         let _view = view(ui, send.clone(), "a.ipynb").into_view();
         let _cell = cell_view(ui, &send, &b, b.live(b.key_at(0).expect("there")).expect("there")).into_view();
         let _md = cell_view(ui, &send, &b, b.live(b.key_at(1).expect("there")).expect("there")).into_view();
+    }
+
+    #[test]
+    fn undo_takes_back_the_change_not_what_was_typed_since() {
+        let (ui, send, _) = ui();
+        let b = opened(ui, &send);
+        let one = b.key_at(0).expect("there");
+        insert(ui, &b, 2, Kind::Code, false);
+        fill(&b.live(one).expect("there").doc, "typed after");
+        undo(ui, &b, true);
+        assert_eq!(b.len(), 2);
+        assert_eq!(b.live(one).expect("there").doc.text().to_string(), "typed after");
+    }
+
+    #[test]
+    fn the_workbenchs_keys_are_not_the_cells() {
+        let (ui, send, _) = ui();
+        let b = opened(ui, &send);
+        let ch = |c: &str| Key::Character(c.into());
+        // Ctrl+Shift+X (Extensions), Ctrl+Shift+C, Alt+M are the workbench's.
+        assert!(!command_key(ui, &send, &b, &ch("x"), Modifiers::CONTROL | Modifiers::SHIFT));
+        assert!(!command_key(ui, &send, &b, &ch("c"), Modifiers::CONTROL | Modifiers::SHIFT));
+        assert!(!command_key(ui, &send, &b, &ch("m"), Modifiers::ALT));
+        assert_eq!(b.len(), 2);
+        assert!(command_key(ui, &send, &b, &ch("z"), Modifiers::CONTROL | Modifiers::SHIFT), "redo");
+    }
+
+    #[test]
+    fn a_notebook_that_cannot_be_read_leaves_no_tab_waiting() {
+        let (ui, send, said) = ui();
+        open(ui, &send, "gone.ipynb");
+        assert_eq!(said.borrow().last(), Some(&json!({"type": "open", "path": "gone.ipynb"})));
+        assert!(ui.tab("notebook:gone.ipynb").is_some());
+        let failed = json!({"type": "file", "path": "gone.ipynb", "error": "not there", "kind": "other"});
+        assert!(!take(ui, &failed, &send), "the editor says why");
+        assert!(ui.tab("notebook:gone.ipynb").is_none());
+        assert!(book(ui, "gone.ipynb").is_none());
     }
 }
