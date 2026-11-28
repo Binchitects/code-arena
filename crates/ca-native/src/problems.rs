@@ -284,6 +284,11 @@ pub fn of_file(ui: Ui, path: &str) -> Vec<(String, Problem)> {
     })
 }
 
+/// Each problem's file and severity, of every source (followed where it is read).
+pub fn severities(ui: Ui) -> Vec<(String, Severity)> {
+    store(ui).by_source.with(|m| m.values().flat_map(|l| l.iter()).map(|p| (p.path.clone(), p.severity)).collect())
+}
+
 /// How many problems there are of each kind (followed where it is read).
 pub fn counts(ui: Ui) -> Counts {
     store(ui).by_source.with(|m| count(m.values().flat_map(|l| l.iter())))

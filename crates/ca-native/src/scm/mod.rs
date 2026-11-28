@@ -77,6 +77,8 @@ pub struct Status {
     pub files: Vec<File>,
     pub total: usize,
     pub error: Option<String>,
+    /// What the repository ignores, from the project's top: a folder ignored whole ends in a slash.
+    pub ignored: Vec<String>,
 }
 
 impl Status {
@@ -107,6 +109,7 @@ impl Status {
             total: m["total"].as_u64().map(|n| n as usize).unwrap_or(files.len()),
             files,
             error: s(&m["error"]).filter(|e| !e.is_empty()),
+            ignored: m["ignored"].as_array().into_iter().flatten().filter_map(s).collect(),
         }
     }
 

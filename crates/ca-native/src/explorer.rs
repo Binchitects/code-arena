@@ -19,12 +19,13 @@ use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::kurbo::{Point, Rect};
 use floem::peniko::{Brush, Color};
-use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal};
+use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal};
 use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, scroll, text_input, tooltip, v_stack};
 use floem::{AnyView, IntoView, View};
 use serde_json::{Value, json};
 
+use crate::explorer_decor as decor;
 use crate::icons::icon;
 use crate::keymap::TakesKeys;
 use crate::menus::Menu;
@@ -937,6 +938,10 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
             .into_any();
     }
     let (path, shown, target) = (r.path.clone(), r.path.clone(), r.path.clone());
+    let mark = decor::mark_of(ui, r.path.clone());
+    let closed = r.dir && !r.open;
+    let clipped = r.path.clone();
+    let cut = create_memo(move |_| x.clip.with(|k| k.as_ref().is_some_and(|k| k.cut && k.paths.contains(&clipped))));
     let name = if r.link { format!("{} \u{21aa}", r.name) } else { r.name.clone() };
     let row = h_stack((
         empty().style(move |s| s.width(indent)),
@@ -946,7 +951,28 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
             empty().style(|s| s.width(16.0)).into_any()
         },
         icon(icon_of(&r.name, r.dir, r.open), 16.0).style(|s| s.margin_left(2.0)),
-        label(move || name.clone()).style(|s| s.padding_left(4.0).text_ellipsis().selectable(false)),
+        label(move || name.clone()).style(move |s| {
+            let s = s.padding_left(4.0).min_width(0.0).flex_grow(1.0_f32).text_ellipsis().selectable(false);
+            match decor::colour(ui, &mark.get()) {
+                Some(c) if !cut.get() => s.color(c),
+                _ => s,
+            }
+        }),
+        // A file's letters, a closed folder's dot, in the decoration's colour.
+        label(move || {
+            let m = mark.get();
+            if closed && m.dot { "\u{25CF}".to_string() } else { m.badge }
+        })
+        .style(move |s| {
+            let m = mark.get();
+            let dot = closed && m.dot;
+            let s = s.flex_shrink(0.0_f32).padding_left(6.0).padding_right(12.0).selectable(false);
+            let s = s.font_size(if dot { 9.0 } else { 12.0 }).apply_if(!dot && m.badge.is_empty(), |s| s.hide());
+            match decor::colour(ui, &m) {
+                Some(c) if !cut.get() => s.color(c),
+                _ => s,
+            }
+        }),
     ));
     // A press, then a move past 5 px, is a drag of the rows selected; let go without one, a click.
     let start = create_rw_signal(None::<Point>);
@@ -956,7 +982,7 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
         Point::new(o.x + p.x, o.y + p.y)
     };
     let dragged = path.clone();
-    row.on_event(EventListener::PointerDown, move |e| {
+    let row = row.on_event(EventListener::PointerDown, move |e| {
         if let Event::PointerDown(p) = e
             && p.button.is_primary()
         {
@@ -1027,7 +1053,7 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
         let selected = ui
             .selected
             .with(|sel| *sel == shown || x.picked.with(|p| p.len() > 1 && p.contains(sel) && p.contains(&shown)));
-        let cut = x.clip.with(|k| k.as_ref().is_some_and(|k| k.cut && k.paths.contains(&shown)));
+        let cut = cut.get();
         let dropped = x.over.with(|o| o.as_ref().is_some_and(|f| !f.is_empty() && inside(&shown, f)));
         let s = s
             .height(ROW)
@@ -1046,7 +1072,14 @@ fn row_view(ui: Ui, send: Send, r: Row, focused: RwSignal<bool>, menu: OpenMenu)
         };
         // A row cut is faded until it is pasted; the folder rows would be dropped in is shaded with all in it.
         s.apply_if(cut, |s| s.color(c.desc)).apply_if(dropped, |s| s.background(c.drop_bg))
+    });
+    // VS Code's tooltip: the path, then what each decoration says.
+    let tip = r.path.clone();
+    tooltip(row, move || {
+        let tip = tip.clone();
+        label(move || decor::tooltip(&tip, &mark.get()))
     })
+    .style(|s| s.width_full())
     .into_any()
 }
 

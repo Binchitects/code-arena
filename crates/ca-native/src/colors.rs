@@ -265,6 +265,11 @@ colors! {
     scm_untracked: ["gitDecoration.untrackedResourceForeground"], "#73C991", "#007100";
     scm_renamed: ["gitDecoration.renamedResourceForeground"], "#73C991", "#007100";
     scm_conflict: ["gitDecoration.conflictingResourceForeground"], "#E4676B", "#AD0707";
+    scm_ignored: ["gitDecoration.ignoredResourceForeground"], "#8C8C8C", "#8E8E90";
+    scm_stage_modified: ["gitDecoration.stageModifiedResourceForeground"], "#E2C08D", "#895503";
+    scm_stage_deleted: ["gitDecoration.stageDeletedResourceForeground"], "#C74E39", "#AD0707";
+    list_error_fg: ["list.errorForeground"], "#F88070", "#B01011";
+    list_warning_fg: ["list.warningForeground"], "#CCA700", "#855F00";
     scm_count_bg: ["badge.background"], "#4D4D4D", "#C4C4C4";
     scm_count_fg: ["badge.foreground"], "#FFFFFF", "#333333";
     terminal_bg: ["terminal.background", "panel.background"], "#1E1E1E", "#FFFFFF";
