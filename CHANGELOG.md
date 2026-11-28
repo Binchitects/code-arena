@@ -634,6 +634,16 @@ Sections used:
   the chat's Markdown renderer (tables too), follows its text 150 ms after typing, draws the
   project's pictures, opens linked files (a linked Markdown file in the preview's group), scrolls
   to #headings by GitHub's names and opens web links in the browser.
+- **Tasks view.** A Tasks view sits beside the Agent and lists the session's sub-agents, those at
+  work first, then those that ended. Each row shows its status, its title, a pencil when it may
+  change files, 'as ASSISTANT · now · 12 s · 3.4k tokens · 5 tool calls' and Stop. The header says
+  'N at work' and has a help button.
+- **A sub-agent's detail.** Open a sub-agent to see what it was asked, its tools, each step's
+  thinking, words and calls, what it is doing now, its report and its errors. Stop it while it
+  works, or go Back to the list.
+- **Sub-agent lines in the thread.** A task call is now one line: its status, its description,
+  'Working…' or its report's first line, its time, tokens and model. Clicking it opens the sub-agent
+  in Tasks. Calls in a row are grouped as '3 sub-agents · 2 working'.
 
 
 ### :bug: Bugs fixed
