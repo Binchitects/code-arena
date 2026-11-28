@@ -145,6 +145,7 @@ pub fn entries(rules: &[Rule], known: &[Known], os: Os) -> Vec<Entry> {
     use std::collections::{HashMap, HashSet};
     let titles: HashMap<&str, &str> = known.iter().map(|(id, title, _)| (id.as_str(), title.as_str())).collect();
     let mut bound: HashSet<&str> = HashSet::new();
+    let mut seen: HashSet<(&str, &[Chord], &str, &str)> = HashSet::new();
     let mut all = Vec::new();
     let make = |command: &str, title: &str, keys: Option<Vec<Chord>>, when: &str, source: Source| {
         let key_label = keys.as_deref().map(|k| super::label(k, os)).unwrap_or_default();
@@ -165,6 +166,10 @@ pub fn entries(rules: &[Rule], known: &[Known], os: Os) -> Vec<Entry> {
     for r in rules {
         let title = titles.get(r.command.as_str()).copied();
         if title.is_none() && r.source != Source::User {
+            continue;
+        }
+        // A rule the same as one before it (a command's own key that VS Code's table has too) is one row.
+        if !seen.insert((r.command.as_str(), r.keys.as_slice(), r.when_text.as_str(), source_name(r.source))) {
             continue;
         }
         bound.insert(&r.command);
@@ -726,9 +731,23 @@ fn row_view(ui: Ui, send: Send, e: Entry, odd: bool) -> AnyView {
     let (uid, command) = (e.uid, e.command.clone());
     let picked = move || s.selected.with(|p| p.as_ref().is_some_and(|p| p.uid == uid && p.command == command));
     let p2 = picked.clone();
+    // The row's action, kept in its place (the columns level with the header's) and drawn only on the row picked.
     let action = container(icon(if e.keys.is_some() { "edit" } else { "add" }, 16.0))
-        .on_click_stop(move |_| define(ui, false))
-        .style(move |s| s.width(24.0).height_full().items_center().justify_center().apply_if(!p2(), |s| s.hide()));
+        .on_click_stop({
+            let e = e.clone();
+            move |_| {
+                s.selected.set(Some(e.clone()));
+                define(ui, false)
+            }
+        })
+        .style(move |s| {
+            s.width(24.0)
+                .flex_shrink(0.0)
+                .height_full()
+                .items_center()
+                .justify_center()
+                .apply_if(!p2(), |s| s.color(Color::TRANSPARENT))
+        });
     let known = e.known();
     let (name, id) = (e.name().to_string(), e.command.clone());
     let p3 = picked.clone();
@@ -1287,6 +1306,8 @@ mod tests {
     fn defaults() -> Vec<Rule> {
         vec![
             rule("ctrl+k ctrl+o", "a.open", "", Source::Default),
+            rule("ctrl+w", "b.close", "editorFocus", Source::Default),
+            // The same again (a command's own key the table has too): one row.
             rule("ctrl+w", "b.close", "editorFocus", Source::Default),
             rule("ctrl+q", "gone.command", "", Source::Default),
         ]
