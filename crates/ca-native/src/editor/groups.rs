@@ -164,7 +164,7 @@ impl Model {
 
     /// The layout turned to one under the other (true) or side by side, when there is a single group to split.
     pub fn orient(&mut self, vertical: bool) {
-        if self.groups.len() == 1 {
+        if self.main_len() == 1 {
             self.vertical = vertical;
         }
     }
@@ -688,7 +688,12 @@ pub fn holder(ui: Ui, path: &str) -> u64 {
 pub fn open_to_side(ui: Ui, path: &str, send: &Send) {
     let open = ui.tab(path).is_some();
     change(ui, |m, order| {
-        if m.groups.len() == 1 {
+        // From a window of its own: beside the editor's last group.
+        let n = m.main_len();
+        if m.is_apart(m.focused) {
+            m.focused = m.groups[n - 1].id;
+        }
+        if n == 1 {
             if m.split(true).is_none() {
                 return;
             }
@@ -698,7 +703,7 @@ pub fn open_to_side(ui: Ui, path: &str, send: &Send) {
                 g.active = Some(path.to_string());
             }
         } else {
-            let to = (m.at() + 1).min(m.groups.len() - 1);
+            let to = (m.at() + 1).min(n - 1);
             let to = if to == m.at() { m.at().saturating_sub(1) } else { to };
             m.focused = m.groups[to].id;
             if open && let Some(g) = m.group_mut(m.focused) {
@@ -1125,7 +1130,8 @@ pub fn register(ui: Ui, _send: &Send) {
 fn close_group(ui: Ui) {
     let g = groups(ui);
     let m = g.model.get_untracked();
-    if m.groups.len() < 2 {
+    let apart = m.is_apart(m.focused);
+    if m.groups.len() < 2 || (!apart && m.main_len() < 2) {
         return;
     }
     let here = m.current().clone();
@@ -1135,7 +1141,8 @@ fn close_group(ui: Ui) {
     let keep: Vec<String> = only.iter().filter(|p| dirty(p)).cloned().collect();
     change(ui, |m, order| {
         let at = m.at();
-        let to = m.groups[if at == 0 { 1 } else { at - 1 }].id;
+        // A window's group gives what is kept to the editor's last group.
+        let to = m.groups[if apart { m.main_len() - 1 } else if at == 0 { 1 } else { at - 1 }].id;
         if let Some(g) = m.group_mut(to) {
             g.tabs.extend(keep.iter().cloned());
             g.tabs.sort_by_key(|p| order.iter().position(|o| o == p).unwrap_or(usize::MAX));

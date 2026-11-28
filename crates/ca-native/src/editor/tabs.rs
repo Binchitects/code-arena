@@ -201,7 +201,7 @@ pub fn put(m: &mut Model, from: u64, path: &str, to: &Drop, order: &[String]) ->
             true
         }
         Drop::Split(id, vertical, after) => {
-            if m.group(id).is_none() || (m.groups.len() > 1 && m.vertical != vertical) {
+            if m.group(id).is_none() || (m.main_len() > 1 && m.vertical != vertical) {
                 return false;
             }
             m.orient(vertical);
@@ -765,7 +765,12 @@ fn tab_menu(ui: Ui, send: &Send) -> Vec<popup::Item> {
 /// Where a tab dragged from a group would go with the pointer at `p` (in the window), and what is lit for it.
 fn aim(ui: Ui, from: u64, path: &str, p: Point) -> Option<(Drop, Rect)> {
     let strips: Vec<(u64, ViewId)> = STRIPS.with(|s| s.borrow().iter().map(|(g, v)| (*g, *v)).collect());
-    let (count, vertical) = groups::groups(ui).model.with_untracked(|m| (m.groups.len(), m.vertical));
+    // Only the groups of the window the tab is dragged in (a group in a window of its own is in another).
+    let window = strips.iter().find(|(g, _)| *g == from).and_then(|(_, v)| v.window_id());
+    let strips: Vec<(u64, ViewId)> = strips.into_iter().filter(|(_, v)| v.window_id() == window).collect();
+    let (count, vertical, apart) =
+        groups::groups(ui).model.with_untracked(|m| (m.groups.len(), m.vertical, m.apart.clone()));
+    let main = count - apart.len();
     for (gid, strip) in strips {
         let r = strip.layout_rect();
         if r.contains(p) && r.area() > 0.0 {
@@ -803,7 +808,9 @@ fn aim(ui: Ui, from: u64, path: &str, p: Point) -> Option<(Drop, Rect)> {
             None
         };
         let alone = gid == from && order_of(ui, gid).len() < 2;
-        let can_split = |v: bool| count < groups::MOST && (count == 1 || vertical == v) && !alone;
+        // A window of its own is one group: it is not split.
+        let can_split =
+            |v: bool| count < groups::MOST && (main == 1 || vertical == v) && !alone && !apart.contains(&gid);
         return match edge {
             Some((v, after)) if can_split(v) => {
                 let half = match (v, after) {
