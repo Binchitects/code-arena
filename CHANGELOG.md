@@ -734,6 +734,14 @@ Sections used:
   watch tick.
 - **Exit with unsaved text.** File > Exit and the title bar's close button back up unsaved text
   first. With hot exit off they ask Save / Don't Save.
+- **Indentation per file.** Each file's indentation comes from `editor.tabSize`,
+  `editor.insertSpaces` and `editor.detectIndentation` (detected from its first 10,000 lines). Tab,
+  Enter, Indent and Outdent use it, and a tab is drawn that wide. The status bar's 'Spaces: 4' /
+  'Tab Size: 4' opens Indent Using Spaces/Tabs, Change Tab Display Size, Detect Indentation from
+  Content and Convert Indentation to Spaces/Tabs. A pick stays until those settings change.
+- **Line endings in the status bar.** 'LF' / 'CRLF' shows the ending most of a file's lines have, or
+  `files.eol` for a new file (auto = the system's). A click picks another, and the file is saved
+  with every line ending that way. The UTF-8 item says only UTF-8 is read and written.
 
 
 ### :bug: Bugs fixed
