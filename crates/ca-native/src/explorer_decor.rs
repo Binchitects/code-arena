@@ -314,13 +314,12 @@ pub struct Decor {
 
 impl crate::ext::State for Decor {
     fn new(ui: Ui) -> Self {
-        let on = move |key: &str| crate::settings::setting(ui, key, None).as_bool().unwrap_or(true);
         let marks = ui.scope.create_memo(move |_| {
             let flags = Flags {
-                git: on("git.decorations.enabled"),
-                problems: on("problems.decorations.enabled"),
-                colors: on("explorer.decorations.colors"),
-                badges: on("explorer.decorations.badges"),
+                git: crate::settings::flag(ui, "git.decorations.enabled", None),
+                problems: crate::settings::flag(ui, "problems.decorations.enabled", None),
+                colors: crate::settings::flag(ui, "explorer.decorations.colors", None),
+                badges: crate::settings::flag(ui, "explorer.decorations.badges", None),
             };
             let scm = ui.state::<Scm>();
             let (git, ignored) = scm.status.with(|s| match s {
@@ -385,20 +384,28 @@ mod tests {
 
     #[test]
     fn git_letters_and_words_follow_vs_code_and_the_working_tree_is_said_over_the_index() {
-        let f = facts(vec![file("a.rs", ' ', 'M'), file("n.rs", '?', '?'), file("s.rs", 'M', 'M'), file("i.rs", 'A', ' ')]);
+        let f =
+            facts(vec![file("a.rs", ' ', 'M'), file("n.rs", '?', '?'), file("s.rs", 'M', 'M'), file("i.rs", 'A', ' ')]);
         let m = marks(&f, Flags::default());
         assert_eq!((m.of("a.rs").badge, m.of("a.rs").tint), ("M".to_string(), Some(Tint::Modified)));
         assert_eq!((m.of("n.rs").badge, m.of("n.rs").tips), ("U".to_string(), vec!["Untracked".to_string()]));
         assert_eq!(m.of("s.rs").tips, ["Modified"]);
         assert_eq!((m.of("i.rs").badge, m.of("i.rs").tint), ("A".to_string(), Some(Tint::Added)));
         let c = marks(&facts(vec![file("c.rs", 'U', 'U')]), Flags::default()).of("c.rs");
-        assert_eq!((c.badge.as_str(), c.tint, c.tips[0].as_str()), ("C", Some(Tint::Conflict), "Conflict: Both Modified"));
+        assert_eq!(
+            (c.badge.as_str(), c.tint, c.tips[0].as_str()),
+            ("C", Some(Tint::Conflict), "Conflict: Both Modified")
+        );
     }
 
     #[test]
     fn a_folder_takes_the_strongest_colour_in_it_and_a_dot_and_says_what_it_contains() {
         let mut f = facts(vec![file("src/ui/a.rs", ' ', 'M')]);
-        f.problems = vec![("src/b.rs".into(), Severity::Error), ("src/b.rs".into(), Severity::Warning), ("src/b.rs".into(), Severity::Info)];
+        f.problems = vec![
+            ("src/b.rs".into(), Severity::Error),
+            ("src/b.rs".into(), Severity::Warning),
+            ("src/b.rs".into(), Severity::Info),
+        ];
         f.agent = vec![("src/ui/a.rs".into(), "M")];
         let m = marks(&f, Flags::default());
         let b = m.of("src/b.rs");
@@ -410,7 +417,10 @@ mod tests {
         assert_eq!(a.tips, ["Changed by the agent", "Modified"]);
         let src = m.of("src");
         assert_eq!((src.dot, src.tint, src.badge.as_str()), (true, Some(Tint::Error), ""));
-        assert_eq!(src.tips, ["Contains 1 error and 1 warning", "Contains 1 file the agent changed", "Contains 1 changed file"]);
+        assert_eq!(
+            src.tips,
+            ["Contains 1 error and 1 warning", "Contains 1 file the agent changed", "Contains 1 changed file"]
+        );
         assert_eq!(m.of("src/ui").tint, Some(Tint::AgentModified));
         assert_eq!(m.of("other"), Mark::default());
     }
@@ -437,7 +447,12 @@ mod tests {
         let plain = marks(&f, Flags { colors: false, badges: false, ..Flags::default() });
         assert_eq!((plain.of("a.rs").badge.as_str(), plain.of("a.rs").tint), ("", None));
         assert_eq!(plain.of("a.rs").tips.len(), 2);
-        assert!(marks(&facts(vec![file("d/a.rs", ' ', 'M')]), Flags { badges: false, ..Flags::default() }).of("d").dot.eq(&false));
+        assert!(
+            marks(&facts(vec![file("d/a.rs", ' ', 'M')]), Flags { badges: false, ..Flags::default() })
+                .of("d")
+                .dot
+                .eq(&false)
+        );
     }
 
     #[test]

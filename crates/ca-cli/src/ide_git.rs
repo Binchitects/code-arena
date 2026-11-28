@@ -471,7 +471,17 @@ fn status(dir: &Path) -> (Value, Option<PathBuf>) {
 /// What the repository ignores in a folder, from the folder: a folder ignored whole is one path ending in a slash,
 /// with nothing in it listed. At most `MOST_FILES` of them; none when git cannot say.
 fn ignored(dir: &Path) -> Vec<String> {
-    let args = ["--no-optional-locks", "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--", "."];
+    let args = [
+        "--no-optional-locks",
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--directory",
+        "--",
+        ".",
+    ];
     match git(dir, &args, None) {
         Ok(out) => ignored_of(&out),
         Err(_) => Vec::new(),
