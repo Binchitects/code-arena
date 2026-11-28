@@ -14,6 +14,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::{Duration, Instant};
 
+use floem::IntoView;
 use floem::action::exec_after;
 use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith};
 use floem::style::CursorStyle;
@@ -21,7 +22,6 @@ use floem::views::editor::Editor;
 use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::core::cursor::CursorMode;
 use floem::views::{Decorators, h_stack, label, tooltip};
-use floem::IntoView;
 use serde_json::{Value, json};
 
 use crate::ext::State;
@@ -43,9 +43,6 @@ const MOST_KEPT: usize = 32;
 /// The status item's pulse while an answer is awaited.
 const PULSE: Duration = Duration::from_millis(500);
 
-pub const SETTING: &str = "codeArena.inlineCompletion.enabled";
-const SUGGEST: &str = "editor.inlineSuggest.enabled";
-
 #[derive(Clone, Copy)]
 struct Inline {
     /// An answer is awaited.
@@ -59,7 +56,11 @@ struct Inline {
 impl State for Inline {
     fn new(ui: Ui) -> Self {
         let s = ui.scope;
-        Inline { waiting: s.create_rw_signal(false), dim: s.create_rw_signal(false), error: s.create_rw_signal(String::new()) }
+        Inline {
+            waiting: s.create_rw_signal(false),
+            dim: s.create_rw_signal(false),
+            error: s.create_rw_signal(String::new()),
+        }
     }
 }
 
@@ -96,8 +97,8 @@ thread_local! {
 /// Whether completions are on for a file's language.
 fn enabled(ui: Ui, path: &str) -> bool {
     let lang = crate::language::of(ui, path);
-    crate::settings::now(ui, SETTING, None).as_bool() != Some(false)
-        && crate::settings::now(ui, SUGGEST, lang).as_bool() != Some(false)
+    crate::settings::now(ui, "codeArena.inlineCompletion.enabled", None).as_bool() != Some(false)
+        && crate::settings::now(ui, "editor.inlineSuggest.enabled", lang).as_bool() != Some(false)
 }
 
 /// The editor shown, when its cursor is a caret (no selection, one cursor).
@@ -300,10 +301,10 @@ fn answered(ui: Ui, m: &Value) {
 
 /// Turns completions on or off, as the status item does (on, inline suggestions are turned on too).
 fn toggle(ui: Ui, send: &Send) {
-    let on = crate::settings::now(ui, SETTING, None).as_bool() != Some(false);
-    send(json!({"type": "set_setting", "key": SETTING, "value": !on}));
-    if !on && crate::settings::now(ui, SUGGEST, None).as_bool() == Some(false) {
-        send(json!({"type": "set_setting", "key": SUGGEST, "value": true}));
+    let on = crate::settings::now(ui, "codeArena.inlineCompletion.enabled", None).as_bool() != Some(false);
+    send(json!({"type": "set_setting", "key": "codeArena.inlineCompletion.enabled", "value": !on}));
+    if !on && crate::settings::now(ui, "editor.inlineSuggest.enabled", None).as_bool() == Some(false) {
+        send(json!({"type": "set_setting", "key": "editor.inlineSuggest.enabled", "value": true}));
     }
     if on && let Some((path, _)) = ui.live.get_untracked() {
         crate::complete::ghost_clear(ui, &path);
@@ -350,7 +351,9 @@ pub fn register(ui: Ui, send: &Send) {
     statusbar::add("status.complete", Side::Right, 270, |ui, send| {
         let t = ui.colors;
         let me = ui.state::<Inline>();
-        let on = ui.scope.create_memo(move |_| crate::settings::setting(ui, SETTING, None).as_bool() != Some(false));
+        let on = ui.scope.create_memo(move |_| {
+            crate::settings::setting(ui, "codeArena.inlineCompletion.enabled", None).as_bool() != Some(false)
+        });
         let editor = ui.scope.create_memo(move |_| ui.active.with(Option::is_some));
         let item = h_stack((icon("sparkle", 14.0), label(move || words(on.get()))))
             .style(|s| s.gap(4.0).items_center())

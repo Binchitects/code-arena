@@ -163,7 +163,6 @@ const NOT_READ_YET: &[&str] = &[
     "codeArena.languageServers.html.enabled",
     "codeArena.languageServers.yaml.enabled",
     "codeArena.languageServers.bash.enabled",
-    "codeArena.inlineCompletion.enabled",
 ];
 
 /// The other settings that no code names by its item, each with why it is declared all the same.
