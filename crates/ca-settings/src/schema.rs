@@ -242,6 +242,16 @@ pub static PERMISSIONS: Setting = Setting {
     section: "Permissions",
 };
 
+pub static TOOL_SETTINGS: Setting = Setting {
+    key: "tools.settings",
+    kind: Kind::Object,
+    default: "{}",
+    description: "Each tool's own settings, as Configure Tools keeps them: {\"run_shell\": {\"enabled\": false, \"approval\": \"ask\" or \"allow\", \"description\": \"…\", \"defaults\": {…}, \"fixed\": {…}}}. A project's file may only turn a tool off or make it ask.",
+    scope: Scope::Project,
+    env: None,
+    section: "Tools",
+};
+
 pub static AUTO_COMMIT: Setting = Setting {
     key: "git.autoCommit",
     kind: Kind::Bool,
@@ -521,6 +531,7 @@ pub static ALL: &[&Setting] = &[
     &UPDATE_CHECK,
     &COLOR,
     &MCP_SERVERS,
+    &TOOL_SETTINGS,
     &ARENA_TOOLS,
     &CODE_INTEL_TOOLS,
     &TOOL_CHARS,

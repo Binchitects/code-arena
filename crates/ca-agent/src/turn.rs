@@ -1010,6 +1010,8 @@ impl Agent {
                     if let Some(u) = pre.updated_input {
                         m.args = u;
                     }
+                    // The person's fixed arguments and defaults, so the question and the hooks' record say what runs.
+                    m.args = t.given(m.args);
                     let subject = t.subject(&m.args);
                     let said = Call { id: &calls[idx].id, name: &m.name, subject: &subject, arguments: &m.args };
                     match self.policy.decide(&m.name, Kind::Read, &subject) {
@@ -1077,6 +1079,7 @@ impl Agent {
                         i += 1;
                         continue;
                     };
+                    m.args = tool.given(m.args);
                     let kind = tool.kind();
                     let subject = tool.subject(&m.args);
                     let said = Call { id: &call.id, name: &m.name, subject: &subject, arguments: &m.args };

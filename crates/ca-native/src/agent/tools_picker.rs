@@ -25,7 +25,7 @@ use crate::commands;
 use crate::icons::icon;
 use crate::layers::{self, Place};
 use crate::state::{Send, Ui};
-use crate::widgets::{MONO_FONT, Theme, toast, window_size};
+use crate::widgets::{MONO_FONT, Theme, window_size};
 
 /// The command Customize tools… runs: the Configure Tools dialog registers it again under this id.
 pub const CUSTOMIZE: &str = "codeArena.agent.configureTools";
@@ -127,14 +127,11 @@ fn set(ui: Ui, send: &Send, id: &str, on: bool) {
     send(json!({"type": "tools_set", "group": id, "on": on, "key": id}));
 }
 
-/// What it adds to the window's registries, once at start: the wrench, its popover, and Customize's command (its
-/// stand-in until the Configure Tools dialog takes its place).
+/// What it adds to the window's registries, once at start: the wrench and its popover. Customize's command is the
+/// Configure Tools dialog's (`tools_dialog`).
 pub fn register(_ui: Ui, _send: &Send) {
     slots::add(Slot::BoxLeft, "tools.picker", 10, |ui, send| button(ui, send).into_any());
     layers::add(Place::Over, "tools.popover", 40, |ui, send| popover(ui, &send));
-    commands::add(commands::command(CUSTOMIZE, "Agent", "Configure Tools…", |ui, _| {
-        toast::info(ui, "Turn a group on or off here; MCP servers are set in settings.json under mcpServers.");
-    }));
 }
 
 /// The session's messages that are this part's, taken in. Never taken away from the parts after it.

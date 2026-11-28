@@ -335,11 +335,14 @@ pub struct Policy {
     pub rules: Rules,
     always: HashSet<String>,
     pub laya: Option<Laya>,
+    /// How each tool's calls ask, as the person set it in Configure Tools: "ask" asks every call in every mode,
+    /// "allow" runs a call that changes something unasked (Laya still makes a risky command ask).
+    pub approvals: crate::tool_settings::Approvals,
 }
 
 impl Policy {
     pub fn new(mode: Mode, rules: Rules) -> Self {
-        Self { mode, rules, always: HashSet::new(), laya: None }
+        Self { mode, rules, always: HashSet::new(), laya: None, approvals: Default::default() }
     }
 
     /// Laya's reading of a command; none for other tools, or with no Laya.
@@ -366,6 +369,11 @@ impl Policy {
         // Stopping a command the person may be relying on asks every time, in every mode.
         if tool == "stop_command" {
             return Decision::Ask;
+        }
+        match self.approvals.get(tool) {
+            Some(crate::tool_settings::Approval::Ask) => return Decision::Ask,
+            Some(crate::tool_settings::Approval::Allow) if kind != Kind::Read => return Decision::Run,
+            _ => {}
         }
         if kind == Kind::Read || self.mode == Mode::Yolo {
             return Decision::Run;
@@ -478,6 +486,26 @@ mod tests {
         assert_eq!(p.decide("run_shell", Kind::Shell, "npm publish"), Decision::Ask);
         p.remember("edit_file", Kind::Edit, "a.rs");
         assert_eq!(p.decide("write_file", Kind::Edit, "b.rs"), Decision::Run);
+    }
+
+    #[test]
+    fn a_tools_own_approval_holds_whatever_the_mode() {
+        use crate::tool_settings::Approval;
+        let mut p = Policy::new(Mode::Yolo, Rules::default());
+        p.approvals.insert("write_file".into(), Approval::Ask);
+        assert_eq!(p.decide("write_file", Kind::Edit, "a.txt"), Decision::Ask, "ask holds in yolo");
+        p.mode = Mode::Ask;
+        p.approvals.insert("run_shell".into(), Approval::Allow);
+        assert_eq!(p.decide("run_shell", Kind::Shell, "ls"), Decision::Run);
+        p.approvals.insert("stop_command".into(), Approval::Allow);
+        assert_eq!(p.decide("stop_command", Kind::Shell, "1"), Decision::Ask, "stopping a command asks every time");
+        p.rules.deny("run_shell(rm *)");
+        assert!(
+            matches!(p.decide("run_shell", Kind::Shell, "rm -rf x"), Decision::Refuse(_)),
+            "a deny rule still refuses"
+        );
+        p.mode = Mode::Plan;
+        assert!(matches!(p.decide("run_shell", Kind::Shell, "ls"), Decision::Refuse(_)), "plan mode still refuses");
     }
 
     #[test]
