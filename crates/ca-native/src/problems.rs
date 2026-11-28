@@ -744,9 +744,9 @@ fn row_view(ui: Ui, node: &Node) -> AnyView {
             let line = h_stack((
                 severity_icon(ui, p.severity),
                 label(move || message.clone())
-                    .style(|s| s.font_size(13.0).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)),
-                desc(from).style(|s| s.flex_shrink(0.0_f32)),
-                desc(place).style(|s| s.flex_shrink(0.0_f32)),
+                    .style(|s| s.font_size(13.0).text_ellipsis().min_width(80.0).flex_shrink(1.0_f32)),
+                desc(from).style(|s| s.flex_shrink(4.0_f32)),
+                desc(place).style(|s| s.flex_shrink(2.0_f32)),
             ))
             .style(|s| s.items_center().gap(6.0).min_width(0.0).width_full());
             tooltip(line, move || {
@@ -996,7 +996,9 @@ pub fn actions(ui: Ui, _send: Send) -> Option<floem::AnyView> {
     let menu = tooltip(menu, || label(|| "More Filters..."));
     let filter = h_stack((input, menu)).style(move |st| {
         let c = t.get();
-        st.width(260.0)
+        st.flex_basis(260.0)
+            .flex_shrink(1.0_f32)
+            .min_width(100.0)
             .height(24.0)
             .padding_right(2.0)
             .items_center()
