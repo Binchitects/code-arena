@@ -48,11 +48,12 @@ pub enum Block {
     },
     Quote(Text),
     /// A fenced block: the language its fence names (lower case, may be none), the file it names after a colon
-    /// (```` ```ts:src/app.ts ````, may be none), its lines.
+    /// (```` ```ts:src/app.ts ````, may be none), its lines, and whether its closing fence was written yet.
     Code {
         lang: String,
         name: String,
         text: String,
+        closed: bool,
     },
     /// A table: its header's cells, its columns' alignments (as many), its rows (each as many cells).
     Table {
@@ -233,10 +234,11 @@ pub fn parse(src: &str) -> Vec<Block> {
             if indent == 0 {
                 levels.clear();
             }
-            let mut text = String::new();
+            let (mut text, mut closed) = (String::new(), false);
             for l in lines.by_ref() {
                 let t = l.trim_start();
                 if run(t.as_bytes(), 0, c) >= n && t.trim_start_matches(c as char).trim().is_empty() {
+                    closed = true;
                     break;
                 }
                 // The fence's own indent is not the code's.
@@ -245,7 +247,7 @@ pub fn parse(src: &str) -> Vec<Block> {
                 text.push('\n');
             }
             text.pop();
-            out.push(Block::Code { lang, name, text });
+            out.push(Block::Code { lang, name, text, closed });
             continue;
         }
         if let Some((level, text)) = heading(rest) {
@@ -585,7 +587,10 @@ mod tests {
     #[test]
     fn a_fence_names_its_language_and_its_file() {
         let blocks = parse("```TS:src/App.ts\nlet a = 1\n```");
-        assert_eq!(blocks, [Block::Code { lang: "ts".into(), name: "src/App.ts".into(), text: "let a = 1".into() }]);
+        assert_eq!(
+            blocks,
+            [Block::Code { lang: "ts".into(), name: "src/App.ts".into(), text: "let a = 1".into(), closed: true }]
+        );
     }
 
     #[test]
@@ -703,7 +708,8 @@ mod tests {
                 Block::Code {
                     lang: "rust".into(),
                     name: String::new(),
-                    text: "fn main() {\n    let a = \"**x**\";\n}".into()
+                    text: "fn main() {\n    let a = \"**x**\";\n}".into(),
+                    closed: true,
                 },
                 Block::Paragraph(inline("Done.")),
             ]
@@ -711,16 +717,21 @@ mod tests {
         // Still being written.
         assert_eq!(
             parse("```sh\nls -la\n# not a heading"),
-            [Block::Code { lang: "sh".into(), name: String::new(), text: "ls -la\n# not a heading".into() }]
+            [Block::Code {
+                lang: "sh".into(),
+                name: String::new(),
+                text: "ls -la\n# not a heading".into(),
+                closed: false
+            }]
         );
         assert_eq!(
             parse("~~~\n```\n~~~"),
-            [Block::Code { lang: String::new(), name: String::new(), text: "```".into() }]
+            [Block::Code { lang: String::new(), name: String::new(), text: "```".into(), closed: true }]
         );
         // Under a list's item, its indent is the fence's, not the code's.
         assert_eq!(
             parse("- so:\n  ```py\n  if x:\n      y()\n  ```")[1],
-            Block::Code { lang: "py".into(), name: String::new(), text: "if x:\n    y()".into() }
+            Block::Code { lang: "py".into(), name: String::new(), text: "if x:\n    y()".into(), closed: true }
         );
     }
 

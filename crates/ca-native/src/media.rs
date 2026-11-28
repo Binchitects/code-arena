@@ -157,7 +157,7 @@ fn still(bytes: &[u8]) -> Result<image::DynamicImage, String> {
 /// An SVG drawn (twice its own size, for a sharp picture on a dense screen), with its own size.
 fn drawn_svg(bytes: &[u8]) -> Result<(u32, u32, image::DynamicImage), String> {
     use resvg::{tiny_skia, usvg};
-    let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).map_err(|e| e.to_string())?;
+    let tree = usvg::Tree::from_data(bytes, &svg_options()).map_err(|e| e.to_string())?;
     let size = tree.size();
     let (w, h) = (size.width().ceil().max(1.0), size.height().ceil().max(1.0));
     let scale = (MOST_DRAWN as f32 / w.max(h)).min(2.0);
@@ -236,6 +236,28 @@ pub fn checker(ui: Ui) -> [[u8; 3]; 2] {
 /// `grow` (a picture zoomed in is drawn as large as its place).
 pub fn drawn(picture: Rc<Picture>, grow: bool) -> impl View {
     Drawn { id: ViewId::new(), picture, grow }
+}
+
+/// What an SVG's text is drawn with: the system's fonts, read once (on the first thread that draws one), its
+/// `sans-serif` one of them (an SVG naming only fonts that are not here is drawn in it, its text not left out).
+pub(crate) fn svg_options() -> resvg::usvg::Options<'static> {
+    static FONTS: std::sync::OnceLock<Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    let fonts = FONTS.get_or_init(|| {
+        let mut db = resvg::usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        let families: Vec<String> =
+            db.faces().filter_map(|f| f.families.first().map(|(name, _)| name.clone())).collect();
+        let sans = ["Arial", "Liberation Sans", "DejaVu Sans", "Noto Sans", "Ubuntu", "Cantarell", "Segoe UI"]
+            .into_iter()
+            .map(str::to_string)
+            .find(|want| families.iter().any(|f| f.eq_ignore_ascii_case(want)))
+            .or_else(|| families.first().cloned());
+        if let Some(sans) = sans {
+            db.set_sans_serif_family(sans);
+        }
+        Arc::new(db)
+    });
+    resvg::usvg::Options { fontdb: fonts.clone(), ..Default::default() }
 }
 
 /// What a media tab shows.

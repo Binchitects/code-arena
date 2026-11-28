@@ -15,6 +15,8 @@ const ALLOWED: &[(&str, &str)] = &[
     ("ca-tools/src/sandbox.rs", "std::env::var_os(\"PATH\")"),
     ("ca-cli/src/ide.rs", "std::env::var_os(\"PATH\")"),
     ("ca-cli/src/ide_files.rs", "std::env::var_os(\"PATH\")"),
+    // Where mermaid-cli or a Chrome is found, to draw a diagram.
+    ("ca-cli/src/ide_media.rs", "std::env::var_os(\"PATH\")"),
     // A build script's own variables, set by Cargo while it builds: not the program's environment.
     ("ca-server/build.rs", "std::env::var(\"CARGO_MANIFEST_DIR\")"),
     ("ca-server/build.rs", "std::env::var(\"OUT_DIR\")"),
