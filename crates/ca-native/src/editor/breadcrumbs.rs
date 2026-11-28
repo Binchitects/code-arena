@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use floem::IntoView;
 use floem::action::remove_overlay;
-use floem::event::{Event, EventListener};
+use floem::event::{Event, EventListener, EventPropagation};
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::kurbo::Rect;
 use floem::reactive::{
@@ -278,10 +278,14 @@ fn bar(ui: Ui, path: String, file: String, folders: bool, focused: Memo<bool>) -
                 lit.set(None);
             }
         })
-        .on_event_stop(EventListener::KeyDown, move |e| {
-            let Event::KeyDown(k) = e else { return };
+        .on_event(EventListener::KeyDown, move |e| {
+            let Event::KeyDown(k) = e else { return EventPropagation::Continue };
             let n = count();
-            let Some(at) = lit.get_untracked().filter(|_| n > 0) else { return };
+            // Only the bar's own keys stop here: the palette, Quick Open and every other binding still work.
+            let Some(at) = lit.get_untracked().filter(|_| n > 0) else { return EventPropagation::Continue };
+            if !k.modifiers.is_empty() {
+                return EventPropagation::Continue;
+            }
             match &k.key.logical_key {
                 Key::Named(NamedKey::ArrowLeft) => lit.set(Some(at.saturating_sub(1))),
                 Key::Named(NamedKey::ArrowRight) => lit.set(Some((at + 1).min(n - 1))),
@@ -298,8 +302,9 @@ fn bar(ui: Ui, path: String, file: String, folders: bool, focused: Memo<bool>) -
                         super::focus(&editor);
                     }
                 }
-                _ => {}
+                _ => return EventPropagation::Continue,
             }
+            EventPropagation::Stop
         })
         .style(|s| s.width_full())
 }
