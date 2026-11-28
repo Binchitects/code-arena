@@ -1090,10 +1090,15 @@ pub fn register(ui: Ui, _send: &Send) {
     );
     tab(PIN, "Pin", "4_keep", 20);
     tab(UNPIN, "Unpin", "4_keep", 30);
-    tab("workbench.action.splitEditorRight", "Split Right", "5_split", 10);
-    tab("workbench.action.splitEditorDown", "Split Down", "5_split", 20);
-    tab("workbench.action.moveEditorToNextGroup", "Move to Next Group", "6_move", 10);
-    tab("workbench.action.moveEditorToPreviousGroup", "Move to Previous Group", "6_move", 20);
+    // Not in a window of its own: it is one group.
+    let main = |id: &str, title: &str, group: &str, order: i32| {
+        let apart = |ui: Ui| groups::groups(ui).model.with_untracked(|m| m.is_apart(m.focused));
+        menus::add(Menu::EditorTab, item(id).title(title).group(group).order(order).when(move |ui| !apart(ui)));
+    };
+    main("workbench.action.splitEditorRight", "Split Right", "5_split", 10);
+    main("workbench.action.splitEditorDown", "Split Down", "5_split", 20);
+    main("workbench.action.moveEditorToNextGroup", "Move to Next Group", "6_move", 10);
+    main("workbench.action.moveEditorToPreviousGroup", "Move to Previous Group", "6_move", 20);
 
     // A file asked for as a preview, come: its group's preview, in place of the one before (unless that one was
     // kept meanwhile); a tab closed once it is saved.
