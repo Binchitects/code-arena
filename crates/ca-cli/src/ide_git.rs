@@ -1047,7 +1047,7 @@ mod tests {
         assert_eq!(info["current"]["subject"], "Number two");
         assert_eq!(info["incoming"]["name"], "feature");
         assert_eq!(info["incoming"]["subject"], "Shout two");
-        assert_eq!(info["incoming"]["short"].as_str().map(str::len).unwrap_or(0) >= 7, true);
+        assert!(info["incoming"]["short"].as_str().map(str::len).unwrap_or(0) >= 7);
         assert_eq!(info["base_text"], "one\ntwo\nthree\n");
         assert_eq!(info["current_text"], "one\n2\nthree\n");
         assert_eq!(info["incoming_text"], "one\nTWO\nthree\n");
