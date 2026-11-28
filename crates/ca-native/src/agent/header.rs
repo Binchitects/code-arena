@@ -100,7 +100,12 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         let button = action(t, "ellipsis", || {}).into_view();
         let id = button.id();
         tooltip(
-            button.on_click_stop(move |_| popup::open_menu(ui, &send, popup::At::under(id), Menu::AgentMore)),
+            button.on_click_stop(move |_| {
+                // The menu's rows, with Arena's Assistant and Project submenus after the session's group.
+                let mut items = popup::of_rows(ui, &send, menus::rows(ui, Menu::AgentMore));
+                crate::assistants::more(ui, &send, &mut items);
+                popup::open(ui, popup::At::under(id), items);
+            }),
             || label(|| "More Actions…"),
         )
     };
