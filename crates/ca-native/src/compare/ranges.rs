@@ -350,6 +350,44 @@ mod tests {
     }
 
     #[test]
+    fn a_compare_of_the_index_reads_it_from_git_and_stages_and_reverts_the_lines_chosen() {
+        use std::cell::RefCell;
+        let ui = Ui::new();
+        let asked = Rc::new(RefCell::new(Vec::<Value>::new()));
+        let kept = asked.clone();
+        let send: Send = Rc::new(move |v: Value| kept.borrow_mut().push(v));
+        super::super::register(ui, &send);
+        ui.take(&json!({"type": "file", "path": "a.rs", "text": "a\nB\nc\nD\n", "modified": 1}), &send);
+        asked.borrow_mut().clear();
+        super::super::open(ui, &send, Source::Index("a.rs".into()), Source::Live("a.rs".into()));
+        let shown = json!({"type": "git_show", "repo": "", "path": "a.rs", "rev": "", "working": false, "key": "compare"});
+        assert_eq!(*asked.borrow(), [shown.clone()], "the index's text is asked of git");
+        let e = super::super::entry("compare:index:a.rs ↔ live:a.rs").expect("open");
+        assert!(!super::super::has_come(&e.left), "nothing is staged before the index's text has come");
+        let reply = json!({"type": "git_shown", "repo": "", "path": "a.rs", "rev": "", "working": false,
+            "exists": true, "text": "a\nb\nc\nd\n", "key": "compare"});
+        assert!(super::super::take(ui, &reply, &send), "the reply is the compare's");
+        assert!(super::super::has_come(&e.left));
+        assert_eq!(e.left.doc.text().to_string(), "a\nb\nc\nd\n");
+        // A status asks for it again.
+        asked.borrow_mut().clear();
+        super::super::take(ui, &json!({"type": "git_status", "repo": "", "files": []}), &send);
+        assert_eq!(*asked.borrow(), [shown]);
+        // Staging the caret's line sends the index's new text and shows it at once.
+        asked.borrow_mut().clear();
+        let text = work("a\nb\nc\nd\n", "a\nB\nc\nD\n", &[(1, 1)], How::Take).expect("touched");
+        finish(ui, &send, &e, Act::Stage, "a.rs", "", text);
+        assert_eq!(asked.borrow()[0]["type"], "git_stage_text");
+        assert_eq!(asked.borrow()[0]["text"], "a\nB\nc\nd\n");
+        assert_eq!(e.left.doc.text().to_string(), "a\nB\nc\nd\n");
+        // Reverting the other line puts the index's line back into the file's text, as one edit.
+        let now = e.right.doc.text().to_string();
+        let back = work(&e.left.doc.text().to_string(), &now, &[(3, 3)], How::GiveBack).expect("touched");
+        finish(ui, &send, &e, Act::Revert, "a.rs", &now, back);
+        assert_eq!(ui.tab("a.rs").expect("tab").text(), "a\nB\nc\nd\n");
+    }
+
+    #[test]
     fn each_command_acts_on_the_compares_it_belongs_to() {
         let (index, live, head) =
             (Source::Index("a.rs".into()), Source::Live("a.rs".into()), Source::Head("a.rs".into()));
