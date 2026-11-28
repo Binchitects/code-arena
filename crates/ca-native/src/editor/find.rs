@@ -575,7 +575,7 @@ fn find_box(
             _ => {
                 return match default_key(&map, editor, press, mods) {
                     // Not the box's: the workbench's keys (Ctrl+S, Ctrl+P, Ctrl+B…) work while it has the keys.
-                    CommandExecuted::No if crate::keys_hook::editor(key, mods) => {
+                    CommandExecuted::No if crate::keys_hook::editor(ui, key, mods) => {
                         let key = key.clone();
                         super::tell(ui, |send| crate::workbench::key(ui, send, &key, mods));
                         CommandExecuted::Yes

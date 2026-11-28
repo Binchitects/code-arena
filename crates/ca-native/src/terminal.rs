@@ -1521,7 +1521,7 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
         }
     });
     let (keys, mouse) = (send.clone(), send);
-    body.keyboard_navigable()
+    crate::keymap::tracked(body.keyboard_navigable(), crate::keymap::Focus::Terminal)
         .on_event_cont(EventListener::FocusGained, move |_| focused.set(true))
         .on_event_cont(EventListener::FocusLost, move |_| focused.set(false))
         .on_resize(on_resize)
@@ -1605,11 +1605,8 @@ fn screen_view(ui: Ui, send: Send) -> impl IntoView {
             let m = k.modifiers;
             let ctrl = m.contains(Modifiers::CONTROL);
             let letter = |l: &str| matches!(&k.key.logical_key, Key::Character(c) if c.eq_ignore_ascii_case(l));
-            // The workbench's own keys stay the workbench's, as VS Code skips them in the shell, unless every key
-            // is to reach the shell (`terminal.integrated.sendKeybindingsToShell`).
-            if crate::keys_hook::terminal(&k.key.logical_key, m)
-                && !settings::now(ui, "terminal.integrated.sendKeybindingsToShell", None).as_bool().unwrap_or(false)
-            {
+            // The workbench's own keys stay the workbench's, as VS Code skips them in the shell (`keys_hook.rs`).
+            if crate::keys_hook::terminal(ui, &k.key.logical_key, m) {
                 return EventPropagation::Continue;
             }
             // Ctrl+Shift+C copies the selection, as in VS Code's terminal.

@@ -263,7 +263,7 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                         // Not the editor's: the workbench's keys (Ctrl+B, Ctrl+P, Ctrl+J…) work while it has focus.
                         CommandExecuted::No => {
                             if let KeyInput::Keyboard(key, _) = &press.key
-                                && crate::keys_hook::editor(key, mods)
+                                && crate::keys_hook::editor(ui, key, mods)
                             {
                                 tell(ui, |send| crate::workbench::key(ui, send, key, mods));
                             }

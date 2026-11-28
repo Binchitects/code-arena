@@ -628,7 +628,7 @@ fn side(ui: Ui, e: &Rc<Entry>, half: &Half) -> (Editor, AnyView) {
         match crate::editor::keys::default_key(&map, editor, press, mods) {
             CommandExecuted::No => {
                 if let KeyInput::Keyboard(key, _) = &press.key
-                    && crate::keys_hook::editor(key, mods)
+                    && crate::keys_hook::editor(ui, key, mods)
                 {
                     crate::editor::tell(ui, |send| crate::workbench::key(ui, send, key, mods));
                 }

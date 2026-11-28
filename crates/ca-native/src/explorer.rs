@@ -25,6 +25,7 @@ use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, scro
 use floem::{AnyView, IntoView, View};
 use serde_json::{Value, json};
 
+use crate::keymap::TakesKeys;
 use crate::icons::icon;
 use crate::menus::Menu;
 use crate::state::{Entry, Send, Ui};
@@ -1178,6 +1179,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         })
         .on_event_cont(EventListener::FocusGained, move |_| focused.set(true))
         .on_event_cont(EventListener::FocusLost, move |_| focused.set(false))
+        .takes_keys(crate::keymap::Focus::Explorer)
         // The tree's empty part: a click selects nothing (a new file then goes in the project's top), a right-click
         // opens the menu for the top.
         .on_click_stop(move |_| select_one(ui, ""))

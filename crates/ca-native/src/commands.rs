@@ -21,14 +21,16 @@
 //! - When several commands have the same key, the one added last whose `when` holds runs (VS Code's "last match
 //!   wins").
 //!
-//! The keys are looked up in a map (made once after commands were added, at the first key pressed), never by
-//! reading the list on a key.
+//! The keys are the keymap's (`keymap/mod.rs`): a command's own keys are its defaults, under VS Code's table and the
+//! person's keybindings.json, and the keymap looks a key up in a map made once after commands were added (at the
+//! first key pressed), never by reading the list on a key. `keys_of` is a command's key as shown now (the person's,
+//! if they gave one), `Command::shown_keys` its first default.
 
 // The parts to come call what the window's first parts do not yet.
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use floem::keyboard::{Key, Modifiers, NamedKey};
@@ -95,7 +97,7 @@ impl Command {
         if self.category.is_empty() { self.title.clone() } else { format!("{}: {}", self.category, self.title) }
     }
 
-    /// The key shown for it (none: an empty text).
+    /// Its first default key as written (none: an empty text); `keys_of` is the one shown now.
     pub fn shown_keys(&self) -> &str {
         self.keys.first().map_or("", String::as_str)
     }
@@ -168,7 +170,7 @@ impl Chord {
                 _ => return None,
             }
         }
-        chord.key = key.trim().to_lowercase();
+        chord.key = crate::keymap::key_name(key);
         (!chord.key.is_empty()).then_some(chord)
     }
 
@@ -234,37 +236,10 @@ struct Registry {
     /// the palette: it copies no text).
     list: Vec<Rc<Command>>,
     by_id: HashMap<String, usize>,
-    /// The commands each key (or chord of two) is bound to, by their places in the list, in the order added.
-    by_keys: HashMap<Vec<Chord>, Vec<usize>>,
-    /// The keys that begin a chord.
-    firsts: HashSet<Chord>,
-    /// Commands were added since the keys were last put in their map: it is made again before a key is looked up
-    /// (once for all the commands added at start, not once for each).
-    stale: bool,
-}
-
-impl Registry {
-    fn index(&mut self) {
-        if !std::mem::take(&mut self.stale) {
-            return;
-        }
-        self.by_keys.clear();
-        self.firsts.clear();
-        for (at, c) in self.list.iter().enumerate() {
-            for keys in c.keys.iter().filter_map(|k| parse_keys(k)) {
-                if keys.len() > 1 {
-                    self.firsts.insert(keys[0].clone());
-                }
-                self.by_keys.entry(keys).or_default().push(at);
-            }
-        }
-    }
 }
 
 thread_local! {
     static REGISTRY: RefCell<Registry> = RefCell::new(Registry::default());
-    /// The first key of a chord, pressed: the next key ends it.
-    static PENDING: RefCell<Option<Chord>> = const { RefCell::new(None) };
 }
 
 /// Adds a command; one of the same id takes the first's place.
@@ -279,8 +254,8 @@ pub fn add(c: Command) {
                 r.list.push(Rc::new(c));
             }
         }
-        r.stale = true;
     });
+    crate::keymap::stale();
 }
 
 /// Every command, in the order added.
@@ -295,9 +270,13 @@ pub fn find(id: &str) -> Option<Rc<Command>> {
     })
 }
 
-/// The key shown for a command (none, or no such command: an empty text).
+/// The key shown for a command now: the person's if they gave one, else its first default (none, or no such
+/// command: an empty text).
 pub fn keys_of(id: &str) -> String {
-    find(id).map(|c| c.shown_keys().to_string()).unwrap_or_default()
+    if find(id).is_none() {
+        return String::new();
+    }
+    crate::keymap::shown_keys(id)
 }
 
 /// Runs a command by its id; false when there is none, or it is not there or may not run now.
@@ -312,16 +291,6 @@ pub fn run(ui: Ui, send: &Send, id: &str) -> bool {
     }
 }
 
-/// The command a key (or a chord) runs now: the one added last among those bound to it that are there.
-fn bound(ui: Ui, keys: &[Chord]) -> Option<Rc<Command>> {
-    let candidates: Vec<Rc<Command>> = REGISTRY.with(|r| {
-        let mut r = r.borrow_mut();
-        r.index();
-        r.by_keys.get(keys).map(|at| at.iter().map(|i| r.list[*i].clone()).collect()).unwrap_or_default()
-    });
-    candidates.into_iter().rev().find(|c| c.offered(ui))
-}
-
 /// What became of a key pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pressed {
@@ -333,38 +302,15 @@ pub enum Pressed {
     Free,
 }
 
-/// A key pressed in the window, taken to the command bound to it. A key that does not end the chord begun is
-/// taken as a key of its own.
+/// A key pressed in the window, taken to the command bound to it (the keymap's `press`). A key that ends no chord
+/// begun is not a command: it does nothing else.
 pub fn press(ui: Ui, send: &Send, key: &Key, m: Modifiers) -> Pressed {
-    let Some(chord) = Chord::of(key, m) else { return Pressed::Free };
-    if let Some(first) = PENDING.with(|p| p.borrow_mut().take())
-        && let Some(c) = bound(ui, &[first, chord.clone()])
-    {
-        if c.may_run(ui) {
-            (c.run)(ui, send);
-        }
-        return Pressed::Ran;
-    }
-    if let Some(c) = bound(ui, std::slice::from_ref(&chord)) {
-        if c.may_run(ui) {
-            (c.run)(ui, send);
-        }
-        return Pressed::Ran;
-    }
-    if REGISTRY.with(|r| {
-        let mut r = r.borrow_mut();
-        r.index();
-        r.firsts.contains(&chord)
-    }) {
-        PENDING.with(|p| *p.borrow_mut() = Some(chord));
-        return Pressed::Waiting;
-    }
-    Pressed::Free
+    crate::keymap::press(ui, send, key, m)
 }
 
 /// The first key of a chord that waits for its second (none: no chord is begun).
 pub fn waiting() -> Option<Chord> {
-    PENDING.with(|p| p.borrow().clone())
+    crate::keymap::waiting()
 }
 
 #[cfg(test)]
@@ -444,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn a_chord_waits_for_its_second_key_and_another_key_is_taken_as_its_own() {
+    fn a_chord_waits_for_its_second_key_and_another_key_ends_it_as_no_command() {
         let ui = Ui::new();
         let send: Send = Rc::new(|_| {});
         let said = move |text: &'static str| move |ui: Ui, _: &Send| ui.message.set(text.into());
@@ -458,10 +404,12 @@ mod tests {
         assert_eq!(p("t"), Pressed::Ran);
         assert_eq!(ui.message.get_untracked(), "chord");
         assert_eq!(waiting(), None);
-        // Not the chord's second key: a key of its own.
+        // Not the chord's second key: no command, and the key's own does not run.
         assert_eq!(p("k"), Pressed::Waiting);
         assert_eq!(p("b"), Pressed::Ran);
-        assert_eq!(ui.message.get_untracked(), "single");
+        assert_eq!(ui.message.get_untracked(), "chord");
         assert_eq!(p("t"), Pressed::Free, "no chord is begun any more");
+        assert_eq!(p("b"), Pressed::Ran);
+        assert_eq!(ui.message.get_untracked(), "single");
     }
 }

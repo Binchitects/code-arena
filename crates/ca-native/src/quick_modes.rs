@@ -284,7 +284,7 @@ pub fn command_rows(all: &[Rc<Command>], text: &str, recent: &[String]) -> Vec<R
     }
     let row = |i: usize| {
         let (c, label) = (&all[i], &names[i]);
-        Row::new(label, "", positions(label, &q), c.shown_keys(), Pick::Command(c.id.clone()))
+        Row::new(label, "", positions(label, &q), &crate::commands::keys_of(&c.id), Pick::Command(c.id.clone()))
     };
     // The commands run last that are listed now, the last first (one not there any more is passed over).
     let place = |id: &str| all.iter().position(|c| c.id == id);
