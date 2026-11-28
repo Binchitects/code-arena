@@ -951,6 +951,17 @@ Sections used:
 - **Typing works again after Change Language Mode and the indentation, line-ending and encoding
   pickers.** Closing one of these pickers now puts the cursor back in the editor, as VS Code does,
   so you can type into the file straight away.
+- **Skill descriptions stay out from under the row's buttons.** In the Skills view, a long description
+  now ends in an ellipsis before the Export and Use in the Chat buttons instead of running on beneath
+  them.
+- **Left-to-right items in right-to-left lists stand beside their numbers.** In an answer, an English
+  item in a Persian numbered list now sits next to its marker instead of at the far side of the
+  answer.
+- **The goal bar, the goal form and the loops are easier to read.** Wrapped lines there now have room
+  between them instead of nearly touching.
+- **You can tell apart tabs with the same name.** When two open tabs share a file name (two skills'
+  SKILL.md, for example), each now shows the folders that tell it apart, as VS Code does
+  ('.../explain-module').
 
 ## v0.5.0 (2026-11-26)
 
