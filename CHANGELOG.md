@@ -925,6 +925,16 @@ Sections used:
   you may) and Refresh; each row says global, archived, your role, how much of its goals are done,
   this month's spend of its budget, whether this session counts to it and whether this folder's
   repository is in it, and the pointer on a row puts the session in it.
+- **Accounts menu.** The Accounts button in the activity bar opens a menu that says whose key is in
+  use and on which Arena. From it you can open Your Account in Arena, open People (Admin) if you may
+  manage people, sign in as someone else, send feedback, or sign out (you are asked first). The
+  button has a warning dot while you are signed out or Arena refused the key.
+- **Sign in from the window.** Sign In with User Name and Password... asks for the Arena's address,
+  your user name, your password and then your authenticator code if the account has one. The session
+  then picks up the new key in the same window without restarting.
+- **Send Feedback.** Send Feedback... is in the Accounts menu, the Manage menu and the palette. You
+  say whether it is an idea, a problem, praise or something else, and Arena's admins get it and may
+  answer you there.
 
 
 ### :bug: Bugs fixed
