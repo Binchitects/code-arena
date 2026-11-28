@@ -150,7 +150,8 @@ pub fn entries(rules: &[Rule], known: &[Known], os: Os) -> Vec<Entry> {
     let make = |command: &str, title: &str, keys: Option<Vec<Chord>>, when: &str, source: Source| {
         let key_label = keys.as_deref().map(|k| super::label(k, os)).unwrap_or_default();
         let key_text = keys.as_deref().map(|k| key_text(k, os)).unwrap_or_default();
-        let hay = format!("{title}\n{command}\n{key_label}\n{key_text}\n{when}\n{}", source_name(source)).to_lowercase();
+        let hay =
+            format!("{title}\n{command}\n{key_label}\n{key_text}\n{when}\n{}", source_name(source)).to_lowercase();
         Entry {
             uid: 0,
             command: command.into(),
@@ -181,7 +182,11 @@ pub fn entries(rules: &[Rule], known: &[Known], os: Os) -> Vec<Entry> {
         }
     }
     all.sort_by(|a, b| {
-        (a.keys.is_none(), a.name().to_lowercase(), &a.command).cmp(&(b.keys.is_none(), b.name().to_lowercase(), &b.command))
+        (a.keys.is_none(), a.name().to_lowercase(), &a.command).cmp(&(
+            b.keys.is_none(),
+            b.name().to_lowercase(),
+            &b.command,
+        ))
     });
     for (n, e) in all.iter_mut().enumerate() {
         e.uid = n;
@@ -675,7 +680,10 @@ fn menu(ui: Ui, send: &Send, e: &Entry, at: popup::At) {
             .enabled(bound)
             .into(),
         popup::line(),
-        popup::entry("Remove Keybinding", move || apply(ui, &f, &h, Change::Remove)).keys("Delete").enabled(bound).into(),
+        popup::entry("Remove Keybinding", move || apply(ui, &f, &h, Change::Remove))
+            .keys("Delete")
+            .enabled(bound)
+            .into(),
         {
             let e = e.clone();
             popup::entry("Reset Keybinding", move || apply(ui, &g, &e, Change::Reset)).enabled(user).into()
@@ -747,22 +755,24 @@ fn row_view(ui: Ui, send: Send, e: Entry, odd: bool) -> AnyView {
             }
         })
         .style(move |s| {
-            s.width(24.0)
-                .flex_shrink(0.0)
-                .height_full()
-                .items_center()
-                .justify_center()
-                .cursor(if p2() { CursorStyle::Pointer } else { CursorStyle::Default })
+            s.width(24.0).flex_shrink(0.0).height_full().items_center().justify_center().cursor(if p2() {
+                CursorStyle::Pointer
+            } else {
+                CursorStyle::Default
+            })
         });
     let known = e.known();
     let (name, id) = (e.name().to_string(), e.command.clone());
     let p3 = picked.clone();
     let title = h_stack((
-        label(move || name.clone()).style(move |s| {
-            s.text_ellipsis().min_width(0.0).apply_if(!known, |s| s.color(t.get().warning))
-        }),
+        label(move || name.clone())
+            .style(move |s| s.text_ellipsis().min_width(0.0).apply_if(!known, |s| s.color(t.get().warning))),
         label(move || id.clone()).style(move |s| {
-            s.margin_left(8.0).text_ellipsis().min_width(0.0).color(t.get().desc).apply_if(!known || !p3(), |s| s.hide())
+            s.margin_left(8.0)
+                .text_ellipsis()
+                .min_width(0.0)
+                .color(t.get().desc)
+                .apply_if(!known || !p3(), |s| s.hide())
         }),
     ))
     .style(|s| s.items_center().min_width(0.0));
@@ -819,8 +829,10 @@ fn define_box(ui: Ui, send: Send, all: Memo<(u64, Rc<Vec<Entry>>)>) -> AnyView {
     let t = ui.colors;
     let s = ui.state::<Shortcuts>();
     let pressed = create_memo(move |_| s.define.with(|d| d.as_ref().map(|d| d.keys.clone()).unwrap_or_default()));
-    let title = label(move || s.define.with(|d| d.as_ref().map(|d| format!("Keys for {}", d.entry.name())).unwrap_or_default()))
-        .style(|s| s.font_bold().margin_bottom(6.0).text_ellipsis());
+    let title = label(move || {
+        s.define.with(|d| d.as_ref().map(|d| format!("Keys for {}", d.entry.name())).unwrap_or_default())
+    })
+    .style(|s| s.font_bold().margin_bottom(6.0).text_ellipsis());
     let keys = floem::views::dyn_container(move || pressed.get(), move |k| key_boxes(t, &k)).style(move |s| {
         let c = t.get();
         s.width_full()
@@ -863,7 +875,8 @@ fn define_box(ui: Ui, send: Send, all: Memo<(u64, Rc<Vec<Entry>>)>) -> AnyView {
     let box_view = view
         .on_event(EventListener::KeyDown, move |e| {
             let Event::KeyDown(k) = e else { return EventPropagation::Stop };
-            let key = crate::accessibility::numpad(&k.key.logical_key, k.key.location).unwrap_or(k.key.logical_key.clone());
+            let key =
+                crate::accessibility::numpad(&k.key.logical_key, k.key.location).unwrap_or(k.key.logical_key.clone());
             let plain = k.modifiers.is_empty();
             match key {
                 Key::Named(NamedKey::Escape) if plain => close(),
@@ -920,7 +933,9 @@ fn search_box(ui: Ui, count: Memo<usize>) -> impl IntoView {
         .on_event(EventListener::KeyDown, move |e| {
             let Event::KeyDown(k) = e else { return EventPropagation::Continue };
             match &k.key.logical_key {
-                Key::Named(NamedKey::Escape) if s.search.with_untracked(|t| !t.is_empty()) => s.search.set(String::new()),
+                Key::Named(NamedKey::Escape) if s.search.with_untracked(|t| !t.is_empty()) => {
+                    s.search.set(String::new())
+                }
                 Key::Named(NamedKey::ArrowDown) => focus(s.table),
                 _ => {}
             }
@@ -948,8 +963,10 @@ fn search_box(ui: Ui, count: Memo<usize>) -> impl IntoView {
     let recorder = recorder
         .on_event(EventListener::KeyDown, move |e| {
             let Event::KeyDown(k) = e else { return EventPropagation::Stop };
-            let key = crate::accessibility::numpad(&k.key.logical_key, k.key.location).unwrap_or(k.key.logical_key.clone());
-            let alt_k = k.modifiers == Modifiers::ALT && matches!(&key, Key::Character(c) if c.eq_ignore_ascii_case("k"));
+            let key =
+                crate::accessibility::numpad(&k.key.logical_key, k.key.location).unwrap_or(k.key.logical_key.clone());
+            let alt_k =
+                k.modifiers == Modifiers::ALT && matches!(&key, Key::Character(c) if c.eq_ignore_ascii_case("k"));
             if (matches!(key, Key::Named(NamedKey::Escape)) && k.modifiers.is_empty()) || alt_k {
                 s.recording.set(false);
             } else if let Some(c) = Chord::of(&key, k.modifiers) {
@@ -980,18 +997,17 @@ fn search_box(ui: Ui, count: Memo<usize>) -> impl IntoView {
     let toggle = crate::widgets::toggle(t, "record-keys", s.recording, "Record Keys (Alt+K)");
     let focused = s.recording;
     h_stack((
-        h_stack((input, recorder, results, toggle))
-            .style(move |st| {
-                let c = t.get();
-                st.flex_grow(1.0_f32)
-                    .min_width(0.0)
-                    .height(26.0)
-                    .padding_right(2.0)
-                    .items_center()
-                    .border(1.0)
-                    .border_color(if focused.get() { c.focus } else { c.input_border })
-                    .background(c.input_bg)
-            }),
+        h_stack((input, recorder, results, toggle)).style(move |st| {
+            let c = t.get();
+            st.flex_grow(1.0_f32)
+                .min_width(0.0)
+                .height(26.0)
+                .padding_right(2.0)
+                .items_center()
+                .border(1.0)
+                .border_color(if focused.get() { c.focus } else { c.input_border })
+                .background(c.input_bg)
+        }),
         crate::widgets::action(t, "clear-all", move || {
             if s.search.with_untracked(|t| !t.is_empty()) {
                 s.search.set(String::new());
@@ -1023,7 +1039,9 @@ fn view(ui: Ui, send: Send) -> AnyView {
     // The place of the row picked among those shown.
     let at = create_memo(move |_| {
         let picked = s.selected.get()?;
-        all.with(|(_, all)| shown.with(|sh| sh.iter().position(|n| all[*n].uid == picked.uid && all[*n].command == picked.command)))
+        all.with(|(_, all)| {
+            shown.with(|sh| sh.iter().position(|n| all[*n].uid == picked.uid && all[*n].command == picked.command))
+        })
     });
     let problems = ui.state::<super::Keymap>().problems;
     let send_w = send.clone();
@@ -1166,7 +1184,7 @@ fn view(ui: Ui, send: Send) -> AnyView {
         },
     )
     .style(|s| s.position(Position::Absolute).inset_top(60.0).width_full().justify_center());
-    let json =crate::widgets::action(t, "go-to-file", move || crate::settings::open_user(ui, &send_j, super::FILE));
+    let json = crate::widgets::action(t, "go-to-file", move || crate::settings::open_user(ui, &send_j, super::FILE));
     let json = floem::views::tooltip(json, || label(|| "Open Keyboard Shortcuts (JSON)"));
     let body = floem::views::v_stack((
         h_stack((search_box(ui, count), json.style(|s| s.margin_left(2.0)))).style(|s| s.width_full().items_center()),
@@ -1175,7 +1193,12 @@ fn view(ui: Ui, send: Send) -> AnyView {
         table,
     ))
     .style(move |s| {
-        s.size_full().padding_horiz(24.0).padding_top(12.0).min_height(0.0).color(t.get().fg).background(t.get().editor_bg)
+        s.size_full()
+            .padding_horiz(24.0)
+            .padding_top(12.0)
+            .min_height(0.0)
+            .color(t.get().fg)
+            .background(t.get().editor_bg)
     });
     focus(if s.recording.get_untracked() { s.recorder } else { s.input });
     floem::views::stack((body, define_layer)).style(|s| s.size_full()).into_any()
@@ -1202,7 +1225,10 @@ pub fn register(ui: Ui, _send: &Send) {
         .keys("Ctrl+K Ctrl+E")
         .when(move |_| s.focused.get_untracked())
         .hidden());
-    add(command(RECORD, "", "Record Keys", move |_, _| s.recording.update(|r| *r = !*r)).keys("Alt+K").when(shown).hidden());
+    add(command(RECORD, "", "Record Keys", move |_, _| s.recording.update(|r| *r = !*r))
+        .keys("Alt+K")
+        .when(shown)
+        .hidden());
     // Record Keys turned on or off: what was recorded is forgotten, and the box it is in has the keys.
     ui.scope.create_effect(move |was: Option<bool>| {
         let on = s.recording.get();
@@ -1400,7 +1426,8 @@ mod tests {
 
     #[test]
     fn the_lists_places_are_found_past_comments_and_strings() {
-        let text = "// mine\n[\n  /* one, ] */ {\"key\": \"ctrl+]\", \"command\": \"a\"},\n  {\"command\": \"b // c\"},\n]\n";
+        let text =
+            "// mine\n[\n  /* one, ] */ {\"key\": \"ctrl+]\", \"command\": \"a\"},\n  {\"command\": \"b // c\"},\n]\n";
         let sp = spans(text).expect("spans");
         let items: Vec<&str> = sp.items.iter().map(|(s, e)| &text[*s..*e]).collect();
         assert_eq!(items, ["{\"key\": \"ctrl+]\", \"command\": \"a\"}", "{\"command\": \"b // c\"}"]);
