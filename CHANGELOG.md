@@ -1155,6 +1155,24 @@ Sections used:
 - **Git commands ask which repository.** Run from the Command Palette with several repositories, git
   commands first ask 'Repository'. Git: Fetch From All Repositories fetches each one. Staging,
   diffs, quick diff and the merge editor work on files in nested repositories too.
+- **Settings editor.** Ctrl+, (Preferences: Open Settings) opens VS Code's Settings editor in a tab.
+  It has a search (words, `@modified`, `@id:editor.tabSize`, `@lang:python`) with the number found,
+  the User and Workspace tabs, the sections at the left (Commonly Used, the IDE's, then the agent's
+  under Agent), and a row per setting: 'Editor: Font Size', what it does, and a box to tick, a
+  choice, or a number or text taken on Enter (out of bounds is refused in VS Code's words). Lists
+  and objects get 'Edit in settings.json'. Changes are written at once with the file's comments
+  kept.
+- **What is set, and where.** A setting set in the tab's file has the modified bar and says 'Also
+  modified in: Workspace'. Its gear menu has Reset Setting, Copy Setting ID and Copy Setting as
+  JSON. A value given by an environment variable or the command line, one this edition locks, and
+  one a file has that was not taken are said under the setting. Settings the file has that Code
+  Arena does not read are listed above the rows.
+- **From VS Code.** The Settings editor's From VS Code link, or Preferences: Bring Over VS Code's
+  Settings, finds VS Code's settings.json on this computer. It offers the settings Code Arena reads
+  that yours lacks ('Bring over VS Code's settings? N of them: …') and writes them into your
+  settings.json with Bring Over.
+- **Open User Settings, Open Workspace Settings.** VS Code's commands open the Settings editor on
+  your settings or on the project's .vscode/settings.json.
 
 
 ### :bug: Bugs fixed
