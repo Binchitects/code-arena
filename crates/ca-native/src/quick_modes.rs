@@ -340,6 +340,9 @@ pub fn ran(ui: Ui, send: &Send, id: &str) {
 pub fn symbols_shown(ui: Ui) -> Option<Option<Rc<Vec<Symbol>>>> {
     let active = ui.active.get()?;
     let tab = ui.tab(&active).filter(|t| t.is_file())?;
+    // Read (and so watched by the effect asking) before the reading is begun: an effect made while another runs
+    // (the answer's) leaves what that one reads after it unwatched.
+    let shown = ui.symbols.with(|(p, s)| (*p == active).then(|| s.clone()));
     let st = recent(ui);
     // Read again each time "@" is opened (the Outline's may be of the text before an edit, when it is not shown).
     if st.asked.with_untracked(|a| a.as_deref() != Some(active.as_str())) {
@@ -356,7 +359,7 @@ pub fn symbols_shown(ui: Ui) -> Option<Option<Rc<Vec<Symbol>>>> {
         let file = active.clone();
         std::thread::spawn(move || done(crate::outline::symbols(&file, &rope.to_string())));
     }
-    Some(ui.symbols.with(|(p, s)| (*p == active).then(|| s.clone())))
+    Some(shown)
 }
 
 /// The symbols read again the next time "@" is shown.
