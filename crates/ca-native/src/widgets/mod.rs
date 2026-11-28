@@ -86,17 +86,22 @@ pub fn action_dim(
     dim: impl Fn() -> bool + 'static,
     on: impl Fn() + 'static,
 ) -> impl IntoView {
-    container(icon(name, 16.0)).on_click_stop(move |_| on()).style(move |s| {
+    let dim = std::rc::Rc::new(dim);
+    let shade = dim.clone();
+    // Mixed into the side bar's background, since a glyph's own transparency is not drawn by every renderer.
+    let glyph = icon(name, 16.0).style(move |s| {
         let c = t.get();
-        let off = dim();
+        s.color(if shade() { mix(c.icon, c.side_bg, 0.6) } else { c.icon })
+    });
+    container(glyph).on_click_stop(move |_| on()).style(move |s| {
+        let c = t.get();
         s.width(22.0)
             .height(22.0)
             .items_center()
             .justify_center()
             .border_radius(5.0)
-            .color(if off { c.icon.multiply_alpha(0.4) } else { c.icon })
             .cursor(CursorStyle::Pointer)
-            .apply_if(!off, |s| s.hover(|s| s.background(c.toolbar_hover)))
+            .apply_if(!dim(), |s| s.hover(|s| s.background(c.toolbar_hover)))
     })
 }
 
