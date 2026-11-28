@@ -629,6 +629,11 @@ Sections used:
   at 60% or more asks even in yolo mode and past an allow rule, and a -p run refuses it. If the
   Arena has no Laya, or gives no answer within 3 seconds, commands are asked about exactly as
   before.
+- **Markdown preview.** Markdown: Open Preview (Ctrl+Shift+V), Open Preview to the Side (Ctrl+K V)
+  and Show Source, also from the breadcrumb's Preview button: a 'Preview' tab draws the file with
+  the chat's Markdown renderer (tables too), follows its text 150 ms after typing, draws the
+  project's pictures, opens linked files (a linked Markdown file in the preview's group), scrolls
+  to #headings by GitHub's names and opens web links in the browser.
 
 
 ### :bug: Bugs fixed
