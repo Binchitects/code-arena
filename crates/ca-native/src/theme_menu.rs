@@ -117,7 +117,7 @@ fn set(send: &Send, key: &str, value: Value) {
 
 /// A theme chosen: kept as `workbench.colorTheme` (by its name, as VS Code keeps it), following the system turned
 /// off after it (so the window never shows the setting from before in between), and shown until the session says so.
-fn choose(ui: Ui, send: &Send, name: &str) {
+pub(crate) fn choose(ui: Ui, send: &Send, name: &str) {
     let s = ui.state::<Follow>();
     let was = said(ui);
     if was.auto || of(ui, name).id != of(ui, &was.setting).id {

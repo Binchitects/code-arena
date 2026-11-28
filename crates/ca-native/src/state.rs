@@ -383,7 +383,7 @@ impl Ui {
         let t = crate::theme_menu::theme(*self);
         // The same theme again (every `state` says it) changes nothing: what is drawn with its colours is not made
         // again, and a code block going with the thread it is in is not given lines first.
-        let colors = Colors::of(&t);
+        let colors = crate::accessibility::adjusted(Colors::of(&t), crate::accessibility::seeing(*self));
         if self.colors.get_untracked() == colors {
             return;
         }

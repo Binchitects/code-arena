@@ -212,6 +212,9 @@ fn row(ui: Ui, bar: Bar, send: Send, j: Job) -> impl IntoView {
     let mark = if running { icon("loading", 14.0) } else { icon("circle-filled", 10.0) }.style(move |s| {
         let c = t.get();
         if running {
+            if crate::accessibility::still(ui) {
+                return s;
+            }
             return s.rotate((bar.tick.get() % 12) as f64 * std::f64::consts::TAU / 12.0);
         }
         let ok = status == "ended" && j.exit == Some(0);

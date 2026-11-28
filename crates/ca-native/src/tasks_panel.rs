@@ -461,7 +461,7 @@ fn status_icon(ui: Ui, status: Memo<String>) -> impl IntoView {
                         None => st_,
                     };
                     st_.flex_shrink(0.0_f32)
-                        .apply_if(working, |s| s.rotate((st.spin.get() % 12) as f64 * std::f64::consts::TAU / 12.0))
+                        .apply_if(working && !crate::accessibility::still(ui), |s| s.rotate((st.spin.get() % 12) as f64 * std::f64::consts::TAU / 12.0))
                 })
                 .into_any()
         },
