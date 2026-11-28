@@ -25,7 +25,7 @@
 //!   `git_push{repo, force, remote?}` (a branch with no upstream is published), `git_sync{repo, rebase}` (a pull,
 //!   then a push) and `git_undo_commit{repo}` → `git_done{repo, key, op, ok, error}` then `git_status`. A delete
 //!   refused because the branch is not merged says `unmerged`; a publish, `published` (the remote); an undo, the
-//!   commit's `message`; an automatic fetch, `auto` (one is skipped while another fetch, pull or push runs). A
+//!   commit's `message`; an automatic fetch, `auto` (one is skipped, and says `skipped`, while another fetch, pull or push runs). A
 //!   fetch, pull, push or sync is stopped after ten minutes; a fetch or a push does not hold staging up.
 //!
 //! Once a face has asked a repository's status it is told again by itself whenever git's own files change (the
@@ -121,6 +121,22 @@ impl Area for Here {
         let me = kept.me.lock().ok().and_then(|w| w.upgrade());
         let (m, of) = (m.clone(), of.to_string());
         later(move || {
+            // One fetch, pull, push or sync at a time, waited for before the index's lock (never while holding it);
+            // an automatic fetch never waits, and says it was skipped.
+            let network = matches!(of.as_str(), "git_fetch" | "git_pull" | "git_push" | "git_sync");
+            let _net = match (network, m["auto"].as_bool().unwrap_or(false)) {
+                (false, _) => None,
+                (true, false) => kept.network.lock().ok(),
+                (true, true) => match kept.network.try_lock() {
+                    Ok(g) => Some(g),
+                    Err(_) => {
+                        let skipped = json!({"type": "git_done", "repo": repo, "op": of, "ok": true, "auto": true,
+                            "skipped": true, "key": m["key"]});
+                        send(&out, skipped);
+                        return;
+                    }
+                },
+            };
             // A fetch or a push leaves the index alone: it keeps neither staging nor the status waiting.
             let _one = (!matches!(of.as_str(), "git_fetch" | "git_push")).then(|| kept.lock.lock());
             answer(&of, &m, &repo, &dir, &out, &kept, me.as_deref());
@@ -869,18 +885,6 @@ fn remote_answer(of: &str, m: &Value, repo: &str, dir: &Path, out: &broadcast::S
     let s = |k: &str| m[k].as_str().unwrap_or("").to_string();
     let b = |k: &str| m[k].as_bool().unwrap_or(false);
     let mut more = serde_json::Map::new();
-    let network = matches!(of, "git_fetch" | "git_pull" | "git_push" | "git_sync");
-    let _net = if network && b("auto") {
-        // An automatic fetch never waits for another.
-        match kept.network.try_lock() {
-            Ok(g) => Some(g),
-            Err(_) => return,
-        }
-    } else if network {
-        kept.network.lock().ok()
-    } else {
-        None
-    };
     let valid = |n: &str| if name_ok(n) { Ok(()) } else { Err(format!("'{n}' is not a valid branch name.")) };
     let done: Result<(), String> = match of {
         "git_switch" => switch(dir, &s("name"), m["kind"].as_str().unwrap_or("local")),

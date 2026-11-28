@@ -210,7 +210,7 @@ fn scm(ui: Ui) -> Scm {
 }
 
 fn has_repo(ui: Ui) -> bool {
-    scm(ui).status.with_untracked(|s| s.as_ref().is_some_and(|s| s.root.is_some()))
+    scm(ui).status.with(|s| s.as_ref().is_some_and(|s| s.root.is_some()))
 }
 
 /// The branch checked out and its upstream, as the last status said.
@@ -718,7 +718,7 @@ pub fn register(_ui: Ui, _send: &Send) {
     add(git(SYNC, "Sync", sync));
     add(git(COMMIT_PUSH, "Commit & Push", |ui, send| commit_then(ui, send, "push")));
     add(git(COMMIT_SYNC, "Commit & Sync", |ui, send| commit_then(ui, send, "sync")));
-    add(git(MORE, "More Actions...", more));
+    add(git(MORE, "More Actions...", more).hidden());
     crate::menus::add(
         Menu::ViewTitle(View::Scm),
         item(MORE).title("More Actions...").icon("ellipsis").group("navigation").order(9),
@@ -928,6 +928,12 @@ mod tests {
         assert_eq!(state(ui).busy.get_untracked().as_deref(), Some("git_push"));
         take(ui, &json!({"type": "git_done", "repo": "", "op": "git_push", "ok": true}), &send);
         assert_eq!(state(ui).busy.get_untracked(), None);
+        commands::run(ui, &send, FETCH);
+        assert_eq!(state(ui).busy.get_untracked().as_deref(), Some("git_fetch"));
+        let skipped =
+            json!({"type": "git_done", "repo": "", "op": "git_fetch", "ok": true, "auto": true, "skipped": true});
+        take(ui, &skipped, &send);
+        assert_eq!(state(ui).busy.get_untracked(), None, "a skipped fetch stops the turning too");
         // A commit that failed pushes nothing.
         scm(ui).message.set("Again".into());
         commands::run(ui, &send, COMMIT_PUSH);
