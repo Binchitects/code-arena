@@ -66,7 +66,10 @@ impl Account {
     pub fn who(&self) -> String {
         let on = if self.host.is_empty() { String::new() } else { format!(" on {}", self.host) };
         if !self.signed_in {
-            return format!("Not signed in{}", if self.host.is_empty() { String::new() } else { format!(" to {}", self.host) });
+            return format!(
+                "Not signed in{}",
+                if self.host.is_empty() { String::new() } else { format!(" to {}", self.host) }
+            );
         }
         match (self.name.as_str(), self.user.as_str()) {
             ("", "") => format!("Signed in{on}"),
@@ -391,7 +394,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                     me.signing_in.set(None);
                     let error = error.unwrap_or("Arena did not say why.").to_string();
                     toast::error_of(&format!("Could not sign in: {error}"))
-                        .action("Try Again", |ui, send| sign_in(ui, send))
+                        .action("Try Again", sign_in)
                         .source("Accounts")
                         .show_in(ui);
                 }
@@ -478,7 +481,12 @@ mod tests {
         assert!(out.warns());
         assert_eq!(
             shown(&rows(&out)),
-            ["(Not signed in to arena.example)", "-", "Sign In with User Name and Password...", "Send Feedback... (dimmed)"]
+            [
+                "(Not signed in to arena.example)",
+                "-",
+                "Sign In with User Name and Password...",
+                "Send Feedback... (dimmed)"
+            ]
         );
         let refused = signed(false, Some("Arena refused the key: That key was revoked."));
         assert!(refused.warns());
@@ -522,7 +530,11 @@ mod tests {
         assert_eq!(toast::count(ui), 1);
         // A refusal mid-turn ends the wait too.
         me.signing_in.set(Some("sara".into()));
-        take(ui, &json!({"type": "refused", "of": "sign_in", "reason": "Wait for the answer, or stop it, to sign in."}), &send);
+        take(
+            ui,
+            &json!({"type": "refused", "of": "sign_in", "reason": "Wait for the answer, or stop it, to sign in."}),
+            &send,
+        );
         assert_eq!(me.signing_in.get_untracked(), None);
     }
 

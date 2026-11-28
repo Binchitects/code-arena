@@ -233,7 +233,14 @@ async fn signed_in(ctx: &mut Ctx<'_>, s: PasswordSignIn, url: String, user: Stri
         ..Default::default()
     };
     if conn.gateway_url().is_none() {
-        return refused(ctx, &url, &user, &format!("{url} is an address, so its gateway cannot be guessed: sign in with code-arena login --url {url} --gateway URL"));
+        return refused(
+            ctx,
+            &url,
+            &user,
+            &format!(
+                "{url} is an address, so its gateway cannot be guessed: sign in with code-arena login --url {url} --gateway URL"
+            ),
+        );
     }
     if let Ok(arena) = ArenaClient::new(&url, Some(key), conn.ca.as_deref())
         && let Ok(me) = arena.me().await
@@ -324,8 +331,7 @@ mod tests {
     use super::*;
 
     fn me(display: Option<&str>, admin: bool) -> Me {
-        serde_json::from_value(json!({"userName": "sara", "displayName": display, "managesPeople": admin}))
-            .expect("me")
+        serde_json::from_value(json!({"userName": "sara", "displayName": display, "managesPeople": admin})).expect("me")
     }
 
     #[test]
@@ -367,7 +373,10 @@ mod tests {
         assert!(checked_feedback(&json!({"kind": "rant", "text": "x"})).is_err());
         assert_eq!(checked_feedback(&json!({"kind": "idea", "text": "  "})), Err("Write what you want to say.".into()));
         assert!(checked_feedback(&json!({"kind": "idea", "text": "x".repeat(MOST_TEXT + 1)})).is_err());
-        assert_eq!(checked_feedback(&json!({"kind": "praise", "text": "x", "screenshot": ""})).map(|f| f.2), Ok(vec![]));
+        assert_eq!(
+            checked_feedback(&json!({"kind": "praise", "text": "x", "screenshot": ""})).map(|f| f.2),
+            Ok(vec![])
+        );
     }
 
     #[test]
