@@ -634,3 +634,21 @@ async fn a_rating_goes_to_the_answer_arena_has_and_not_from_a_chat_kept_here() {
     sync.set_on(false);
     assert!(sync.rate(3, None).await.expect_err("kept here").contains("kept here only"));
 }
+
+#[tokio::test]
+async fn where_it_stands_is_said_without_taking_what_waits() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/code-arena/chats"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+    let store = Arc::new(Mutex::new(Store::in_memory().expect("store")));
+    let id = session(&store.lock().expect("store"));
+    let (sync, _) = sync(&server, &store, &id);
+    assert_eq!((sync.behind(), sync.trouble(), sync.kept_here()), (false, None, false));
+    assert!(matches!(sync.push().await, Pushed::Retry(_)));
+    assert!(sync.trouble().is_some(), "Arena out of reach is said until a send gets through");
+    sync.set_on(false);
+    assert!(sync.kept_here());
+}
