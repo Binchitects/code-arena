@@ -39,7 +39,7 @@ pub mod compaction;
 pub mod context;
 mod history;
 pub(crate) mod library;
-mod mentions;
+pub mod mentions;
 pub mod pickers;
 mod pieces;
 pub mod queue;
