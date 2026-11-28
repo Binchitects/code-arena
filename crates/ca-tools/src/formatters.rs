@@ -306,6 +306,7 @@ pub fn versions(items: &mut [Formatter], runner: &Runner, root: &Path) {
                     cwd: root.to_path_buf(),
                     timeout: VERSION_TIME_LIMIT,
                     mirror: None,
+                    copies: Vec::new(),
                     readable: vec![root.to_path_buf(), p.clone()],
                 };
                 let i = *i;
@@ -628,6 +629,9 @@ pub struct Plan {
     /// The file the formatter formats in place, in a folder of its own (dotnet format): written with the text
     /// first, read back after, the folder removed.
     pub mirror: Option<(PathBuf, PathBuf)>,
+    /// The folder's files copied into the mirror beside it (its `.editorconfig` files, which say how it formats),
+    /// each from where it is to where it goes in the mirror.
+    pub copies: Vec<(PathBuf, PathBuf)>,
     /// What it reads that may be under `/tmp` (the folder, the program).
     pub readable: Vec<PathBuf>,
 }
@@ -667,6 +671,7 @@ pub fn plan(f: &Formatter, job: &Job, root: &Path, file: &Path) -> Result<Plan, 
         cwd: dir.clone(),
         timeout: TIME_LIMIT,
         mirror: None,
+        copies: Vec::new(),
         readable: vec![root.to_path_buf(), dir, program],
     };
     let a = &mut plan.args;
@@ -728,6 +733,16 @@ pub fn plan(f: &Formatter, job: &Job, root: &Path, file: &Path) -> Result<Plan, 
                 ]);
                 plan.timeout = DOTNET_TIME_LIMIT;
                 plan.cwd = folder.clone();
+                let mut at = rel.parent().map(Path::to_path_buf).unwrap_or_default();
+                loop {
+                    let config = root.join(&at).join(".editorconfig");
+                    if config.is_file() {
+                        plan.copies.push((config, at.join(".editorconfig")));
+                    }
+                    if !at.pop() {
+                        break;
+                    }
+                }
                 plan.mirror = Some((folder, rel));
             }
             other => return Err(Failure::new("not_found", format!("No formatter is named {other}."))),
@@ -882,8 +897,14 @@ impl Runner<'_> {
         let _pass = self.gate.enter();
         if let Some((folder, rel)) = &plan.mirror {
             let file = folder.join(rel);
-            let made =
-                file.parent().map(std::fs::create_dir_all).unwrap_or(Ok(())).and_then(|_| std::fs::write(&file, text));
+            let made = file
+                .parent()
+                .map(std::fs::create_dir_all)
+                .unwrap_or(Ok(()))
+                .and_then(|_| std::fs::write(&file, text))
+                .and_then(|_| {
+                    plan.copies.iter().try_for_each(|(from, to)| std::fs::copy(from, folder.join(to)).map(|_| ()))
+                });
             if let Err(e) = made {
                 let _ = std::fs::remove_dir_all(folder);
                 return Err(Failure::new(
@@ -1325,6 +1346,7 @@ mod tests {
             cwd: std::env::temp_dir(),
             timeout,
             mirror: None,
+            copies: Vec::new(),
             readable: vec![],
         }
     }
@@ -1360,11 +1382,16 @@ mod tests {
     fn a_formatter_of_files_formats_a_copy_in_a_folder_of_its_own() {
         let gate = Gate::default();
         let r = Runner { sandbox: None, env: vec![], gate: &gate };
-        let folder = mirror_folder();
-        let mut p = sh_plan("tr a-z A-Z < src/A.cs > t && mv t src/A.cs", TIME_LIMIT);
-        p.cwd = folder.clone();
-        p.mirror = Some((folder.clone(), PathBuf::from("src/A.cs")));
-        assert_eq!(r.run(&p, "class a {}").expect("formatted"), "CLASS A {}");
+        let d = tempfile::tempdir().expect("temp");
+        let root = d.path();
+        std::fs::create_dir_all(root.join("src")).expect("mkdir");
+        std::fs::write(root.join(".editorconfig"), "root = true\n").expect("write");
+        let mut p = plan(&found("dotnet-format", true), &Job::default(), root, &root.join("src/A.cs")).expect("plan");
+        assert_eq!(p.copies, [(root.join(".editorconfig"), PathBuf::from(".editorconfig"))]);
+        let folder = p.mirror.clone().expect("mirror").0;
+        p.program = PathBuf::from("/bin/sh");
+        p.args = vec!["-c".into(), "cat .editorconfig > t && tr a-z A-Z < src/A.cs >> t && mv t src/A.cs".into()];
+        assert_eq!(r.run(&p, "class a {}").expect("formatted"), "root = true\nCLASS A {}");
         assert!(!folder.exists());
     }
 }
