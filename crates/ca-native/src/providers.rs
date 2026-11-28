@@ -57,7 +57,13 @@ impl Row {
             url: s("url"),
             key: s("key"),
             key_env: s("key_env"),
-            models: v["models"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect(),
+            models: v["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
             more: v["more"].as_u64().unwrap_or(0),
         })
     }
@@ -288,14 +294,19 @@ fn row(ui: Ui, send: Send, r: Row) -> AnyView {
     ))
     .style(|s| s.gap(12.0).min_width(0.0));
     let name = r.name.clone();
-    let remove = tooltip(
-        action(t, "trash", move || send(json!({"type": "provider_remove", "name": name}))),
-        || label(|| "Remove"),
-    );
+    let remove = tooltip(action(t, "trash", move || send(json!({"type": "provider_remove", "name": name}))), || {
+        label(|| "Remove")
+    });
     h_stack((v_stack((head, url, foot)).style(|s| s.gap(2.0).flex_grow(1.0_f32).min_width(0.0)), remove))
         .style(move |s| {
             let c = t.get();
-            s.width_full().padding_vert(6.0).padding_horiz(8.0).gap(8.0).items_center().border_bottom(1.0).border_color(c.widget_border)
+            s.width_full()
+                .padding_vert(6.0)
+                .padding_horiz(8.0)
+                .gap(8.0)
+                .items_center()
+                .border_bottom(1.0)
+                .border_color(c.widget_border)
         })
         .into_any()
 }
@@ -390,7 +401,13 @@ fn host(ui: Ui, send: Send) -> AnyView {
         form::button(ui, || "Close".into(), false, || true, move || f.close()),
         form::button(
             ui,
-            move || if st.busy.with(Option::is_some) { "Listing its models…".into() } else { "Add and list its models".into() },
+            move || {
+                if st.busy.with(Option::is_some) {
+                    "Listing its models…".into()
+                } else {
+                    "Add and list its models".into()
+                }
+            },
             true,
             able,
             go,
@@ -470,8 +487,14 @@ mod tests {
         assert_eq!(r.key_words(), ("Key from ANTHROPIC_API_KEY".to_string(), false));
         assert_eq!(r.models_words(), "a, b, c, d and 3 more");
         let none = Row::of(&json!({"name": "gpu", "kind": "openai", "key": "none"})).expect("a row");
-        assert_eq!((none.speaks(), none.key_words().1, none.models_words()), ("Chat completions", true, "No models listed".into()));
-        assert_eq!(Row::of(&json!({"name": "x", "key": "here"})).map(|r| r.key_words().0), Some("Key kept here".into()));
+        assert_eq!(
+            (none.speaks(), none.key_words().1, none.models_words()),
+            ("Chat completions", true, "No models listed".into())
+        );
+        assert_eq!(
+            Row::of(&json!({"name": "x", "key": "here"})).map(|r| r.key_words().0),
+            Some("Key kept here".into())
+        );
         assert!(Row::of(&json!({"kind": "openai"})).is_none(), "a row without its name is not one");
     }
 

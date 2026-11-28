@@ -30,8 +30,7 @@ use crate::ide_ext::{Ctx, Shared, kind, send};
 const SHOWN_MODELS: usize = 4;
 
 /// The words when Arena's admins keep other providers out.
-pub const BANNED: &str =
-    "Arena's admins do not let Code Arena use other providers (Admin → Settings → Code Arena): only Arena's models are offered.";
+pub const BANNED: &str = "Arena's admins do not let Code Arena use other providers (Admin → Settings → Code Arena): only Arena's models are offered.";
 
 fn kind_name(k: Kind) -> &'static str {
     match k {
@@ -122,10 +121,7 @@ impl Asked {
 /// The entry to keep and the provider it is, from what was asked and what is kept already; or why not.
 pub fn entry_for(asked: &Asked, had: Option<&ProviderEntry>) -> Result<(ProviderEntry, providers::Provider), String> {
     if !providers::valid_name(&asked.name) {
-        return Err(format!(
-            "'{}' is not a provider's name: lower-case letters, digits and '-' only",
-            asked.name
-        ));
+        return Err(format!("'{}' is not a provider's name: lower-case letters, digits and '-' only", asked.name));
     }
     let mut entry = had.cloned().unwrap_or_default();
     // What was there only for the environment's key is the person's own from now on.
@@ -290,7 +286,10 @@ async fn refresh(ctx: &mut Ctx<'_>, allowed: bool) {
     now.models = Arc::new(ctx.drv.models.clone());
     let mut v = json!({});
     crate::ide_chat::pickers::state(&now, &mut v);
-    send(&ctx.sh.out, json!({"type": "settings_changed", "models": now.models.as_slice(), "model_info": v["model_info"]}));
+    send(
+        &ctx.sh.out,
+        json!({"type": "settings_changed", "models": now.models.as_slice(), "model_info": v["model_info"]}),
+    );
     send(&ctx.sh.out, listed(&ctx.app.connection, &ctx.drv.models, allowed));
 }
 
@@ -345,7 +344,8 @@ mod tests {
         let asked = |m: Value| Asked::of(&m);
         let bad = asked(json!({"name": "My API", "url": "https://x"}));
         assert!(entry_for(&bad, None).is_err());
-        let other = asked(json!({"name": "gpu", "url": " https://gpu.example/ ", "kind": "anthropic", "api_key": " k "}));
+        let other =
+            asked(json!({"name": "gpu", "url": " https://gpu.example/ ", "kind": "anthropic", "api_key": " k "}));
         assert_eq!(other.key, "k");
         let (e, p) = entry_for(&other, None).expect("an API of one's own");
         assert_eq!((p.kind, e.url.as_deref()), (Kind::Anthropic, Some("https://gpu.example/")));
