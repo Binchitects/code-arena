@@ -181,6 +181,9 @@ enum Command {
         /// With --browser: print the address only; open no browser.
         #[arg(long)]
         no_open: bool,
+        /// This folder in Arena's Code Studio too, while this runs (needs code-arena login); opens no browser here.
+        #[arg(long)]
+        connect: bool,
     },
     /// Your agents in Arena (Agent Studio, 8.1 on): list, run NAME [TEXT…] [--field K=V]… (waits for its answer).
     Agents {
@@ -324,10 +327,10 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
             // A timer of the system's goes in the system's own home, whatever CODE_ARENA_HOME says.
             schedules::command(&app.paths.config, dirs::home_dir().as_deref(), &cwd, &args)
         }
-        Some(Command::Ide { browser, port, no_open }) => {
+        Some(Command::Ide { browser, port, no_open, connect }) => {
             let (opts, resume) = (cli_opts(&cli_common), resume_of(&cli_common));
             #[cfg(feature = "native")]
-            if !browser && port.is_none() && !no_open {
+            if !browser && port.is_none() && !no_open && !connect {
                 // The native window has the main thread (the system's windows want it); the session's driver runs on
                 // the runtime's other threads, and their messages go between them in-process.
                 let (to_driver, from_ui) = tokio::sync::mpsc::unbounded_channel();
@@ -349,11 +352,14 @@ async fn go(cli: Cli) -> anyhow::Result<i32> {
                 return Ok(0);
             }
             #[cfg(not(feature = "native"))]
-            if !browser {
+            if !browser && !connect {
                 eprintln!("This Code Arena was built without its native window: the IDE is served to a browser.");
             }
-            let args =
-                ide::IdeArgs { opts, resume, face: ide::Face::Browser { port: port.unwrap_or(0), open: !no_open } };
+            let args = ide::IdeArgs {
+                opts,
+                resume,
+                face: ide::Face::Browser { port: port.unwrap_or(0), open: !no_open && !connect, connect },
+            };
             ide::run(&mut app, args).await
         }
         Some(Command::Agents { args }) => automation::agents_cli(&app, &args).await,

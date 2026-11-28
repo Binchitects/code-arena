@@ -750,10 +750,32 @@ fn keep_address(data: &Path, url: &str) -> Option<PathBuf> {
     Some(file)
 }
 
+/// `--connect`: the relay to Arena's Code Studio, dialled in the background while the IDE runs, as "FOLDER on
+/// MACHINE" with the folder's id kept beside its view state.
+fn connect_studio(app: &App, local: ca_server::relay::Local, root: &Path) {
+    let (Some(url), Some(key)) = (&app.connection.url, &app.connection.api_key) else { return };
+    let id = ca_server::relay::kept_id(&view_state_at(&app.paths.data, root).with_extension("studio"));
+    let folder = root.file_name().map_or_else(|| root.to_string_lossy(), |n| n.to_string_lossy());
+    let name = format!("{folder} on {}", crate::account::machine_name());
+    let (project, branch) = ca_server::relay::git_facts(root);
+    let dial = ca_server::relay::Dial::new(url, key.expose(), &id, &name, project, branch);
+    let ui = app.ui;
+    let say: ca_server::relay::Say = Arc::new(move |t: &str| ui.say(t));
+    tokio::spawn(ca_server::relay::run(dial, local, say));
+}
+
 /// Where the IDE is shown: the native window (its messages in-process), or a browser (its page and its WebSocket).
 pub enum Face {
-    Native { from_ui: mpsc::UnboundedReceiver<ca_server::FromPage>, to_ui: broadcast::Sender<String> },
-    Browser { port: u16, open: bool },
+    Native {
+        from_ui: mpsc::UnboundedReceiver<ca_server::FromPage>,
+        to_ui: broadcast::Sender<String>,
+    },
+    /// `connect`: the folder in Arena's Code Studio too, through the relay.
+    Browser {
+        port: u16,
+        open: bool,
+        connect: bool,
+    },
 }
 
 pub struct IdeArgs {
@@ -954,11 +976,14 @@ fn settled(sh: &mut Shared, p: &Prepared, app: &App, drv: &Driver, side: &Arc<Si
 pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
     let ui = app.ui;
     // The face's messages in, the session's out: the same for the native window and a browser's page.
-    let (from_page, out, served) = match args.face {
-        Face::Native { from_ui, to_ui } => (from_ui, to_ui, None),
-        Face::Browser { port, open } => {
+    let (from_page, out, served, studio) = match args.face {
+        Face::Native { from_ui, to_ui } => (from_ui, to_ui, None, None),
+        Face::Browser { port, open, connect } => {
+            if connect && (app.connection.url.is_none() || app.connection.api_key.is_none()) {
+                anyhow::bail!("Code Studio is Arena's: sign in first, code-arena login --url https://YOUR-ARENA");
+            }
             let s = ca_server::start(port, ca_server::built_page()).await?;
-            (s.from_page, s.to_pages, Some((s.url, open)))
+            (s.from_page, s.to_pages, Some((s.url, open)), connect.then_some(s.local))
         }
     };
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
@@ -990,6 +1015,9 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                 b => ui.say(&ui.dim(&format!("Opened with {b}."))),
             }
         }
+    }
+    if let Some(local) = studio {
+        connect_studio(app, local, p.agent.ctx.workspace.root());
     }
     // The models the pickers offer: the gateway's (and the providers' of one's own), asked once.
     let (models, infos): (Vec<String>, Vec<ca_llm::ModelInfo>) =
