@@ -335,6 +335,7 @@ pub struct Tree {
     rows: Rc<dyn Fn() -> im::Vector<Node>>,
     content: Content,
     actions: Option<Actions>,
+    decoration: Option<Content>,
     multi: bool,
     on_toggle: Option<Told>,
     on_open: Option<Told>,
@@ -353,6 +354,7 @@ pub fn tree(ui: Ui, state: State, rows: impl Fn() -> im::Vector<Node> + 'static)
             label(move || id.clone()).into_any()
         }),
         actions: None,
+        decoration: None,
         multi: false,
         on_toggle: None,
         on_open: None,
@@ -369,6 +371,7 @@ struct Shared {
     rows: Memo<im::Vector<Node>>,
     content: Content,
     actions: Option<Actions>,
+    decoration: Option<Content>,
     multi: bool,
     on_toggle: Option<Told>,
     on_open: Option<Told>,
@@ -403,6 +406,13 @@ impl Tree {
     /// What a row draws after its chevron (its icon, its name, its count): the row's id, when it is not said.
     pub fn content(mut self, content: impl Fn(&Node) -> AnyView + 'static) -> Tree {
         self.content = Rc::new(content);
+        self
+    }
+
+    /// What a row shows at its very right, right of its actions (Source Control's letter, as VS Code's): it stays in
+    /// place when the actions come under the pointer.
+    pub fn decoration(mut self, decoration: impl Fn(&Node) -> AnyView + 'static) -> Tree {
+        self.decoration = Some(Rc::new(decoration));
         self
     }
 
@@ -445,9 +455,9 @@ impl Tree {
 
     /// The tree drawn. It fills the room it is given.
     pub fn view(self) -> impl IntoView + use<> {
-        let Tree { ui, state, rows, content, actions, multi, on_toggle, on_open, on_menu, on_key } = self;
+        let Tree { ui, state, rows, content, actions, decoration, multi, on_toggle, on_open, on_menu, on_key } = self;
         let rows: Memo<im::Vector<Node>> = create_memo(move |_| rows());
-        let shared = Shared { ui, state, rows, content, actions, multi, on_toggle, on_open, on_menu };
+        let shared = Shared { ui, state, rows, content, actions, decoration, multi, on_toggle, on_open, on_menu };
         let drawn = shared.clone();
         let list = virtual_stack(
             VirtualDirection::Vertical,
@@ -550,6 +560,10 @@ fn row_view(shared: Shared, node: Node) -> impl IntoView {
         })
     }))
     .style(move |s| s.gap(2.0).padding_right(8.0).flex_shrink(0.0_f32).apply_if(!over.get(), |s| s.hide()));
+    let decoration = match &shared.decoration {
+        Some(of) => container(of(&node)).style(|s| s.flex_shrink(0.0_f32)).into_any(),
+        None => empty().into_any(),
+    };
     let (clicked, menu_of, lit_of) = (shared.clone(), shared.clone(), node.id.clone());
     let (id, right_id, folds, depth) = (node.id.clone(), node.id.clone(), node.fold.is_some(), node.depth);
     let row = h_stack((
@@ -557,6 +571,7 @@ fn row_view(shared: Shared, node: Node) -> impl IntoView {
         chevron,
         container(content).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).padding_left(4.0)),
         buttons,
+        decoration,
     ));
     let row_id = row.id();
     row.on_event_stop(EventListener::PointerDown, move |e| {

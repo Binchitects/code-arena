@@ -227,7 +227,20 @@ fn open_menu(ui: Ui, send: &Send, c: Change, at: popup::At) {
     popup::open(ui, at, items);
 }
 
-/// A row: a file's name in its letter's colour, its folder dimmed (in a list), its letter; or a folder's name.
+/// A file's letter at its row's right, right of the actions so that it stays in place under the pointer; none for
+/// a folder.
+fn row_letter(ui: Ui, node: &Node) -> AnyView {
+    let t = ui.colors;
+    if node.id.starts_with(FOLDER) {
+        return empty().into_any();
+    }
+    let letter = change_of(ui, &node.id).map(|c| c.letter()).unwrap_or("M");
+    label(move || letter)
+        .style(move |s| s.font_size(12.0).width(12.0).margin_right(10.0).color(letter_colour(letter, t.get().dark)))
+        .into_any()
+}
+
+/// A row: a file's name in its letter's colour and its folder dimmed (in a list); or a folder's name.
 fn row(ui: Ui, node: &Node, as_tree: bool) -> AnyView {
     let t = ui.colors;
     if let Some(path) = node.id.strip_prefix(FOLDER) {
@@ -243,13 +256,16 @@ fn row(ui: Ui, node: &Node, as_tree: bool) -> AnyView {
     h_stack((
         label(move || name.clone()).style(move |s| {
             let c = t.get();
-            s.color(letter_colour(letter, c.dark)).apply_if(letter == "D", |s| s.color(c.desc))
+            s.flex_shrink(0.0_f32).color(letter_colour(letter, c.dark)).apply_if(letter == "D", |s| s.color(c.desc))
         }),
-        label(move || dir.clone())
-            .style(move |s| s.font_size(12.0).color(t.get().desc).text_ellipsis().apply_if(as_tree, |s| s.hide())),
-        empty().style(|s| s.flex_grow(1.0_f32)),
-        label(move || letter)
-            .style(move |s| s.font_size(12.0).padding_right(12.0).color(letter_colour(letter, t.get().dark))),
+        label(move || dir.clone()).style(move |s| {
+            s.font_size(12.0)
+                .color(t.get().desc)
+                .text_ellipsis()
+                .min_width(0.0)
+                .flex_shrink(1.0_f32)
+                .apply_if(as_tree, |s| s.hide())
+        }),
     ))
     .style(|s| s.width_full().items_center().gap(6.0).font_size(13.0).min_width(0.0))
     .into_any()
@@ -267,6 +283,7 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
         r.folded.with(|f| ui.changes.with(|c| rows(c, as_tree, f)))
     })
     .content(move |node| row(ui, node, r.as_tree.get_untracked()))
+    .decoration(move |node| row_letter(ui, node))
     .actions(move |node| {
         let Some(c) = change_of(ui, &node.id) else { return vec![] };
         let mut out = Vec::new();
