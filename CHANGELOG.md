@@ -816,8 +816,8 @@ Sections used:
 - **Schedules can be turned off.** A schedule that is off is kept but not run when due, and
   `code-arena schedule list` says so.
 - **Extensions view.** Ctrl+Shift+X lists your installed extensions. Each row shows the icon, name,
-  version, description and publisher, what the extension brings, a warning for what is not used here,
-  a switch to turn it on or off, and Uninstall (asked first). The view also lists the project's
+  version, description and publisher, what the extension brings, a warning for what is not used
+  here, a switch to turn it on or off, and Uninstall (asked first). The view also lists the project's
   recommendations from .vscode/extensions.json, and the extensions that VS Code, VSCodium or
   VS Code - Insiders have on this computer, with Import or Update.
 - **Install from VSIX and extension search.** 'Extensions: Install from VSIX...' (palette, or the
