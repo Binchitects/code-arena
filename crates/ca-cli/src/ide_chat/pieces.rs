@@ -7,7 +7,9 @@
 //!   it, since the file on disk is not what the person sees.
 //! - What the question shows stays the words typed. The pieces go in the `user` (or `queued`) message's `files`,
 //!   so the faces draw them under the question ("Sent with it") and the session keeps them in the question's
-//!   details.
+//!   details: their file and lines only (an unsaved piece's text is the model's alone).
+//! - Sent while a turn runs, the pieces are in what the turn reads at its next step (the inbox is given the
+//!   model's words), and the question's words are what `took_in` shows.
 //!
 //! Only a message the face sent with `context` is shaped: a question asked again already has its pieces in what
 //! the model read, and its `files` in its details.
@@ -76,11 +78,7 @@ pub fn expand(context: &Value, ws: &ca_workspace::Workspace) -> (String, Vec<Val
             }
         };
         read.push_str(&block);
-        let mut file = json!({"path": shown, "start": start, "end": end});
-        if let Some(text) = text {
-            file["text"] = json!(text);
-        }
-        files.push(file);
+        files.push(json!({"path": shown, "start": start, "end": end}));
     }
     (read, files)
 }
@@ -113,7 +111,7 @@ mod tests {
             files,
             [
                 json!({"path": "a.rs", "start": 10, "end": 12}),
-                json!({"path": "a.rs", "start": 2, "end": 2, "text": "fn changed() {}"}),
+                json!({"path": "a.rs", "start": 2, "end": 2}),
                 json!({"path": "my notes.md", "start": 1, "end": 1}),
             ]
         );

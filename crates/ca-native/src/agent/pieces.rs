@@ -66,32 +66,21 @@ thread_local! {
     static ONCE: RefCell<Option<Chip>> = const { RefCell::new(None) };
 }
 
-/// A chip added to the list: in the place of one of the same file whose lines it shares, else at the end, the
-/// oldest left out past `MOST`.
+/// A chip added to the list: in the place of one of the same lines of the same file, else at the end, the oldest
+/// left out past `MOST`.
 pub fn put(list: &mut Vec<Chip>, chip: Chip) {
-    let (path, start, end) = (chip.piece.path.clone(), chip.piece.start, chip.piece.end);
-    let same = |c: &Chip| c.piece.path == path && c.piece.start <= end && start <= c.piece.end;
-    match list.iter().position(same) {
-        Some(at) => {
-            list[at] = chip;
-            // Another of the same lines further on goes.
-            let mut seen = false;
-            let kept = std::mem::take(list);
-            for c in kept {
-                if same(&c) {
-                    if seen {
-                        continue;
-                    }
-                    seen = true;
-                }
-                list.push(c);
-            }
-        }
+    match list.iter().position(|c| same_lines(c, &chip.piece.path, chip.piece.start, chip.piece.end)) {
+        Some(at) => list[at] = chip,
         None => list.push(chip),
     }
     while list.len() > MOST {
         list.remove(0);
     }
+}
+
+/// Whether a chip is of these lines of this file.
+fn same_lines(c: &Chip, path: &str, start: usize, end: usize) -> bool {
+    c.piece.path == path && (c.piece.start, c.piece.end) == (start, end)
 }
 
 /// A chip as it reads: "src/cart.rs:12-30", "src/cart.rs:7", "(unsaved)" after it.
@@ -118,6 +107,8 @@ fn fill(ui: Ui, msg: &mut Value) {
     let me = ui.state::<Pieces>();
     let chips = match ONCE.with(|o| o.borrow().clone()) {
         Some(once) => vec![once],
+        // Another part's question asked at once (Explain These Changes): the chips wait for the next message.
+        None if chat_bridge::asking_now() => return,
         None => {
             let chips = me.list.get_untracked();
             if !chips.is_empty() {
@@ -160,6 +151,22 @@ pub fn add(ui: Ui, piece: Piece, unsaved: bool) {
 /// else its caret's line; none for a tab that is not a file of the folder's text (the person's own files, a diff, a
 /// preview).
 pub fn current(ui: Ui) -> Option<Chip> {
+    let (file, a, b, unsaved) = lines_now(ui)?;
+    let text = match ui.live.get_untracked() {
+        Some((_, e)) if unsaved => {
+            let rope = e.doc().text();
+            let t = RopeTextRef::new(&rope);
+            let end = if b + 1 > t.last_line() { t.len() } else { t.offset_of_line(b + 1) };
+            rope.slice_to_cow(t.offset_of_line(a)..end).trim_end_matches(['\n', '\r']).to_string()
+        }
+        _ => String::new(),
+    };
+    Some(Chip { id: 0, piece: Piece { path: file, start: a + 1, end: b + 1, text }, unsaved })
+}
+
+/// The file and the lines (from 0) `current` takes, and whether the file has changes not saved: what is followed
+/// as the caret moves (no text is copied for it).
+fn lines_now(ui: Ui) -> Option<(String, usize, usize, bool)> {
     let (path, e) = ui.live.get_untracked()?;
     let tab = ui.tab(&path)?;
     if tab.kind.is_some() || tab.diff.is_some() || tab.file.is_empty() {
@@ -173,17 +180,8 @@ pub fn current(ui: Ui) -> Option<Chip> {
         _ => (c.offset(), c.offset()),
     });
     let rope = e.doc().text();
-    let t = RopeTextRef::new(&rope);
-    let (a, b) = lines_of(&t, from, to);
-    let unsaved = tab.dirty.get_untracked();
-    let text = if unsaved {
-        let end = t.offset_of_line(b + 1).max(t.offset_of_line(b));
-        let end = if b + 1 > t.last_line() { t.len() } else { end };
-        rope.slice_to_cow(t.offset_of_line(a)..end).trim_end_matches(['\n', '\r']).to_string()
-    } else {
-        String::new()
-    };
-    Some(Chip { id: 0, piece: Piece { path: tab.file.clone(), start: a + 1, end: b + 1, text }, unsaved })
+    let (a, b) = lines_of(&RopeTextRef::new(&rope), from, to);
+    Some((tab.file.clone(), a, b, tab.dirty.get_untracked()))
 }
 
 /// The lines (from 0) a selection from one offset to another takes.
@@ -226,13 +224,9 @@ fn chips(ui: Ui, send: Send) -> impl IntoView {
                 tab.dirty.track();
             }
         }
-        let chip = current(ui)?;
-        let taken = me.list.with(|l| {
-            l.iter().any(|c| {
-                c.piece.path == chip.piece.path && (c.piece.start, c.piece.end) == (chip.piece.start, chip.piece.end)
-            })
-        });
-        (!taken).then(|| (chip.piece.path.clone(), chip.piece.start, chip.piece.end, chip.unsaved))
+        let (file, a, b, unsaved) = lines_now(ui)?;
+        let taken = me.list.with(|l| l.iter().any(|c| same_lines(c, &file, a + 1, b + 1)));
+        (!taken).then_some((file, a + 1, b + 1, unsaved))
     });
     let open = send.clone();
     let row = dyn_stack(move || me.list.get(), |c| c.id, move |c| chip_view(ui, &open, c).into_any())
@@ -371,9 +365,10 @@ mod tests {
         let mut list = Vec::new();
         put(&mut list, chip(0, "a.rs", 1, 5));
         put(&mut list, chip(1, "b.rs", 1, 5));
-        put(&mut list, chip(2, "a.rs", 4, 9));
+        put(&mut list, chip(2, "a.rs", 1, 5));
         assert_eq!(list.iter().map(|c| c.id).collect::<Vec<_>>(), [2, 1]);
-        put(&mut list, chip(3, "a.rs", 20, 20));
+        // Other lines of the same file are a chip of their own.
+        put(&mut list, chip(3, "a.rs", 4, 4));
         assert_eq!(list.len(), 3);
         for id in 4..12 {
             put(&mut list, chip(id, "c.rs", id as usize * 10, id as usize * 10));
@@ -456,6 +451,27 @@ mod tests {
         commands::press(ui, &send, &Key::Character("l".into()), Modifiers::CONTROL);
         let names: Vec<String> = me.list.with_untracked(|l| l.iter().map(name).collect());
         assert_eq!(names, ["src/a.rs:1"]);
+        // A file with changes not saved: its lines go as the person sees them.
+        ui.tab("src/a.rs").expect("tab").dirty.set(true);
+        let unsaved = current(ui).expect("lines");
+        assert_eq!((unsaved.piece.text.as_str(), name(&unsaved).as_str()), ("one", "src/a.rs:1 (unsaved)"));
+        // Another part's question asked at once leaves the chips in the box.
+        chat_bridge::install(chat_bridge::Bridge {
+            put_in_box: Rc::new(|_, _| {}),
+            insert_at_start: Rc::new(|_, _| {}),
+            add_piece: Rc::new(|_, _| {}),
+            ask_now: Rc::new(|ui, _, text| {
+                let mut msg = json!({"type": "send", "text": text});
+                chat_bridge::fill(ui, &mut msg);
+                assert!(msg["context"].is_null(), "{msg}");
+            }),
+            focus: Rc::new(|_| {}),
+            caret: Rc::new(|_| None),
+            place: Rc::new(|_| None),
+            replace: Rc::new(|_, _, _, _| {}),
+        });
+        chat_bridge::ask_now(ui, &send, "Explain the changes you made to @a.rs.");
+        assert_eq!(me.list.with_untracked(Vec::len), 1);
         ui.live.set(Some(("user:settings.json".into(), ed.editor().clone())));
         assert!(current(ui).is_none());
         ui.live.set(None);
