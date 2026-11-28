@@ -124,6 +124,12 @@ colors! {
     ruler_error: ["editorOverviewRuler.errorForeground"], "#FF1212B3", "#FF1212B3";
     ruler_warning: ["editorOverviewRuler.warningForeground", "editorWarning.foreground"], "#CCA700", "#BF8803";
     ruler_info: ["editorOverviewRuler.infoForeground", "editorInfo.foreground"], "#3794FF", "#1A85FF";
+    gutter_added: ["editorGutter.addedBackground"], "#487E02", "#48985D";
+    gutter_modified: ["editorGutter.modifiedBackground"], "#1B81A8", "#2090D3";
+    gutter_deleted: ["editorGutter.deletedBackground", "editorError.foreground"], "#F14C4C", "#E51400";
+    ruler_added: ["editorOverviewRuler.addedForeground"], "#487E0299", "#48985D99";
+    ruler_modified: ["editorOverviewRuler.modifiedForeground"], "#1B81A899", "#2090D399";
+    ruler_deleted: ["editorOverviewRuler.deletedForeground"], "#F14C4C99", "#E5140099";
 
     tabs_bg: ["editorGroupHeader.tabsBackground"], "#252526", "#F3F3F3";
     tabs_border: ["editorGroupHeader.tabsBorder"], "#00000000", "#00000000";

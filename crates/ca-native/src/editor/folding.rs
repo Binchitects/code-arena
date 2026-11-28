@@ -701,7 +701,8 @@ pub fn view<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + '
                 .apply_if(!on, |s| s.hide())
         });
     let e = editor.clone();
-    stack((gutter, content(sig, path, keys), strip))
+    let bars = crate::scm::quick_diff::bars(ui, &editor, path, gutter_width);
+    stack((gutter, bars, content(sig, path, keys), strip))
         .on_event_cont(EventListener::PointerMove, move |e| {
             if let Event::PointerMove(p) = e {
                 let over = p.pos.x < gutter_width.get_untracked();

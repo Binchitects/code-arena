@@ -14,8 +14,9 @@
 //!   not track is deleted as the Explorer deletes, kept aside where it can be got back.
 //! - `git_commit{repo, message, all, amend}` → `git_committed{repo, hash, error}` (`all`: every change is staged
 //!   first, as VS Code's smart commit), then `git_status`.
-//! - `git_show{repo, path, rev, working}` → `git_shown{repo, path, rev, working, exists, text, binary, too_large}`:
-//!   `rev` empty is the index, else a revision (`HEAD`); `working` reads the file in the working tree instead.
+//! - `git_show{repo, path, rev, working, key}` → `git_shown{repo, path, rev, working, key, exists, text, binary,
+//!   too_large}`: `rev` empty is the index, else a revision (`HEAD`); `working` reads the file in the working tree
+//!   instead; `key`, when given, is said back.
 //! - `git_init{repo}` → a repository made there, then `git_status`.
 //!
 //! Once a face has asked a repository's status it is told again by itself whenever git's own files change (the
@@ -633,6 +634,10 @@ fn answer(
             v["path"] = json!(path);
             v["rev"] = json!(rev);
             v["working"] = json!(working);
+            // The key the face asked with, said back (quick diff's requests, beside the changes tabs').
+            if let Some(key) = m["key"].as_str() {
+                v["key"] = json!(key);
+            }
             send(out, v);
         }
         "git_init" => {
