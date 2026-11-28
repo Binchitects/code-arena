@@ -232,6 +232,16 @@ impl Pick {
         self
     }
 
+    /// The editor drawn has the keys again once the pick has closed, as after VS Code's picks over a file (its
+    /// language, indentation or line ending).
+    pub fn back_to_editor(mut self, ui: Ui) -> Pick {
+        let editor = ui.live.with_untracked(|l| l.as_ref().and_then(|(_, e)| e.editor_view_id.get_untracked()));
+        if editor.is_some() {
+            self.back = editor;
+        }
+        self
+    }
+
     /// Opens it. `done` is given the item taken (none: cancelled), once.
     pub fn open(self, ui: Ui, done: impl FnOnce(Option<Item>) + 'static) {
         let hay = self.items.iter().map(hay_of).collect();

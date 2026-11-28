@@ -462,7 +462,7 @@ pub fn change(ui: Ui, send: &Send) {
     let Some(path) = file_shown(ui) else { return };
     let current = now(ui, &path);
     let send = send.clone();
-    quick::pick("").placeholder("Select Language Mode").items(rows(current)).active(current).open(ui, move |picked| {
+    quick::pick("").back_to_editor(ui).placeholder("Select Language Mode").items(rows(current)).active(current).open(ui, move |picked| {
         let Some(picked) = picked else { return };
         match picked.id.as_str() {
             "auto" => choose(ui, &path, None),
