@@ -425,7 +425,9 @@ fn choose(ui: Ui, send: Send, job: Rc<Import>, clashes: Vec<String>, at: usize) 
 /// The view's own content.
 pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     let (t, st) = (ui.colors, state(ui));
+    // The list as it is kept at once, then again once Arena's are read (that may take a while).
     if st.list.with_untracked(Option::is_none) {
+        ask(&send, false);
         ask(&send, true);
     }
     let shown = create_memo(move |_| {

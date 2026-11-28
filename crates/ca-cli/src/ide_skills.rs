@@ -358,10 +358,13 @@ fn preview(places: &Places, found: &st::Found, mine: &[String], path: &str) -> V
         .iter()
         .map(|s| {
             let taken = taken(places, mine, &s.name);
-            let secret = found
-                .left_out
-                .iter()
-                .any(|l| l.contains("secrets never come in") && l.contains(&format!("{}/", s.name)));
+            // A lone skill's folder says its files without the skill's name before them.
+            let of_it = |l: &str| {
+                found.skills.len() == 1
+                    || l.starts_with(&format!("{}/", s.name))
+                    || l.contains(&format!("/{}/", s.name))
+            };
+            let secret = found.left_out.iter().any(|l| l.contains("secrets never come in") && of_it(l));
             json!({"name": s.name, "exists": !taken.is_empty(), "taken": taken, "secret": secret})
         })
         .collect();
@@ -568,6 +571,23 @@ mod tests {
         assert_eq!(import_local(&p, "project", &found, &BTreeMap::new())["kept"], json!(["release", "tests"]));
         let bad = choices_of(&json!([{"name": "release", "action": "rename", "as": "Bad Name"}]));
         assert!(import_local(&p, "project", &found, &bad)["error"].is_string());
+    }
+
+    #[test]
+    fn the_preview_says_which_skill_had_a_file_left_out_for_a_secret() {
+        let d = tempfile::tempdir().expect("temp");
+        let p = places(d.path());
+        let many = d.path().join("many");
+        skill(&many, "deploy");
+        skill(&many, "plain");
+        let fake = "-----BEGIN RSA PRIVATE KEY-----\nnot-a-real-one\n-----END RSA PRIVATE KEY-----";
+        std::fs::write(many.join("deploy/key.pem"), fake).expect("key");
+        let seen = preview(&p, &st::read(&many).expect("read"), &[], "many");
+        assert_eq!(seen["skills"][0]["secret"], true, "{seen}");
+        assert_eq!(seen["skills"][1]["secret"], false, "{seen}");
+        // One skill's folder alone: its files are said without its name.
+        let one = preview(&p, &st::read(&many.join("deploy")).expect("read"), &[], "deploy");
+        assert_eq!(one["skills"][0]["secret"], true, "{one}");
     }
 
     #[test]
