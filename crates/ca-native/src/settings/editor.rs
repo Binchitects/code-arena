@@ -242,7 +242,11 @@ fn wordify(part: &str) -> String {
         if c.is_uppercase() && was_lower {
             out.push(' ');
         }
-        if i == 0 { out.extend(c.to_uppercase()) } else { out.push(c) }
+        if i == 0 {
+            out.extend(c.to_uppercase())
+        } else {
+            out.push(c)
+        }
         was_lower = c.is_lowercase() || c.is_ascii_digit();
     }
     out
@@ -369,7 +373,8 @@ fn as_text(v: &Value) -> String {
 /// What is sent to keep a value in a tab's file (null: the setting taken out of it). The person's file loses a
 /// setting set back to its default, as VS Code's; a project's keeps it, since it wins over the person's.
 pub fn set_message(e: &Entry, value: &Value, target: Target, lang: Option<&str>) -> Value {
-    let value = if target == Target::User && lang.is_none() && *value == e.default { Value::Null } else { value.clone() };
+    let value =
+        if target == Target::User && lang.is_none() && *value == e.default { Value::Null } else { value.clone() };
     let mut m = json!({"type": "set_setting", "key": e.key, "value": value, "where": target.layer()});
     if let Some(lang) = lang {
         m["lang"] = Value::from(lang);
@@ -386,7 +391,13 @@ enum Row {
 
 /// The rows shown: with no search, the section picked's settings under its heading; with one, every setting found,
 /// each section's under its heading.
-fn rows(schema: &Schema, q: &Query, target: Target, section: &str, lang_of: impl Fn(&str) -> Option<Value>) -> Vec<Row> {
+fn rows(
+    schema: &Schema,
+    q: &Query,
+    target: Target,
+    section: &str,
+    lang_of: impl Fn(&str) -> Option<Value>,
+) -> Vec<Row> {
     let lang = q.lang.is_some();
     let mut out = Vec::new();
     let mut last = String::new();
@@ -613,8 +624,15 @@ fn typed(ui: Ui, send: Send, shown: Memo<Option<Shown>>) -> AnyView {
         .style(move |s| {
             let c = t.get();
             let wrong = error.with(Option::is_some);
-            let number = shown.with(|s| s.as_ref().is_some_and(|s| matches!(s.entry.kind.as_str(), "integer" | "number")));
-            let border = if wrong { c.input_error } else if focused.get() { c.focus } else { c.input_border };
+            let number =
+                shown.with(|s| s.as_ref().is_some_and(|s| matches!(s.entry.kind.as_str(), "integer" | "number")));
+            let border = if wrong {
+                c.input_error
+            } else if focused.get() {
+                c.focus
+            } else {
+                c.input_border
+            };
             let s = s
                 .width(if number { 200.0 } else { 500.0 })
                 .max_width_full()
@@ -727,9 +745,8 @@ fn setting_row(ui: Ui, send: Send, key: String) -> AnyView {
     ))
     .style(move |s| s.items_center().color(t.get().settings_header).min_width(0.0));
     let description = e.description.clone();
-    let desc = label(move || description.clone()).style(move |s| {
-        s.color(t.get().desc).line_height(1.4).margin_top(4.0).max_width_full()
-    });
+    let desc = label(move || description.clone())
+        .style(move |s| s.color(t.get().desc).line_height(1.4).margin_top(4.0).max_width_full());
     let send_c = send.clone();
     let control: AnyView = match e.kind.as_str() {
         "bool" => {
@@ -809,7 +826,15 @@ fn setting_row(ui: Ui, send: Send, key: String) -> AnyView {
         .on_secondary_click_stop(move |_| {
             if let Some(sh) = shown.get_untracked() {
                 let (x, y) = ui.pointer.get_untracked();
-                menu(ui, &menu_send, &sh.entry, sh.target, sh.lang.clone(), sh.modified, popup::At::point(gear_id, x, y));
+                menu(
+                    ui,
+                    &menu_send,
+                    &sh.entry,
+                    sh.target,
+                    sh.lang.clone(),
+                    sh.modified,
+                    popup::At::point(gear_id, x, y),
+                );
             }
         })
         .style(move |s| {
@@ -941,7 +966,7 @@ fn targets(ui: Ui, send: Send) -> impl IntoView {
         });
     let open_json = floem::views::tooltip(open_json, || label(|| "Open Settings (JSON)"));
     let from = link(ui, "From VS Code", move || from_send(json!({"type": "vscode_settings"})))
-    .style(move |st| st.margin_right(8.0).font_size(12.0).apply_if(s.target.get() != Target::User, |s| s.hide()));
+        .style(move |st| st.margin_right(8.0).font_size(12.0).apply_if(s.target.get() != Target::User, |s| s.hide()));
     h_stack((
         tab(Target::User, "User"),
         tab(Target::Workspace, "Workspace"),
@@ -988,7 +1013,8 @@ fn banner(ui: Ui, send: Send) -> impl IntoView {
                 .into_iter()
                 .map(|l| {
                     h_stack((
-                        icon("warning", 16.0).style(move |s| s.color(t.get().warning).margin_right(6.0).flex_shrink(0.0_f32)),
+                        icon("warning", 16.0)
+                            .style(move |s| s.color(t.get().warning).margin_right(6.0).flex_shrink(0.0_f32)),
                         label(move || l.clone()).style(|s| s.min_width(0.0)),
                     ))
                     .style(|s| s.items_start())
@@ -1067,9 +1093,7 @@ fn view(ui: Ui, send: Send) -> AnyView {
         let q = s.search.with(|t| query(t));
         let section = s.section.get();
         let lang = q.lang.clone();
-        s.schema.with(|sc| {
-            rows(sc, &q, target, &section, |key| lang.as_ref().and_then(|l| own_value(ui, key, l)))
-        })
+        s.schema.with(|sc| rows(sc, &q, target, &section, |key| lang.as_ref().and_then(|l| own_value(ui, key, l))))
     });
     let found = create_memo(move |_| {
         let searching = s.search.with(|t| !t.trim().is_empty());
@@ -1085,11 +1109,13 @@ fn view(ui: Ui, send: Send) -> AnyView {
         },
     )
     .style(|s| s.flex_col().width_full().padding_bottom(24.0));
-    let loading = label(|| "Reading the settings…")
-        .style(move |st| st.padding(32.0).color(t.get().desc).apply_if(s.schema.with(|sc| !sc.entries.is_empty()), |s| s.hide()));
+    let loading = label(|| "Reading the settings…").style(move |st| {
+        st.padding(32.0).color(t.get().desc).apply_if(s.schema.with(|sc| !sc.entries.is_empty()), |s| s.hide())
+    });
     let rows_view = scroll(v_stack((loading, list)).style(|s| s.width_full().max_width(1000.0)))
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).height_full().min_width(0.0));
-    let body = h_stack((toc(ui), rows_view)).style(|s| s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0));
+    let body =
+        h_stack((toc(ui), rows_view)).style(|s| s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0));
     let header = v_stack((search_box(ui, found), targets(ui, send.clone()), banner(ui, send.clone())))
         .style(|s| s.width_full().max_width(1180.0).padding_horiz(24.0).padding_top(12.0));
     focus(s.input);
@@ -1116,9 +1142,7 @@ pub fn register(_ui: Ui, _send: &Send) {
         let target = ui.state::<Editor>().target.get_untracked();
         open(ui, send, target, "")
     }));
-    commands::add(command(OPEN_USER, "Preferences", "Open User Settings", |ui, send| {
-        open(ui, send, Target::User, "")
-    }));
+    commands::add(command(OPEN_USER, "Preferences", "Open User Settings", |ui, send| open(ui, send, Target::User, "")));
     commands::add(command(OPEN_WORKSPACE, "Preferences", "Open Workspace Settings", |ui, send| {
         open(ui, send, Target::Workspace, "")
     }));
@@ -1166,13 +1190,8 @@ fn offer(ui: Ui, m: &Value) {
         toast::info(ui, &format!("No settings of VS Code's were found ({path})."));
         return;
     }
-    let keys: Vec<String> = m["entries"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|e| e["key"].as_str())
-        .map(str::to_string)
-        .collect();
+    let keys: Vec<String> =
+        m["entries"].as_array().into_iter().flatten().filter_map(|e| e["key"].as_str()).map(str::to_string).collect();
     if keys.is_empty() {
         toast::info(ui, "Your settings.json already has every setting of VS Code's that Code Arena reads.");
         return;
@@ -1267,7 +1286,10 @@ mod tests {
         let s = Schema::from_json(&schema());
         assert_eq!(s.entries.len(), 6);
         let names: Vec<String> = sections(&s.entries).into_iter().map(|(n, d)| format!("{d}{n}")).collect();
-        assert_eq!(names, ["0Commonly Used", "0Text Editor", "0Workbench", "0Agent", "1Agent", "1MCP servers", "1Arena"]);
+        assert_eq!(
+            names,
+            ["0Commonly Used", "0Text Editor", "0Workbench", "0Agent", "1Agent", "1MCP servers", "1Arena"]
+        );
         let none = |_: &str| None;
         let rows_of = |q: &str, target: Target, section: &str| keys(rows(&s, &query(q), target, section, none));
         // Commonly Used, in its own order.
@@ -1394,7 +1416,8 @@ mod tests {
         let (ui, send, told) = window();
         assert!(commands::run(ui, &send, FROM_VS_CODE));
         assert_eq!(told.borrow().last(), Some(&json!({"type": "vscode_settings"})));
-        let keys: Vec<String> = ["editor.fontSize", "editor.tabSize", "files.autoSave", "editor.wordWrap"].map(String::from).into();
+        let keys: Vec<String> =
+            ["editor.fontSize", "editor.tabSize", "files.autoSave", "editor.wordWrap"].map(String::from).into();
         assert_eq!(
             offer_text(&keys),
             "Bring over VS Code's settings? 4 of them: editor.fontSize, editor.tabSize, files.autoSave, …"
@@ -1402,8 +1425,16 @@ mod tests {
         assert_eq!(offer_text(&keys[..1]), "Bring over VS Code's settings? 1 of them: editor.fontSize");
         let entries: Vec<Value> = keys.iter().map(|k| json!({"key": k, "value": 1})).collect();
         let was = toast::count(ui);
-        take(ui, &json!({"type": "vscode_settings", "found": true, "path": "/home/me/.config/Code/User/settings.json", "entries": entries}), &send);
-        take(ui, &json!({"type": "vscode_settings", "found": false, "path": "/home/me/.config/Code/User/settings.json", "entries": []}), &send);
+        take(
+            ui,
+            &json!({"type": "vscode_settings", "found": true, "path": "/home/me/.config/Code/User/settings.json", "entries": entries}),
+            &send,
+        );
+        take(
+            ui,
+            &json!({"type": "vscode_settings", "found": false, "path": "/home/me/.config/Code/User/settings.json", "entries": []}),
+            &send,
+        );
         take(ui, &json!({"type": "vscode_imported", "keys": ["editor.fontSize"]}), &send);
         assert_eq!(toast::count(ui), was + 3);
     }

@@ -144,7 +144,8 @@ fn kind_name(kind: Kind) -> &'static str {
 }
 
 /// The layers' names, as `set_setting`'s `where` and the Settings editor's tabs say them.
-const LAYERS: [(Layer, &str); 3] = [(Layer::User, "user"), (Layer::Project, "project"), (Layer::Workspace, "workspace")];
+const LAYERS: [(Layer, &str); 3] =
+    [(Layer::User, "user"), (Layer::Project, "project"), (Layer::Workspace, "workspace")];
 
 /// The `settings_schema` message: what the Settings editor is drawn from.
 ///
@@ -577,7 +578,9 @@ impl Area for Here {
                         json!({"type": "vscode_imported", "keys": done})
                     }
                     Some(Err(e)) => json!({"type": "vscode_imported", "keys": [], "error": e}),
-                    None => json!({"type": "vscode_imported", "keys": [], "error": "there is no home folder to look in"}),
+                    None => {
+                        json!({"type": "vscode_imported", "keys": [], "error": "there is no home folder to look in"})
+                    }
                 };
                 send(&ctx.sh.out, reply);
             }
@@ -691,8 +694,14 @@ mod tests {
         assert_eq!(entries[0]["key"], ide_schema::ALL[0].key);
         let of = |key: &str| entries.iter().find(|e| e["key"] == key).expect(key).clone();
         let size = of("editor.fontSize");
-        assert_eq!((size["kind"].as_str(), size["min"].as_i64(), size["max"].as_i64()), (Some("number"), Some(6), Some(100)));
-        assert_eq!((size["value"].as_i64(), size["source"].as_str(), size["scope"].as_str()), (Some(17), Some("workspace"), Some("language")));
+        assert_eq!(
+            (size["kind"].as_str(), size["min"].as_i64(), size["max"].as_i64()),
+            (Some("number"), Some(6), Some(100))
+        );
+        assert_eq!(
+            (size["value"].as_i64(), size["source"].as_str(), size["scope"].as_str()),
+            (Some(17), Some("workspace"), Some("language"))
+        );
         assert_eq!(size["written"], json!({"user": 15, "project": 16, "workspace": 17}));
         assert_eq!(size["in"], json!(["user", "project", "workspace"]));
         assert_eq!(size["default"], 13);
@@ -701,11 +710,17 @@ mod tests {
         // A value not taken is no value of the file's: its problem says it.
         assert_eq!(of("editor.tabSize")["in"], json!([]));
         let mode = of("agent.mode");
-        assert_eq!((mode["source"].as_str(), mode["env"].as_str()), (Some("env:CODE_ARENA_MODE"), Some("CODE_ARENA_MODE")));
+        assert_eq!(
+            (mode["source"].as_str(), mode["env"].as_str()),
+            (Some("env:CODE_ARENA_MODE"), Some("CODE_ARENA_MODE"))
+        );
         assert_eq!(mode["scope"], "user");
         // The agent's own objects: where they are set, never what they hold.
         let servers = of("mcpServers");
-        assert_eq!((servers["kind"].as_str(), &servers["value"], &servers["written"]), (Some("object"), &Value::Null, &json!({})));
+        assert_eq!(
+            (servers["kind"].as_str(), &servers["value"], &servers["written"]),
+            (Some("object"), &Value::Null, &json!({}))
+        );
         assert_eq!(servers["in"], json!(["user"]));
         assert!(!m.to_string().contains("not-a-real-one"));
         // This edition's locks, what was not taken, and what is no setting.
@@ -722,7 +737,10 @@ mod tests {
         let theirs = vscode_file(&d.path().join("me"));
         assert!(theirs.ends_with(Path::new("Code").join("User").join("settings.json")));
         let s = Settings::load(&files.user, Some(&files.project), Env::from_pairs([]));
-        assert_eq!(vscode_message(&theirs, &s), json!({"type": "vscode_settings", "found": false, "path": theirs.display().to_string(), "entries": []}));
+        assert_eq!(
+            vscode_message(&theirs, &s),
+            json!({"type": "vscode_settings", "found": false, "path": theirs.display().to_string(), "entries": []})
+        );
         std::fs::create_dir_all(theirs.parent().expect("folder")).expect("folder");
         std::fs::write(
             &theirs,
@@ -744,9 +762,15 @@ mod tests {
             m["entries"],
             json!([{"key": "editor.fontSize", "value": 15}, {"key": "files.associations", "value": {"*.inc": "php"}}])
         );
-        assert_eq!(import(&theirs, &files.user, &s, &["editor.fontSize", "agent.mode"]), Ok(vec!["editor.fontSize".to_string()]));
+        assert_eq!(
+            import(&theirs, &files.user, &s, &["editor.fontSize", "agent.mode"]),
+            Ok(vec!["editor.fontSize".to_string()])
+        );
         let now = std::fs::read_to_string(&files.user).expect("read");
-        assert!(now.contains("// mine") && now.contains("\"editor.fontSize\": 15") && !now.contains("files.associations"), "{now}");
+        assert!(
+            now.contains("// mine") && now.contains("\"editor.fontSize\": 15") && !now.contains("files.associations"),
+            "{now}"
+        );
     }
 
     #[test]
