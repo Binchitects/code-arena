@@ -7,9 +7,10 @@
 //! Enter saving and Escape giving up, with the other commands of those keys named. The row's menu also adds keys,
 //! changes the `when` (read before it is written), removes or resets the keys and copies the rule or the command's
 //! id. What is changed is written into keybindings.json as VS Code writes it: a rule of the person's is changed in
-//! its place; a default one is taken away by a rule of `-command` and the new one added after; the file's comments
-//! and the rules not touched stay as they were, to the byte. The rules of the file that do nothing (what could not
-//! be read, a command there is not) are said above the table.
+//! its place; a default one is taken away by a rule of `-command` and the new one added after; the rules not touched
+//! and the comments between them stay as they were (a rule taken out goes with the comments just before it, and one
+//! written again loses its own comments and its `mac`, `linux` and `win`). The rules of the file that do nothing
+//! (what could not be read, a command there is not) are said above the table.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -257,6 +258,16 @@ pub fn others(all: &[Entry], keys: &[Chord], not: &str) -> Vec<String> {
     names
 }
 
+/// A row picked, found again among rows made again: the same rule, else the row in its place if it is of the same
+/// command (its keys changed), else the command's first row.
+pub fn found(all: &[Entry], was: &Entry) -> Option<Entry> {
+    all.iter()
+        .find(|e| e.command == was.command && e.keys == was.keys && e.when == was.when && e.source == was.source)
+        .or_else(|| all.get(was.uid).filter(|e| e.command == was.command))
+        .or_else(|| all.iter().find(|e| e.command == was.command))
+        .cloned()
+}
+
 /// The rules of the person's that do nothing because their command there is not (what could not be read at all is
 /// the keymap's `problems`).
 pub fn idle(all: &[Entry]) -> Vec<String> {
@@ -499,7 +510,7 @@ pub fn edit(text: &str, os: Os, e: &Entry, change: &Change) -> Option<String> {
             for (n, (start, end)) in sp.items.iter().enumerate() {
                 let v = ca_settings::jsonc::parse(&text[*start..*end]).ok();
                 let s = |k: &str| v.as_ref().and_then(|v| v.get(k)).and_then(Value::as_str).unwrap_or("").trim();
-                if s("command") == not && (s("when").is_empty() || s("when") == e.when) {
+                if s("command") == not {
                     gone.push(n);
                 }
             }
@@ -1037,6 +1048,13 @@ fn view(ui: Ui, send: Send) -> AnyView {
     });
     let count = create_memo(move |_| shown.with(Vec::len));
     // The place of the row picked among those shown.
+    // The rows made again (the file read): the row picked is found among them, as it is now.
+    floem::reactive::create_effect(move |_| {
+        let again = all.with(|(_, all)| s.selected.with_untracked(|p| p.as_ref().and_then(|p| found(all, p))));
+        if s.selected.with_untracked(|p| *p != again) {
+            s.selected.set(again);
+        }
+    });
     let at = create_memo(move |_| {
         let picked = s.selected.get()?;
         all.with(|(_, all)| {
@@ -1425,6 +1443,20 @@ mod tests {
     }
 
     #[test]
+    fn the_row_picked_is_found_again_once_the_rules_change() {
+        let all = rows_with("");
+        let picked = row(&all, "b.close").clone();
+        // Its keys changed: the person's row of it now, with its new keys.
+        let text = edit("", Os::Linux, &picked, &Change::Keys(keys("f9"))).expect("written");
+        let again = rows_with(&text);
+        let now = found(&again, &picked).expect("found");
+        assert_eq!((now.command.as_str(), now.key_text.as_str(), now.source), ("b.close", "f9", Source::User));
+        // The same rule is itself; a command gone is none.
+        assert_eq!(found(&all, &picked), Some(picked.clone()));
+        assert_eq!(found(&rows_with(""), &Entry { command: "no.such".into(), ..picked }), None);
+    }
+
+    #[test]
     fn the_lists_places_are_found_past_comments_and_strings() {
         let text =
             "// mine\n[\n  /* one, ] */ {\"key\": \"ctrl+]\", \"command\": \"a\"},\n  {\"command\": \"b // c\"},\n]\n";
@@ -1537,6 +1569,14 @@ mod tests {
         assert_eq!(row(&rows_with(&text), "a.open").when, "");
         // No keys, no `when` to change; a file that is not a list is never written into.
         assert_eq!(edit("", Os::Linux, row(&all, "c.none"), &Change::When("x".into())), None);
+        // A default with a `when` given another, then reset: it has its default again, and nothing is left of it.
+        let text = edit("", Os::Linux, row(&all, "b.close"), &Change::When("terminalFocus".into())).expect("when");
+        assert_eq!(row(&rows_with(&text), "b.close").when, "terminalFocus");
+        let text = edit(&text, Os::Linux, row(&rows_with(&text), "b.close"), &Change::Reset).expect("reset");
+        let again = rows_with(&text);
+        assert_eq!(keys_of(&again, "b.close"), ["ctrl+w"]);
+        assert_eq!(row(&again, "b.close").source, Source::Default);
+        assert!(!text.contains("b.close"));
         assert_eq!(edit("{ \"a\": 1 }", Os::Linux, row(&all, "a.open"), &Change::Remove), None);
         assert_eq!(edit("[ {", Os::Linux, row(&all, "a.open"), &Change::Add(keys("f1"))), None);
     }
