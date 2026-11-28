@@ -50,10 +50,6 @@ pub const LOCATION_HIDE: &str = "workbench.action.activityBarLocation.hide";
 pub const TOGGLE_VISIBILITY: &str = "workbench.action.toggleActivityBarVisibility";
 pub const HIDE_VIEW: &str = "codeArena.hideFromActivityBar";
 pub const SHOW_ALL: &str = "codeArena.showAllInActivityBar";
-/// VS Code's commands that move the panel beside the editor.
-pub const PANEL_LEFT: &str = "workbench.action.positionPanelLeft";
-pub const PANEL_RIGHT: &str = "workbench.action.positionPanelRight";
-pub const PANEL_BOTTOM: &str = "workbench.action.positionPanelBottom";
 
 /// Where the bar is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -671,9 +667,6 @@ pub fn register(_ui: Ui, _send: &Send) {
             h.set(Vec::new());
         }
     }));
-    add(command(PANEL_LEFT, "View", "Move Panel Left", |ui, _| move_panel(ui, Side::Left)));
-    add(command(PANEL_RIGHT, "View", "Move Panel Right", |ui, _| move_panel(ui, Side::Right)));
-    add(command(PANEL_BOTTOM, "View", "Move Panel To Bottom", |ui, _| move_panel(ui, Side::Bottom)));
     // The gear's menu, as VS Code's begins: the parts that have settings, keys, profiles add their rows.
     use crate::menus::{Menu, add as row, item};
     row(Menu::Manage, item(crate::workbench::SHOW_COMMANDS).title("Command Palette...").group("1_commands"));

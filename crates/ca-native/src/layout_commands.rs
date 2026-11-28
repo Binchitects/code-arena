@@ -24,7 +24,7 @@ use floem::views::{Decorators, empty, stack_from_iter};
 use floem::{IntoView, View as _, ViewId, WindowIdExt};
 use serde_json::Value;
 
-use crate::dock::{Dir, Dock, EDITOR, HOMES, Home, Node, Side};
+use crate::dock::{Dir, Dock, HOMES, Home, Node, Side};
 use crate::layout::View;
 use crate::state::{Send, Ui};
 
@@ -151,8 +151,8 @@ pub fn panel_place(d: &Dock) -> Place {
     }
 }
 
-/// The panel moved against the editor, its views and the one it shows as they were (as a group of its own, under
-/// a new number); none when there is no panel.
+/// The panel moved against the editor, whole (its views, the one it shows, its number and so its size, as
+/// Dock::group_moved keeps them), and its group; none when there is no panel.
 pub fn panel_moved(d: &Dock, place: Place) -> Option<(Dock, u32)> {
     let side = match place {
         Place::Bottom => Side::Bottom,
@@ -161,14 +161,7 @@ pub fn panel_moved(d: &Dock, place: Place) -> Option<(Dock, u32)> {
         Place::Elsewhere => return None,
     };
     let g = panel_group(d)?;
-    let Some(Node::Tabs { views, active, .. }) = d.find(g) else { return None };
-    let first = *views.first()?;
-    let mut next = d.docked(first, EDITOR, side);
-    let group = next.group_of(first)?;
-    for v in &views[1..] {
-        next = next.docked(*v, group, Side::Center);
-    }
-    Some((next.shown(*active), group))
+    Some((d.group_moved(g, side), g))
 }
 
 /// The groups hidden in Zen mode: all of them.
@@ -272,16 +265,13 @@ pub fn toggle_zen(ui: Ui) {
 
 fn move_panel(ui: Ui, place: Place) {
     let Some((next, group)) = ui.dock.with_untracked(|d| panel_moved(d, place)) else { return };
-    let old = ui.dock.with_untracked(panel_group);
-    ui.dock.set(next);
-    // The panel is shown where it went, at VS Code's size for that side.
+    if ui.dock.with_untracked(|d| *d != next) {
+        ui.dock.set(next);
+    }
+    // The panel is shown where it went, at the size it had.
     let mut hidden = ui.hidden.get_untracked();
-    hidden.retain(|g| Some(*g) != old && *g != group);
-    set_hidden(ui, hidden);
-    let size = ui.size(group);
-    let want = if place == Place::Bottom { 230.0 } else { 300.0 };
-    if size.get_untracked() != want {
-        size.set(want);
+    if hidden.remove(&group) {
+        set_hidden(ui, hidden);
     }
 }
 
