@@ -1320,6 +1320,11 @@ Sections used:
 - **A task's ending line sits under its output.** When a task or a shell ends, its line now comes
   right after the last output, not at the bottom of the panel. A task that succeeded says only that
   its terminal will be reused, without 'exit code: 0'.
+- **Selecting a notebook cell no longer squeezes it.** The cell's tools (Move, Change to Markdown,
+  Clear Outputs, Delete) float over its top right corner, as in VS Code, so its text stays where it
+  was.
+- **Toasts raised as the window opens use the window's font.** The 'Code Arena X is available' toast
+  was drawn in a monospaced font; it now reads like every other notification.
 
 ## v0.5.0 (2026-11-26)
 
