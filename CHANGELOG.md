@@ -1276,6 +1276,11 @@ Sections used:
   completion, inlay hint or error text drawn right after it.
 - **Default formatter's description.** The editor.defaultFormatter setting now says its own
   formatters are listed in settings.json, not config.json.
+- **Go to Symbol in Workspace puts the caret on the name.** A symbol picked with Ctrl+T or '#' opens
+  with the caret on its name, as VS Code does. Before, it landed at the start of the line.
+- **A task's ending line sits under its output.** When a task or a shell ends, its line now comes
+  right after the last output, not at the bottom of the panel. A task that succeeded says only that
+  its terminal will be reused, without 'exit code: 0'.
 
 ## v0.5.0 (2026-11-26)
 
