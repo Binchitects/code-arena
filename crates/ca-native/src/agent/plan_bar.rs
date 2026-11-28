@@ -31,10 +31,8 @@ pub fn said(p: &Plan) -> String {
 pub(super) fn view(ui: Ui) -> impl IntoView {
     let (t, st, open) = (ui.colors, plan(ui), ui.state::<Open>().0);
     let words = move |f: fn(&Plan) -> String| move || st.plan.with(|p| p.as_ref().map(f).unwrap_or_default());
-    let chevron = dyn_container(
-        move || open.get(),
-        |o| icon(if o { "chevron-down" } else { "chevron-right" }, 14.0).into_any(),
-    );
+    let chevron =
+        dyn_container(move || open.get(), |o| icon(if o { "chevron-down" } else { "chevron-right" }, 14.0).into_any());
     let line = h_stack((
         chevron,
         label(|| "Plan").style(move |s| bold(s).font_size(12.0)),
@@ -68,8 +66,7 @@ pub(super) fn view(ui: Ui) -> impl IntoView {
             .into_any()
         },
     );
-    v_stack((line, track, steps))
-        .style(move |s| super::bar(t, s).apply_if(st.plan.with(Option::is_none), |s| s.hide()))
+    v_stack((line, track, steps)).style(move |s| super::bar(t, s).apply_if(st.plan.with(Option::is_none), |s| s.hide()))
 }
 
 /// A step under the bar: its mark and its title.

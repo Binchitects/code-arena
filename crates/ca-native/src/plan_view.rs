@@ -315,8 +315,8 @@ fn body(ui: Ui, send: Send) -> impl IntoView {
         .style(move |s| bold(s).font_size(13.0).color(t.get().fg).text_overflow(TextOverflow::Wrap).min_width(0.0));
     let count = label(move || st.plan.with(|p| p.as_ref().map(progress).unwrap_or_default()))
         .style(move |s| s.font_size(12.0).color(t.get().desc).flex_shrink(0.0_f32));
-    let goal = label(move || st.plan.with(|p| p.as_ref().and_then(|p| p.goal.clone()).unwrap_or_default()))
-        .style(move |s| {
+    let goal =
+        label(move || st.plan.with(|p| p.as_ref().and_then(|p| p.goal.clone()).unwrap_or_default())).style(move |s| {
             let none = st.plan.with(|p| p.as_ref().is_none_or(|p| p.goal.is_none()));
             s.font_size(12.0).color(t.get().desc).text_overflow(TextOverflow::Wrap).apply_if(none, |s| s.hide())
         });
@@ -397,8 +397,11 @@ fn review_card(ui: Ui, send: Send) -> impl IntoView {
 fn wide(t: Theme, text: &'static str, primary: bool, on: impl Fn() + 'static) -> impl IntoView {
     label(move || text).on_click_stop(move |_| on()).style(move |s| {
         let c = t.get();
-        let (bg, fg, hover) =
-            if primary { (c.button_bg, c.button_fg, c.button_hover) } else { (c.button2_bg, c.button2_fg, c.button2_hover) };
+        let (bg, fg, hover) = if primary {
+            (c.button_bg, c.button_fg, c.button_hover)
+        } else {
+            (c.button2_bg, c.button2_fg, c.button2_hover)
+        };
         s.padding_horiz(14.0)
             .padding_vert(4.0)
             .border_radius(4.0)
@@ -466,10 +469,13 @@ fn step_row(ui: Ui, send: Send, s: Step, proposed: floem::reactive::Memo<bool>) 
         let passed = s.check_result.as_deref() == Some("passed");
         let line = label(move || check.clone()).style(move |s| {
             let c = t.get();
-            s.font_size(12.0)
-                .text_overflow(TextOverflow::Wrap)
-                .min_width(0.0)
-                .color(if failed { c.error } else if passed { c.ok } else { c.desc })
+            s.font_size(12.0).text_overflow(TextOverflow::Wrap).min_width(0.0).color(if failed {
+                c.error
+            } else if passed {
+                c.ok
+            } else {
+                c.desc
+            })
         });
         lines.push(match s.check_output.clone() {
             Some(out) => tooltip(line, move || {
@@ -513,11 +519,7 @@ fn step_row(ui: Ui, send: Send, s: Step, proposed: floem::reactive::Memo<bool>) 
             .style(|s| s.gap(3.0).flex_grow(1.0_f32).min_width(0.0)),
     ))
     .style(move |s| {
-        s.gap(8.0)
-            .width_full()
-            .padding_horiz(20.0)
-            .padding_vert(5.0)
-            .hover(|s| s.background(t.get().list_hover))
+        s.gap(8.0).width_full().padding_horiz(20.0).padding_vert(5.0).hover(|s| s.background(t.get().list_hover))
     })
 }
 

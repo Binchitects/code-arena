@@ -116,7 +116,10 @@ mod tests {
         let r = |v: Value| review_words(&v);
         assert_eq!(r(json!({"action": "approve"})), Ok(("approve", String::new())));
         assert_eq!(r(json!({"action": "approve-ask"})), Ok(("approve", "ask".into())));
-        assert_eq!(r(json!({"action": "change", "step": 2, "text": " use a map "})), Ok(("change", "2 use a map".into())));
+        assert_eq!(
+            r(json!({"action": "change", "step": 2, "text": " use a map "})),
+            Ok(("change", "2 use a map".into()))
+        );
         assert!(r(json!({"action": "change", "text": "x"})).is_err(), "a change names its step");
         assert_eq!(r(json!({"action": "another", "text": "too slow"})), Ok(("another", "too slow".into())));
         assert_eq!(r(json!({"action": "reject"})), Ok(("reject", String::new())));
@@ -126,7 +129,9 @@ mod tests {
     #[test]
     fn a_plan_left_is_offered_only_while_some_of_it_is_to_do() {
         let plan = |a: &str, b: &str| {
-            format!(r#"{{"title":"T","steps":[{{"number":1,"title":"a","status":"{a}"}},{{"number":2,"title":"b","status":"{b}"}}]}}"#)
+            format!(
+                r#"{{"title":"T","steps":[{{"number":1,"title":"a","status":"{a}"}},{{"number":2,"title":"b","status":"{b}"}}]}}"#
+            )
         };
         assert_eq!(left_of(&plan("done", "todo")), Some(json!({"title": "T", "done": 1, "total": 2})));
         assert_eq!(left_of(&plan("done", "done")), None);
