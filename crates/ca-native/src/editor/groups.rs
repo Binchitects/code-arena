@@ -805,8 +805,10 @@ fn settle(ui: Ui) {
 /// The groups drawn: a row or a column of them, a divider between two, the question before a tab closes over all.
 pub fn area(ui: Ui) -> impl IntoView {
     let g = groups(ui);
-    let ids =
-        floem::reactive::create_memo(move |_| g.model.with(|m| m.groups.iter().map(|g| g.id).collect::<Vec<_>>()));
+    // Not the groups in windows of their own (`window.rs` draws each).
+    let ids = floem::reactive::create_memo(move |_| {
+        g.model.with(|m| m.groups.iter().map(|g| g.id).filter(|id| !m.is_apart(*id)).collect::<Vec<_>>())
+    });
     let vertical = floem::reactive::create_memo(move |_| g.model.with(|m| m.vertical));
     let row = dyn_stack(move || ids.get(), |id| *id, move |id| one(ui, id))
         .on_resize(move |r| {
@@ -831,11 +833,12 @@ pub struct Shown {
     pub focused: Memo<bool>,
 }
 
-fn one(ui: Ui, id: u64) -> impl IntoView {
+/// What a group's parts are drawn from, followed from the groups.
+pub fn shown_of(ui: Ui, id: u64) -> Shown {
     use floem::reactive::create_memo;
     let g = groups(ui);
     // A group gone keeps what it showed until it is taken away (nothing in it is drawn again meanwhile).
-    let shown = Shown {
+    Shown {
         id,
         tabs: create_memo(move |was: Option<&Vec<String>>| {
             g.model.with(|m| m.group(id).map(|g| g.tabs.clone())).or_else(|| was.cloned()).unwrap_or_default()
@@ -844,7 +847,13 @@ fn one(ui: Ui, id: u64) -> impl IntoView {
             g.model.with(|m| m.group(id).map(|g| g.active.clone())).or_else(|| was.cloned()).flatten()
         }),
         focused: create_memo(move |_| g.model.with(|m| m.focused == id)),
-    };
+    }
+}
+
+fn one(ui: Ui, id: u64) -> impl IntoView {
+    use floem::reactive::create_memo;
+    let g = groups(ui);
+    let shown = shown_of(ui, id);
     let at = create_memo(move |was: Option<&usize>| {
         g.model.with(|m| m.groups.iter().position(|g| g.id == id)).or(was.copied()).unwrap_or(0)
     });
