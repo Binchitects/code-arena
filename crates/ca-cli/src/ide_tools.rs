@@ -44,8 +44,7 @@ const OWN: &str = "Code Arena's own";
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] =
-        &[
+    const MESSAGES: &'static [(&'static str, Rule)] = &[
         ("tools", Rule::Turn),
         ("tools_set", Rule::Queue),
         ("servers", Rule::Turn),
@@ -159,7 +158,11 @@ fn set_tool_mode(ctx: &mut Ctx<'_>, m: &Value) {
     let asked = json!({"type": "tool_mode", "key": m["key"]});
     let value = &m["value"];
     if !value.is_null() && value.as_str().and_then(ca_agent::code_mode::ToolMode::parse).is_none() {
-        refuse(&ctx.sh.out, &asked, &format!("Tools are direct, code or both (or null, to follow Arena's word), not {value}."));
+        refuse(
+            &ctx.sh.out,
+            &asked,
+            &format!("Tools are direct, code or both (or null, to follow Arena's word), not {value}."),
+        );
         return;
     }
     let root = ctx.p.agent.ctx.workspace.root().to_path_buf();

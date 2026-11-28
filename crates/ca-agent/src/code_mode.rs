@@ -41,7 +41,8 @@ const OWN: &str = "Code Arena's own";
 
 /// The tools a program may not call: those that run code themselves, wait on or stop commands, hand work on to a
 /// sub-agent, or load tools into the requests.
-const NOT_FROM_CODE: &[&str] = &[RUN_CODE, "command_output", "stop_command", "task", "run_steps", "goal_check", "load_tools"];
+const NOT_FROM_CODE: &[&str] =
+    &[RUN_CODE, "command_output", "stop_command", "task", "run_steps", "goal_check", "load_tools"];
 
 /// How the model is given its tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -138,8 +139,10 @@ fn in_code_note(tools: &[&Arc<dyn Tool>]) -> String {
             } else {
                 about.to_string()
             };
-            let args: Vec<String> =
-                parameters(&d.parameters).into_iter().map(|(p, required)| if required { p } else { format!("{p}=…") }).collect();
+            let args: Vec<String> = parameters(&d.parameters)
+                .into_iter()
+                .map(|(p, required)| if required { p } else { format!("{p}=…") })
+                .collect();
             format!("- {}({}): {about}", python_name(&t.group(), &d.name), args.join(", "))
         })
         .collect();
@@ -437,7 +440,10 @@ pub struct Ran {
 #[derive(Debug, PartialEq)]
 pub enum Step {
     /// A program calls a tool: answer it with [`Kernel::answer`].
-    Call { name: String, args: Value },
+    Call {
+        name: String,
+        args: Value,
+    },
     Done(Ran),
 }
 
@@ -486,7 +492,9 @@ impl Kernel {
         let root = ctx.workspace.root().to_path_buf();
         let py = python(&root);
         let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-        hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
+        hasher.write_u128(
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos(),
+        );
         let mark = format!("\u{1}arena-{:016x} ", hasher.finish());
         let (program, args) = ctx.command(&py, &["-u".into(), "-c".into(), RUNNER.into()]);
         let mut cmd = tokio::process::Command::new(&program);
@@ -500,9 +508,9 @@ impl Kernel {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .kill_on_drop(true);
-        let mut child = cmd.spawn().map_err(|e| {
-            format!("Could not start {py} ({e}): install Python 3, or make the project's .venv.")
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Could not start {py} ({e}): install Python 3, or make the project's .venv."))?;
         let stdin = child.stdin.take().ok_or("the interpreter has no stdin")?;
         let stdout = BufReader::new(child.stdout.take().ok_or("the interpreter has no stdout")?);
         Ok(Kernel { child, stdin, stdout, mark: mark.trim_end().to_string(), python: py })
@@ -622,7 +630,14 @@ fn counted(calls: &[String]) -> String {
 }
 
 /// What the model reads of a run.
-fn result_text(anew: &str, ran: &Ran, shown_plots: &[String], calls: &[String], secs: u64, code: Option<i32>) -> String {
+fn result_text(
+    anew: &str,
+    ran: &Ran,
+    shown_plots: &[String],
+    calls: &[String],
+    secs: u64,
+    code: Option<i32>,
+) -> String {
     let mut text = anew.to_string();
     if ran.output.is_empty() {
         text.push_str("(no output)\n");
@@ -692,7 +707,8 @@ impl Agent {
                 Step::Done(r) => break r,
                 Step::Call { name, args } => {
                     let began = Instant::now();
-                    let answer = self.answer_from_code(call_id, &tools, calls.len(), &name, args, events, &mut wrote).await;
+                    let answer =
+                        self.answer_from_code(call_id, &tools, calls.len(), &name, args, events, &mut wrote).await;
                     calls.push(name);
                     // The time the person took to answer is not the program's.
                     until += began.elapsed();
@@ -709,7 +725,10 @@ impl Agent {
             .iter()
             .filter(|p| std::path::Path::new(p).is_file())
             .map(|p| {
-                std::path::Path::new(p).strip_prefix(&root).map(|r| r.display().to_string()).unwrap_or_else(|_| p.clone())
+                std::path::Path::new(p)
+                    .strip_prefix(&root)
+                    .map(|r| r.display().to_string())
+                    .unwrap_or_else(|_| p.clone())
             })
             .collect();
         if !ran.ended {
@@ -908,7 +927,9 @@ mod tests {
         let mut out = Bounded::new(1000);
         let Step::Done(r) = k.next(until, &mut out).await else { panic!("a call") };
         assert_eq!((r.output.as_str(), r.ok), ("hi\n42", true));
-        k.begin("import arena\nr = arena.arena.web_search('cats', limit=2)\nprint(r['echo']['query'])", &t).await.expect("the kernel");
+        k.begin("import arena\nr = arena.arena.web_search('cats', limit=2)\nprint(r['echo']['query'])", &t)
+            .await
+            .expect("the kernel");
         let mut out = Bounded::new(1000);
         let step = k.next(until, &mut out).await;
         assert_eq!(step, Step::Call { name: "web_search".into(), args: json!({"query": "cats", "limit": 2}) });

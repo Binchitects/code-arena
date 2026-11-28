@@ -108,12 +108,19 @@ pub fn register(ui: Ui, _send: &Send) {
     );
     add(
         Menu::Manage,
-        item(TOOLS_AS_ARENA_SAYS).title("As Arena says").group("7_tools").order(1).live_title(|ui| {
-            let arena = ui.state::<ToolMode>().arena.get_untracked();
-            format!("As Arena says: {}", mode_title(arena.as_deref().unwrap_or("both")).to_lowercase())
-        }).checked(|ui| ui.state::<ToolMode>().checked() == "arena"),
+        item(TOOLS_AS_ARENA_SAYS)
+            .title("As Arena says")
+            .group("7_tools")
+            .order(1)
+            .live_title(|ui| {
+                let arena = ui.state::<ToolMode>().arena.get_untracked();
+                format!("As Arena says: {}", mode_title(arena.as_deref().unwrap_or("both")).to_lowercase())
+            })
+            .checked(|ui| ui.state::<ToolMode>().checked() == "arena"),
     );
-    for (order, (id, mode)) in [(TOOLS_DIRECT, "direct"), (TOOLS_AS_CODE, "code"), (TOOLS_BOTH, "both")].into_iter().enumerate() {
+    for (order, (id, mode)) in
+        [(TOOLS_DIRECT, "direct"), (TOOLS_AS_CODE, "code"), (TOOLS_BOTH, "both")].into_iter().enumerate()
+    {
         add(
             Menu::Manage,
             item(id)
@@ -193,7 +200,11 @@ mod tests {
         // Arena's word is said in its row; the person's choice is checked in place of it.
         take(ui, &json!({"type": "state", "tool_mode": {"value": "direct", "set": false, "arena": "direct"}}), &send);
         assert_eq!(checked(ui), ["As Arena says: direct"]);
-        assert!(take(ui, &json!({"type": "tool_mode", "value": "code", "set": true, "arena": "direct", "key": "code"}), &send));
+        assert!(take(
+            ui,
+            &json!({"type": "tool_mode", "value": "code", "set": true, "arena": "direct", "key": "code"}),
+            &send
+        ));
         assert_eq!(checked(ui), ["As code"]);
         assert!(crate::commands::run(ui, &send, TOOLS_BOTH));
         assert!(crate::commands::run(ui, &send, TOOLS_AS_ARENA_SAYS));
