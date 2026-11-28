@@ -945,6 +945,14 @@ Sections used:
   Opened... forgets them.
 - **Welcome.** An empty window says "No file is open" and offers Open Folder... above its keys. An
   empty second group says "Drag a tab here, or open a file."
+- **Changed files as a tree or a list.** Source Control and Agent changes can show changed files as a
+  tree or as a list. Use View as Tree / View as List in the view's title; in a tree, Collapse All
+  folds every folder. `scm.defaultViewMode` sets the starting view, and the choice and the folded
+  folders are kept for the folder. With `scm.compactFolders`, a folder that holds only one folder
+  shares its row with it (`tests/unit`).
+- **Folder actions on changed files.** In a tree, a folder row has its group's actions for every
+  file under it: Stage, Unstage and Discard in Source Control, and Accept and Revert in Agent
+  changes. Revert asks once for the whole folder.
 
 
 ### :bug: Bugs fixed
