@@ -261,6 +261,7 @@ fn cli_opts(c: &Common) -> session::Opts {
         thinking: c.thinking.clone(),
         interactive: c.print.is_none(),
         carry_plan: c.carry_plan,
+        modelless: false,
     }
 }
 

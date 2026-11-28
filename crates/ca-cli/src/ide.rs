@@ -964,7 +964,7 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
     let approver: Arc<dyn ca_agent::Approver> =
         Arc::new(PageApprover { out: out.clone(), pending: pending.clone(), next: AtomicU64::new(1) });
-    let opts = Opts { interactive: true, ..args.opts.clone() };
+    let opts = Opts { interactive: true, modelless: true, ..args.opts.clone() };
     let mut p = session::prepare(app, &opts, approver.clone(), args.resume).await?;
     let inbox = Arc::new(Mutex::new(Vec::<String>::new()));
     p.agent.inbox = Some(inbox.clone());
