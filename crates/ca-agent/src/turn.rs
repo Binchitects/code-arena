@@ -1409,11 +1409,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_command_laya_flags_asks_even_in_yolo_and_a_run_that_cannot_ask_refuses_it() {
-        let (_s, mut a, d, seen) = agent(
-            vec![call("run_shell", r#"{"command": "touch made.txt"}"#), say("I could not.", "stop")],
-            Mode::Yolo,
-        )
-        .await;
+        let (_s, mut a, d, seen) =
+            agent(vec![call("run_shell", r#"{"command": "touch made.txt"}"#), say("I could not.", "stop")], Mode::Yolo)
+                .await;
         a.policy.laya = Some(crate::policy::Laya(Arc::new(Alarmed)));
         a.turn("make it", &mut Quiet).await.expect("turn");
         assert!(!d.path().join("made.txt").exists());

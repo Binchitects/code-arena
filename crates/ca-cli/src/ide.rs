@@ -1435,10 +1435,14 @@ mod tests {
         };
         let m = ask_message(4, &q);
         assert_eq!((&m["type"], &m["id"], &m["tool"]), (&json!("ask"), &json!(4), &json!("run_shell")));
-        assert_eq!((&m["title"], &m["always"], &m["timeless"]), (&json!("Run this command?"), &json!(null), &json!(true)));
+        assert_eq!(
+            (&m["title"], &m["always"], &m["timeless"]),
+            (&json!("Run this command?"), &json!(null), &json!(true))
+        );
         assert_eq!(m["risk"], json!({"destructive": 0.96, "outside": 0.93, "network": 0.03}));
         assert_eq!(m["arguments"]["command"], "rm -rf ../build");
-        let q = Question { always: Some("Always for this session: no more questions about file edits."), risk: None, ..q };
+        let q =
+            Question { always: Some("Always for this session: no more questions about file edits."), risk: None, ..q };
         let m = ask_message(5, &q);
         assert_eq!((m["risk"].is_null(), m["always"].as_str().is_some()), (true, true));
     }

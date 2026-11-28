@@ -129,11 +129,8 @@ pub(super) fn card(ui: Ui, send: Send, id: u64, asked: Asked, answer: RwSignal<O
                 .background(c.code)
                 .text_overflow(TextOverflow::Wrap)
         }),
-        h_stack((
-            icon("watch", 14.0).style(move |s| s.color(t.get().desc)),
-            label(move || waits.unwrap_or_default()),
-        ))
-        .style(move |s| s.gap(6.0).items_center().color(t.get().desc).apply_if(waits.is_none(), |s| s.hide())),
+        h_stack((icon("watch", 14.0).style(move |s| s.color(t.get().desc)), label(move || waits.unwrap_or_default())))
+            .style(move |s| s.gap(6.0).items_center().color(t.get().desc).apply_if(waits.is_none(), |s| s.hide())),
         h_stack((
             icon(if laya_warns { "warning" } else { "shield" }, 14.0)
                 .style(move |s| s.apply_if(laya_warns, |s| s.color(t.get().warning))),
@@ -222,8 +219,12 @@ mod tests {
         let a = Asked::of(&m);
         assert_eq!(a.always.as_deref(), Some("Always for this session: no more questions about file edits."));
         assert_eq!((a.risk, a.waits()), (None, None));
-        let bg = Asked::of(&json!({"tool": "run_shell", "subject": "[in the background] npm run dev", "background": true}));
-        assert_eq!((bg.subject.as_str(), bg.waits(), bg.title.as_str()), ("npm run dev", Some("In the background"), "Run run_shell?"));
+        let bg =
+            Asked::of(&json!({"tool": "run_shell", "subject": "[in the background] npm run dev", "background": true}));
+        assert_eq!(
+            (bg.subject.as_str(), bg.waits(), bg.title.as_str()),
+            ("npm run dev", Some("In the background"), "Run run_shell?")
+        );
         assert!(!Risk { destructive: 0.59, outside: 0.0, network: 0.1 }.asks());
         assert_eq!(said("always"), "Allowed for this session");
     }
