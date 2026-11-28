@@ -544,6 +544,15 @@ Sections used:
   of the folder left unfinished.
 - **Plan bar.** The plan's bar over the input shows a progress bar and 'waiting for your review',
   and opens to the steps with a click.
+- **Compare editor.** Compare Active File with Saved (Ctrl+K D) or with Clipboard (Ctrl+K C), or pick
+  two files with Select for Compare and Compare with Selected (from the tab or Explorer menu). The
+  compare opens side by side as in VS Code: matching lines line up, hatched rows fill the gaps,
+  changed words are marked, and both sides scroll together. When the editor is narrow it switches to
+  the inline view. The file's own side can be edited and saved with Ctrl+S, and the arrow by each
+  change reverts it. The toolbar shows the lines added and removed, and has Previous/Next Change
+  (Shift+Alt+F5, Alt+F5), the inline toggle, Show Whitespace Differences, Swap Sides and Open File.
+- **Agent changes open in the compare editor.** Opening a change from the Changes view shows the file
+  before the agent beside the file itself, with Revert and Accept in the toolbar.
 
 
 ### :bug: Bugs fixed
