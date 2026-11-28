@@ -422,7 +422,17 @@ fn group_view(ui: Ui, send: Send, id: u32, place: Place) -> impl IntoView {
                 // A side bar's title (the activity bar switches its views), as VS Code's: the shown view's name.
                 let Some(v) = active else { return empty().into_any() };
                 let title = label(move || v.title().to_uppercase())
-                    .style(move |s| caps(s).padding_left(20.0).height_full().items_center().color(t.get().side_title));
+                    .style(move |s| {
+                        // Cut with "…" when the view's actions leave too little room, as VS Code's.
+                        caps(s)
+                            .padding_left(20.0)
+                            .height_full()
+                            .width_full()
+                            .min_width(0.0)
+                            .items_center()
+                            .text_ellipsis()
+                            .color(t.get().side_title)
+                    });
                 handle(ui, v, title, move || {}).into_any()
             } else {
                 // The tabs that fit the title's width, the shown one always; the rest under VS Code's "…".
