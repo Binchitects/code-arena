@@ -618,7 +618,7 @@ mod tests {
         assert_eq!(rows(Some(&[]), 0, None, "parser"), vec![Row::Note("No chats found.".into())]);
         assert_eq!(rows(Some(&[]), 0, Some("Sign in"), ""), vec![Row::Note("Sign in".into())]);
         let c = Chat { id: "a".into(), ..Chat::default() };
-        assert_eq!(rows(Some(&[c.clone()]), 4, None, ""), vec![Row::Chat(c), Row::More(4)]);
+        assert_eq!(rows(Some(std::slice::from_ref(&c)), 4, None, ""), vec![Row::Chat(c), Row::More(4)]);
     }
 
     #[test]
