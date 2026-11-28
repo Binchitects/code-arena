@@ -815,6 +815,16 @@ Sections used:
   Arena shows each task's cron, last run and next run, and runs one now in Arena.
 - **Schedules can be turned off.** A schedule that is off is kept but not run when due, and
   `code-arena schedule list` says so.
+- **Extensions view.** Ctrl+Shift+X lists your installed extensions. Each row shows the icon, name,
+  version, description and publisher, what the extension brings, a warning for what is not used here,
+  a switch to turn it on or off, and Uninstall (asked first). The view also lists the project's
+  recommendations from .vscode/extensions.json, and the extensions that VS Code, VSCodium or
+  VS Code - Insiders have on this computer, with Import or Update.
+- **Install from VSIX and extension search.** 'Extensions: Install from VSIX...' (palette, or the
+  view's ... menu) asks for the path of a .vsix. The search box finds extensions by name, id,
+  publisher or description, and @installed, @enabled, @disabled, @recommended and @local narrow it.
+  The title also has Refresh and Clear Extensions Search Results, and the palette has Show Installed
+  and Show Recommended Extensions.
 
 
 ### :bug: Bugs fixed
