@@ -88,6 +88,11 @@ impl crate::ext::State for Bar {
     }
 }
 
+/// How tall the jobs' list may be in a window this tall: the bar is a quarter of it at most, its header included.
+pub fn list_height(window: f64) -> f64 {
+    (window * 0.25 - 40.0).max(60.0)
+}
+
 /// The header's words: "2 commands, 1 running".
 pub fn header(jobs: &[Job]) -> String {
     let n = jobs.len();
@@ -165,10 +170,14 @@ pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
         move || folded.get(),
         |f| icon(if f { "chevron-right" } else { "chevron-down" }, 14.0).into_any(),
     );
-    let head =
-        h_stack((chevron, label(move || bar.jobs.with(|js| header(js))).style(move |s| bold(s).font_size(12.0))))
-            .style(|s| s.gap(5.0).items_center().width_full().cursor(CursorStyle::Pointer))
-            .on_click_stop(move |_| bar.folded.update(|f| *f = !*f));
+    let head = h_stack((
+        chevron,
+        label(|| "Commands with no time limit").style(move |s| bold(s).font_size(12.0).flex_shrink(0.0_f32)),
+        label(move || bar.jobs.with(|js| format!(" · {}", header(js))))
+            .style(move |s| s.font_size(12.0).color(t.get().desc).min_width(0.0).text_overflow(TextOverflow::Ellipsis)),
+    ))
+    .style(|s| s.gap(5.0).items_center().width_full().cursor(CursorStyle::Pointer))
+    .on_click_stop(move |_| bar.folded.update(|f| *f = !*f));
     let rows = dyn_container(
         move || folded.get(),
         move |f| {
@@ -177,13 +186,14 @@ pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
             }
             let send = send.clone();
             let list = dyn_stack(
-                move || bar.jobs.get(),
+                // The newest first: the one open by itself is at the top.
+                move || bar.jobs.with(|js| js.iter().rev().cloned().collect::<Vec<_>>()),
                 |j: &Job| (j.id, j.status.clone()),
                 move |j| row(ui, bar, send.clone(), j),
             )
             .style(|s| s.flex_col().gap(2.0).width_full().min_width(0.0));
             scroll(list)
-                .style(move |s| s.width_full().margin_top(4.0).max_height(ui.window.get().1 * 0.25 - 40.0))
+                .style(move |s| s.width_full().margin_top(4.0).max_height(list_height(ui.window.get().1)))
                 .into_any()
         },
     );
@@ -264,7 +274,13 @@ fn row(ui: Ui, bar: Bar, send: Send, j: Job) -> impl IntoView {
             },
         )
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),
-        label(move || words.clone()).style(move |s| s.font_size(12.0).color(t.get().desc).flex_shrink(0.0_f32)),
+        label(move || words.clone()).style(move |s| {
+            s.font_size(12.0)
+                .color(t.get().desc)
+                .min_width(0.0)
+                .flex_shrink(1.0_f32)
+                .text_overflow(TextOverflow::Ellipsis)
+        }),
         stop,
     ))
     .style(|s| s.gap(6.0).items_center().width_full().min_width(0.0).cursor(CursorStyle::Pointer))
@@ -307,7 +323,7 @@ fn row(ui: Ui, bar: Bar, send: Send, j: Job) -> impl IntoView {
                 })
                 .style(move |s| {
                     let c = t.get();
-                    s.max_height(180.0)
+                    s.max_height((list_height(ui.window.get().1) - 24.0).clamp(40.0, 180.0))
                         .width_full()
                         .min_width(0.0)
                         .margin_left(19.0)
@@ -408,6 +424,12 @@ mod tests {
     fn the_header_says_how_many_commands_and_how_many_run() {
         assert_eq!(header(&[job(1, "running")]), "1 command, 1 running");
         assert_eq!(header(&[job(1, "ended"), job(2, "running"), job(3, "stopped")]), "3 commands, 1 running");
+    }
+
+    #[test]
+    fn the_bar_takes_a_quarter_of_the_window_at_most() {
+        assert_eq!(list_height(800.0), 160.0);
+        assert_eq!(list_height(100.0), 60.0);
     }
 
     #[test]
