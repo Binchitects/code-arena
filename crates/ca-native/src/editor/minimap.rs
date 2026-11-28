@@ -210,7 +210,12 @@ fn room_of(editor: &Editor) -> RwSignal<f64> {
         return s;
     }
     let s = editor.cx.get().create_rw_signal(0.0);
-    ROOM.with(|r| r.borrow_mut().insert(id, s));
+    ROOM.with(|r| {
+        let mut r = r.borrow_mut();
+        // Those of editors gone (a compare's, which has no minimap) are let go.
+        r.retain(|_, s| s.try_get_untracked().is_some());
+        r.insert(id, s);
+    });
     s
 }
 
@@ -373,18 +378,16 @@ fn minimap(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, chars: Mem
         id.request_paint();
     });
     let (e, p) = (editor.clone(), path.to_string());
-    let at = move |y: f64| -> Option<Frame> {
+    // The frame now, while there is a slider (the editor scrolls).
+    let at = move || -> Option<Frame> {
         let height = id.get_size()?.height;
-        Some(frame_of(&e, &p, chars.get_untracked(), height).0).filter(|f| f.needed).map(|f| {
-            let _ = y;
-            f
-        })
+        Some(frame_of(&e, &p, chars.get_untracked(), height).0).filter(|f| f.needed)
     };
     let (down, moved, wheel) = (editor.clone(), editor.clone(), editor.clone());
     let at_down = at.clone();
     view.on_event(EventListener::PointerDown, move |e| {
         let Event::PointerDown(p) = e else { return EventPropagation::Continue };
-        let Some(f) = at_down(p.pos.y) else { return EventPropagation::Stop };
+        let Some(f) = at_down() else { return EventPropagation::Stop };
         let top = if f.on_slider(p.pos.y) {
             down.viewport.get_untracked().y0
         } else {
@@ -399,7 +402,7 @@ fn minimap(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, chars: Mem
     .on_event(EventListener::PointerMove, move |e| {
         let Event::PointerMove(p) = e else { return EventPropagation::Continue };
         if let Some((y, top)) = drag.get_untracked()
-            && let Some(f) = at(p.pos.y)
+            && let Some(f) = at()
         {
             scroll_to(&moved, f.dragged(top, p.pos.y - y));
         }
@@ -544,6 +547,15 @@ fn sticky(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, on: Memo<Va
             }
         })
     });
+    // The scopes, worked out again only when the regions or the symbols change, not on every scroll.
+    let ends = editor.clone();
+    let found = create_memo(move |_| {
+        let text = ends.rope_text();
+        regions.with(|r| {
+            let r: Vec<_> = r.iter().map(|r| with_closer(&text, *r)).collect();
+            symbols.with(|s| Rc::new(scopes(&r, s.as_deref().map(|s| &s[..]), ends.last_line())))
+        })
+    });
     let (e, viewport, screen) = (editor.clone(), editor.viewport, editor.screen_lines);
     let pins = create_memo(move |_| {
         if on.with(|v| v.as_bool() != Some(true)) {
@@ -551,11 +563,7 @@ fn sticky(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, on: Memo<Va
         }
         let vp = viewport.get();
         let line_height = f64::from(e.line_height(0));
-        let text = e.rope_text();
-        let found = regions.with(|r| {
-            let r: Vec<_> = r.iter().map(|r| with_closer(&text, *r)).collect();
-            symbols.with(|s| scopes(&r, s.as_deref().map(|s| &s[..]), e.last_line()))
-        });
+        let found = found.get();
         screen.with(|s| {
             let lines: Vec<(usize, f64)> = s.iter_lines_y().map(|(l, y)| (l, y - vp.y0)).collect();
             pinned(

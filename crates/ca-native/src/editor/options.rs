@@ -17,7 +17,8 @@
 //! - `editor.emptySelectionClipboard`: off, Ctrl+C and Ctrl+X with nothing selected do nothing (on, they take the
 //!   line, which is what the editor does).
 //! - View: Toggle Minimap, Toggle Sticky Scroll, Toggle Breadcrumbs write the person's setting
-//!   (`editor.minimap.enabled`, `editor.stickyScroll.enabled`, `breadcrumbs.enabled`); the breadcrumbs follow it.
+//!   (`editor.minimap.enabled`, `editor.stickyScroll.enabled`, `breadcrumbs.enabled`); the breadcrumbs, the
+//!   minimap and the sticky scroll (`minimap.rs`) follow it.
 //!
 //! Not applied, because Floem's editor cannot do them (the setting is kept, and nothing pretends to follow it):
 //!
