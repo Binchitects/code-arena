@@ -40,8 +40,7 @@ use floem::views::editor::keypress::key::KeyInput;
 use floem::views::editor::text::Document;
 use floem::views::editor::text_document::TextDocument;
 use floem::views::{
-    Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, text_editor_keys, tooltip,
-    v_stack,
+    Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, text_editor_keys, tooltip, v_stack,
 };
 use floem::{AnyView, IntoView, View, ViewId};
 use serde_json::{Map, Value, json};
@@ -150,11 +149,18 @@ pub struct Book {
 /// to run in order, each by its key with its source; `label` says what the toolbar shows of the notebook's kernel.
 #[derive(Clone)]
 pub struct Kernel {
-    pub run: Rc<dyn Fn(Ui, &Send, &str, Vec<(u64, String)>)>,
-    pub interrupt: Rc<dyn Fn(Ui, &Send, &str)>,
-    pub restart: Rc<dyn Fn(Ui, &Send, &str)>,
-    pub label: Rc<dyn Fn(Ui, &str) -> String>,
+    pub run: RunCells,
+    pub interrupt: OfNotebook,
+    pub restart: OfNotebook,
+    pub label: Label,
 }
+
+/// Code cells run: the notebook's path, and each cell's key and source.
+pub type RunCells = Rc<dyn Fn(Ui, &Send, &str, Vec<(u64, String)>)>;
+/// Something done to a notebook's kernel, by the notebook's path.
+pub type OfNotebook = Rc<dyn Fn(Ui, &Send, &str)>;
+/// What the toolbar says of a notebook's kernel, by the notebook's path.
+pub type Label = Rc<dyn Fn(Ui, &str) -> String>;
 
 /// How a code cell's outputs are drawn: given the notebook's path and the cell's outputs.
 pub type OutputsView = Rc<dyn Fn(Ui, &Send, &str, RwSignal<Vec<Value>>) -> AnyView>;
@@ -783,21 +789,19 @@ fn tool(
     on: impl Fn() + 'static,
 ) -> impl IntoView {
     let words = label(move || text).style(move |s| s.apply_if(short.get(), |s| s.hide()));
-    h_stack((icon(name, 16.0), words))
-        .on_click_stop(move |_| on())
-        .style(move |s| {
-            let c = t.get();
-            s.height(22.0)
-                .gap(4.0)
-                .padding_horiz(4.0)
-                .items_center()
-                .border_radius(5.0)
-                .font_size(12.0)
-                .color(c.fg)
-                .cursor(CursorStyle::Pointer)
-                .selectable(false)
-                .hover(|s| s.background(c.toolbar_hover))
-        })
+    h_stack((icon(name, 16.0), words)).on_click_stop(move |_| on()).style(move |s| {
+        let c = t.get();
+        s.height(22.0)
+            .gap(4.0)
+            .padding_horiz(4.0)
+            .items_center()
+            .border_radius(5.0)
+            .font_size(12.0)
+            .color(c.fg)
+            .cursor(CursorStyle::Pointer)
+            .selectable(false)
+            .hover(|s| s.background(c.toolbar_hover))
+    })
 }
 
 fn separator(t: Theme) -> impl IntoView {
@@ -807,14 +811,29 @@ fn separator(t: Theme) -> impl IntoView {
 fn toolbar(ui: Ui, send: &Send, book: &Rc<Book>) -> AnyView {
     let t = ui.colors;
     let short = floem::reactive::create_rw_signal(false);
-    let (b1, b2, b3, b4, b5, b6) =
-        (book.clone(), book.clone(), book.clone(), book.clone(), book.clone(), book.clone());
+    let (b1, b2, b3, b4, b5, b6) = (book.clone(), book.clone(), book.clone(), book.clone(), book.clone(), book.clone());
     let (s1, s2, s3, s4) = (send.clone(), send.clone(), send.clone(), send.clone());
     let path = book.path.clone();
     let kernel_at = book.path.clone();
     h_stack((
-        tool(t, short, "add", "Code", move || insert(ui, &b1, b1.selected.get_untracked().and_then(|k| b1.at(k)).map_or(b1.len(), |a| a + 1), Kind::Code, true)),
-        tool(t, short, "add", "Markdown", move || insert(ui, &b2, b2.selected.get_untracked().and_then(|k| b2.at(k)).map_or(b2.len(), |a| a + 1), Kind::Markdown, true)),
+        tool(t, short, "add", "Code", move || {
+            insert(
+                ui,
+                &b1,
+                b1.selected.get_untracked().and_then(|k| b1.at(k)).map_or(b1.len(), |a| a + 1),
+                Kind::Code,
+                true,
+            )
+        }),
+        tool(t, short, "add", "Markdown", move || {
+            insert(
+                ui,
+                &b2,
+                b2.selected.get_untracked().and_then(|k| b2.at(k)).map_or(b2.len(), |a| a + 1),
+                Kind::Markdown,
+                true,
+            )
+        }),
         separator(t),
         tool(t, short, "run-all", "Run All", move || {
             let keys: Vec<u64> = b3.cells.with_untracked(|c| c.iter().map(|l| l.key).collect());
@@ -834,26 +853,26 @@ fn toolbar(ui: Ui, send: &Send, book: &Rc<Book>) -> AnyView {
             }
         }),
         empty().style(|s| s.flex_grow(1.0_f32)),
-        tooltip(
-            tool(t, short, "go-to-file", "Open as Text", move || open_as_text(ui, &s4, &path)),
-            || label(|| "Reopen the notebook as its JSON text"),
-        ),
-        label(move || kernel_label(ui, &kernel_at)).on_click_stop(move |_| {
-            if kernel().is_none() {
-                toast::info(ui, "No kernel to select: there is none in this window yet.");
-            }
-        })
-        .style(move |s| {
-            let c = t.get();
-            s.height(22.0)
-                .padding_horiz(6.0)
-                .items_center()
-                .border_radius(5.0)
-                .font_size(12.0)
-                .color(c.fg)
-                .cursor(CursorStyle::Pointer)
-                .hover(|s| s.background(c.toolbar_hover))
+        tooltip(tool(t, short, "go-to-file", "Open as Text", move || open_as_text(ui, &s4, &path)), || {
+            label(|| "Reopen the notebook as its JSON text")
         }),
+        label(move || kernel_label(ui, &kernel_at))
+            .on_click_stop(move |_| {
+                if kernel().is_none() {
+                    toast::info(ui, "No kernel to select: there is none in this window yet.");
+                }
+            })
+            .style(move |s| {
+                let c = t.get();
+                s.height(22.0)
+                    .padding_horiz(6.0)
+                    .items_center()
+                    .border_radius(5.0)
+                    .font_size(12.0)
+                    .color(c.fg)
+                    .cursor(CursorStyle::Pointer)
+                    .hover(|s| s.background(c.toolbar_hover))
+            }),
     ))
     .on_resize(move |r| {
         // Its words left out where they do not fit beside the kernel's name.
@@ -892,9 +911,7 @@ fn view(ui: Ui, send: Send, path: &str) -> AnyView {
             if ready {
                 cells_view(ui, &s, &b).into_any()
             } else {
-                label(|| "Reading the notebook…")
-                    .style(move |s| s.padding(20.0).color(t.get().desc))
-                    .into_any()
+                label(|| "Reading the notebook…").style(move |s| s.padding(20.0).color(t.get().desc)).into_any()
             }
         },
     )
@@ -908,12 +925,9 @@ fn cells_view(ui: Ui, send: &Send, book: &Rc<Book>) -> AnyView {
     let short = floem::reactive::create_rw_signal(false);
     let (b, s) = (book.clone(), send.clone());
     let cells = book.cells;
-    let list = dyn_stack(
-        move || cells.get(),
-        |l: &Rc<Live>| (l.key, l.kind),
-        move |l: Rc<Live>| cell_view(ui, &s, &b, l),
-    )
-    .style(|s| s.flex_col().width_full());
+    let list =
+        dyn_stack(move || cells.get(), |l: &Rc<Live>| (l.key, l.kind), move |l: Rc<Live>| cell_view(ui, &s, &b, l))
+            .style(|s| s.flex_col().width_full());
     let (b1, b2) = (book.clone(), book.clone());
     let end = h_stack((
         tool(t, short, "add", "Code", move || insert(ui, &b1, b1.len(), Kind::Code, true)),
@@ -966,17 +980,24 @@ fn cell_view(ui: Ui, send: &Send, book: &Rc<Book>, l: Rc<Live>) -> AnyView {
     let body = container(body).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0_f32).min_width(0.0));
     let tools = cell_tools(ui, book, &l);
     let b = book.clone();
-    let row = h_stack((left, body, tools.style(|s| s.align_self(Some(floem::taffy::AlignItems::FlexStart)))))
-        .style(move |s| {
+    let row = h_stack((left, body, tools.style(|s| s.align_self(Some(floem::taffy::AlignItems::FlexStart))))).style(
+        move |s| {
             let c = t.get();
             let on = is_selected.get();
             s.width_full()
                 .padding_vert(4.0)
                 .border_left(2.0)
-                .border_color(if on && !editing.get() { c.nb_focused_cell } else if on { c.nb_cell_border } else { floem::peniko::Color::TRANSPARENT })
+                .border_color(if on && !editing.get() {
+                    c.nb_focused_cell
+                } else if on {
+                    c.nb_cell_border
+                } else {
+                    floem::peniko::Color::TRANSPARENT
+                })
                 .background(if on { c.nb_selected_bg.multiply_alpha(0.35) } else { floem::peniko::Color::TRANSPARENT })
                 .margin_vert(2.0)
-        });
+        },
+    );
     book.views.borrow_mut().insert(key, row.id());
     // A press on the cell selects it, in command mode: once what was pressed (its text, which takes the keys to
     // copy) has done with it. One in its editor is the editor's (edit mode).
@@ -1028,32 +1049,32 @@ fn gutter(ui: Ui, send: &Send, book: &Rc<Book>, l: &Rc<Live>) -> AnyView {
     let (run_state, count) = (l.run, l.count);
     let (b, s, key) = (book.clone(), send.clone(), l.key);
     let busy = create_memo(move |_| matches!(run_state.get(), Run::Running | Run::Queued));
-    let button = dyn_container(
-        move || busy.get(),
-        move |busy| icon(if busy { "loading" } else { "play" }, 16.0).into_any(),
-    )
-    .on_click_stop(move |_| {
-        if let Some(k) = kernel()
-            && busy.get_untracked()
-        {
-            (k.interrupt)(ui, &s, &b.path);
-        } else {
-            b.selected.set(Some(key));
-            run(ui, &s, &b, &[key]);
-        }
-    })
-    .style(move |s| {
-        let c = t.get();
-        s.width(22.0)
-            .height(22.0)
-            .items_center()
-            .justify_center()
-            .border_radius(5.0)
-            .color(c.icon)
-            .cursor(CursorStyle::Pointer)
-            .hover(|s| s.background(c.toolbar_hover))
+    let button =
+        dyn_container(move || busy.get(), move |busy| icon(if busy { "loading" } else { "play" }, 16.0).into_any())
+            .on_click_stop(move |_| {
+                if let Some(k) = kernel()
+                    && busy.get_untracked()
+                {
+                    (k.interrupt)(ui, &s, &b.path);
+                } else {
+                    b.selected.set(Some(key));
+                    run(ui, &s, &b, &[key]);
+                }
+            })
+            .style(move |s| {
+                let c = t.get();
+                s.width(22.0)
+                    .height(22.0)
+                    .items_center()
+                    .justify_center()
+                    .border_radius(5.0)
+                    .color(c.icon)
+                    .cursor(CursorStyle::Pointer)
+                    .hover(|s| s.background(c.toolbar_hover))
+            });
+    let button = tooltip(button, move || {
+        label(move || if busy.get_untracked() { "Stop Cell Execution" } else { "Execute Cell (Ctrl+Enter)" })
     });
-    let button = tooltip(button, move || label(move || if busy.get_untracked() { "Stop Cell Execution" } else { "Execute Cell (Ctrl+Enter)" }));
     let shown = label(move || count_text(run_state.get(), count.get())).style(move |s| {
         let c = t.get();
         let colour = match run_state.get() {
@@ -1062,9 +1083,7 @@ fn gutter(ui: Ui, send: &Send, book: &Rc<Book>, l: &Rc<Live>) -> AnyView {
         };
         s.font_size(11.0).font_family(MONO_FONT.clone()).color(colour).selectable(false)
     });
-    v_stack((button, shown))
-        .style(|s| s.width(54.0).items_center().gap(2.0).padding_top(4.0))
-        .into_any()
+    v_stack((button, shown)).style(|s| s.width(54.0).items_center().gap(2.0).padding_top(4.0)).into_any()
 }
 
 /// A code cell's count as Jupyter shows it: `[*]` while it runs, `[ ]` before it has run.
@@ -1099,7 +1118,12 @@ fn cell_tools(ui: Ui, book: &Rc<Book>, l: &Rc<Live>) -> AnyView {
                 tip(t, "arrow-down", "Move Cell Down", move || {
                     change(ui, &b2, Change::Move(key, false));
                 }),
-                tip(t, if other == Kind::Markdown { "markdown" } else { "code" }, if other == Kind::Markdown { "Change Cell to Markdown" } else { "Change Cell to Code" }, move || to_kind(ui, &b3, Some(key), other)),
+                tip(
+                    t,
+                    if other == Kind::Markdown { "markdown" } else { "code" },
+                    if other == Kind::Markdown { "Change Cell to Markdown" } else { "Change Cell to Code" },
+                    move || to_kind(ui, &b3, Some(key), other),
+                ),
             ];
             if kind == Kind::Code {
                 items.push(tip(t, "clear-all", "Clear Cell Outputs", move || {
@@ -1194,7 +1218,11 @@ fn cell_editor(ui: Ui, send: &Send, book: &Rc<Book>, l: &Rc<Live>) -> AnyView {
         let c = t.get();
         s.hide_gutter(true)
             .scroll_beyond_last_line(false)
-            .cursor_color(if selected.get() == Some(key) && editing.get() { c.cursor } else { floem::peniko::Color::TRANSPARENT })
+            .cursor_color(if selected.get() == Some(key) && editing.get() {
+                c.cursor
+            } else {
+                floem::peniko::Color::TRANSPARENT
+            })
             .selection_color(c.selection)
             .current_line_color(floem::peniko::Color::TRANSPARENT)
             .indent_guide_color(c.indent_guide)
@@ -1590,9 +1618,7 @@ pub fn register(_ui: Ui, _send: &Send) {
         })
         .when(|ui| notebook_shown(ui).is_some()),
     );
-    breadcrumbs::end("notebook", "Open as Notebook", |_ui, file| is_notebook(file), |ui, send, file| {
-        open_as_notebook(ui, send, file)
-    });
+    breadcrumbs::end("notebook", "Open as Notebook", |_ui, file| is_notebook(file), open_as_notebook);
 }
 
 /// The session's messages of the notebooks: an `.ipynb`'s file that has no text tab, opened (or read again) as a
@@ -1711,7 +1737,7 @@ mod tests {
         assert_eq!(b.len(), 2);
         assert_eq!(b.load.get_untracked(), Load::Ready);
         assert_eq!(b.selected.get_untracked(), b.key_at(0));
-        let first = b.live(b.key_at(0).unwrap()).unwrap();
+        let first = b.live(b.key_at(0).expect("there")).expect("there");
         assert_eq!(first.count.get_untracked(), Some(1));
         assert_eq!(plain(&first.outputs.get_untracked()), "hi");
         // Another file is not taken.
@@ -1722,16 +1748,16 @@ mod tests {
     fn saved_as_it_was_read_and_its_saved_taken() {
         let (ui, send, said) = ui();
         let b = opened(ui, &send);
-        kinds::save(ui, &send, &ui.tab("notebook:a.ipynb").unwrap());
+        kinds::save(ui, &send, &ui.tab("notebook:a.ipynb").expect("there"));
         let sent = said.borrow().last().cloned().expect("a save");
         assert_eq!(sent["type"], "save");
         assert_eq!(sent["modified"], 7);
-        let text = sent["text"].as_str().unwrap();
-        assert_eq!(model::parse(text).unwrap().cells.len(), 2);
+        let text = sent["text"].as_str().expect("there");
+        assert_eq!(model::parse(text).expect("there").cells.len(), 2);
         assert!(text.ends_with("}\n") && text.contains("\n \"cells\": ["));
         dirty(ui, &b);
         assert!(take(ui, &json!({"type": "saved", "path": "a.ipynb", "modified": 9}), &send));
-        assert!(!ui.tab("notebook:a.ipynb").unwrap().dirty.get_untracked());
+        assert!(!ui.tab("notebook:a.ipynb").expect("there").dirty.get_untracked());
         assert_eq!(b.modified.get(), Some(9));
         // Another's saved is left to the others.
         assert!(!take(ui, &json!({"type": "saved", "path": "a.ipynb", "modified": 10}), &send));
@@ -1743,18 +1769,18 @@ mod tests {
         let b = opened(ui, &send);
         let ch = |c: &str| Key::Character(c.into());
         let none = Modifiers::empty();
-        let (one, two) = (b.key_at(0).unwrap(), b.key_at(1).unwrap());
+        let (one, two) = (b.key_at(0).expect("there"), b.key_at(1).expect("there"));
         assert!(command_key(ui, &send, &b, &ch("j"), none));
         assert_eq!(b.selected.get_untracked(), Some(two));
         assert!(command_key(ui, &send, &b, &Key::Named(NamedKey::ArrowUp), none));
         assert_eq!(b.selected.get_untracked(), Some(one));
         assert!(command_key(ui, &send, &b, &ch("b"), none));
         assert_eq!(b.len(), 3);
-        assert_eq!(b.at(b.selected.get_untracked().unwrap()), Some(1), "added below, and selected");
-        assert!(ui.tab("notebook:a.ipynb").unwrap().dirty.get_untracked());
-        let added = b.selected.get_untracked().unwrap();
+        assert_eq!(b.at(b.selected.get_untracked().expect("there")), Some(1), "added below, and selected");
+        assert!(ui.tab("notebook:a.ipynb").expect("there").dirty.get_untracked());
+        let added = b.selected.get_untracked().expect("there");
         assert!(command_key(ui, &send, &b, &ch("m"), none));
-        assert_eq!(b.live(added).unwrap().kind, Kind::Markdown);
+        assert_eq!(b.live(added).expect("there").kind, Kind::Markdown);
         assert!(command_key(ui, &send, &b, &ch("d"), none));
         assert_eq!(b.len(), 3, "one D deletes nothing");
         assert!(command_key(ui, &send, &b, &ch("d"), none));
@@ -1763,11 +1789,11 @@ mod tests {
         // Undo takes back the deletion, then the change to Markdown.
         assert!(command_key(ui, &send, &b, &ch("z"), none));
         assert_eq!(b.len(), 3);
-        assert_eq!(b.live(added).unwrap().kind, Kind::Markdown);
+        assert_eq!(b.live(added).expect("there").kind, Kind::Markdown);
         assert!(command_key(ui, &send, &b, &ch("z"), none));
-        assert_eq!(b.live(added).unwrap().kind, Kind::Code);
+        assert_eq!(b.live(added).expect("there").kind, Kind::Code);
         assert!(command_key(ui, &send, &b, &ch("z"), Modifiers::SHIFT), "redo");
-        assert_eq!(b.live(added).unwrap().kind, Kind::Markdown);
+        assert_eq!(b.live(added).expect("there").kind, Kind::Markdown);
         assert!(!command_key(ui, &send, &b, &ch("q"), none), "not a key of the notebook's");
     }
 
@@ -1775,11 +1801,11 @@ mod tests {
     fn a_cell_keeps_its_text_across_changes_and_undo_puts_it_back() {
         let (ui, send, _) = ui();
         let b = opened(ui, &send);
-        let one = b.key_at(0).unwrap();
-        let doc = b.live(one).unwrap().doc.clone();
+        let one = b.key_at(0).expect("there");
+        let doc = b.live(one).expect("there").doc.clone();
         fill(&doc, "x = 1");
         change(ui, &b, Change::Move(one, false));
-        assert!(Rc::ptr_eq(&b.live(one).unwrap().doc, &doc), "the same editor's text");
+        assert!(Rc::ptr_eq(&b.live(one).expect("there").doc, &doc), "the same editor's text");
         assert_eq!(b.at(one), Some(1));
         undo(ui, &b, true);
         assert_eq!(b.at(one), Some(0));
@@ -1795,14 +1821,14 @@ mod tests {
         assert!(command_key(ui, &send, &b, &ch("c"), none));
         assert!(command_key(ui, &send, &b, &ch("v"), none));
         assert_eq!(b.len(), 3);
-        let pasted = b.live(b.key_at(1).unwrap()).unwrap();
+        let pasted = b.live(b.key_at(1).expect("there")).expect("there");
         assert_eq!(pasted.doc.text().to_string(), "print('hi')");
         // Shift+Enter on the last runs it (no kernel: it says so) and adds a code cell after it.
-        let last = b.key_at(2).unwrap();
+        let last = b.key_at(2).expect("there");
         b.selected.set(Some(last));
         assert!(command_key(ui, &send, &b, &Key::Named(NamedKey::Enter), Modifiers::SHIFT));
         assert_eq!(b.len(), 4);
-        assert_eq!(b.live(b.key_at(3).unwrap()).unwrap().kind, Kind::Code);
+        assert_eq!(b.live(b.key_at(3).expect("there")).expect("there").kind, Kind::Code);
         assert!(said.borrow().iter().all(|m| m["type"] != "save"));
     }
 
@@ -1865,7 +1891,7 @@ mod tests {
         let (ui, send, _) = ui();
         let b = opened(ui, &send);
         let _view = view(ui, send.clone(), "a.ipynb").into_view();
-        let _cell = cell_view(ui, &send, &b, b.live(b.key_at(0).unwrap()).unwrap()).into_view();
-        let _md = cell_view(ui, &send, &b, b.live(b.key_at(1).unwrap()).unwrap()).into_view();
+        let _cell = cell_view(ui, &send, &b, b.live(b.key_at(0).expect("there")).expect("there")).into_view();
+        let _md = cell_view(ui, &send, &b, b.live(b.key_at(1).expect("there")).expect("there")).into_view();
     }
 }

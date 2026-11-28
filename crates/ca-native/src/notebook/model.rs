@@ -156,10 +156,14 @@ pub fn parse(text: &str) -> Result<Notebook, String> {
     let Value::Object(mut rest) = raw else { return Err("The notebook is not a JSON object.".into()) };
     match rest.get("nbformat").and_then(Value::as_u64) {
         Some(4) => {}
-        Some(n) => return Err(format!("Only nbformat 4 notebooks open as notebooks (this one is {n}): open it as text.")),
+        Some(n) => {
+            return Err(format!("Only nbformat 4 notebooks open as notebooks (this one is {n}): open it as text."));
+        }
         None => return Err("The notebook says no nbformat: open it as text.".into()),
     }
-    let Some(Value::Array(cells)) = rest.remove("cells") else { return Err("The notebook has no list of cells.".into()) };
+    let Some(Value::Array(cells)) = rest.remove("cells") else {
+        return Err("The notebook has no list of cells.".into());
+    };
     let minor = rest.remove("nbformat_minor").and_then(|m| m.as_u64()).unwrap_or(0);
     let cells = cells
         .into_iter()
@@ -526,12 +530,12 @@ mod tests {
         assert_eq!(nb.at(new), Some(0));
         assert!(!apply(&mut nb, Change::Move(new, true)), "the first goes no higher");
         assert!(apply(&mut nb, Change::Kind(code, Kind::Markdown)));
-        assert!(nb.cells[nb.at(code).unwrap()].outputs.is_empty(), "Markdown has no outputs");
+        assert!(nb.cells[nb.at(code).expect("there")].outputs.is_empty(), "Markdown has no outputs");
         assert!(!apply(&mut nb, Change::Kind(md, Kind::Markdown)));
         assert!(apply(&mut nb, Change::Delete(last)));
         assert!(!apply(&mut nb, Change::Delete(last)));
         let written = write(&nb);
-        let cells = &serde_json::from_str::<Value>(&written).unwrap()["cells"];
+        let cells = &serde_json::from_str::<Value>(&written).expect("there")["cells"];
         assert!(cells[2].get("outputs").is_none() && cells[2].get("execution_count").is_none());
         assert_eq!(cells[2]["metadata"]["tags"], json!(["x"]), "what else a cell has is kept");
     }
