@@ -33,7 +33,7 @@ use floem::views::editor::keypress::KeypressMap;
 use floem::views::editor::keypress::key::KeyInput;
 use floem::views::editor::text::Document;
 use floem::views::editor::text_document::TextDocument;
-use floem::views::{Decorators, dyn_container, empty, h_stack, label, v_stack};
+use floem::views::{Decorators, empty, h_stack, label, v_stack};
 use floem::{AnyView, IntoView};
 use serde_json::{Value, json};
 
@@ -630,12 +630,9 @@ fn view(ui: Ui, send: Send, tab: &Tab) -> AnyView {
             .color(c.fg)
             .apply_if(said.get().is_none(), |s| s.hide())
     });
-    let (body_e, body_send) = (e.clone(), send.clone());
-    let body = dyn_container(
-        move || narrow.get(),
-        move |one| layout(ui, &body_send, &body_e, result.clone(), one),
-    )
-    .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
+    // Built once: a layout built again would leave the group holding the editors it replaced.
+    let body = layout(ui, &send, &e, result, narrow)
+        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     let (width, cleared) = (e.width, e.clone());
     v_stack((banner, body))
         .on_resize(move |r| {
@@ -648,8 +645,8 @@ fn view(ui: Ui, send: Send, tab: &Tab) -> AnyView {
         .into_any()
 }
 
-/// The three editors: the sides beside each other above the result, or one column.
-fn layout(ui: Ui, send: &Send, e: &Rc<Entry>, result: Tab, one: bool) -> AnyView {
+/// The three editors: the sides beside each other above the result, or, while `narrow`, one column.
+fn layout(ui: Ui, send: &Send, e: &Rc<Entry>, result: Tab, narrow: floem::reactive::Memo<bool>) -> AnyView {
     let t = ui.colors;
     let (incoming, iv) = side(ui, e, true);
     let (current, cv) = side(ui, e, false);
@@ -681,23 +678,20 @@ fn layout(ui: Ui, send: &Send, e: &Rc<Entry>, result: Tab, one: bool) -> AnyView
         });
     }
     *e.editors.borrow_mut() = Some(Editors { incoming, current, result: res });
-    let rule = move |vertical: bool| {
+    // The rule between the two sides lies across them while they are one column.
+    let rule = move |between: bool| {
         empty().style(move |s| {
-            let s = if vertical { s.width(1.0).height_full() } else { s.height(1.0).width_full() };
+            let across = !between || narrow.get();
+            let s = if across { s.height(1.0).width_full() } else { s.width(1.0).height_full() };
             s.background(t.get().group_border)
         })
     };
     let grow = |s: floem::style::Style| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).min_width(0.0);
-    if one {
-        v_stack((iv.style(grow), rule(false), cv.style(grow), rule(false), rv.style(grow)))
-            .style(|s| s.size_full())
-            .into_any()
-    } else {
-        let top = h_stack((iv.style(grow), rule(true), cv.style(grow))).style(grow);
-        v_stack((top.style(|s| s.width_full()), rule(false), rv.style(grow).style(|s| s.width_full())))
-            .style(|s| s.size_full())
-            .into_any()
-    }
+    let top = h_stack((iv.style(grow), rule(true), cv.style(grow))).style(move |s| {
+        let s = s.width_full().flex_basis(0.0).min_height(0.0);
+        if narrow.get() { s.flex_col().flex_grow(2.0_f32) } else { s.flex_row().flex_grow(1.0_f32) }
+    });
+    v_stack((top, rule(false), rv.style(grow).style(|s| s.width_full()))).style(|s| s.size_full()).into_any()
 }
 
 /// A small action in words, as a CodeLens's or a header's: 'Accept Incoming'.
