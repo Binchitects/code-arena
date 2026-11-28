@@ -178,7 +178,7 @@ fn moves(paths: &[String], folder: &str, copy: bool) -> Vec<Value> {
 
 /// The icon of an entry, by its kind as the old Code Arena's own icons have it: code, text, JSON, a shell script, a
 /// picture, settings; a folder open or closed.
-fn icon_of(name: &str, dir: bool, open: bool) -> &'static str {
+pub(crate) fn icon_of(name: &str, dir: bool, open: bool) -> &'static str {
     if dir {
         return if open { "folder-opened" } else { "folder" };
     }

@@ -57,7 +57,7 @@ pub(super) fn group_view(ui: Ui, shown: groups::Shown) -> floem::views::Stack {
     let editor =
         stack((body(ui, shown), find)).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     let disk = only_focused(|ui| disk::disk_bar(ui).into_any()).style(|s| s.width_full());
-    v_stack((tabs::tabs(ui, shown), breadcrumbs::breadcrumbs(ui, shown.active), disk, editor))
+    v_stack((tabs::tabs(ui, shown), breadcrumbs::breadcrumbs(ui, shown.active, shown.focused), disk, editor))
 }
 
 /// The editor drawn for a tab, when it is the one on screen.

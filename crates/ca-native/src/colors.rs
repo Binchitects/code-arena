@@ -137,6 +137,9 @@ colors! {
     tab_hover: ["tab.hoverBackground", "tab.inactiveBackground"], "#2D2D2D", "#ECECEC";
     group_border: ["editorGroup.border"], "#444444", "#E7E7E7";
     breadcrumb: ["breadcrumb.foreground"], "#CCCCCCCC", "#616161CC";
+    breadcrumb_bg: ["breadcrumb.background", "editor.background"], "#1E1E1E", "#FFFFFF";
+    breadcrumb_focus: ["breadcrumb.focusForeground"], "#E0E0E0", "#4E4E4E";
+    breadcrumb_picker: ["breadcrumbPicker.background", "editorWidget.background"], "#252526", "#F3F3F3";
     watermark: ["editorWatermark.foreground"], "#CCCCCC99", "#61616199";
 
     panel_bg: ["panel.background", "editor.background"], "#1E1E1E", "#FFFFFF";
