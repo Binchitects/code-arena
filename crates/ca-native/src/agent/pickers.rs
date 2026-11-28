@@ -439,7 +439,7 @@ pub(super) fn menu(ui: Ui, send: Send, anchor: RwSignal<Rect>, frame: ViewId, ba
                             s.background(c.menu_selected).color(c.menu_selected_fg)
                         })
                     } else {
-                        s.color(c.menu_fg.multiply_alpha(0.4))
+                        s.color(crate::widgets::mix(c.menu_fg, c.menu_bg, 0.6))
                     }
                 })
             },
