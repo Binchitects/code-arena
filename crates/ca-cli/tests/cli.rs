@@ -1798,6 +1798,23 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
         "{d}"
     );
     assert!(d["context"]["size"].as_u64() > Some(0), "{d}");
+    // Each part's pieces, the room kept for the answer and what is free, adding up to the window.
+    let tools = d["kinds"].as_array().and_then(|k| k.iter().find(|x| x["kind"] == "Tools")).expect("tools");
+    assert!(tools["pieces"].as_array().is_some_and(|p| p.iter().any(|x| x["name"] == "read_file")), "{tools}");
+    let (used, reserve, free) = (d["context"]["used"].as_u64(), d["reserve"].as_u64(), d["free"].as_u64());
+    assert_eq!(used.zip(reserve).zip(free).map(|((u, r), f)| u + r + f), d["context"]["size"].as_u64(), "{d}");
+    assert_eq!(d["counted"], "estimate");
+    // The step said how full the window was as the model counted it.
+    let step = seen.iter().find(|v| v["type"] == "step_end").expect("step_end");
+    assert!(step["context"]["used"].as_u64() >= Some(120), "{step}");
+    // The threshold changed from the window: live and kept; one out of range is refused with what it asked.
+    page.send(Message::text(json!({"type": "compact_at", "at": 70, "target": 20}).to_string())).await.expect("send");
+    let set = until(&mut page, "compact_set").await;
+    assert_eq!((set["at"].as_u64(), set["target"].as_u64(), set["source"].as_str()), (Some(70), Some(20), Some("settings")));
+    assert_eq!(set["context"]["compact_at"], 70, "{set}");
+    page.send(Message::text(json!({"type": "compact_at", "at": 19, "target": 5}).to_string())).await.expect("send");
+    let no = until(&mut page, "compact_refused").await;
+    assert_eq!((no["at"].as_u64(), no["error"].as_str()), (Some(19), Some("The threshold is from 20% to 95% of the window.")));
     // The answer as the session kept it: its thinking, and what its turn used, for its footer after a reload.
     page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
     let st = until(&mut page, "state").await;
