@@ -1062,6 +1062,12 @@ Sections used:
 - **Vue and Svelte components are coloured.** The template is read as HTML, the `<script>` as
   TypeScript and the `<style>` as CSS, along with `{{ }}`, `{#if}` and `{expr}` blocks. New Svelte,
   Terraform, HCL and GraphQL entries appear in the language picker.
+- **Harness view.** See and change how the agent runs, in one side bar view with five sections that
+  fold. Hooks lists the hooks that run, and a project's own untrusted hooks with Trust Project Hooks.
+  Permissions lets you allow or deny a rule for this session, or remove one. Sandbox says what
+  commands may do. Plugins lets you install one from a folder or a git URL, turn it on or off, or
+  remove it. Output Style picks how the agent talks, from the next message. Run Doctor opens what
+  `code-arena doctor` finds in an editor tab.
 
 
 ### :bug: Bugs fixed
