@@ -553,6 +553,11 @@ pub fn change(ui: Ui, how: impl FnOnce(&mut Model, &[String])) {
     }
 }
 
+/// The keys given back to the editor of the group that has them (a menu that had them closed).
+pub fn give_keys_back(ui: Ui) {
+    give_keys(ui, focused(ui));
+}
+
 /// The keys given to a group's editor, once it is drawn.
 fn give_keys(ui: Ui, id: u64) {
     floem::action::exec_after(std::time::Duration::from_millis(20), move |_| {

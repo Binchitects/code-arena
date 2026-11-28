@@ -49,6 +49,8 @@ thread_local! {
     static MAIN: Cell<Option<ViewId>> = const { Cell::new(None) };
     /// Where each title bar menu's title begins across the window, as laid out.
     static TITLES: Cell<[Option<f64>; 8]> = const { Cell::new([None; 8]) };
+    /// A title bar menu was opened by its keys, and has them.
+    static BY_KEYS: Cell<bool> = const { Cell::new(false) };
     /// How far into the Konami code the keys typed are.
     static TYPED: Cell<usize> = const { Cell::new(0) };
 }
@@ -94,6 +96,14 @@ pub fn title_bar_shown(ui: Ui) -> bool {
 /// Whether the activity bar and the status bar are drawn: not in Zen mode.
 pub fn bars_shown(ui: Ui) -> bool {
     ui.state::<Layout>().zen.with(Option::is_none)
+}
+
+/// The groups hidden, as the layout kept for the folder has them: in Zen mode, the ones hidden before it.
+pub fn kept_hidden(ui: Ui) -> HashSet<u32> {
+    match ui.state::<Layout>().zen.with_untracked(|z| z.as_ref().map(|z| z.hidden.clone())) {
+        Some(before) => before,
+        None => ui.hidden.get_untracked(),
+    }
 }
 
 pub fn in_zen(ui: Ui) -> bool {
@@ -385,17 +395,21 @@ pub fn register(ui: Ui, _send: &Send) {
     add(panel(PANEL_BOTTOM, "Move Panel To Bottom", Place::Bottom));
     add(command(FOCUS_SIDE_BAR, "View", "Focus into Primary Side Bar", |ui, _| focus_side_bar(ui)).keys("Ctrl+0"));
 
-    for (n, (letter, name)) in MNEMONICS.into_iter().enumerate() {
-        let open = move |ui: Ui, _: &Send| {
+    let open = |n: usize| {
+        move |ui: Ui, _: &Send| {
+            BY_KEYS.with(|b| b.set(true));
             if ui.menu.get_untracked() != Some(n) {
                 ui.menu.set(Some(n));
             }
-        };
-        add(command(&format!("codeArena.menu.{name}"), "", name, open).keys(&format!("Alt+{letter}")).hidden());
+        }
+    };
+    for (n, (letter, name)) in MNEMONICS.into_iter().enumerate() {
+        let id = format!("codeArena.menu.{name}");
+        let keys = format!("Alt+{letter}");
+        let (me, k) = (id.clone(), keys.clone());
+        add(command(&id, "", name, open(n)).keys(&keys).when(move |ui| !taken_elsewhere(ui, &me, &k)).hidden());
     }
-    add(command("workbench.action.menubarFocus", "", "Focus Application Menu", |ui, _| ui.menu.set(Some(0)))
-        .keys("F10")
-        .hidden());
+    add(command("workbench.action.menubarFocus", "", "Focus Application Menu", open(0)).keys("F10").hidden());
 
     // VS Code's View > Appearance, in the View menu's parts group; the others' first rows made live.
     let bar = Menu::TitleBar;
@@ -437,6 +451,28 @@ pub fn title_at(n: usize, x: f64) {
 /// Where a title bar menu's title begins, once it is laid out.
 pub fn title_x(n: usize) -> Option<f64> {
     TITLES.with(|t| t.get().get(n).copied().flatten())
+}
+
+/// Whether the title bar menu open now was opened by its keys (it then has them).
+pub fn menu_by_keys() -> bool {
+    BY_KEYS.with(Cell::get)
+}
+
+/// A title bar menu closed: one opened by its keys gives them back to the editor.
+pub fn menu_closed(ui: Ui) {
+    if BY_KEYS.with(|b| b.replace(false)) {
+        crate::editor::groups::give_keys_back(ui);
+    }
+}
+
+/// A row of the menu is run: the keys go where its command puts them, not back.
+pub fn menu_keys_kept() {
+    BY_KEYS.with(|b| b.set(false));
+}
+
+/// Whether another command bound to these keys is there now (it keeps them: Alt+R in the find widget).
+fn taken_elsewhere(ui: Ui, id: &str, keys: &str) -> bool {
+    crate::commands::all().iter().any(|c| c.id != id && c.keys.iter().any(|k| k == keys) && c.offered(ui))
 }
 
 /// What a key does in a title bar menu that has the keys.
@@ -601,6 +637,8 @@ mod tests {
         assert_eq!(ui.hidden.get_untracked(), ui.dock.with_untracked(zen_hidden));
         // Ctrl+B while in Zen shows the side bar; leaving Zen puts things back as they were before it.
         ui.toggle_group_of(View::Files);
+        // What is kept for the folder while in Zen is what was shown before it.
+        assert_eq!(ui.view_state()["hidden"], serde_json::json!([panel]));
         toggle_zen(ui);
         assert_eq!(ui.hidden.get_untracked(), before);
         assert!(bars_shown(ui) && title_bar_shown(ui));
@@ -622,6 +660,31 @@ mod tests {
             _ => None,
         });
         assert_eq!(right, Some(None), "dimmed in the View menu");
+    }
+
+    #[test]
+    fn a_menus_letter_opens_it_unless_another_command_there_has_the_key() {
+        let ui = Ui::new();
+        let send: Send = std::rc::Rc::new(|_| {});
+        register(ui, &send);
+        let alt_r = || Key::Character("r".into());
+        crate::commands::press(ui, &send, &alt_r(), Modifiers::ALT);
+        assert_eq!(ui.menu.get_untracked(), Some(crate::menus::RUN));
+        assert!(menu_by_keys());
+        menu_keys_kept();
+        ui.menu.set(None);
+        let shown = ui.scope.create_rw_signal(true);
+        crate::commands::add(
+            crate::commands::command("test.regex", "", "Regex", |_, _| {})
+                .keys("Alt+R")
+                .when(move |_| shown.get_untracked()),
+        );
+        crate::commands::press(ui, &send, &alt_r(), Modifiers::ALT);
+        assert_eq!(ui.menu.get_untracked(), None, "the find widget's Alt+R keeps its key while it is shown");
+        shown.set(false);
+        crate::commands::press(ui, &send, &alt_r(), Modifiers::ALT);
+        assert_eq!(ui.menu.get_untracked(), Some(crate::menus::RUN));
+        menu_keys_kept();
     }
 
     #[test]

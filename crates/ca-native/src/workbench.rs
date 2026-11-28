@@ -339,16 +339,17 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
     dyn_container(
         move || ui.menu.get(),
         move |open| {
-            let Some(n) = open else { return empty().into_any() };
+            let Some(n) = open else {
+                crate::layout_commands::menu_closed(ui);
+                return empty().into_any();
+            };
             if lit.get_untracked().is_some() {
                 lit.set(None);
             }
             let send = send.clone();
             let keys = send.clone();
-            let live: Vec<bool> = crate::menus::rows(ui, crate::menus::Menu::TitleBar(n))
-                .iter()
-                .map(|r| matches!(r, Row::Entry { command: Some(_), .. }))
-                .collect();
+            let shown = crate::menus::rows(ui, crate::menus::Menu::TitleBar(n));
+            let live: Vec<bool> = shown.iter().map(|r| matches!(r, Row::Entry { command: Some(_), .. })).collect();
             // Where the menu's title is, as laid out (before that: the icon's 35 and the titles before it, each its
             // text and 16 of padding).
             let left = crate::layout_commands::title_x(n)
@@ -427,10 +428,10 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
                             ui.menu.set(Some((n as isize + by).rem_euclid(MENUS.len() as isize) as usize))
                         }
                         MenuKey::Run(row) => {
+                            // The command run says where the keys go.
+                            crate::layout_commands::menu_keys_kept();
                             ui.menu.set(None);
-                            if let Some(Row::Entry { command: Some(id), .. }) =
-                                crate::menus::rows(ui, crate::menus::Menu::TitleBar(n)).get(row)
-                            {
+                            if let Some(Row::Entry { command: Some(id), .. }) = shown.get(row) {
                                 crate::commands::run(ui, &keys, id);
                             }
                         }
@@ -439,8 +440,11 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
                     }
                 })
                 .style(|s| s.position(Position::Absolute).inset(0.0).size_full());
-            let id = floem::View::id(&layer);
-            floem::action::exec_after(std::time::Duration::ZERO, move |_| id.request_focus());
+            // Opened by its keys (Alt+F, F10), it takes them; opened by a click, they stay where they were.
+            if crate::layout_commands::menu_by_keys() {
+                let id = floem::View::id(&layer);
+                floem::action::exec_after(std::time::Duration::ZERO, move |_| id.request_focus());
+            }
             layer.into_any()
         },
     )
