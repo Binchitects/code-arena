@@ -302,6 +302,8 @@ colors! {
     charts_red: ["charts.red"], "#F14C4C", "#E51400";
     status_warning_bg: ["statusBarItem.warningBackground"], "#7A6400", "#725102";
     status_warning_fg: ["statusBarItem.warningForeground"], "#FFFFFF", "#FFFFFF";
+    status_error_bg: ["statusBarItem.errorBackground"], "#C72E0F", "#611708";
+    status_error_fg: ["statusBarItem.errorForeground"], "#FFFFFF", "#FFFFFF";
     banner_bg: ["banner.background", "list.activeSelectionBackground"], "#04395E", "#0060C0";
     banner_fg: ["banner.foreground", "list.activeSelectionForeground"], "#FFFFFF", "#FFFFFF";
     banner_icon: ["banner.iconForeground", "editorInfo.foreground"], "#3794FF", "#1A85FF";
