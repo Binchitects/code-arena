@@ -454,7 +454,7 @@ fn apply(ui: Ui, e: &Rc<Entry>, c: Compared) {
     e.compared.set(Rc::new(c));
 }
 
-/// An editor's caret put on its first line on screen when it is off screen.
+/// An editor's caret put on its middle line on screen when it is off screen.
 fn keep_in_view(ed: &Editor, key: &str) {
     let height = f64::from(ed.line_height(0));
     let vp = ed.viewport.get_untracked();
@@ -468,7 +468,7 @@ fn keep_in_view(ed: &Editor, key: &str) {
     if row >= first && row <= last {
         return;
     }
-    let top = first as usize;
+    let top = ((vp.y0 + vp.y1) / 2.0 / height) as usize;
     let to = map.as_ref().map_or(top, |m| m.line_of_row(top)).min(ed.last_line());
     let at = ed.offset_of_line(to);
     ed.cursor.update(|c| c.set_insert(Selection::caret(at)));
@@ -571,12 +571,22 @@ fn side_by_side(ui: Ui, e: &Rc<Entry>) -> AnyView {
     let (right, rv) = side(ui, e, &e.right);
     // The editor the window's commands (Find, Save, Go to Line) act on: the modified side, or the one clicked.
     ui.live.set(Some((e.path.clone(), right.clone())));
-    for (from, to) in [(left.clone(), right.clone()), (right.clone(), left.clone())] {
+    // Each side's scroll followed by the other. A side scrolled by the other's is not followed back (its place is
+    // the one asked of it, its echo): the side scrolled with the wheel would else be pulled back to where the
+    // other was a moment before.
+    let (echo_l, echo_r) = (Rc::new(Cell::new(None::<f64>)), Rc::new(Cell::new(None::<f64>)));
+    let pairs =
+        [(left.clone(), right.clone(), echo_l.clone(), echo_r.clone()), (right.clone(), left.clone(), echo_r, echo_l)];
+    for (from, to, mine, theirs) in pairs {
         let (viewport, path) = (from.viewport, e.path.clone());
         create_effect(move |_| {
             let v = viewport.get();
+            if mine.take().is_some_and(|y| (y - v.y0).abs() <= 0.5) {
+                return;
+            }
             let o = to.viewport.get_untracked();
             if (v.y0 - o.y0).abs() > 0.5 {
+                theirs.set(Some(v.y0));
                 to.scroll_to.set(Some(Vec2::new(o.x0, v.y0)));
             }
         });
