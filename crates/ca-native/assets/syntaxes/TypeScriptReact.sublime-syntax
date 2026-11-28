@@ -11,9 +11,10 @@ contexts:
     - include: tag-open
     - include: scope:source.ts#code
 
-  # A tag starts where a value may (not after a name, as `Array<string>` does).
+  # A tag starts where a value may (not after a name, as `Array<string>` does), and is no generic function's
+  # parameters (`<T extends object>(x: T) => x`).
   tag-open:
-    - match: '(?<![_$[:alnum:].)\]])(<)(?:({{tag}})(?=[\s/>]|$)|(?=>))'
+    - match: '(?<![_$[:alnum:].)\]])(<)(?:({{tag}})(?=[\s/>]|$)(?!\s+extends\b)|(?=>))'
       captures:
         1: punctuation.definition.tag.begin.tsx
         2: entity.name.tag.tsx

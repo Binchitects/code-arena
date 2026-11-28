@@ -156,7 +156,7 @@ contexts:
   names:
     - match: '\b[A-Z][A-Z0-9_]+\b'
       scope: variable.other.constant.kotlin
-    - match: '({{id}})(?=\s*(?:<[^<>()]*>)?\s*[({])'
+    - match: '({{id}})(?=\s*(?:<[^<>()]*>)?\s*\()|\b([a-z_][_[:alnum:]]*)(?=\s*\{)'
       scope: meta.function-call.kotlin support.function.kotlin
     - match: '\b[A-Z][_[:alnum:]]*\b'
       scope: support.type.kotlin

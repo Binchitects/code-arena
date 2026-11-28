@@ -661,6 +661,8 @@ mod tests {
                 "</div>;\n",
                 "const n = a < b ? 1 : 2;\n",
                 "export function App() { return null; }\n",
+                "const id = <T extends object>(x: T) => x;\n",
+                "export const k = 1;\n",
             ),
         );
         assert_eq!(c(0, "div"), STORAGE);
@@ -672,6 +674,9 @@ mod tests {
         assert_eq!(c(4, "1"), NUMBER);
         assert_eq!(c(5, "function"), STORAGE);
         assert_eq!(c(5, "App"), FUNCTION);
+        // A generic function's parameters are no tag.
+        assert_eq!(c(6, "object"), TYPE);
+        assert_eq!(c(7, "export"), CONTROL);
         let c = coloured("a.jsx", "const a = <A b=\"c\" />;\nexport default a;\n");
         assert_eq!(c(0, "A "), STORAGE);
         assert_eq!(c(1, "export"), CONTROL);
@@ -710,6 +715,12 @@ mod tests {
         assert_eq!(c(4, "COPY"), STORAGE);
         assert_eq!(c(4, "from"), VARIABLE);
         assert_eq!(c(5, "/b"), STRING);
+        // As a fenced block in an answer draws it: each instruction its own.
+        let all = ca_themes::built_in();
+        let theme = Rc::new(theme_of(&ca_themes::chosen(&all, "dark-modern", true).json));
+        let lines = Snippet::new("docker").lines("FROM a\nRUN b\nCOPY c d", &theme);
+        let at = |l: &Line| l.runs.iter().find(|r| r.range.contains(&0)).map(|r| r.colour);
+        assert!(lines.iter().all(|l| at(l) == Some(Color::rgb8(0x56, 0x9C, 0xD6))), "{lines:?}");
     }
 
     #[test]
@@ -720,6 +731,8 @@ mod tests {
                 "package app.core\n/* a /* nested */ still */\ndata class User(val name: String)\n",
                 "fun String.shout(): String = \"${this.uppercase()}!\"\n",
                 "fun main() { if (true) println(\"hi $x\") }\n",
+                "fun size(): Int {\n",
+                "class A : Base { init { run { } } }\n",
             ),
         );
         assert_eq!(c(1, "still"), COMMENT);
@@ -730,6 +743,10 @@ mod tests {
         assert_eq!(c(4, "if"), CONTROL);
         assert_eq!(c(4, "main"), FUNCTION);
         assert_eq!(c(4, "hi"), STRING);
+        // A type before a `{` is a type, a lower-case name a call with a lambda.
+        assert_eq!(c(5, "Int"), TYPE);
+        assert_eq!(c(6, "Base"), TYPE);
+        assert_eq!(c(6, "run"), FUNCTION);
         let c = coloured(
             "a.ps1",
             concat!(

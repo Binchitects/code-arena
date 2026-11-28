@@ -4,4 +4,4 @@ International licence (https://creativecommons.org/licenses/by/4.0/). Copyright 
 
 syntaxes/*.sublime-syntax (TypeScript, TypeScript JSX, JavaScript JSX, TOML, Dockerfile, Vue, Svelte, Kotlin,
 PowerShell, Terraform, GraphQL) are this project's own grammars, written for Code Arena under its licence; they
-take no text from other grammars. The other grammars are syntect's own set (MIT licence).
+take no text from other grammars.
