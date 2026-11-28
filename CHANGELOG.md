@@ -741,6 +741,12 @@ Sections used:
   review" and errors no longer run past the chat panel's edge.
 - **SVG text in previews.** SVG files opened in a preview tab now draw their text in the system's
   fonts.
+- **Asking about picked words no longer hides them.** The 'Ask about this' field and its offered
+  questions now stand above the words you selected in an answer, not over them.
+- **A finished turn's bubble waits while you reply in it.** The 'Ready: the agent finished' bubble
+  no longer disappears after 20 seconds while its Reply field has the keys or holds words.
+- **A command of several lines fits on its card's head.** A call whose command runs over several
+  lines now shows its first line and '…' in one row, not a tall, half-empty card.
 
 ## v0.5.0 (2026-11-26)
 
