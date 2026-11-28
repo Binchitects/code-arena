@@ -66,6 +66,10 @@ pub(crate) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
     if crate::complete::key(ui, key, mods) {
         return true;
     }
+    // A snippet's Tab, Shift+Tab and Escape while it is filled in (`snippets.rs`).
+    if crate::snippets::key(ui, key, mods) {
+        return true;
+    }
     if super::find::find_key(ui, key, mods) {
         return true;
     }
