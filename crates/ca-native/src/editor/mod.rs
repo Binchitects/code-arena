@@ -223,9 +223,10 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 // The editor's width, by which a bounded wrap is found.
                 let width = create_rw_signal(0.0);
                 {
-                    let viewport = editor.viewport;
+                    let (viewport, under) = (editor.viewport, editor.clone());
                     create_effect(move |_| {
-                        let w = viewport.with(|v| v.width());
+                        // Less what a minimap at the right covers.
+                        let w = (viewport.with(|v| v.width()) - minimap::room(&under)).max(0.0);
                         if width.get_untracked() != w {
                             width.set(w);
                         }
@@ -365,7 +366,9 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 let ed = options::follow(ui, ed, &editor, tab.colours.clone(), o);
                 let ed = highlights::follow(ui, ed, &editor, tab.doc.clone(), &tab.path);
                 let ed = crate::merge_inline::follow(ui, ed, &editor, &tab.path);
-                crate::decor::around(ui, ed, &editor, &tab.path).into_any()
+                let ed = crate::decor::around(ui, ed, &editor, &tab.path);
+                // With the minimap and the sticky scroll over it.
+                minimap::around(ui, ed, &editor, tab.colours.clone(), &tab.path)
             }
         },
     )

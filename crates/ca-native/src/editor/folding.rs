@@ -552,7 +552,7 @@ fn change(ui: Ui, path: &str, f: impl FnOnce(&mut Vec<(usize, usize)>)) {
 }
 
 /// A file's regions, found again when its text changed since.
-fn regions_of(path: &str, editor: &Editor) -> Rc<Vec<(usize, usize)>> {
+pub(crate) fn regions_of(path: &str, editor: &Editor) -> Rc<Vec<(usize, usize)>> {
     let rev = editor.doc().cache_rev().get_untracked();
     if let Some(r) = FILES.with(|f| f.borrow().get(path).and_then(|f| f.regions.clone())).filter(|r| r.0 == rev) {
         return r.1;
@@ -574,7 +574,7 @@ fn unwrapped(editor: &Editor) -> bool {
 }
 
 /// The fold map an editor of a file draws with, followed (none: nothing folded, or its lines wrap).
-fn followed(path: &str, editor: &Editor) -> Option<Rc<FoldMap>> {
+pub(crate) fn followed(path: &str, editor: &Editor) -> Option<Rc<FoldMap>> {
     let rev = FILES.with(|f| f.borrow().get(path).map(|f| f.rev))?;
     rev.track();
     map(path).filter(|_| unwrapped(editor))
@@ -793,9 +793,12 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
             * height;
         let beyond =
             if e.es.with_untracked(|s| s.scroll_beyond_last_line()) { vp.height().min(rows) - height } else { 0.0 };
-        (e.max_line_width().max(vp.width()), rows.max(vp.height()) + beyond.max(0.0))
+        // Wider by what a minimap covers at the right, so a long line's end can be scrolled out from under it.
+        let room = super::minimap::room(&e);
+        ((e.max_line_width() + room).max(vp.width()), rows.max(vp.height()) + beyond.max(0.0))
     });
     let caret_path = path.to_string();
+    let kept = Rc::new(RefCell::new(None));
     scroll(container(text).style(move |s| {
         let (w, h) = size.get();
         // Out of the flow, as Floem's own editor puts its text: in it, its size made the scroll view as wide as
@@ -809,6 +812,19 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
         let editor = sig.get_untracked();
         let cursor = cursor.get();
         editor.doc().cache_rev().track();
+        // Only for a caret moved or a text changed: the lines laid out again for their marks alone (`decor.rs` bumps
+        // the cache for them, as the lines scrolled to get theirs) leave the view where it was scrolled to (the
+        // minimap, the scroll bar), as the viewport itself is always visible.
+        let now = (cursor.offset(), cursor.is_insert(), editor.doc().text());
+        let same = kept
+            .borrow()
+            .as_ref()
+            .is_some_and(|k: &(usize, bool, Rope)| k.0 == now.0 && k.1 == now.1 && k.2.ptr_eq(&now.2));
+        if same {
+            editor.es.track();
+            return viewport.get_untracked();
+        }
+        *kept.borrow_mut() = Some(now);
         let LineRegion { x, width, rvline } =
             cursor_caret(&editor, cursor.offset(), !cursor.is_insert(), cursor.affinity);
         let height = f64::from(editor.line_height(0));
@@ -817,6 +833,8 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
             None => editor.vline_of_rvline(rvline).get(),
         };
         let rect = Rect::from_origin_size((x, row as f64 * height), (width, height)).inflate(10.0, 1.0);
+        // Kept left of a minimap at the right.
+        let rect = Rect { x1: rect.x1 + super::minimap::room_now(&editor), ..rect };
         let vp = viewport.get_untracked();
         let near = [(vp.y0 - rect.y0), (vp.y1 - rect.y0), (vp.y0 - rect.y1), (vp.y1 - rect.y1)].map(f64::abs);
         let smallest = near.iter().copied().fold(f64::MAX, f64::min);

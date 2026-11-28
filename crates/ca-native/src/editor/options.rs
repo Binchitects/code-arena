@@ -17,7 +17,8 @@
 //! - `editor.emptySelectionClipboard`: off, Ctrl+C and Ctrl+X with nothing selected do nothing (on, they take the
 //!   line, which is what the editor does).
 //! - View: Toggle Minimap, Toggle Sticky Scroll, Toggle Breadcrumbs write the person's setting
-//!   (`editor.minimap.enabled`, `editor.stickyScroll.enabled`, `breadcrumbs.enabled`); the breadcrumbs follow it.
+//!   (`editor.minimap.enabled`, `editor.stickyScroll.enabled`, `breadcrumbs.enabled`); the breadcrumbs, the
+//!   minimap and the sticky scroll (`minimap.rs`) follow it.
 //!
 //! Not applied, because Floem's editor cannot do them (the setting is kept, and nothing pretends to follow it):
 //!
@@ -329,13 +330,15 @@ pub fn look(s: Style, o: &Options, c: &Colors, width: f64) -> Style {
 
 /// The wrap, the line numbers' colours (dim, accent), the gutter's current line and the current line's colour.
 fn parts(o: &Options, c: &Colors, width: f64) -> (WrapMethod, Color, Color, Color, Color) {
+    // At the editor's width as given (less what a minimap covers, `minimap.rs`), once it is known.
+    let at_width = if width > 0.0 { WrapMethod::WrapWidth { width: width as f32 } } else { WrapMethod::EditorWidth };
     let wrap = match o.wrap {
         Wrap::Off => WrapMethod::None,
-        Wrap::On => WrapMethod::EditorWidth,
+        Wrap::On => at_width,
         Wrap::Column(col) => WrapMethod::WrapColumn { col },
         Wrap::Bounded(col) => {
             let at = col as f64 * o.font.char_width();
-            if width > 0.0 && width < at { WrapMethod::EditorWidth } else { WrapMethod::WrapColumn { col } }
+            if width > 0.0 && width < at { at_width } else { WrapMethod::WrapColumn { col } }
         }
     };
     let gutter = if o.highlight_gutter { c.line_highlight } else { c.editor_bg };

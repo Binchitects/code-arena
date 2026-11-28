@@ -145,6 +145,55 @@ pub struct Line {
     pub runs: Vec<Run>,
 }
 
+/// A line's minimap blocks, and whether they are of the line as it is now.
+type MiniLine = (bool, Rc<[Block]>);
+
+/// A run of a line's characters as the minimap draws it: its first column and the column after its last (a tab
+/// counted as the columns it is drawn as), and its colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Block {
+    pub from: u16,
+    pub to: u16,
+    pub colour: Color,
+}
+
+/// A line's runs as the minimap draws them, as VS Code's: each character that is not white space by its column (a
+/// tab goes to its next stop), in its run's colour (`plain` outside the runs), those side by side in one colour as
+/// one block, and nothing from column `most` on.
+pub fn blocks(
+    text: &str,
+    runs: &[(std::ops::Range<usize>, Color)],
+    tab: usize,
+    most: usize,
+    plain: Color,
+) -> Vec<Block> {
+    let tab = tab.max(1);
+    let (mut out, mut col, mut r) = (Vec::<Block>::new(), 0usize, 0usize);
+    for (i, ch) in text.char_indices() {
+        if col >= most || ch == '\n' || ch == '\r' {
+            break;
+        }
+        if ch == '\t' {
+            col += tab - col % tab;
+            continue;
+        }
+        if ch.is_whitespace() {
+            col += 1;
+            continue;
+        }
+        while r < runs.len() && runs[r].0.end <= i {
+            r += 1;
+        }
+        let colour = runs.get(r).filter(|run| run.0.start <= i).map_or(plain, |run| run.1);
+        match out.last_mut() {
+            Some(b) if usize::from(b.to) == col && b.colour == colour => b.to += 1,
+            _ => out.push(Block { from: col as u16, to: col as u16 + 1, colour }),
+        }
+        col += 1;
+    }
+    out
+}
+
 /// A line as it was parsed: whether a line follows it, and the parse after it.
 struct Kept {
     line: Rc<Line>,
@@ -253,6 +302,8 @@ pub struct Colours {
     tab: Cell<usize>,
     /// The file's path, by which its decorations are found (`decor.rs`).
     path: String,
+    /// The minimap's runs of each line worked out, and whether they are of the line as it is now (`minimap`).
+    mini: RefCell<Vec<Option<MiniLine>>>,
 }
 
 impl Colours {
@@ -267,6 +318,7 @@ impl Colours {
             look: RefCell::new(Look::default()),
             tab: Cell::new(4),
             path: path.to_string(),
+            mini: RefCell::new(Vec::new()),
         })
     }
 
@@ -277,6 +329,7 @@ impl Colours {
         }
         self.syntax.set(syntax);
         self.parsed.borrow_mut().after.clear();
+        self.mini_stale(0);
         self.id.set(self.id.get() + 1);
         true
     }
@@ -285,6 +338,7 @@ impl Colours {
     pub fn set_theme(&self, theme: Theme) {
         *self.theme.borrow_mut() = theme;
         self.parsed.borrow_mut().after.clear();
+        self.mini_stale(0);
         self.id.set(self.id.get() + 1);
     }
 
@@ -305,6 +359,7 @@ impl Colours {
     /// A tab drawn `columns` wide; the editor drawn again with `update_styling`.
     pub fn set_tab_width(&self, columns: usize) {
         self.tab.set(columns.max(1));
+        self.mini_stale(0);
         self.id.set(self.id.get() + 1);
     }
 
@@ -315,7 +370,42 @@ impl Colours {
     /// The text changed from `line` on: what was parsed before it stands.
     pub fn changed_from(&self, line: usize) {
         self.parsed.borrow_mut().after.truncate(line);
+        self.mini_stale(line);
         self.id.set(self.id.get() + 1);
+    }
+
+    /// The minimap's runs of the lines from `line` on are no longer those of the text. They are still drawn until
+    /// they are worked out again, so the minimap does not blink while typing.
+    fn mini_stale(&self, line: usize) {
+        for kept in self.mini.borrow_mut().iter_mut().skip(line).flatten() {
+            kept.0 = false;
+        }
+    }
+
+    /// The minimap's runs of a line (`blocks`, at most `most` columns), kept until the line changes. They are worked
+    /// out only when `work` is true; otherwise the ones kept are given, even from before the last edit (false then:
+    /// not of the line as it is now), or none.
+    pub fn minimap(&self, line: usize, most: usize, work: bool) -> (Option<Rc<[Block]>>, bool) {
+        let kept = self.mini.borrow().get(line).cloned().flatten();
+        if let Some((fresh, kept)) = kept
+            && (fresh || !work)
+        {
+            return (Some(kept), fresh);
+        }
+        if !work {
+            return (None, false);
+        }
+        let colour = |c: syntect::highlighting::Color| Color::rgba8(c.r, c.g, c.b, c.a);
+        let plain = self.theme.borrow().settings.foreground.map_or(Color::rgb8(0xD4, 0xD4, 0xD4), colour);
+        let runs: Vec<_> = self.runs(line).into_iter().map(|(r, s)| (r, colour(s.foreground))).collect();
+        let text = self.doc.rope_text();
+        let made: Rc<[Block]> = blocks(&text.line_content(line), &runs, self.tab.get(), most, plain).into();
+        let mut mini = self.mini.borrow_mut();
+        if mini.len() <= line {
+            mini.resize(line + 1, None);
+        }
+        mini[line] = Some((true, made.clone()));
+        (Some(made), true)
     }
 
     /// The runs of a line with their style: parsed from the last line kept up to it.
@@ -440,6 +530,39 @@ pub fn take(_ui: crate::state::Ui, _m: &serde_json::Value, _send: &crate::state:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_minimaps_blocks_are_the_runs_without_white_space_by_column() {
+        let (red, blue, plain) = (Color::rgb8(255, 0, 0), Color::rgb8(0, 0, 255), Color::rgb8(9, 9, 9));
+        let block = |from, to, colour| Block { from, to, colour };
+        // "fn ab" with "fn" red and "ab" blue: two blocks, the space between them none.
+        assert_eq!(
+            blocks("fn ab\n", &[(0..2, red), (2..5, blue)], 4, 120, plain),
+            [block(0, 2, red), block(3, 5, blue)]
+        );
+        // A tab goes to its stop; outside the runs the plain colour; runs of one colour side by side join.
+        assert_eq!(blocks("\tx", &[], 4, 120, plain), [block(4, 5, plain)]);
+        assert_eq!(blocks("ab", &[(0..1, red), (1..2, red)], 4, 120, plain), [block(0, 2, red)]);
+        // Nothing past the most columns.
+        assert_eq!(blocks("abcdef", &[], 4, 3, plain), [block(0, 3, plain)]);
+    }
+
+    #[test]
+    fn the_minimap_keeps_a_lines_blocks_until_an_edit_reaches_it() {
+        let scope = floem::reactive::Scope::new();
+        let doc = Rc::new(TextDocument::new(scope, "a\nb\nc\n"));
+        let colours = Colours::new(doc, "x.txt");
+        assert_eq!(colours.minimap(1, 120, false), (None, false), "not worked out without work");
+        let (made, fresh) = colours.minimap(1, 120, true);
+        assert!(fresh && made.is_some());
+        assert!(colours.minimap(1, 120, false).1, "kept");
+        colours.changed_from(2);
+        assert!(colours.minimap(1, 120, false).1, "an edit below leaves it");
+        colours.changed_from(0);
+        let (kept, fresh) = colours.minimap(1, 120, false);
+        assert!(kept.is_some() && !fresh, "an edit above: drawn as it was until worked out again");
+        assert!(colours.minimap(1, 120, true).1);
+    }
 
     #[test]
     fn a_file_gets_its_grammar_by_name_or_first_line() {

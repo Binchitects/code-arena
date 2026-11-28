@@ -196,7 +196,8 @@ impl Shows {
         match value {
             "gutter" => Shows { gutter: true, ruler: false },
             "overview" => Shows { gutter: false, ruler: true },
-            // The minimap is not drawn yet; "minimap" and "none" show nothing.
+            // The minimap draws the overview ruler's marks; a mark for the minimap alone is not in `decor.rs`, so
+            // "minimap" shows nothing, as "none".
             "minimap" | "none" => Shows { gutter: false, ruler: false },
             _ => Shows { gutter: true, ruler: true },
         }
