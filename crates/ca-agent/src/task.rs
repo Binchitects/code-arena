@@ -171,6 +171,7 @@ impl Tool for TaskTool {
             second_reading: false,
             repo_key: None,
             hooks: crew.hooks.clone(),
+            attached: Default::default(),
         };
         (crew.say)(format!("  ↳ {name} starts: {description}"));
         let mut events = Steps { name: name.clone(), say: crew.say.clone() };

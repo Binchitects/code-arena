@@ -259,6 +259,16 @@ pub struct Agent {
     pub repo_key: Option<String>,
     /// The person's hooks (and a project's they trusted).
     pub hooks: Arc<crate::hooks::Hooks>,
+    /// Files attached to the next message the person sends, taken by the turn it begins.
+    pub attached: Attached,
+}
+
+/// Files that go with a person's message: what the model reads of them after the words (the `<uploaded>` block,
+/// kept from the `@` mentions so that a document's words are not read as mentions), and the pictures it sees.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Attached {
+    pub section: String,
+    pub images: Vec<String>,
 }
 
 /// Keeps a result aside and names it (`r1`), for `read_result`.
@@ -358,8 +368,10 @@ impl Agent {
         if let Some(why) = said.block.or(said.stop) {
             return Err(TurnError::Blocked(format!("A hook blocked the message: {why}")));
         }
-        let text = crate::mentions::attach(text, &self.ctx.workspace);
-        let seq = self.add(Message::user(text), true).unwrap_or(self.history.len() as i64);
+        let attached = std::mem::take(&mut self.attached);
+        let mut asked = Message::user(crate::mentions::attach(text, &self.ctx.workspace) + &attached.section);
+        asked.images = attached.images;
+        let seq = self.add(asked, true).unwrap_or(self.history.len() as i64);
         for c in said.context {
             self.note(format!("(Code Arena: a hook of the person's says: {c})"));
         }
@@ -1322,6 +1334,7 @@ mod tests {
             second_reading: false,
             repo_key: None,
             hooks: Arc::default(),
+            attached: Default::default(),
         };
         (server, a, dir, seen)
     }

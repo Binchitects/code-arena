@@ -251,6 +251,17 @@ pub fn anthropic_body(body: &Value, model: &str, thinking: &crate::Thinking) -> 
                     "user",
                     json!({"type": "text", "text": if t.is_empty() { "(nothing)".to_string() } else { t }}),
                 );
+                // A picture as a data URL: Anthropic's image block of the same bytes.
+                for part in m["content"].as_array().into_iter().flatten() {
+                    let url = part["image_url"]["url"].as_str().unwrap_or("");
+                    if let Some((media_type, data)) = url.strip_prefix("data:").and_then(|u| u.split_once(";base64,")) {
+                        add(
+                            &mut messages,
+                            "user",
+                            json!({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}),
+                        );
+                    }
+                }
             }
         }
     }
@@ -433,6 +444,21 @@ mod tests {
         assert_eq!(a["tools"][0]["input_schema"]["type"], "object");
         assert_eq!(a["thinking"]["budget_tokens"], 2048);
         assert_eq!(a["max_tokens"], 10240);
+    }
+
+    #[test]
+    fn a_picture_goes_to_anthropic_as_an_image_block_after_the_words() {
+        let body = json!({"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "what is this?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+        ]}]});
+        let a = anthropic_body(&body, "model-x", &Thinking::Default);
+        let c = &a["messages"][0]["content"];
+        assert_eq!(c[0]["text"], "what is this?");
+        assert_eq!(
+            c[1],
+            json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}})
+        );
     }
 
     #[test]

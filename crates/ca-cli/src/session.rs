@@ -888,6 +888,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
             Arc::new(h)
         },
         repo_key: Some(ca_memory::keys::project_key(&ws_root)).filter(|k| !k.starts_with("local/")),
+        attached: Default::default(),
     };
     // The sandbox, as the settings and this system allow.
     let sandbox_mode = app.settings.string(&schema::SANDBOX).unwrap_or_else(|| "auto".into());

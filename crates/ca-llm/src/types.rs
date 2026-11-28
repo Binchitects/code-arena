@@ -32,6 +32,9 @@ pub struct Message {
     /// The model's thinking: kept and shown, never sent back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// Pictures that go with a person's words (data URLs), each a part of its own for a model that sees.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
 }
 
 impl Message {
@@ -48,7 +51,7 @@ impl Message {
         Message { tool_call_id: Some(call_id.into()), ..Self::of(Role::Tool, text) }
     }
     fn of(role: Role, text: impl Into<String>) -> Self {
-        Message { role, content: text.into(), tool_calls: vec![], tool_call_id: None, reasoning: None }
+        Message { role, content: text.into(), tool_calls: vec![], tool_call_id: None, reasoning: None, images: vec![] }
     }
 
     /// As OpenAI's chat completions take it.
@@ -68,6 +71,12 @@ impl Message {
         }
         if let Some(id) = &self.tool_call_id {
             m["tool_call_id"] = json!(id);
+        }
+        // Pictures: the words first, then each picture, as OpenAI's content parts.
+        if !self.images.is_empty() {
+            let mut parts = vec![json!({"type": "text", "text": self.content})];
+            parts.extend(self.images.iter().map(|url| json!({"type": "image_url", "image_url": {"url": url}})));
+            m["content"] = Value::Array(parts);
         }
         m
     }
@@ -203,6 +212,23 @@ impl Sink for Quiet {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pictures_go_as_parts_after_the_words_and_a_message_without_any_is_as_it_was() {
+        let mut m = Message::user("what is this?");
+        assert_eq!(m.to_wire(), json!({"role": "user", "content": "what is this?"}));
+        m.images = vec!["data:image/png;base64,AAAA".into()];
+        assert_eq!(
+            m.to_wire()["content"],
+            json!([
+                {"type": "text", "text": "what is this?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ])
+        );
+        let kept: Message = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        assert_eq!(kept.images, m.images);
+        assert!(!serde_json::to_string(&Message::user("x")).unwrap().contains("images"));
+    }
 
     #[test]
     fn thinking_goes_as_the_chat_sends_it() {

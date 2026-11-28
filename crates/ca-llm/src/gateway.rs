@@ -552,6 +552,7 @@ impl Assembly {
                 tool_calls: self.calls,
                 tool_call_id: None,
                 reasoning: (!self.reasoning.is_empty()).then_some(self.reasoning),
+                images: vec![],
             },
             finish,
             usage: self.usage,
