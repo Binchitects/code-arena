@@ -594,6 +594,14 @@ Sections used:
   refused), and the model reads the quote before your words. Ask about this sends a question about
   the words at once ('Explain this', 'Say more', 'Give an example', or your own), leaving the box as
   it was. Chat: Reply Quoting the Selection is Ctrl+Shift+'.
+- **Pictures, sounds and videos a tool made show under its card.** When a tool saves a file under
+  `.code-arena/media/`, its card shows a small copy of each picture, and a card for each sound or
+  video that opens it in the system's player. While a tool that draws or films runs, its card says
+  'Drawing the picture…' or 'Making the video, a few minutes…'.
+- **A picture viewer over the whole window.** Click a tool's picture to see it fitted to the window.
+  Zoom with + / − / 0, Ctrl+wheel or the bar's buttons, go through the call's other pictures with
+  the arrows or the arrow keys, open it in the system's viewer, or Save As to a path in the project.
+  Escape closes the viewer.
 
 
 ### :bug: Bugs fixed
