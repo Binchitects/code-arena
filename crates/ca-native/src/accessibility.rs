@@ -198,12 +198,10 @@ fn readable(c: Color, ground: Color, dark: bool) -> Color {
 pub fn adjusted(mut c: Colors, s: Seeing) -> Colors {
     let dark = c.dark;
     if s.safe {
-        let (blue, vermilion, orange) = (Color::rgb8(0x00, 0x72, 0xB2), Color::rgb8(0xD5, 0x5E, 0x00), Color::rgb8(0xE6, 0x9F, 0x00));
-        let (good, bad) = if dark {
-            (Color::rgb8(0x56, 0xB4, 0xE9), Color::rgb8(0xF0, 0x8A, 0x4B))
-        } else {
-            (blue, vermilion)
-        };
+        let (blue, vermilion, orange) =
+            (Color::rgb8(0x00, 0x72, 0xB2), Color::rgb8(0xD5, 0x5E, 0x00), Color::rgb8(0xE6, 0x9F, 0x00));
+        let (good, bad) =
+            if dark { (Color::rgb8(0x56, 0xB4, 0xE9), Color::rgb8(0xF0, 0x8A, 0x4B)) } else { (blue, vermilion) };
         c.gutter_added = blue;
         c.gutter_modified = orange;
         c.gutter_deleted = vermilion;
@@ -388,7 +386,10 @@ mod tests {
         assert_eq!(numpad(&k("0"), KeyLocation::Standard), None);
         let chord = crate::commands::Chord::of(&k("numpad_add"), floem::keyboard::Modifiers::CONTROL);
         assert_eq!(chord, crate::commands::Chord::parse("Ctrl+numpad_add"));
-        let plus = crate::commands::Chord::of(&k("+"), floem::keyboard::Modifiers::CONTROL | floem::keyboard::Modifiers::SHIFT);
+        let plus = crate::commands::Chord::of(
+            &k("+"),
+            floem::keyboard::Modifiers::CONTROL | floem::keyboard::Modifiers::SHIFT,
+        );
         assert_eq!(plus, crate::commands::Chord::parse("Ctrl+Shift+="));
     }
 
@@ -409,7 +410,10 @@ mod tests {
     }
 
     fn said(ui: Ui, send: &Send, values: Value) {
-        ui.take(&json!({"type": "settings", "values": values, "by_lang": {}, "sources": {}, "problems": [], "files": {}}), send);
+        ui.take(
+            &json!({"type": "settings", "values": values, "by_lang": {}, "sources": {}, "problems": [], "files": {}}),
+            send,
+        );
     }
 
     #[test]
@@ -419,7 +423,8 @@ mod tests {
         zoom(ui, &send, Some(1.0));
         zoom(ui, &send, Some(1.0));
         assert_eq!(a.level.get_untracked(), 2.0);
-        let kept: Vec<Value> = told.borrow().iter().filter(|m| m["key"] == "window.zoomLevel").map(|m| m["value"].clone()).collect();
+        let kept: Vec<Value> =
+            told.borrow().iter().filter(|m| m["key"] == "window.zoomLevel").map(|m| m["value"].clone()).collect();
         assert_eq!(kept, vec![json!(1), json!(2)]);
         said(ui, &send, json!({"window.zoomLevel": 1}));
         assert_eq!(a.level.get_untracked(), 2.0, "the first step's echo does not undo the second");
@@ -436,7 +441,11 @@ mod tests {
     #[test]
     fn the_colour_settings_change_the_window_s_colours_at_once() {
         let (ui, send, told) = window();
-        said(ui, &send, json!({"codeArena.accessibility.colorBlindColors": true, "codeArena.accessibility.contrast": "more"}));
+        said(
+            ui,
+            &send,
+            json!({"codeArena.accessibility.colorBlindColors": true, "codeArena.accessibility.contrast": "more"}),
+        );
         let c = ui.colors.get_untracked();
         assert_eq!(c.gutter_added, Color::rgb8(0x00, 0x72, 0xB2));
         assert_eq!(c.desc, c.fg);

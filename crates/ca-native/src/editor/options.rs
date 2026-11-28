@@ -262,7 +262,8 @@ pub fn read(ui: Ui, path: Option<&str>) -> Options {
         // The workbench's larger text (codeArena.accessibility.textSize) leaves the editor's as it was.
         size: (zoomed(size, level) / share).round(),
         weight: font_weight(&settings::setting(ui, "editor.fontWeight", lang)),
-        line_height: (zoomed(line_height(&settings::setting(ui, "editor.lineHeight", lang), size), level) / share).round(),
+        line_height: (zoomed(line_height(&settings::setting(ui, "editor.lineHeight", lang), size), level) / share)
+            .round(),
     };
     let mut wrap =
         wrap(&settings::setting(ui, "editor.wordWrap", lang), &settings::setting(ui, "editor.wordWrapColumn", lang));
