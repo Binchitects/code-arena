@@ -25,8 +25,8 @@ use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, scro
 use floem::{AnyView, IntoView, View};
 use serde_json::{Value, json};
 
-use crate::keymap::TakesKeys;
 use crate::icons::icon;
+use crate::keymap::TakesKeys;
 use crate::menus::Menu;
 use crate::state::{Entry, Send, Ui};
 use crate::widgets::{action, bold, caps, dialog, line, popup, toast};

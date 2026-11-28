@@ -28,11 +28,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
-use floem::{IntoView, View};
 use floem::event::EventListener;
 use floem::keyboard::{Key, Modifiers};
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith};
 use floem::views::Decorators;
+use floem::{IntoView, View};
 use serde_json::{Value, json};
 
 use crate::commands::{self, Chord, Pressed, parse_keys};
@@ -431,14 +431,16 @@ pub fn context_key(name: &str, value: impl Fn(Ui) -> Value + 'static) {
 /// A view that takes the keys says so: while it has them, the context keys say what it is.
 pub fn tracked<V: View + 'static>(v: V, focus: Focus) -> V {
     let me = NEXT_VIEW.with(|n| n.replace(n.get() + 1));
-    v.on_event_cont(EventListener::FocusGained, move |_| FOCUS.with(|f| f.set((focus, me))))
-        .on_event_cont(EventListener::FocusLost, move |_| {
+    v.on_event_cont(EventListener::FocusGained, move |_| FOCUS.with(|f| f.set((focus, me)))).on_event_cont(
+        EventListener::FocusLost,
+        move |_| {
             FOCUS.with(|f| {
                 if f.get().1 == me {
                     f.set((Focus::None, 0));
                 }
             })
-        })
+        },
+    )
 }
 
 /// `tracked` in a chain of a view's calls: `.takes_keys(Focus::Explorer)`.
@@ -482,14 +484,19 @@ pub fn value(ui: Ui, key: &str) -> Value {
         "textCompareEditorVisible" | "isInDiffEditor" | "textCompareEditorActive" => {
             json!(active().is_some_and(|t| t.diff.is_some() || t.kind.is_some_and(|k| k.contains("compare"))))
         }
-        "activeViewlet" => json!(ui.drawn().with_untracked(|d| {
-            let g = d.side_bar()?;
-            match d.find(g) {
-                Some(crate::dock::Node::Tabs { active, .. }) if !ui.hidden(g) => Some(active.command().to_string()),
-                _ => None,
-            }
-        })
-        .unwrap_or_default()),
+        "activeViewlet" => json!(
+            ui.drawn()
+                .with_untracked(|d| {
+                    let g = d.side_bar()?;
+                    match d.find(g) {
+                        Some(crate::dock::Node::Tabs { active, .. }) if !ui.hidden(g) => {
+                            Some(active.command().to_string())
+                        }
+                        _ => None,
+                    }
+                })
+                .unwrap_or_default()
+        ),
         "resourceLangId" | "editorLangId" => {
             json!(file().and_then(|p| crate::editor::options::language(&p)).unwrap_or(""))
         }
@@ -643,7 +650,10 @@ pub fn press(ui: Ui, send: &Send, key: &Key, m: Modifiers) -> Pressed {
         }
         set_pending(ui, None);
         let os = os();
-        say(ui, format!("The key combination ({}, {}) is not a command.", chord_label(&first, os), chord_label(&chord, os)));
+        say(
+            ui,
+            format!("The key combination ({}, {}) is not a command.", chord_label(&first, os), chord_label(&chord, os)),
+        );
         let k = ui.state::<Keymap>();
         let n = k.said.get_untracked() + 1;
         k.said.set(n);
@@ -870,7 +880,10 @@ mod tests {
         set_user(read_user(r#"[{"key": "ctrl+alt+[KeyY]", "command": "test.km.chord"}]"#, Os::Linux).rules);
         assert_eq!(p("y"), Pressed::Ran);
         assert_eq!(shown_keys("test.km.chord"), "Ctrl+Alt+Y");
-        assert_eq!(command_of(ui, &Key::Character("j".into()), Modifiers::CONTROL | Modifiers::ALT).as_deref(), Some("test.km.single"));
+        assert_eq!(
+            command_of(ui, &Key::Character("j".into()), Modifiers::CONTROL | Modifiers::ALT).as_deref(),
+            Some("test.km.single")
+        );
         assert!(begins_chord(ui, &Key::Character("k".into()), Modifiers::CONTROL | Modifiers::ALT));
         set_user(Vec::new());
     }

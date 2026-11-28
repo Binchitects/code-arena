@@ -63,7 +63,12 @@ pub(crate) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
     }
     // The second key of a chord begun is the workbench's, whatever the editor would do with it (Ctrl+K Ctrl+S is
     // not a save, Ctrl+K X types no x).
-    if crate::commands::waiting().is_some() && !matches!(key, Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super | NamedKey::Meta)) {
+    if crate::commands::waiting().is_some()
+        && !matches!(
+            key,
+            Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super | NamedKey::Meta)
+        )
+    {
         tell(ui, |send| crate::workbench::key(ui, send, key, mods));
         return true;
     }

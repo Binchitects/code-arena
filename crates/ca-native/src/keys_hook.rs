@@ -91,8 +91,7 @@ pub fn skips_shell(id: &str, setting: &[String], all_to_shell: bool) -> bool {
 /// Whether a key pressed in the terminal is the workbench's, not the shell's.
 pub fn terminal(ui: Ui, key: &Key, m: Modifiers) -> bool {
     let chords = settings::now(ui, "terminal.integrated.allowChords", None).as_bool().unwrap_or(true);
-    let all_to_shell =
-        settings::now(ui, "terminal.integrated.sendKeybindingsToShell", None).as_bool().unwrap_or(false);
+    let all_to_shell = settings::now(ui, "terminal.integrated.sendKeybindingsToShell", None).as_bool().unwrap_or(false);
     if crate::keymap::waiting().is_some() {
         return chords;
     }

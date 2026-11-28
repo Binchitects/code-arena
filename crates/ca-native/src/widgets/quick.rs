@@ -57,9 +57,9 @@ use floem::views::{
 use floem::{AnyView, IntoView, View, ViewId};
 use serde_json::Value;
 
-use crate::keymap::TakesKeys;
 use crate::colors::Colors;
 use crate::icons::icon;
+use crate::keymap::TakesKeys;
 use crate::layers::{self, Place};
 use crate::state::{Send, Ui};
 use crate::widgets::UI_FONT;

@@ -443,18 +443,7 @@ mod tests {
     #[test]
     fn what_cannot_be_read_is_said() {
         for bad in [
-            "a &&",
-            "(a",
-            "a)",
-            "a == ",
-            "a =~ b",
-            "a =~ /(/",
-            "a < x",
-            "a not b",
-            "&& a",
-            "'quoted'",
-            "a = b",
-            "a 'b'",
+            "a &&", "(a", "a)", "a == ", "a =~ b", "a =~ /(/", "a < x", "a not b", "&& a", "'quoted'", "a = b", "a 'b'",
         ] {
             assert!(parse(bad).is_err(), "{bad} was read");
         }
