@@ -439,26 +439,33 @@ fn discard(ui: Ui, send: &Send, files: Vec<File>) {
     });
 }
 
-/// The commit asked of the driver: what is staged, or every change when nothing is.
-fn commit(ui: Ui, send: &Send, amend: bool) {
+/// The commit asked of the driver: what is staged, or every change when nothing is. False: it was not asked (one
+/// is being made, there is nothing to commit, no message).
+pub(crate) fn commit(ui: Ui, send: &Send, amend: bool) -> bool {
     let me = state(ui);
     if me.busy.get_untracked() {
-        return;
+        return false;
     }
     let (staged, any) = me.status.with_untracked(|s| {
         s.as_ref().map(|s| (s.of_group(Group::Staged).len(), !s.files.is_empty())).unwrap_or((0, false))
     });
     if staged == 0 && !any && !amend {
         toast::info(ui, "There are no changes to commit.");
-        return;
+        return false;
     }
     let message = me.message.get_untracked();
     if message.trim().is_empty() && !amend {
         toast::warning(ui, "Type a message to commit.");
-        return;
+        return false;
     }
     me.busy.set(true);
     send(json!({"type": "git_commit", "repo": "", "message": message, "all": staged == 0 && !amend, "amend": amend}));
+    true
+}
+
+/// The changes' list, where the title's menus open.
+pub(crate) fn list_view(ui: Ui) -> Option<floem::ViewId> {
+    state(ui).tree.view()
 }
 
 /// A file's row opened: its changes in a tab, or the file itself (one git does not track yet, one in conflict).
@@ -726,7 +733,9 @@ fn message_box(ui: Ui, send: Send) -> impl IntoView {
                         .apply_if(me.message.with(|m| !m.is_empty()), |s| s.hide())
                 });
             let input = text_input(me.message)
-                .on_key_down(Key::Named(NamedKey::Enter), |m| m.control(), move |_| commit(ui, &go, false))
+                .on_key_down(Key::Named(NamedKey::Enter), |m| m.control(), move |_| {
+                    commit(ui, &go, false);
+                })
                 .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true))
                 .on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false))
                 .style(move |s| {
@@ -777,7 +786,9 @@ fn commit_box(ui: Ui, send: Send) -> impl IntoView {
     });
     let c1 = send.clone();
     let main = h_stack((icon("check", 16.0), label(move || words.get())))
-        .on_click_stop(move |_| commit(ui, &c1, false))
+        .on_click_stop(move |_| {
+            commit(ui, &c1, false);
+        })
         .style(move |s| {
             let c = t.get();
             s.flex_grow(1.0_f32)
@@ -794,14 +805,18 @@ fn commit_box(ui: Ui, send: Send) -> impl IntoView {
     let more = more
         .on_click_stop(move |_| {
             let (a, b) = (c2.clone(), c2.clone());
-            popup::open(
-                ui,
-                popup::At::under(more_id),
-                vec![
-                    popup::entry("Commit", move || commit(ui, &a, false)).into(),
-                    popup::entry("Commit (Amend)", move || commit(ui, &b, true)).into(),
-                ],
-            );
+            let mut rows: Vec<popup::Item> = vec![
+                popup::entry("Commit", move || {
+                    commit(ui, &a, false);
+                })
+                .into(),
+                popup::entry("Commit (Amend)", move || {
+                    commit(ui, &b, true);
+                })
+                .into(),
+            ];
+            rows.extend(branches::commit_rows(ui, &c2));
+            popup::open(ui, popup::At::under(more_id), rows);
         })
         .style(move |s| {
             let c = t.get();
@@ -825,7 +840,7 @@ fn commit_box(ui: Ui, send: Send) -> impl IntoView {
             .selectable(false)
             .apply_if(me.busy.get(), |s| s.color(c.button_fg.multiply_alpha(0.6)))
     });
-    v_stack((message_box(ui, send), button)).style(|s| s.width_full().gap(6.0).padding_horiz(12.0).padding_vert(6.0))
+    v_stack((message_box(ui, send.clone()), button, branches::sync_button(ui, send))).style(|s| s.width_full().gap(6.0).padding_horiz(12.0).padding_vert(6.0))
 }
 
 /// What the view says instead of its changes.
@@ -937,8 +952,14 @@ fn has_repo(ui: Ui) -> bool {
 pub fn register(_ui: Ui, _send: &Send) {
     use crate::commands::{add, command};
     use crate::menus::{Menu, item};
-    add(command("git.commit", "Git", "Commit", |ui, send| commit(ui, send, false)).when(has_repo));
-    add(command("git.commitAmend", "Git", "Commit (Amend)", |ui, send| commit(ui, send, true)).when(has_repo));
+    add(command("git.commit", "Git", "Commit", |ui, send| {
+        commit(ui, send, false);
+    })
+    .when(has_repo));
+    add(command("git.commitAmend", "Git", "Commit (Amend)", |ui, send| {
+        commit(ui, send, true);
+    })
+    .when(has_repo));
     add(command("git.refresh", "Git", "Refresh", |_, send| refresh(send)));
     add(command("git.stageAll", "Git", "Stage All Changes", |ui, send| stage(send, &files_of(ui, Group::Changes)))
         .when(has_repo));
