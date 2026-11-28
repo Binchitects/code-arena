@@ -129,7 +129,7 @@ pub fn title_of(file: &str, kind: &str) -> String {
 pub fn remaining(left: usize, had: usize) -> String {
     match left {
         0 => "No conflicts remaining".into(),
-        1 if had <= 1 => "1 conflict remaining".into(),
+        n if had.max(n) == 1 => "1 of 1 conflict remaining".into(),
         n => format!("{n} of {} conflicts remaining", had.max(n)),
     }
 }
@@ -939,11 +939,17 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     match m["type"].as_str().unwrap_or("") {
         "git_merge_info" => {
-            let Some(e) = living(ui, &path_of(path)) else { return false };
+            // Its tab is made only once the file has come: until then, the one waiting for it.
+            let waiting = WAITING.with(|w| w.borrow().contains(path));
+            let merge = path_of(path);
+            let Some(e) = (if waiting { entry(&merge) } else { living(ui, &merge) }) else { return false };
             let info = Info::of(m);
             if info.binary {
                 toast::warning(ui, &format!("{name} is not a text file: the merge editor opens only text."));
-                ui.close_now(&e.path);
+                WAITING.with(|w| w.borrow_mut().remove(path));
+                if ui.tab(&e.path).is_some() {
+                    ui.close_now(&e.path);
+                }
                 forget(ui, &e.path);
                 return true;
             }
@@ -1008,7 +1014,7 @@ mod tests {
         assert_eq!(title_of("a.rs", "rebase"), "Merging a.rs (rebase)");
         assert_eq!(title_of("a.rs", "cherry-pick"), "Merging a.rs (cherry-pick)");
         assert_eq!(remaining(2, 3), "2 of 3 conflicts remaining");
-        assert_eq!(remaining(1, 1), "1 conflict remaining");
+        assert_eq!(remaining(1, 1), "1 of 1 conflict remaining");
         assert_eq!(remaining(0, 3), "No conflicts remaining");
         assert_eq!(remaining(4, 2), "4 of 4 conflicts remaining");
     }
@@ -1052,14 +1058,15 @@ mod tests {
         open(ui, &send, "a.txt");
         assert_eq!(said.borrow()[0], json!({"type": "git_merge_info", "repo": "", "path": "a.txt"}));
         assert_eq!(said.borrow()[1], json!({"type": "open", "path": "a.txt"}));
-        ui.take(&json!({"type": "file", "path": "a.txt", "text": RESULT, "modified": 1}), &send);
-        assert_eq!(ui.active.get_untracked().as_deref(), Some("merge:a.txt"));
+        // What git says may come before the file does.
         let info = json!({"type": "git_merge_info", "repo": "", "path": "a.txt", "unmerged": true, "kind": "rebase",
             "current": {"name": "main", "commit": "c", "short": "1111111", "subject": "Number two"},
             "incoming": {"name": "feature", "commit": "i", "short": "2222222", "subject": "Shout two"},
             "base_text": "one\ntwo\nthree\nend\n", "current_text": "one\n2\nthree\nx\nend\n",
             "incoming_text": "one\nTWO\nthree\nend\n", "binary": false});
         assert!(take(ui, &info, &send), "the answer is the merge editor's");
+        ui.take(&json!({"type": "file", "path": "a.txt", "text": RESULT, "modified": 1}), &send);
+        assert_eq!(ui.active.get_untracked().as_deref(), Some("merge:a.txt"));
         let e = entry("merge:a.txt").expect("open");
         assert_eq!(e.incoming.doc.text().to_string(), "one\nTWO\nthree\nend\n");
         let tab = ui.tab("merge:a.txt").expect("its tab");
@@ -1078,6 +1085,17 @@ mod tests {
         accept(ui, "merge:a.txt", 0, Choice::Current, false);
         accept(ui, "merge:a.txt", 0, Choice::Current, true);
         assert_eq!(file.text(), "one\n2\nthree\nx\nend\n");
+        // Ctrl+S in the merge editor saves the file.
+        said.borrow_mut().clear();
+        ui.save(&send);
+        assert_eq!(
+            (said.borrow()[0]["type"].as_str(), said.borrow()[0]["path"].as_str()),
+            (Some("save"), Some("a.txt"))
+        );
+        take(ui, &json!({"type": "saved", "path": "a.txt", "modified": 2}), &send);
+        assert!(said.borrow().iter().all(|m| m["type"] != "git_merge_complete"), "a plain save stages nothing");
+        file.doc.edit_single(Selection::region(0, 0), "", EditType::Other);
+        file.dirty.set(true);
         said.borrow_mut().clear();
         complete(ui, &send, "merge:a.txt");
         assert_eq!(said.borrow()[0]["type"], "save", "{:?}", said.borrow());

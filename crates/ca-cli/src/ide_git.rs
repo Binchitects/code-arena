@@ -1057,6 +1057,12 @@ mod tests {
         merge_complete(p, "a.txt", false).expect("completed");
         let after = merge_info(p, "a.txt");
         assert_eq!(after["unmerged"], false, "staged, it is merged: {after}");
+        // Asked to anyway, a file with its markers is staged as it is.
+        git(p, &["checkout", "-m", "--", "a.txt"], None).expect("the conflict made again");
+        assert_eq!(merge_info(p, "a.txt")["unmerged"], true);
+        merge_complete(p, "a.txt", true).expect("completed with conflicts");
+        assert_eq!(merge_info(p, "a.txt")["unmerged"], false);
+        assert!(has_markers(&std::fs::read_to_string(p.join("a.txt")).expect("r")));
         assert_eq!(merge_complete(p, "../out.txt", true).map_err(|e| e.contains("not a path")), Err(true));
         assert!(!has_markers("a\n=======\nb\n"), "a lone ======= is text");
         assert!(has_markers("<<<<<<< HEAD\na\n=======\nb\n>>>>>>> x\n"));
