@@ -71,7 +71,6 @@ pub fn message(data: &Path, root: &Path) -> Value {
 
 /// What an area stops when the folder's trust is taken back (its servers), by the area's name: given again from
 /// `start`, it takes the place of the one before.
-#[allow(dead_code)] // For the areas that run the folder's servers.
 pub fn on_revoke(kept: &Kept, area: &'static str, stop: impl Fn(&Shared) + Send + Sync + 'static) {
     let stops = kept.of::<Stops>();
     let mut all = stops.0.lock().unwrap_or_else(|e| e.into_inner());
