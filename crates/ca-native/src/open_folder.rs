@@ -309,6 +309,10 @@ pub fn register(_ui: Ui, _send: &Send) {
     crate::menus::add(Menu::TitleBar(FILE), item(OPEN_FOLDER).group("1_open").order(10));
     crate::menus::add(Menu::TitleBar(FILE), item(OPEN_RECENT).group("1_open").order(20));
     crate::menus::add(Menu::TitleBar(FILE), item(CLEAR_RECENT).group("1_open").order(30));
+    // The Explorer's "…": another folder in its place.
+    let explorer = Menu::ViewTitle(crate::layout::View::Files);
+    crate::menus::add(explorer, item(OPEN_FOLDER).group("9_folder").order(10));
+    crate::menus::add(explorer, item(OPEN_RECENT).group("9_folder").order(20));
 }
 
 /// The session's messages that are this part's, taken in. Never taken away from the rest of the window (false).
