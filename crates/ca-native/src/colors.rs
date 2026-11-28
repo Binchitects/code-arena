@@ -141,6 +141,14 @@ colors! {
     ruler_added: ["editorOverviewRuler.addedForeground"], "#487E0299", "#48985D99";
     ruler_modified: ["editorOverviewRuler.modifiedForeground"], "#1B81A899", "#2090D399";
     ruler_deleted: ["editorOverviewRuler.deletedForeground"], "#F14C4C99", "#E5140099";
+    minimap_bg: ["minimap.background", "editor.background"], "#1E1E1E", "#FFFFFF";
+    minimap_slider: ["minimapSlider.background"], "#79797933", "#64646433";
+    minimap_slider_hover: ["minimapSlider.hoverBackground"], "#64646459", "#64646459";
+    minimap_slider_active: ["minimapSlider.activeBackground"], "#BFBFBF33", "#0000004C";
+    minimap_selection: ["minimap.selectionHighlight", "editor.selectionBackground"], "#264F78", "#ADD6FF";
+    sticky_bg: ["editorStickyScroll.background", "editor.background"], "#1E1E1E", "#FFFFFF";
+    sticky_hover: ["editorStickyScrollHover.background"], "#2A2D2E", "#F0F0F0";
+    sticky_shadow: ["editorStickyScroll.shadow", "scrollbar.shadow"], "#000000", "#DDDDDD";
 
     tabs_bg: ["editorGroupHeader.tabsBackground"], "#252526", "#F3F3F3";
     tabs_border: ["editorGroupHeader.tabsBorder"], "#00000000", "#00000000";

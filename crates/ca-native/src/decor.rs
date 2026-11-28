@@ -282,6 +282,11 @@ impl crate::ext::State for Decor {
     }
 }
 
+/// The count of every change of the marks, followed by what draws them outside the editor (the minimap).
+pub fn rev(ui: Ui) -> RwSignal<u64> {
+    ui.state::<Decor>().rev
+}
+
 /// The hover shown: what the ranges under the pointer say, and where in the window (under their line).
 #[derive(Clone, Debug, PartialEq)]
 struct Shown {
@@ -642,12 +647,17 @@ pub fn around<V: IntoView + 'static>(ui: Ui, view: V, editor: &Editor, path: &st
     let margin = Margin { id: ViewId::new(), ui, editor: editor.clone(), path: path.to_string(), ruler: false };
     let ruler = Margin { id: ViewId::new(), ui, editor: editor.clone(), path: path.to_string(), ruler: true };
     let (screen, viewport, rev, colors) = (editor.screen_lines, editor.viewport, ui.state::<Decor>().rev, ui.colors);
-    for id in [margin.id, ruler.id] {
+    let caret = editor.cursor;
+    for (id, is_ruler) in [(margin.id, false), (ruler.id, true)] {
         floem::reactive::create_effect(move |_| {
             screen.track();
             viewport.track();
             rev.track();
             colors.track();
+            // The ruler has the caret's line.
+            if is_ruler {
+                caret.track();
+            }
             id.request_paint();
         });
     }
@@ -715,21 +725,12 @@ impl View for Margin {
 
     fn paint(&mut self, cx: &mut PaintCx) {
         let Some(size) = self.id.get_size() else { return };
-        let Some(m) = of(&self.path) else { return };
         let c = self.ui.colors.get_untracked();
         if self.ruler {
-            // VS Code's ruler: its left border, and each mark where its line is in the whole file.
-            if m.ruler.is_empty() {
-                return;
-            }
-            cx.fill(&Rect::new(0.0, 0.0, 1.0, size.height), on_editor(c.ruler_border, &c), 0.0);
-            let lines = (self.editor.last_line() + 1) as f64;
-            for (line, color) in &m.ruler {
-                let y = ((*line as f64 / lines) * size.height).min(size.height - 3.0).max(0.0);
-                cx.fill(&Rect::new(1.0, y, size.width, y + 3.0), *color, 0.0);
-            }
+            self.paint_ruler(cx, size.width, size.height, &c);
             return;
         }
+        let Some(m) = of(&self.path) else { return };
         let top = self.editor.viewport.get_untracked().y0;
         let height = self.editor.line_height(0) as f64;
         let family: Vec<FamilyOwned> = FamilyOwned::parse_list("codicon").collect();
@@ -743,6 +744,38 @@ impl View for Margin {
                 cx.draw_text(&layout, Point::new(1.0, y - top + (height - 16.0) / 2.0));
             }
         });
+    }
+}
+
+impl Margin {
+    /// VS Code's overview ruler: its left border, each mark where its line is in the height scrolled over (by the
+    /// folds' rows), at least 3 px high, and the caret's line as a 2 px line across in the caret's colour.
+    fn paint_ruler(&self, cx: &mut PaintCx, width: f64, height: f64, c: &Colors) {
+        let e = &self.editor;
+        cx.fill(&Rect::new(0.0, 0.0, 1.0, height), on_editor(c.ruler_border, c), 0.0);
+        let map = crate::editor::folding::followed(&self.path, e);
+        let line_height = f64::from(e.line_height(0));
+        let lines = e.last_line() + 1;
+        let rows = map.as_ref().map_or(lines, |m| m.rows(lines)) as f64;
+        let vp = e.viewport.get_untracked();
+        let beyond = if e.es.with_untracked(|s| s.scroll_beyond_last_line()) { (vp.height() - line_height).max(0.0) } else { 0.0 };
+        let scroll_height = (rows * line_height + beyond).max(vp.height()).max(1.0);
+        let ratio = height / scroll_height;
+        let y_of = |line: usize| map.as_ref().map_or(line, |m| m.row_of_line(line)) as f64 * line_height * ratio;
+        if let Some(m) = of(&self.path) {
+            for (line, color) in &m.ruler {
+                // As VS Code's: a mark shorter than its least height is drawn that high around its middle.
+                let (y0, y1) = (y_of(*line), y_of(*line) + line_height * ratio);
+                let mid = (y0 + y1) / 2.0;
+                let (y0, y1) = if y1 - y0 < 3.0 { (mid - 1.5, mid + 1.5) } else { (y0, y1) };
+                let y0 = y0.clamp(0.0, (height - 3.0).max(0.0));
+                cx.fill(&Rect::new(1.0, y0, width, y0 + (y1 - y0).max(3.0)), *color, 0.0);
+            }
+        }
+        let caret = e.cursor.with_untracked(|cur| cur.offset());
+        let mid = y_of(e.line_of_offset(caret)) + line_height * ratio / 2.0;
+        let y = (mid - 1.0).clamp(0.0, (height - 2.0).max(0.0));
+        cx.fill(&Rect::new(1.0, y, width, y + 2.0), on_editor(c.cursor.multiply_alpha(0.7), c), 0.0);
     }
 }
 
