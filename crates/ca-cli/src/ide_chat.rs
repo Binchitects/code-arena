@@ -17,6 +17,7 @@
 //!   thinking, the modes).
 //! - `queue.rs`: the messages sent while a turn runs, numbered, changed or taken back until read (`queue_edit`,
 //!   `queue_cancel`, `queue_clear`), and said to be read (`took_in`).
+//! - `quotes.rs`: a message that quotes part of an answer (`send{quote}`): the quote put first for the model.
 //! - `rewind.rs`: what going back to a question would do (`rewind_preview`), and a question asked again.
 
 use serde_json::Value;
@@ -29,6 +30,7 @@ pub(crate) mod library;
 mod mentions;
 pub mod pickers;
 pub mod queue;
+pub mod quotes;
 pub mod replay;
 pub mod rewind;
 
@@ -64,6 +66,7 @@ impl Area for Here {
 
     fn shape(sh: &Shared, sent: &mut Sent) {
         history::sent(sh, sent);
+        quotes::sent(sh, sent);
     }
 
     async fn before_turn(ctx: &mut Ctx<'_>, message: &str) {
