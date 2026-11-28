@@ -829,7 +829,7 @@ enum Own {
     Not,
     Done,
     /// A turn is to run with it (`again`).
-    Turn(Sent),
+    Turn(Box<Sent>),
 }
 
 /// The driver's own messages that need the session, answered between turns.
@@ -920,7 +920,7 @@ async fn own_idle(m: &Value, p: &mut Prepared, app: &mut App, sh: &Shared) -> Ow
                     }
                     ide_ext::say(out, &said.join(" "));
                     if again && let Some(sent) = crate::ide_chat::rewind::again(m, asked) {
-                        return Own::Turn(sent);
+                        return Own::Turn(Box::new(sent));
                     }
                 }
                 Err(e) => ide_ext::say(out, &e.to_string()),
@@ -1088,7 +1088,8 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
                     ide_ext::idle(&mut ctx, &msg).await;
                 }
                 settled(&mut sh, &p, app, &drv, &side);
-                if let Own::Turn(mut sent) = own {
+                if let Own::Turn(sent) = own {
+                    let mut sent = *sent;
                     ide_ext::shape(&sh, &mut sent);
                     if !sent.done {
                         // Another model or thinking for this answer only: what was in force comes back after it.
@@ -1245,6 +1246,7 @@ async fn turn(
     let jobs = p.agent.ctx.jobs.clone();
     let mut events = PageEvents::new(out.clone(), Some(sh.clone()));
     let result = {
+        p.agent.attached = std::mem::take(&mut sent.attached);
         let running = p.agent.turn(&message, &mut events);
         tokio::pin!(running);
         loop {

@@ -79,7 +79,10 @@ pub fn short_tokens(n: u64) -> String {
 
 /// The characters one message brings to a request.
 pub fn message_chars(m: &Message) -> usize {
-    m.content.len() + m.tool_calls.iter().map(|c| c.name.len() + c.arguments.len() + 30).sum::<usize>() + 12
+    m.content.len()
+        + m.tool_calls.iter().map(|c| c.name.len() + c.arguments.len() + 30).sum::<usize>()
+        + 12
+        + m.images.len() * PICTURE_CHARS
 }
 
 /// The characters a request holds: the system prompt, the messages and the tools' definitions.

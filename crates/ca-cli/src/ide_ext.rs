@@ -463,6 +463,8 @@ pub struct Sent {
     pub done: bool,
     /// More fields for the `user` (or `queued`) message the faces get.
     pub fields: Map<String, Value>,
+    /// The files attached to it, as the model reads them after the words (the turn takes them).
+    pub attached: ca_agent::Attached,
 }
 
 impl Sent {
@@ -475,6 +477,7 @@ impl Sent {
             later: false,
             done: false,
             fields: Map::new(),
+            attached: ca_agent::Attached::default(),
         }
     }
 

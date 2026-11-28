@@ -480,6 +480,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "image",
  "nix",
  "regex",
  "ring",

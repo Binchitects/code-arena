@@ -16,7 +16,9 @@
 //! - `sent_with`: a part's share of the box's next message. Its `fill` is given the message on its way out and adds
 //!   its fields (`context`, `quote`, `attachments`), taking them out of the box; its `more` says there is something
 //!   to send though no word is typed (the send button is lit, and `fill` then gives the message its words); its
-//!   `back` is given a message the session refused, to put back what `fill` took.
+//!   `back` is given a message the session refused, to put back what `fill` took; its `ready` false holds the
+//!   message back (a file still on its way up: the send button is dim, Enter sends nothing).
+//! - `on_drop`: the part given files dropped on the box from the system (`dropped` reaches it).
 //! - `pieces_by`: the part that keeps the lines of files sent with the next message (`add_piece` reaches it).
 //! - `caret`, `place`, `replace`: where the caret is in the box's text and in the window, where the box is, and a
 //!   part of its text made another (a name completed). The box's text itself is `ui.draft`.
@@ -94,11 +96,13 @@ pub struct With {
     pub fill: Fill,
     /// A message the session refused: what `fill` took is put back.
     pub back: Back,
+    /// Whether the part lets the message go now (false: a file still on its way up). Read where it is followed.
+    pub ready: Rc<dyn Fn(Ui) -> bool>,
 }
 
 /// A part's share of the box's next message: what fills it. `more` and `back` are added to it when it has them.
 pub fn with(fill: impl Fn(Ui, &mut Value) + 'static) -> With {
-    With { more: Rc::new(|_| false), fill: Rc::new(fill), back: Rc::new(|_, _| {}) }
+    With { more: Rc::new(|_| false), fill: Rc::new(fill), back: Rc::new(|_, _| {}), ready: Rc::new(|_| true) }
 }
 
 impl With {
@@ -109,6 +113,11 @@ impl With {
 
     pub fn back(mut self, back: impl Fn(Ui, &Value) + 'static) -> With {
         self.back = Rc::new(back);
+        self
+    }
+
+    pub fn ready(mut self, test: impl Fn(Ui) -> bool + 'static) -> With {
+        self.ready = Rc::new(test);
         self
     }
 }
@@ -122,7 +131,11 @@ struct Added<T> {
 
 type Kept<T> = RefCell<Vec<Added<T>>>;
 
+/// What is given a file dropped on the box.
+type OnDrop = Rc<dyn Fn(Ui, &Send, &std::path::Path)>;
+
 thread_local! {
+    static DROP: RefCell<Option<OnDrop>> = const { RefCell::new(None) };
     static BRIDGE: RefCell<Option<Bridge>> = const { RefCell::new(None) };
     static KEYS: Kept<OnKey> = const { RefCell::new(Vec::new()) };
     static WITH: Kept<With> = const { RefCell::new(Vec::new()) };
@@ -239,6 +252,24 @@ pub fn sent_with(id: &'static str, order: i32, what: With) {
 /// look): the signals a part's `more` reads tell it.
 pub fn more(ui: Ui) -> bool {
     all(&WITH).into_iter().any(|w| (w.more)(ui))
+}
+
+/// Whether every part lets the box's message go now: while one does not, the send button is dim and Enter sends
+/// nothing.
+pub fn ready(ui: Ui) -> bool {
+    all(&WITH).into_iter().all(|w| (w.ready)(ui))
+}
+
+/// Adds what is given files dropped on the box from the system (one added again takes the first's place).
+pub fn on_drop(drop: impl Fn(Ui, &Send, &std::path::Path) + 'static) {
+    DROP.with(|d| *d.borrow_mut() = Some(Rc::new(drop)));
+}
+
+/// A file dropped on the box from the system, given to the part that takes them; false when none does.
+pub fn dropped(ui: Ui, send: &Send, path: &std::path::Path) -> bool {
+    let Some(drop) = DROP.with(|d| d.borrow().clone()) else { return false };
+    drop(ui, send, path);
+    true
 }
 
 /// The box's message on its way out, given to each part to fill.
