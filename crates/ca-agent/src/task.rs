@@ -451,6 +451,13 @@ fn ctx_call(ctx: &Context) -> Option<String> {
     ctx.call.clone().filter(|c| !c.is_empty())
 }
 
+/// A sub-agent the person stopped: what it did so far is told, and the model hears it was stopped.
+fn stopped(name: &str, events: &mut Steps, ending: &mut Ending) -> Output {
+    events.flush();
+    ending.end(End { status: "stopped", report: String::new(), error: Some("Stopped by you.".into()) });
+    Output::error(format!("The person stopped {name} before it reported."))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -532,11 +539,4 @@ mod tests {
         stop.wait().await;
         assert!(stop.asked());
     }
-}
-
-/// A sub-agent the person stopped: what it did so far is told, and the model hears it was stopped.
-fn stopped(name: &str, events: &mut Steps, ending: &mut Ending) -> Output {
-    events.flush();
-    ending.end(End { status: "stopped", report: String::new(), error: Some("Stopped by you.".into()) });
-    Output::error(format!("The person stopped {name} before it reported."))
 }

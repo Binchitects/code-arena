@@ -160,9 +160,7 @@ fn piece_of(p: &Value) -> Option<Piece> {
 impl Detail {
     /// An `agent_task` reply (none: it says the session has no such task).
     pub fn from_json(v: &Value) -> Option<Detail> {
-        if v.get("status").is_none() {
-            return None;
-        }
+        v.get("status")?;
         let mut steps: Vec<Vec<Piece>> = v["work"]
             .as_array()
             .into_iter()
