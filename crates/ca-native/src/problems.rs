@@ -42,7 +42,7 @@ use std::rc::Rc;
 
 use floem::peniko::Color;
 use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_memo, create_rw_signal};
-use floem::style::CursorStyle;
+use floem::style::{CursorStyle, TextOverflow};
 use floem::views::editor::core::cursor::CursorAffinity;
 use floem::views::{Decorators, container, h_stack, label, text_input, tooltip, v_stack};
 use floem::{AnyView, IntoView};
@@ -896,7 +896,8 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
             NONE_SHOWN.to_string()
         }
     })
-    .style(move |st| st.color(t.get().desc));
+    // A narrow side bar wraps it, as VS Code's message does, rather than clipping it.
+    .style(move |st| st.color(t.get().desc).text_overflow(TextOverflow::Wrap).min_width(0.0).max_width_full());
     let note =
         h_stack((said, clear.style(move |st| st.apply_if(hidden.get() == 0, |st| st.hide())))).style(move |st| {
             st.gap(6.0)
