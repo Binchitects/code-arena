@@ -13,6 +13,9 @@
 //! - the file as saved on disk (`Saved`, "a.rs (Saved)"), or another file (`File`), read with the driver's `open`
 //!   (the reply is taken here, not opened as a tab) and read again when it changes on disk;
 //! - the file before the agent changed it (`Before`, "a.rs (before the agent)"), from the Changes view's list;
+//! - the file as git's index has it (`Index`, "a.rs (Index)") or as the last commit has it (`Head`, "a.rs (HEAD)"),
+//!   read with the driver's `git_show` (keyed `compare`) and read again after every `git_status`; the Source
+//!   Control view opens these, and `ranges.rs` stages and unstages their lines;
 //! - the clipboard's text, read when the compare is opened (`Clipboard`), or nothing (`Empty`).
 //!
 //! A compare is a tab of the kind `compare` (`editor::kinds`), its path `compare:` and the two sides
@@ -74,6 +77,10 @@ pub enum Source {
     File(String),
     /// The file before the agent changed it.
     Before(String),
+    /// The file as git's index has it.
+    Index(String),
+    /// The file as the last commit has it.
+    Head(String),
     /// The clipboard's text when the compare was opened (the number tells two such compares apart).
     Clipboard(u64),
     Empty,
@@ -87,6 +94,8 @@ impl Source {
             Source::Saved(p) => format!("saved:{p}"),
             Source::File(p) => format!("file:{p}"),
             Source::Before(p) => format!("before:{p}"),
+            Source::Index(p) => format!("index:{p}"),
+            Source::Head(p) => format!("head:{p}"),
             Source::Clipboard(n) => format!("clipboard:{n}"),
             Source::Empty => "empty".into(),
         }
@@ -103,6 +112,8 @@ impl Source {
             "saved" => Source::Saved(p),
             "file" => Source::File(p),
             "before" => Source::Before(p),
+            "index" => Source::Index(p),
+            "head" => Source::Head(p),
             "clipboard" => Source::Clipboard(rest.parse().ok()?),
             _ => return None,
         })
@@ -111,7 +122,12 @@ impl Source {
     /// The file it is of (none: the clipboard, nothing).
     pub fn file(&self) -> Option<&str> {
         match self {
-            Source::Live(p) | Source::Saved(p) | Source::File(p) | Source::Before(p) => Some(p),
+            Source::Live(p)
+            | Source::Saved(p)
+            | Source::File(p)
+            | Source::Before(p)
+            | Source::Index(p)
+            | Source::Head(p) => Some(p),
             Source::Clipboard(_) | Source::Empty => None,
         }
     }
@@ -123,6 +139,8 @@ impl Source {
             Source::Live(p) | Source::File(p) => name(p),
             Source::Saved(p) => format!("{} (Saved)", name(p)),
             Source::Before(p) => format!("{} (before the agent)", name(p)),
+            Source::Index(p) => format!("{} (Index)", name(p)),
+            Source::Head(p) => format!("{} (HEAD)", name(p)),
             Source::Clipboard(_) => "Clipboard".into(),
             Source::Empty => "Empty".into(),
         }
@@ -135,7 +153,19 @@ impl Source {
             _ => None,
         }
     }
+
+    /// The revision `git_show` reads it from (empty: the index), when it is read from git.
+    fn git_rev(&self) -> Option<(&'static str, &str)> {
+        match self {
+            Source::Index(p) => Some(("", p)),
+            Source::Head(p) => Some(("HEAD", p)),
+            _ => None,
+        }
+    }
 }
+
+/// The key the compare's `git_show` requests go by.
+pub const GIT_KEY: &str = "compare";
 
 /// The path of the tab comparing two sides.
 pub fn path_of(left: &Source, right: &Source) -> String {
@@ -164,6 +194,8 @@ pub struct Half {
     pub key: String,
     /// Whether it is the file's own text (edited, saved).
     pub editable: bool,
+    /// Whether its text has come (a side read from git is empty until it has).
+    come: Cell<bool>,
 }
 
 /// A compare open in a tab.
@@ -270,7 +302,8 @@ pub fn open_with(ui: Ui, send: &Send, left: Source, right: Source, texts: (Optio
             };
             let colours = crate::highlight::Colours::new(doc.clone(), &key);
             folding::attach(ui, &key, &doc);
-            Half { source, doc, colours, key, editable }
+            let come = Cell::new(source.git_rev().is_none());
+            Half { source, doc, colours, key, editable, come }
         };
         let e = Rc::new(Entry {
             path: path.clone(),
@@ -289,6 +322,7 @@ pub fn open_with(ui: Ui, send: &Send, left: Source, right: Source, texts: (Optio
             {
                 ask(send, p, &path);
             }
+            ask_git(send, &half.source);
             let (colours, weak, p) = (half.colours.clone(), Rc::downgrade(&half.doc), path.clone());
             half.doc.add_on_update(move |u| {
                 if let Some(doc) = weak.upgrade() {
@@ -318,7 +352,25 @@ fn known_text(ui: Ui, s: &Source) -> Option<String> {
         ),
         Source::Clipboard(_) => Some(floem::Clipboard::get_contents().unwrap_or_default()),
         Source::Empty => Some(String::new()),
+        Source::Index(_) | Source::Head(_) => None,
     }
+}
+
+/// A side read from git asked of the driver.
+fn ask_git(send: &Send, s: &Source) {
+    if let Some((rev, path)) = s.git_rev() {
+        send(json!({"type": "git_show", "repo": "", "path": path, "rev": rev, "working": false, "key": GIT_KEY}));
+    }
+}
+
+/// Whether a side's text has come.
+pub fn has_come(h: &Half) -> bool {
+    h.come.get()
+}
+
+/// A side read from git given the text it has now (just staged or unstaged), before git says it again.
+pub fn set_side(h: &Half, text: &str) {
+    fill(&h.doc, text);
 }
 
 /// A file asked of the driver for a compare.
@@ -749,6 +801,39 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 });
                 for compare in shown.into_iter().filter(|c| living(ui, c).is_some()) {
                     ask(send, path, &compare);
+                }
+            }
+            false
+        }
+        // A side read from git: its text put in every open compare that shows it.
+        "git_shown" if m["key"] == GIT_KEY => {
+            let (path, rev) = (m["path"].as_str().unwrap_or(""), m["rev"].as_str().unwrap_or(""));
+            let text = if m["binary"] == true || m["too_large"] == true {
+                ui.message.set(format!("{path} is not compared: it is binary or too large."));
+                ""
+            } else {
+                m["text"].as_str().unwrap_or("")
+            };
+            for e in OPEN.with(|o| o.borrow().values().cloned().collect::<Vec<_>>()) {
+                if living(ui, &e.path).is_none() {
+                    continue;
+                }
+                for half in [&e.left, &e.right] {
+                    if half.source.git_rev() == Some((rev, path)) {
+                        fill(&half.doc, text);
+                        half.come.set(true);
+                    }
+                }
+            }
+            true
+        }
+        // The index or HEAD may be other now: the sides read from git asked again.
+        "git_status" if m["repo"].as_str().unwrap_or("").is_empty() => {
+            for e in OPEN.with(|o| o.borrow().values().cloned().collect::<Vec<_>>()) {
+                if living(ui, &e.path).is_some() {
+                    for half in [&e.left, &e.right] {
+                        ask_git(send, &half.source);
+                    }
                 }
             }
             false
