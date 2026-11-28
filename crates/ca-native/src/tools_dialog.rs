@@ -655,7 +655,7 @@ fn tool_row(ui: Ui, send: Send, e: Entry, here: bool, saving: bool, open: bool) 
                 })
                 .collect()
         };
-        head.push(dropdown(t, words.into(), 132.0, choices, ui));
+        head.push(dropdown(t, words.into(), 150.0, choices, ui));
     }
     let gear_name = name.clone();
     head.push(
