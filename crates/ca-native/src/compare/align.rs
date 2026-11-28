@@ -56,12 +56,15 @@ pub struct Compared {
 /// The longest a hunk may be on either side for its words to be compared (the work grows as their product).
 const MOST_WORD_LINES: usize = 400;
 
+/// A side's empty rows: each the line they are drawn above and how many.
+pub type Fillers = Vec<(usize, usize)>;
+
 /// The editor's lines of a text, each without its `\n`.
 pub fn lines(text: &str) -> Vec<&str> {
     text.split('\n').collect()
 }
 
-fn key<'a>(line: &'a str, trim: bool) -> &'a str {
+fn key(line: &str, trim: bool) -> &str {
     let line = line.strip_suffix('\r').unwrap_or(line);
     if trim { line.trim() } else { line }
 }
@@ -182,7 +185,7 @@ fn words(left: &[&str], right: &[&str], trim: bool) -> (Vec<Word>, Vec<Word>) {
 /// The empty rows each side has (left, right), each as the line they are drawn above and how many: under a hunk,
 /// the side with fewer lines has as many rows as the other has more (the line "above" may be the line count, under
 /// the last).
-pub fn fillers(hunks: &[Hunk]) -> (Vec<(usize, usize)>, Vec<(usize, usize)>) {
+pub fn fillers(hunks: &[Hunk]) -> (Fillers, Fillers) {
     let (mut l, mut r) = (Vec::new(), Vec::new());
     for h in hunks {
         let (a, b) = (h.left.len(), h.right.len());
@@ -295,7 +298,9 @@ mod tests {
         assert_eq!(l, [(4, 1), (5, 1)], "the original gets a row under four and under five");
         assert!(r.is_empty());
         // Every line both have stands on the same row once the fillers are counted.
-        let row = |fill: &[(usize, usize)], line: usize| line + fill.iter().filter(|f| f.0 <= line).map(|f| f.1).sum::<usize>();
+        let row = |fill: &[(usize, usize)], line: usize| {
+            line + fill.iter().filter(|f| f.0 <= line).map(|f| f.1).sum::<usize>()
+        };
         assert_eq!(row(&l, 3), row(&r, 3), "four beside four");
         assert_eq!(row(&l, 4), row(&r, 5), "five beside five");
         assert_eq!(row(&l, 5), row(&r, 7), "the last lines beside each other");

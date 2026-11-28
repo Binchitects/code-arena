@@ -195,7 +195,8 @@ pub fn register(_ui: Ui, _send: &Send) {
         command(WITH_SELECTED, "File", "Compare with Selected", |ui, send| {
             let Some(first) = SELECTED.with(|s| s.borrow().clone()) else { return };
             if let Some(p) = chosen(ui).filter(|p| *p != first) {
-                let live = |p: String| if ui.tab(&p).is_some_and(|t| t.is_file()) { Source::Live(p) } else { Source::File(p) };
+                let live =
+                    |p: String| if ui.tab(&p).is_some_and(|t| t.is_file()) { Source::Live(p) } else { Source::File(p) };
                 super::open(ui, send, live(first), live(p));
             }
         })

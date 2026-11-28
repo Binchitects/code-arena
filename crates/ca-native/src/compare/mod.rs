@@ -33,11 +33,11 @@ use floem::kurbo::{Line as Segment, Rect, Stroke, Vec2};
 use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_effect, create_memo};
 use floem::views::editor::Editor;
 use floem::views::editor::command::CommandExecuted;
+use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::core::editor::EditType;
 use floem::views::editor::core::selection::Selection;
 use floem::views::editor::keypress::KeypressMap;
 use floem::views::editor::keypress::key::KeyInput;
-use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::text::Document;
 use floem::views::editor::text_document::TextDocument;
 use floem::views::{Decorators, dyn_container, empty, h_stack, label, stack, v_stack};
@@ -289,7 +289,8 @@ fn known_text(ui: Ui, s: &Source) -> Option<String> {
             ui.tab(p).filter(|t| t.is_file() && !t.dirty.get_untracked()).map(|t| t.text())
         }
         Source::Before(p) => Some(
-            ui.changes.with_untracked(|c| c.iter().find(|c| c.path == *p).and_then(|c| c.before.clone()))
+            ui.changes
+                .with_untracked(|c| c.iter().find(|c| c.path == *p).and_then(|c| c.before.clone()))
                 .unwrap_or_default(),
         ),
         Source::Clipboard(_) => Some(floem::Clipboard::get_contents().unwrap_or_default()),
@@ -588,7 +589,8 @@ fn side(ui: Ui, e: &Rc<Entry>, half: &Half) -> (Editor, AnyView) {
         id.request_paint();
     });
     let hatch = hatch.style(|s| s.absolute().size_full());
-    let view = stack((hatch, ed)).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full()).into_any();
+    let view =
+        stack((hatch, ed)).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full()).into_any();
     (editor, view)
 }
 
@@ -633,13 +635,11 @@ impl View for Hatch {
 /// What it adds to the window's registries, once at start: its kind of tab; and every compare is compared again
 /// when the ignoring of trim whitespace changes.
 pub fn register(ui: Ui, _send: &Send) {
-    kinds::add(
-        kinds::kind(KIND, |_ui, rest| title_of(rest), view).icon("diff").save(|ui, send, tab| {
-            if let Some(Source::Live(p)) = entry(&tab.path).and_then(|e| e.live().map(|h| h.source.clone())) {
-                ui.save_tab(&p, send);
-            }
-        }),
-    );
+    kinds::add(kinds::kind(KIND, |_ui, rest| title_of(rest), view).icon("diff").save(|ui, send, tab| {
+        if let Some(Source::Live(p)) = entry(&tab.path).and_then(|e| e.live().map(|h| h.source.clone())) {
+            ui.save_tab(&p, send);
+        }
+    }));
     let trim = crate::settings::memo(ui, "diffEditor.ignoreTrimWhitespace", || None);
     create_effect(move |first: Option<()>| {
         trim.track();
@@ -703,10 +703,13 @@ mod tests {
         let (l, r) = (Source::Saved("src/a.rs".into()), Source::Live("src/a.rs".into()));
         let path = path_of(&l, &r);
         assert_eq!(path, "compare:saved:src/a.rs ↔ live:src/a.rs");
-        let rest = kinds::split(&path).unwrap().1;
+        let rest = kinds::split(&path).expect("a kind path").1;
         assert_eq!(sides_of(rest), Some((l, r)));
         assert_eq!(title_of(rest), "a.rs (Saved) ↔ a.rs");
-        let rest = kinds::split(&path_of(&Source::Clipboard(3), &Source::Live("b.md".into()))).unwrap().1.to_string();
+        let rest = kinds::split(&path_of(&Source::Clipboard(3), &Source::Live("b.md".into())))
+            .expect("a kind path")
+            .1
+            .to_string();
         assert_eq!(title_of(&rest), "Clipboard ↔ b.md");
         assert_eq!(Source::Before("x/y.py".into()).label(), "y.py (before the agent)");
         assert_eq!(Source::parse("empty"), Some(Source::Empty));
@@ -721,7 +724,7 @@ mod tests {
         let send: Send = Rc::new(move |v: Value| kept.borrow_mut().push(v));
         register(ui, &send);
         ui.take(&json!({"type": "file", "path": "a.rs", "text": "one\ntwo\nthree\n", "modified": 1}), &send);
-        let tab = ui.tab("a.rs").unwrap();
+        let tab = ui.tab("a.rs").expect("the file is open");
         tab.doc.edit_single(Selection::region(4, 7), "2", EditType::Other);
         assert!(tab.dirty.get_untracked());
         asked.borrow_mut().clear();
@@ -732,7 +735,7 @@ mod tests {
         // The reply is the compare's: taken away, not the file's tab's.
         let reply = json!({"type": "file", "path": "a.rs", "text": "one\ntwo\nthree\n", "modified": 1});
         assert!(take(ui, &reply, &send));
-        let e = entry(path).unwrap();
+        let e = entry(path).expect("the compare is open");
         assert_eq!(e.left.doc.text().to_string(), "one\ntwo\nthree\n");
         assert!(Rc::ptr_eq(&e.right.doc, &tab.doc), "the modified side is the file's own text");
         // Revert Block puts the saved line back into the file's text.
