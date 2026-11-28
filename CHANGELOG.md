@@ -1140,6 +1140,16 @@ Sections used:
   longer hidden below the fold.
 - **Multi-line notices are readable.** The output of a !command and other notices of several lines
   in the thread are no longer squeezed together.
+- **Send button kept in a narrow chat box.** With the tools and providers buttons in the toolbar,
+  the send button no longer runs past the panel's edge and the model picker no longer shrinks to
+  nothing; the thinking picker's words give way first.
+- **Activity bar follows the view shown.** A view opened from the palette or a key, such as
+  Projects, has its icon scrolled into sight instead of lit below the bar's fold.
+- **MCP servers dialog names each server once.** A server titled by its own name no longer shows the
+  name twice.
+- **Keyless local provider not flagged.** A provider at an http:// address or ollama, kept without a
+  key, says 'No key needed' instead of a red 'No key'.
+- **Sign-in prompt.** The address step no longer says twice to press Enter.
 
 ## v0.5.0 (2026-11-26)
 
