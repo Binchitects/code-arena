@@ -11,6 +11,9 @@ mkdir -p /tmp/home/config /tmp/work/src
 cat >/tmp/home/config/settings.json <<'JSON'
 {"arena.syncChats": false, "mcp.arenaTools": false, "mcp.codeIntelTools": false}
 JSON
+# The project is trusted, so the window opens without the trust question; to see it, remove this file and restart.
+mkdir -p /tmp/home/data
+printf '{"folders": {"/tmp/work": true}}\n' >/tmp/home/data/trust.json
 cd /tmp/work
 printf 'fn main() {\n    println!("hello");\n}\n' >src/main.rs
 printf 'pub struct Cart {\n    items: Vec<u32>,\n}\n\nimpl Cart {\n    pub fn total(&self) -> u32 {\n        self.items.iter().sum()\n    }\n}\n' >src/lib.rs
