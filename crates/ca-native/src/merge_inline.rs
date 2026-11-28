@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
+use floem::IntoView;
 use floem::event::{Event, EventListener};
 use floem::kurbo::Point;
 use floem::reactive::{RwSignal, SignalGet, SignalTrack, SignalUpdate, SignalWith, create_rw_signal};
@@ -20,7 +21,6 @@ use floem::views::editor::core::editor::EditType;
 use floem::views::editor::core::selection::Selection;
 use floem::views::editor::text::Document;
 use floem::views::{Decorators, container};
-use floem::IntoView;
 use serde_json::Value;
 
 use crate::commands::{self, command};
@@ -586,15 +586,15 @@ mod tests {
     #[test]
     fn a_click_on_the_lens_finds_its_entry() {
         let drawn = format!("<<<<<<< HEAD (Current Change){}", lens_text(false));
-        let first = drawn.find("Accept Current").unwrap();
+        let first = drawn.find("Accept Current").expect("in the lens");
         assert_eq!(pick_at(&drawn, first, false), Some(Pick::Accept(Choice::Current)));
-        let both = drawn.find("Both Changes").unwrap();
+        let both = drawn.find("Both Changes").expect("in the lens");
         assert_eq!(pick_at(&drawn, both, false), Some(Pick::Accept(Choice::Both)));
-        let bar = drawn.find(" | ").unwrap();
+        let bar = drawn.find(" | ").expect("in the lens");
         assert_eq!(pick_at(&drawn, bar + 1, false), None);
         assert_eq!(pick_at(&drawn, 3, false), None);
         let with = format!("<<<<<<< HEAD{}", lens_text(true));
-        assert_eq!(pick_at(&with, with.find("Resolve").unwrap(), true), Some(Pick::Editor));
+        assert_eq!(pick_at(&with, with.find("Resolve").expect("in the lens"), true), Some(Pick::Editor));
     }
 
     #[test]
