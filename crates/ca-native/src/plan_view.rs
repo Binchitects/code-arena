@@ -271,7 +271,12 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
 /// Wrapped words, in the description's colour.
 fn desc(t: Theme, words: String) -> impl IntoView {
     label(move || words.clone()).style(move |s| {
-        s.font_size(12.0).color(t.get().desc).text_overflow(TextOverflow::Wrap).min_width(0.0).max_width_full()
+        s.font_size(12.0)
+            .line_height(1.4)
+            .color(t.get().desc)
+            .text_overflow(TextOverflow::Wrap)
+            .min_width(0.0)
+            .max_width_full()
     })
 }
 
@@ -295,7 +300,7 @@ fn nothing(ui: Ui, send: Send) -> impl IntoView {
                         between_turns(ui, &send, json!({"type": "plan_resume"}))
                     }),
                 ))
-                .style(|s| s.gap(8.0).margin_top(12.0).items_start())
+                .style(|s| s.gap(8.0).margin_top(12.0).items_start().width_full())
                 .into_any()
             }
         },
@@ -348,18 +353,22 @@ fn review_card(ui: Ui, send: Send) -> impl IntoView {
     })
     .style(move |s| {
         let none = st.plan.with(|p| p.as_ref().is_none_or(|p| p.critique.is_none()));
-        s.font_size(12.0).color(t.get().desc).text_overflow(TextOverflow::Wrap).apply_if(none, |s| s.hide())
+        s.font_size(12.0)
+            .line_height(1.4)
+            .color(t.get().desc)
+            .text_overflow(TextOverflow::Wrap)
+            .min_width(0.0)
+            .max_width_full()
+            .apply_if(none, |s| s.hide())
     });
     let (a, b, c, d) = (send.clone(), send.clone(), send.clone(), send);
     v_stack((
-        label(|| "This plan waits for your review.").style(move |s| bold(s).font_size(12.0).color(t.get().fg)),
+        label(|| "This plan waits for your review.")
+            .style(move |s| bold(s).font_size(12.0).line_height(1.4).color(t.get().fg)),
         critique,
         h_stack((
             button(t, "Approve", true, move || review(&a, "approve", None, "")),
-            button(t, "Approve, asking before each change", false, move || review(&b, "approve-ask", None, "")),
-        ))
-        .style(|s| s.gap(6.0).flex_wrap(floem::style::FlexWrap::Wrap).row_gap(6.0)),
-        h_stack((
+            wide(t, "Approve, asking before each change", false, move || review(&b, "approve-ask", None, "")),
             button(t, "Another Way\u{2026}", false, move || {
                 review_why(ui, &c, "another", "Another Way", "Why another way? Press Enter to ask for one")
             }),
@@ -367,12 +376,13 @@ fn review_card(ui: Ui, send: Send) -> impl IntoView {
                 review_why(ui, &d, "reject", "Reject the Plan", "Why reject it? Press Enter to reject it")
             }),
         ))
-        .style(|s| s.gap(6.0).flex_wrap(floem::style::FlexWrap::Wrap).row_gap(6.0)),
+        .style(|s| s.gap(6.0).flex_wrap(floem::style::FlexWrap::Wrap).row_gap(6.0).min_width(0.0).max_width_full()),
         desc(t, "Or change a step: Change Step on the step.".into()),
     ))
     .style(move |s| {
         let c = t.get();
         s.gap(8.0)
+            .min_width(0.0)
             .margin_horiz(12.0)
             .margin_bottom(8.0)
             .padding(10.0)
@@ -380,8 +390,27 @@ fn review_card(ui: Ui, send: Send) -> impl IntoView {
             .border_radius(4.0)
             .border_color(c.widget_border)
             .background(c.widget)
-            .width_full()
+    })
+}
+
+/// A button whose words wrap when the side bar is narrow: the primary one or the secondary.
+fn wide(t: Theme, text: &'static str, primary: bool, on: impl Fn() + 'static) -> impl IntoView {
+    label(move || text).on_click_stop(move |_| on()).style(move |s| {
+        let c = t.get();
+        let (bg, fg, hover) =
+            if primary { (c.button_bg, c.button_fg, c.button_hover) } else { (c.button2_bg, c.button2_fg, c.button2_hover) };
+        s.padding_horiz(14.0)
+            .padding_vert(4.0)
+            .border_radius(4.0)
+            .font_size(13.0)
+            .line_height(1.4)
             .max_width_full()
+            .text_overflow(TextOverflow::Wrap)
+            .background(bg)
+            .color(fg)
+            .cursor(CursorStyle::Pointer)
+            .selectable(false)
+            .hover(|s| s.background(hover))
     })
 }
 
