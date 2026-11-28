@@ -311,6 +311,15 @@ colors! {
     banner_bg: ["banner.background", "list.activeSelectionBackground"], "#04395E", "#0060C0";
     banner_fg: ["banner.foreground", "list.activeSelectionForeground"], "#FFFFFF", "#FFFFFF";
     banner_icon: ["banner.iconForeground", "editorInfo.foreground"], "#3794FF", "#1A85FF";
+    nb_cell_border: ["notebook.cellBorderColor", "list.inactiveSelectionBackground"], "#37373D", "#E4E6F1";
+    nb_focused_cell: ["notebook.focusedCellBorder", "focusBorder"], "#007FD4", "#0090F1";
+    nb_focused_editor: ["notebook.focusedEditorBorder", "focusBorder"], "#007FD4", "#0090F1";
+    nb_editor_bg: ["notebook.cellEditorBackground", "sideBar.background"], "#252526", "#F3F3F3";
+    nb_selected_bg: ["notebook.selectedCellBackground", "list.inactiveSelectionBackground"], "#37373D", "#E4E6F1";
+    nb_toolbar_separator: ["notebook.cellToolbarSeparator"], "#80808059", "#80808059";
+    nb_running: ["notebookStatusRunningIcon.foreground", "foreground"], "#CCCCCC", "#616161";
+    nb_success: ["notebookStatusSuccessIcon.foreground"], "#89D185", "#388A34";
+    nb_error: ["notebookStatusErrorIcon.foreground", "errorForeground"], "#F48771", "#A1260D";
 }
 
 #[cfg(test)]
