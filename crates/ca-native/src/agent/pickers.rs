@@ -388,13 +388,14 @@ pub(super) fn pill(ui: Ui, which: Picker, anchor: RwSignal<Rect>) -> impl IntoVi
         let lit = ui.picker.get() == Some(which);
         s.gap(2.0)
             .items_center()
-            .min_width(0.0)
+            // The model's and thinking's words give way on a narrow panel, but never to nothing.
+            .min_width(if which == Picker::Mode { 0.0 } else { 56.0 })
             .padding_horiz(6.0)
             .height(22.0)
             .border_radius(5.0)
             .font_size(12.0)
             .selectable(false)
-            .apply_if(which != Picker::Model, |s| s.flex_shrink(0.0_f32))
+            .apply_if(which == Picker::Mode, |s| s.flex_shrink(0.0_f32))
             .color(tone_color(&c, tone(which, &now), c.desc))
             .cursor(CursorStyle::Pointer)
             .apply_if(lit, |s| s.background(c.toolbar_hover))

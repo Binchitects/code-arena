@@ -810,11 +810,13 @@ pub(super) fn input(ui: Ui, send: Send, anchor: RwSignal<Rect>) -> (AnyView, Vie
         pill(ui, Picker::Model, anchor).into_any(),
         pill(ui, Picker::Thinking, anchor).into_any(),
     ];
-    tools.extend(slots::row(ui, &send, Slot::BoxLeft));
+    // The buttons keep their size: on a narrow panel the pickers' words give way (ellipsed), not the send button.
+    let whole = |v: AnyView| v.style(|s| s.flex_shrink(0.0_f32)).into_any();
+    tools.extend(slots::row(ui, &send, Slot::BoxLeft).into_iter().map(whole));
     tools.push(empty().style(|s| s.flex_grow(1.0_f32)).into_any());
-    tools.extend(slots::row(ui, &send, Slot::BoxRight));
-    tools.push(stop.into_any());
-    tools.push(go.into_any());
+    tools.extend(slots::row(ui, &send, Slot::BoxRight).into_iter().map(whole));
+    tools.push(whole(stop.into_any()));
+    tools.push(whole(go.into_any()));
     let toolbar = h_stack_from_iter(tools).style(|s| s.gap(2.0).items_center().width_full().min_width(0.0));
     let dropping = send.clone();
     let frame = v_stack_from_iter([text, toolbar.into_any()]);
