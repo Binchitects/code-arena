@@ -92,6 +92,9 @@ pub fn compact(sh: &Shared, p: Option<&Prepared>, v: &mut Value) {
         None => (sh.was.context["compact_at"].as_u64().unwrap_or(0), sh.settings.integer(&COMPACT_TARGET).max(5) as u64),
     };
     v["compact"] = json!({"at": at, "target": target, "source": source(sh), "account": sh.kept.of::<Account>().get()});
+    if let Some(p) = p {
+        v["compact"]["reserve"] = json!(p.agent.window.reserve);
+    }
 }
 
 /// What the Arena account says, asked once in the background (a managed edition signed in, the setting not given).
