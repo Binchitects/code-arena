@@ -1137,6 +1137,15 @@ Sections used:
   click goes to the line. `editor.stickyScroll.enabled` and Toggle Sticky Scroll turn it on and off.
 - **Overview ruler.** The caret's line is shown as a 2 px line, as in VS Code. Marks are placed
   by the rows drawn, so folds count, and the ruler's border is always drawn.
+- **Last commits in Source Control.** A LAST COMMITS fold under the changes lists the latest 15
+  commits (message and short hash; the tooltip gives hash, message, author and how long ago).
+  Opening a commit lists its files with git's letters, and a file opens the parent beside the
+  commit, with an empty side for an added or deleted file.
+- **Git: Open File History...** picks from the active file's commits, followed through its
+  renames, and opens the chosen commit's change to the file.
+- **Git: Compare with Revision...** compares the active file's editor with HEAD, the index, a
+  branch or tag, or one of the file's last 30 commits. **Git: Open Changes** opens the active
+  file's working-tree or staged changes.
 
 
 ### :bug: Bugs fixed
