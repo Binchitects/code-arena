@@ -67,20 +67,30 @@ pub fn ltr_line(line: &str) -> (String, usize) {
 }
 
 /// The direction of the list a block's item is in: that of the list's first item, the first one before it at its
-/// depth with only deeper items (or further paragraphs of items) between. Its bullets stand on that side; each item's
+/// depth with only deeper items (or further paragraphs of items) between, and of its kind (a numbered list after a
+/// bulleted one is a list of its own). Its bullets stand on that side; each item's
 /// words take their own direction.
 pub fn list_rtl(blocks: &[Rc<Block>], n: usize) -> bool {
-    fn item(b: &Block) -> Option<(u8, bool, &str)> {
+    // An item's depth, its kind (None: a further paragraph of the item before it; else whether it is numbered), its
+    // words.
+    fn item(b: &Block) -> Option<(u8, Option<bool>, &str)> {
         match b {
-            Block::Item { depth, marker, text } => Some((*depth, marker.is_empty(), text.text.as_str())),
+            Block::Item { depth, marker, text } => {
+                let kind = (!marker.is_empty()).then(|| marker.starts_with(|c: char| c.is_ascii_digit()));
+                Some((*depth, kind, text.text.as_str()))
+            }
             _ => None,
         }
     }
-    let Some((mine, _, words)) = blocks.get(n).and_then(|b| item(b)) else { return false };
+    let Some((mine, mut kind, words)) = blocks.get(n).and_then(|b| item(b)) else { return false };
     let mut first = words;
     for b in blocks[..n].iter().rev() {
         match item(b) {
-            Some((depth, further, words)) if depth == mine && !further => first = words,
+            Some((depth, Some(k), words)) if depth == mine && kind.is_none_or(|kind| kind == k) => {
+                kind = Some(k);
+                first = words;
+            }
+            Some((depth, Some(_), _)) if depth == mine => break,
             Some((depth, _, _)) if depth >= mine => {}
             _ => break,
         }
@@ -157,6 +167,8 @@ mod tests {
             item(1, "•", "two"),
             item(0, "", "بیشتر"),
             item(0, "•", "last"),
+            item(0, "1.", "یک"),
+            item(0, "2.", "two"),
             para("after"),
             item(0, "1.", "سلام"),
             item(0, "2.", "hello"),
@@ -169,9 +181,12 @@ mod tests {
         // The nested list begins in Persian.
         assert!(list_rtl(&blocks, 3));
         assert!(list_rtl(&blocks, 4));
-        // A list after a paragraph is a list of its own.
+        // A numbered list right after a bulleted one is a list of its own.
+        assert!(list_rtl(&blocks, 7));
         assert!(list_rtl(&blocks, 8));
-        assert!(list_rtl(&blocks, 9));
+        // A list after a paragraph is a list of its own.
+        assert!(list_rtl(&blocks, 10));
+        assert!(list_rtl(&blocks, 11));
         // Not an item.
         assert!(!list_rtl(&blocks, 0));
     }
