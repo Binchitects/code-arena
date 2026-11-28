@@ -137,7 +137,8 @@ pub(super) fn card(ui: Ui, send: Send, id: u64, asked: Asked, answer: RwSignal<O
         h_stack((
             icon(if laya_warns { "warning" } else { "shield" }, 14.0)
                 .style(move |s| s.apply_if(laya_warns, |s| s.color(t.get().warning))),
-            label(move || laya_text.clone()).style(|s| s.text_overflow(TextOverflow::Wrap).min_width(0.0)),
+            label(move || laya_text.clone())
+                .style(|s| s.line_height(1.4).text_overflow(TextOverflow::Wrap).min_width(0.0)),
         ))
         .style(move |s| s.gap(6.0).items_center().color(t.get().desc).apply_if(laya.is_none(), |s| s.hide())),
         h_stack((
@@ -149,6 +150,7 @@ pub(super) fn card(ui: Ui, send: Send, id: u64, asked: Asked, answer: RwSignal<O
         .style(move |s| s.gap(8.0).apply_if(!open(), |s| s.hide())),
         label(move || always_text.clone()).style(move |s| {
             s.font_size(12.0)
+                .line_height(1.4)
                 .color(t.get().desc)
                 .text_overflow(TextOverflow::Wrap)
                 .apply_if(!offers_always || !open(), |s| s.hide())

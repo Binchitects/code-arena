@@ -387,7 +387,7 @@ pub fn always_text(tool: &str, kind: Kind, subject: &str) -> Option<String> {
     }
     let what = match kind {
         Kind::Edit => "about file edits".to_string(),
-        Kind::Shell if tool == "run_shell" => format!("for commands that start with `{}`", first_words(subject)),
+        Kind::Shell if tool == "run_shell" => format!("for commands that start with \"{}\"", first_words(subject)),
         _ => format!("for {tool}"),
     };
     Some(format!("Always for this session: no more questions {what}."))
@@ -489,7 +489,7 @@ mod tests {
         assert_eq!(p.decide("run_shell", Kind::Shell, "[no time limit] cargo build"), Decision::Ask);
         assert_eq!(
             always_text("run_shell", Kind::Shell, "[in the background] npm run dev").as_deref(),
-            Some("Always for this session: no more questions for commands that start with `npm run`.")
+            Some("Always for this session: no more questions for commands that start with \"npm run\".")
         );
         assert_eq!(
             always_text("edit_file", Kind::Edit, "a.rs").as_deref(),
