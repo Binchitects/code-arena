@@ -376,6 +376,8 @@ fn follow(ui: Ui, e: &Rc<Entry>) {
             && e.followed.get() == at
         {
             soon(ui, &e);
+            // The file's conflict marks too, when the editor with the keys is one of the sides.
+            merge_inline::edited(ui, &e.file);
         }
     });
     run(ui, e);
@@ -651,10 +653,11 @@ fn layout(ui: Ui, send: &Send, e: &Rc<Entry>, result: Tab, narrow: floem::reacti
     let (incoming, iv) = side(ui, e, true);
     let (current, cv) = side(ui, e, false);
     let (res, rv) = result_view(ui, send, e, &result);
-    // The editor the window's commands act on: the result, or the one clicked.
-    ui.live.set(Some((e.path.clone(), res.clone())));
-    for ed in [&incoming, &current, &res] {
-        let (focus, me, path) = (ed.editor_view_focused, ed.clone(), e.path.clone());
+    // The editor the window's commands act on: the result, or the one clicked. The result is the file's own text, so
+    // it is the file's (the Merge Conflict commands act on it, and its conflicts are read again as it is typed in).
+    ui.live.set(Some((e.file.clone(), res.clone())));
+    for (ed, path) in [(&incoming, &e.path), (&current, &e.path), (&res, &e.file)] {
+        let (focus, me, path) = (ed.editor_view_focused, ed.clone(), path.clone());
         create_effect(move |first: Option<()>| {
             focus.track();
             if first.is_some() && ui.live.with_untracked(|l| l.as_ref().is_none_or(|(_, ed)| ed.id() != me.id())) {

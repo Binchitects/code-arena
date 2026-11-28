@@ -256,6 +256,12 @@ impl crate::ext::State for Merge {
     }
 }
 
+/// A file's conflicts read again a moment after an edit made where the editor with the keys is not its own (the
+/// merge editor's buttons).
+pub fn edited(ui: Ui, path: &str) {
+    soon(ui, path, AFTER_EDIT);
+}
+
 /// A file read again after `wait`, unless it is asked again meanwhile.
 fn soon(ui: Ui, path: &str, wait: Duration) {
     let Some(round) = FILES.with(|f| {
