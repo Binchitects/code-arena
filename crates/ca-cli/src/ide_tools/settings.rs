@@ -30,7 +30,9 @@ use crate::ide_ext::{Ctx, Shared, refuse, send};
 use crate::session::Prepared;
 
 /// The setting the person's and the project's are kept under.
-const KEY: &str = "tools.settings";
+fn key() -> &'static str {
+    ca_settings::schema::TOOL_SETTINGS.key
+}
 
 /// The file in the data folder the person's settings for each folder are kept in: `{"folders": {"/abs": {…}}}`.
 const HERE_FILE: &str = "tool-settings.json";
@@ -62,9 +64,9 @@ impl Places {
 
     /// The settings at the three levels, read now.
     fn levels(&self) -> Levels {
-        let key = |f: &Path| read_json(f).and_then(|v| v.get(KEY).cloned()).unwrap_or_else(|| json!({}));
+        let at = |f: &Path| read_json(f).and_then(|v| v.get(key()).cloned()).unwrap_or_else(|| json!({}));
         let here = self.here_all()["folders"].get(&self.folder).cloned().unwrap_or_else(|| json!({}));
-        Levels::new(&key(&self.person), &here, &key(&self.project))
+        Levels::new(&at(&self.person), &here, &at(&self.project))
     }
 
     /// Keeps one tool's settings at a level, the others as they are.
@@ -72,8 +74,8 @@ impl Places {
         let failed = |e: std::io::Error| format!("Not saved: {e}");
         match level {
             "person" => {
-                let all = read_json(&self.person).and_then(|v| v.get(KEY).cloned()).unwrap_or_else(|| json!({}));
-                ca_settings::settings::keep(&self.person, KEY, &ts::with(&all, name, choice)).map_err(failed)
+                let all = read_json(&self.person).and_then(|v| v.get(key()).cloned()).unwrap_or_else(|| json!({}));
+                ca_settings::settings::keep(&self.person, key(), &ts::with(&all, name, choice)).map_err(failed)
             }
             "here" => {
                 let mut all = self.here_all();
@@ -95,7 +97,9 @@ impl Places {
                 let text = serde_json::to_string_pretty(&all).unwrap_or_default();
                 std::fs::write(&self.here, text + "\n").map_err(failed)
             }
-            _ => Err("Tool settings are kept for you (person: every project) or for you in this project (here).".into()),
+            _ => {
+                Err("Tool settings are kept for you (person: every project) or for you in this project (here).".into())
+            }
         }
     }
 }
@@ -273,7 +277,8 @@ pub fn set(ctx: &mut Ctx<'_>, m: &Value) {
     let level = m["level"].as_str().unwrap_or("person");
     let choice = Choice::from_value(&m["settings"]);
     let p = &*ctx.p;
-    let tool = p.agent.tools.iter().chain(p.agent.deferred.iter()).chain(p.disabled.iter()).find(|t| t.def().name == name);
+    let tool =
+        p.agent.tools.iter().chain(p.agent.deferred.iter()).chain(p.disabled.iter()).find(|t| t.def().name == name);
     let Some(tool) = tool.map(ts::base) else {
         refuse(&ctx.sh.out, &asked, &format!("No tool {name}."));
         return;
@@ -347,7 +352,11 @@ mod tests {
     #[test]
     fn a_tool_turned_off_goes_and_comes_back_unless_its_group_is_off() {
         let (mut tools, mut deferred, mut disabled) = (vec![tool("a", OWN), tool("b", "srv")], vec![], vec![]);
-        let off = Levels::new(&json!({"a": {"enabled": false}, "b": {"enabled": false, "approval": "ask"}}), &json!({}), &json!({}));
+        let off = Levels::new(
+            &json!({"a": {"enabled": false}, "b": {"enabled": false, "approval": "ask"}}),
+            &json!({}),
+            &json!({}),
+        );
         let none = BTreeSet::new();
         let l = Lists { tools: &mut tools, deferred: &mut deferred, disabled: &mut disabled };
         let s = settle(l, &off, &none, &[], &none, &|_| false);
@@ -379,7 +388,11 @@ mod tests {
     #[test]
     fn settling_says_how_each_asks_and_a_locked_tool_never_runs_unasked() {
         let (mut tools, mut deferred, mut disabled) = (vec![tool("a", OWN)], vec![tool("b", OWN)], vec![]);
-        let l = Levels::new(&json!({"a": {"approval": "allow", "description": "A."}, "b": {"approval": "allow"}}), &json!({}), &json!({}));
+        let l = Levels::new(
+            &json!({"a": {"approval": "allow", "description": "A."}, "b": {"approval": "allow"}}),
+            &json!({}),
+            &json!({}),
+        );
         let lists = Lists { tools: &mut tools, deferred: &mut deferred, disabled: &mut disabled };
         let s = settle(lists, &l, &BTreeSet::new(), &[], &BTreeSet::new(), &|t| t.def().name == "b");
         assert_eq!(s.approvals.get("a"), Some(&Approval::Allow));
@@ -390,9 +403,10 @@ mod tests {
 
     #[test]
     fn locks_and_what_asks_says() {
-        let arena = ServerRow { name: "arena".into(), title: "Arena's tools".into(), trusted: false, connected: Some(1) };
+        let arena =
+            ServerRow { name: "arena".into(), title: "Arena's tools".into(), trusted: false, connected: Some(1) };
         assert_eq!(lock("stop_command", OWN, Kind::Shell, &[]), Some(ts::ALWAYS_ASKS));
-        assert_eq!(lock("post", "arena", Kind::Edit, &[arena.clone()]), Some(ts::ARENA_ASKS));
+        assert_eq!(lock("post", "arena", Kind::Edit, std::slice::from_ref(&arena)), Some(ts::ARENA_ASKS));
         assert_eq!(lock("look", "arena", Kind::Read, &[arena]), None);
         let c = |v: Value| Choice::from_value(&v);
         assert_eq!(asks("read_file", Kind::Read, &c(json!({}))), "never");
@@ -407,8 +421,11 @@ mod tests {
         let d = tempfile::tempdir().expect("temp");
         let root = d.path().join("proj");
         std::fs::create_dir_all(root.join(".code-arena")).expect("dir");
-        std::fs::write(root.join(".code-arena/settings.json"), r#"{"tools.settings": {"git": {"enabled": false, "approval": "allow"}}}"#)
-            .expect("w");
+        std::fs::write(
+            root.join(".code-arena/settings.json"),
+            r#"{"tools.settings": {"git": {"enabled": false, "approval": "allow"}}}"#,
+        )
+        .expect("w");
         let places = Places {
             person: d.path().join("config/settings.json"),
             here: d.path().join("data").join(HERE_FILE),
@@ -421,7 +438,11 @@ mod tests {
         let l = places.levels();
         assert_eq!(l.of("run_shell").0, c);
         assert_eq!(l.of("write_file").1.enabled, Some(false));
-        assert_eq!(l.of("git").2, Choice { enabled: Some(false), ..Choice::default() }, "the project's allow is not read");
+        assert_eq!(
+            l.of("git").2,
+            Choice { enabled: Some(false), ..Choice::default() },
+            "the project's allow is not read"
+        );
         let project = std::fs::read_to_string(root.join(".code-arena/settings.json")).expect("r");
         assert!(!project.contains("write_file"));
         places.save("here", "write_file", &Choice::default()).expect("forget");

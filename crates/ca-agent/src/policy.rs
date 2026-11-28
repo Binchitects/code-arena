@@ -500,7 +500,10 @@ mod tests {
         p.approvals.insert("stop_command".into(), Approval::Allow);
         assert_eq!(p.decide("stop_command", Kind::Shell, "1"), Decision::Ask, "stopping a command asks every time");
         p.rules.deny("run_shell(rm *)");
-        assert!(matches!(p.decide("run_shell", Kind::Shell, "rm -rf x"), Decision::Refuse(_)), "a deny rule still refuses");
+        assert!(
+            matches!(p.decide("run_shell", Kind::Shell, "rm -rf x"), Decision::Refuse(_)),
+            "a deny rule still refuses"
+        );
         p.mode = Mode::Plan;
         assert!(matches!(p.decide("run_shell", Kind::Shell, "ls"), Decision::Refuse(_)), "plan mode still refuses");
     }

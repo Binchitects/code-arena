@@ -43,8 +43,7 @@ const OWN: &str = "Code Arena's own";
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] =
-    &[
+    const MESSAGES: &'static [(&'static str, Rule)] = &[
         ("tools", Rule::Turn),
         ("tools_set", Rule::Queue),
         ("servers", Rule::Turn),

@@ -56,7 +56,11 @@ impl Choice {
         Choice {
             enabled: v.get("enabled").and_then(Value::as_bool),
             approval: v.get("approval").and_then(Value::as_str).and_then(Approval::parse),
-            description: v.get("description").and_then(Value::as_str).filter(|d| !d.trim().is_empty()).map(String::from),
+            description: v
+                .get("description")
+                .and_then(Value::as_str)
+                .filter(|d| !d.trim().is_empty())
+                .map(String::from),
             defaults: map("defaults"),
             fixed: map("fixed"),
         }
@@ -268,7 +272,8 @@ pub fn configure(tool: &Arc<dyn Tool>, c: &Choice) -> Arc<dyn Tool> {
     let tool = base(tool);
     let def = tool.def();
     let has = |k: &String| def.parameters.get("properties").and_then(|p| p.get(k)).is_some();
-    let fixed: Map<String, Value> = c.fixed.iter().filter(|(k, _)| has(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    let fixed: Map<String, Value> =
+        c.fixed.iter().filter(|(k, _)| has(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
     let defaults: Map<String, Value> = c
         .defaults
         .iter()
@@ -356,7 +361,10 @@ mod tests {
 
     #[test]
     fn fixed_beats_the_models_value_and_a_default_fills_only_what_is_missing() {
-        let t = configure(&(Arc::new(Echo) as Arc<dyn Tool>), &choice(json!({"fixed": {"loud": true}, "defaults": {"times": 2}})));
+        let t = configure(
+            &(Arc::new(Echo) as Arc<dyn Tool>),
+            &choice(json!({"fixed": {"loud": true}, "defaults": {"times": 2}})),
+        );
         assert_eq!(t.given(json!({"text": "hi", "loud": false})), json!({"text": "hi", "loud": true, "times": 2}));
         assert_eq!(t.given(json!({"text": "hi", "times": 5})), json!({"text": "hi", "loud": true, "times": 5}));
         assert!(t.subject(&json!({"text": "hi"})).contains("\"loud\":true"));
@@ -380,7 +388,10 @@ mod tests {
                     "other": {"enabled": false, "approval": "ask"}}),
         );
         assert!(l.of("echo").2.is_empty());
-        assert_eq!(l.of("other").2, Choice { enabled: Some(false), approval: Some(Approval::Ask), ..Choice::default() });
+        assert_eq!(
+            l.of("other").2,
+            Choice { enabled: Some(false), approval: Some(Approval::Ask), ..Choice::default() }
+        );
     }
 
     #[test]
@@ -412,8 +423,14 @@ mod tests {
     fn a_choice_that_cannot_be_kept_says_why() {
         let d = Echo.def();
         let allow = choice(json!({"approval": "allow"}));
-        assert_eq!(refusal("stop", &allow, &d, Some(ALWAYS_ASKS)).as_deref(), Some(&*format!("stop cannot run unasked: {ALWAYS_ASKS}")));
+        assert_eq!(
+            refusal("stop", &allow, &d, Some(ALWAYS_ASKS)).as_deref(),
+            Some(&*format!("stop cannot run unasked: {ALWAYS_ASKS}"))
+        );
         assert_eq!(refusal("echo", &allow, &d, None), None);
-        assert_eq!(refusal("echo", &choice(json!({"fixed": {"nope": 1}})), &d, None).as_deref(), Some("echo has no argument nope."));
+        assert_eq!(
+            refusal("echo", &choice(json!({"fixed": {"nope": 1}})), &d, None).as_deref(),
+            Some("echo has no argument nope.")
+        );
     }
 }

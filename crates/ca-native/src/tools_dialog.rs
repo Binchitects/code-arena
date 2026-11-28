@@ -245,10 +245,23 @@ pub fn formed(was: &Choice, description: &str, args: &[(Arg, How, String)]) -> C
 #[derive(Clone, Debug, PartialEq)]
 pub enum Line {
     /// A group's head: its title, how many of its tools are on of how many, and whether it is folded.
-    Group { title: String, on: usize, of: usize, folded: bool },
-    Tool { entry: Entry, here: bool, saving: bool, open: bool },
+    Group {
+        title: String,
+        on: usize,
+        of: usize,
+        folded: bool,
+    },
+    Tool {
+        entry: Box<Entry>,
+        here: bool,
+        saving: bool,
+        open: bool,
+    },
     /// The gear's form under its tool, for the form opened `serial`th.
-    Form { name: String, serial: u64 },
+    Form {
+        name: String,
+        serial: u64,
+    },
     /// Nothing found.
     None(String),
 }
@@ -297,7 +310,7 @@ pub fn lines(
         }
         for t in of {
             let open = form.is_some_and(|(n, _)| n == t.name);
-            out.push(Line::Tool { entry: (*t).clone(), here, saving: saving.contains(&t.name), open });
+            out.push(Line::Tool { entry: Box::new((*t).clone()), here, saving: saving.contains(&t.name), open });
             if let Some((name, serial)) = form.filter(|_| open) {
                 out.push(Line::Form { name: name.to_string(), serial });
             }
@@ -430,7 +443,9 @@ fn save(ui: Ui, send: &Send, name: &str, choice: Choice) {
     st.saving.update(|s| {
         s.insert(name.to_string());
     });
-    send(json!({"type": "tool_settings_set", "name": name, "level": level, "settings": choice.to_value(), "key": name}));
+    send(
+        json!({"type": "tool_settings_set", "name": name, "level": level, "settings": choice.to_value(), "key": name}),
+    );
 }
 
 /// What it adds to the window's registries, once at start: the dialog's layer and its command (in place of the
@@ -604,7 +619,9 @@ fn group_head(ui: Ui, title: String, on: usize, of: usize, folded: bool) -> AnyV
             }
         })
     })
-    .style(|s| s.gap(6.0).items_center().width_full().padding_top(10.0).padding_bottom(4.0).cursor(CursorStyle::Pointer))
+    .style(|s| {
+        s.gap(6.0).items_center().width_full().padding_top(10.0).padding_bottom(4.0).cursor(CursorStyle::Pointer)
+    })
     .into_any()
 }
 
@@ -631,10 +648,12 @@ fn tool_row(ui: Ui, send: Send, e: Entry, here: bool, saving: bool, open: bool) 
     let words = v_stack((
         tooltip(
             label(move || shown_name.clone()).style(|s| s.font_family(MONO_FONT.clone()).text_ellipsis()),
-            move || label({
-                let tip = tip.clone();
-                move || tip.clone()
-            }),
+            move || {
+                label({
+                    let tip = tip.clone();
+                    move || tip.clone()
+                })
+            },
         ),
         label(move || second.clone()).style(move |s| s.font_size(12.0).color(t.get().desc).text_ellipsis()),
     ))
@@ -643,7 +662,8 @@ fn tool_row(ui: Ui, send: Send, e: Entry, here: bool, saving: bool, open: bool) 
     if e.asks_chosen() {
         let chosen = choice.approval.clone().unwrap_or_else(|| "default".into());
         let words = ASKS.iter().find(|(v, _)| *v == chosen).map(|(_, w)| *w).unwrap_or("As the mode says");
-        let (locked, menu_send, menu_name, menu_choice) = (e.locked.is_some(), send.clone(), name.clone(), choice.clone());
+        let (locked, menu_send, menu_name, menu_choice) =
+            (e.locked.is_some(), send.clone(), name.clone(), choice.clone());
         let choices = move || {
             ASKS.iter()
                 .map(|(v, w)| {
@@ -669,7 +689,9 @@ fn tool_row(ui: Ui, send: Send, e: Entry, here: bool, saving: bool, open: bool) 
     if let Some(why) = e.locked.clone().filter(|_| choice.approval.as_deref() != Some("ask")) {
         parts.push(
             label(move || why.clone())
-                .style(move |s| s.margin_left(36.0).font_size(12.0).color(t.get().desc).text_overflow(TextOverflow::Wrap))
+                .style(move |s| {
+                    s.margin_left(36.0).font_size(12.0).color(t.get().desc).text_overflow(TextOverflow::Wrap)
+                })
                 .into_any(),
         );
     }
@@ -693,7 +715,8 @@ fn form_view(ui: Ui, send: Send) -> AnyView {
     let st = ui.state::<ToolsDialog>();
     let Some(f) = st.form.get_untracked() else { return empty().into_any() };
     let here = st.here.get_untracked();
-    let Some(entry) = st.tools.with_untracked(|t| t.as_ref().and_then(|t| t.iter().find(|e| e.name == f.name).cloned()))
+    let Some(entry) =
+        st.tools.with_untracked(|t| t.as_ref().and_then(|t| t.iter().find(|e| e.name == f.name).cloned()))
     else {
         return empty().into_any();
     };
@@ -706,12 +729,18 @@ fn form_view(ui: Ui, send: Send) -> AnyView {
     if entry.project.approval.as_deref() == Some("ask") {
         parts.push(note("The project makes it ask before each call, whatever is chosen here.".into()));
     }
-    parts.push(label(|| "What the model is told of it").style(|s| s.font_size(12.0).font_weight(*crate::widgets::SEMIBOLD)).into_any());
+    parts.push(
+        label(|| "What the model is told of it")
+            .style(|s| s.font_size(12.0).font_weight(*crate::widgets::SEMIBOLD))
+            .into_any(),
+    );
     parts.push(input(ui, f.description, entry.description.clone(), false));
     parts.push(note("Empty: its own words (shown greyed).".into()));
     if !entry.arguments.is_empty() {
         parts.push(
-            label(|| "Its arguments").style(|s| s.margin_top(6.0).font_size(12.0).font_weight(*crate::widgets::SEMIBOLD)).into_any(),
+            label(|| "Its arguments")
+                .style(|s| s.margin_top(6.0).font_size(12.0).font_weight(*crate::widgets::SEMIBOLD))
+                .into_any(),
         );
         for a in &f.args {
             let (how, value) = (a.how, a.value);
@@ -723,10 +752,12 @@ fn form_view(ui: Ui, send: Send) -> AnyView {
             let named = tooltip(
                 label(move || shown_name.clone())
                     .style(|s| s.font_family(MONO_FONT.clone()).font_size(12.0).text_ellipsis()),
-                move || label({
-                    let about = about.clone();
-                    move || about.clone()
-                }),
+                move || {
+                    label({
+                        let about = about.clone();
+                        move || about.clone()
+                    })
+                },
             )
             .style(|s| s.width(160.0).flex_shrink(0.0_f32));
             let pick = dyn_container(
@@ -751,9 +782,7 @@ fn form_view(ui: Ui, send: Send) -> AnyView {
             );
             let field = container(input(ui, value, String::new(), true))
                 .style(move |s| s.flex_grow(1.0_f32).min_width(0.0).apply_if(how.get() == How::Model, |s| s.hide()));
-            parts.push(
-                h_stack((named, pick, field)).style(|s| s.gap(8.0).items_center().width_full()).into_any(),
-            );
+            parts.push(h_stack((named, pick, field)).style(|s| s.gap(8.0).items_center().width_full()).into_any());
         }
         parts.push(note("A fixed argument is not offered to the model; a default fills one it leaves out.".into()));
     }
@@ -798,7 +827,14 @@ fn list(ui: Ui, send: Send) -> AnyView {
                 st.find.with(|find| {
                     st.folded.with(|folded| {
                         st.saving.with(|saving| {
-                            lines(tools, find, folded, form.as_ref().map(|(n, s)| (n.as_str(), *s)), st.here.get(), saving)
+                            lines(
+                                tools,
+                                find,
+                                folded,
+                                form.as_ref().map(|(n, s)| (n.as_str(), *s)),
+                                st.here.get(),
+                                saving,
+                            )
                         })
                     })
                 })
@@ -812,9 +848,11 @@ fn list(ui: Ui, send: Send) -> AnyView {
         |l: &Line| format!("{l:?}"),
         move |l| match l {
             Line::Group { title, on, of, folded } => group_head(ui, title, on, of, folded),
-            Line::Tool { entry, here, saving, open } => tool_row(ui, send.clone(), entry, here, saving, open),
+            Line::Tool { entry, here, saving, open } => tool_row(ui, send.clone(), *entry, here, saving, open),
             Line::Form { .. } => form_view(ui, send.clone()),
-            Line::None(text) => label(move || text.clone()).style(move |s| s.color(t.get().desc).padding_vert(8.0)).into_any(),
+            Line::None(text) => {
+                label(move || text.clone()).style(move |s| s.color(t.get().desc).padding_vert(8.0)).into_any()
+            }
         },
     )
     .style(|s| s.flex_col().width_full());
@@ -952,7 +990,10 @@ mod tests {
         let found = lines(&tools, "READS", &none, None, false, &none);
         assert_eq!(found.len(), 2);
         assert_eq!(lines(&tools, "srv", &none, None, false, &none).len(), 2);
-        assert_eq!(lines(&tools, "zzz", &none, None, false, &none), [Line::None("No tool has \u{201c}zzz\u{201d} in its name or description.".into())]);
+        assert_eq!(
+            lines(&tools, "zzz", &none, None, false, &none),
+            [Line::None("No tool has \u{201c}zzz\u{201d} in its name or description.".into())]
+        );
     }
 
     #[test]
@@ -960,7 +1001,10 @@ mod tests {
         let tools = vec![entry("a", "G", true), entry("b", "G", true)];
         let folded: BTreeSet<String> = ["G".to_string()].into();
         let none = BTreeSet::new();
-        assert_eq!(lines(&tools, "", &folded, None, false, &none), [Line::Group { title: "G".into(), on: 2, of: 2, folded: true }]);
+        assert_eq!(
+            lines(&tools, "", &folded, None, false, &none),
+            [Line::Group { title: "G".into(), on: 2, of: 2, folded: true }]
+        );
         assert_eq!(lines(&tools, "a", &folded, None, false, &none).len(), 2);
     }
 
@@ -985,7 +1029,12 @@ mod tests {
 
     #[test]
     fn the_form_gives_typed_defaults_and_fixed_arguments() {
-        let was = Choice { enabled: Some(false), approval: Some("ask".into()), description: Some("Old.".into()), ..Choice::default() };
+        let was = Choice {
+            enabled: Some(false),
+            approval: Some("ask".into()),
+            description: Some("Old.".into()),
+            ..Choice::default()
+        };
         let arg = |n: &str, ty: &str| Arg { name: n.into(), ty: Some(ty.into()), about: None };
         let given = vec![
             (arg("times", "integer"), How::Default, "3".to_string()),
@@ -993,7 +1042,10 @@ mod tests {
             (arg("text", "string"), How::Model, "ignored".to_string()),
         ];
         let c = formed(&was, "  ", &given);
-        assert_eq!(c.to_value(), json!({"enabled": false, "approval": "ask", "defaults": {"times": 3}, "fixed": {"loud": true}}));
+        assert_eq!(
+            c.to_value(),
+            json!({"enabled": false, "approval": "ask", "defaults": {"times": 3}, "fixed": {"loud": true}})
+        );
         assert_eq!(formed(&was, " New. ", &[]).description.as_deref(), Some("New."));
         assert_eq!(was.bare().to_value(), json!({"enabled": false, "approval": "ask"}));
     }
