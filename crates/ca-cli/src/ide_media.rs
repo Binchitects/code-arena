@@ -9,6 +9,12 @@
 //!   plain file of the project's, and only up to 50 MB when its bytes are asked for.
 //! - `media_open{path}` → `media_open{path}` once the system's player was started on it (xdg-open, open,
 //!   start), or `media_open{path, error}`.
+//! - `media_save{path, to}` → `media_save{path, to}` once the file was copied to `to` (a path of the project's,
+//!   its folders made), or `media_save{path, to, error}`: a picture a tool made, saved where the person said.
+//!
+//! What a tool made is kept under `.code-arena/media/` at the project's top (see `servers.rs`), and the call's end
+//! says where: [`made`] finds those files in its whole result, as `.code-arena/media/NAME`, before the result is
+//! cut for the window.
 
 use std::path::Path;
 
@@ -25,12 +31,20 @@ const MOST_BYTES: u64 = 50 * 1024 * 1024;
 pub struct Here;
 
 impl Area for Here {
-    const MESSAGES: &'static [(&'static str, Rule)] = &[("media", Rule::Side), ("media_open", Rule::Side)];
+    const MESSAGES: &'static [(&'static str, Rule)] =
+        &[("media", Rule::Side), ("media_open", Rule::Side), ("media_save", Rule::Side)];
 
     fn side(side: &Side, m: &Value) -> bool {
         let path = m["path"].as_str().unwrap_or("");
         let reply = match m["type"].as_str().unwrap_or("") {
             "media" => media(side, path, m["data"] != false),
+            "media_save" => {
+                let to = m["to"].as_str().unwrap_or("");
+                match save(side, path, to) {
+                    Ok(()) => json!({"type": "media_save", "path": path, "to": to}),
+                    Err(e) => json!({"type": "media_save", "path": path, "to": to, "error": e}),
+                }
+            }
             _ => match side.real(path).and_then(|real| system_open(&real)) {
                 Ok(()) => json!({"type": "media_open", "path": path}),
                 Err(e) => json!({"type": "media_open", "path": path, "error": e}),
@@ -39,6 +53,48 @@ impl Area for Here {
         send(side.out(), reply);
         true
     }
+}
+
+/// Where a tool's results are kept, from the project's top.
+pub const MADE: &str = ".code-arena/media/";
+
+/// The files a tool made that its result names (`…/.code-arena/media/NAME`, whole or from the top, either slash),
+/// as `.code-arena/media/NAME`, each once, in the order said.
+pub fn made(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for sep in ['/', '\\'] {
+        let mark = MADE.replace('/', &sep.to_string());
+        for (at, _) in text.match_indices(&mark) {
+            let rest = &text[at + mark.len()..];
+            let name: String =
+                rest.chars().take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.')).collect();
+            let name = name.trim_end_matches('.');
+            if name.contains('.') && !name.starts_with('.') {
+                let key = format!("{MADE}{name}");
+                if !found.contains(&key) {
+                    found.push(key);
+                }
+            }
+        }
+    }
+    found.sort_by_key(|k| text.find(&k[MADE.len()..]).unwrap_or(usize::MAX));
+    found
+}
+
+/// A file of the project's copied to another place of it, the folders on the way made.
+fn save(side: &Side, path: &str, to: &str) -> Result<(), String> {
+    let from = side.real(path)?;
+    if !std::fs::metadata(&from).is_ok_and(|m| m.is_file()) {
+        return Err("not there".into());
+    }
+    let dest = side.entry(to)?;
+    if dest.is_dir() {
+        return Err("a folder of that name is there".into());
+    }
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::copy(&from, &dest).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// A file's media type, by its name's ending (what the window shows it as).
@@ -152,6 +208,32 @@ mod tests {
         assert_eq!((got["path"].as_str(), got["error"].is_string()), (Some("/etc/passwd"), true));
         let got = ask(json!({"type": "media_open", "path": "../out.mp3"}));
         assert_eq!((got["path"].as_str(), got["error"].is_string()), (Some("../out.mp3"), true));
+        // What a tool made is read from the project's own media folder, and saved where the person says.
+        std::fs::create_dir_all(d.path().join(".code-arena/media")).expect("dir");
+        std::fs::write(d.path().join(".code-arena/media/draw-1.png"), [137, 80]).expect("w");
+        let got = ask(json!({"type": "media", "path": ".code-arena/media/draw-1.png"}));
+        assert_eq!((got["path"].as_str(), got["size"].as_u64()), (Some(".code-arena/media/draw-1.png"), Some(2)));
+        let got = ask(json!({"type": "media", "path": ".code-arena/media/../../../x.png"}));
+        assert!(got["error"].is_string(), "{got}");
+        let got = ask(json!({"type": "media_save", "path": ".code-arena/media/draw-1.png", "to": "art/cat.png"}));
+        assert_eq!((got["to"].as_str(), got.get("error")), (Some("art/cat.png"), None), "{got}");
+        assert_eq!(std::fs::read(d.path().join("art/cat.png")).expect("saved"), [137, 80]);
+        for to in ["/tmp/cat.png", "../cat.png", "art", ".git/cat.png"] {
+            let got = ask(json!({"type": "media_save", "path": ".code-arena/media/draw-1.png", "to": to}));
+            assert!(got["error"].is_string(), "{to}: {got}");
+        }
+    }
+
+    #[test]
+    fn what_a_tool_made_is_found_in_its_result() {
+        let text = "Done.\n(Saved image/png as /home/a/p/.code-arena/media/draw-20261128-101500.png: tell the person \
+                    where it is.)\n(Saved audio/wav as C:\\p\\.code-arena\\media\\say-1-2.wav: tell…)\n\
+                    again .code-arena/media/draw-20261128-101500.png. and .code-arena/media/.gitignore";
+        assert_eq!(
+            made(text),
+            [".code-arena/media/draw-20261128-101500.png", ".code-arena/media/say-1-2.wav"]
+        );
+        assert!(made("nothing made").is_empty());
     }
 
     #[test]

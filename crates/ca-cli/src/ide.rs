@@ -234,6 +234,10 @@ fn kept_calls(
                 let (text, cut) = shown_result(&r.content);
                 v["text"] = json!(text);
                 v["cut"] = json!(cut);
+                let made = crate::ide_media::made(&r.content);
+                if !made.is_empty() {
+                    v["media"] = json!(made);
+                }
                 if let Some(f) = fact(&call.id) {
                     v["ok"] = json!(f.ok);
                     v["ms"] = json!(f.ms);
@@ -282,6 +286,11 @@ impl Events for PageEvents {
         self.keep(call.id, Fact { ok, ms, status });
         let mut m = json!({"type": "tool_end", "id": call.id, "name": call.name, "subject": call.subject, "ok": ok,
                            "text": text, "cut": cut, "ms": ms, "status": status});
+        // What it made, found in its whole result: the result is cut for the window, the files' names are not.
+        let made = crate::ide_media::made(&output.text);
+        if !made.is_empty() {
+            m["media"] = json!(made);
+        }
         if let Some(diff) = self.tasks.as_ref().and_then(|sh| crate::ide_diffs::Diffs::end(sh, call, output)) {
             m["diff"] = diff;
         }
@@ -1384,7 +1393,8 @@ mod tests {
         ]}));
         let said_no = format!("{}.", ca_agent::SAID_NO);
         let after = [
-            stored(message(json!({"role": "tool", "tool_call_id": "a", "content": "x".repeat(SHOWN_RESULT + 5)}))),
+            stored(message(json!({"role": "tool", "tool_call_id": "a",
+                "content": format!("{}\n(Saved image/png as /p/.code-arena/media/d-1.png: …)", "x".repeat(SHOWN_RESULT))}))),
             stored(message(json!({"role": "tool", "tool_call_id": "b", "content": said_no}))),
         ];
         let read = |c: &ca_llm::ToolCall| Read {
@@ -1397,6 +1407,8 @@ mod tests {
         assert_eq!(calls[0]["arguments"]["path"], "src/a.rs");
         assert_eq!((&calls[0]["done"], &calls[0]["cut"], &calls[0]["ms"]), (&json!(true), &json!(true), &json!(12)));
         assert_eq!(calls[0]["text"].as_str().map(|t| t.chars().count()), Some(SHOWN_RESULT));
+        assert_eq!(calls[0]["media"], json!([".code-arena/media/d-1.png"]), "found past the cut");
+        assert!(calls[1].get("media").is_none());
         // Said no to, though not in this run: the result's words say it.
         assert_eq!((&calls[1]["ok"], &calls[1]["status"]), (&json!(false), &json!("denied")));
         // No result: it did not run, and says nothing of how it ended.
