@@ -27,6 +27,7 @@ use floem::{IntoView, View as _};
 use serde_json::{Value, json};
 
 use crate::colors::Colors;
+use crate::compare::Source as Src;
 use crate::diff::Line;
 use crate::icons::icon;
 use crate::layout::View;
@@ -559,7 +560,7 @@ pub(crate) fn view_id(ui: Ui) -> Option<floem::ViewId> {
     state(ui).root.get_untracked()
 }
 
-/// A file's row opened: its changes in a tab, or the file itself (one git does not track yet, one in conflict: in
+/// A file's row opened: its changes in a compare or a tab, or the file itself (one git does not track yet, one in conflict: in
 /// the merge editor when `git.mergeEditor` is on).
 fn open_row(ui: Ui, send: &Send, id: &str) {
     let Some(Row::File(g, path)) = row_of(id) else { return };
@@ -570,6 +571,12 @@ fn open_row(ui: Ui, send: &Send, id: &str) {
         Group::Merge if crate::settings::flag(ui, "git.mergeEditor", None) => crate::merge_editor::open(ui, send, path),
         Group::Merge => ui.open(path, send),
         Group::Changes if f.untracked => ui.open(path, send),
+        // A file changed on both sides opens in the compare editor, as VS Code's, where its lines can be staged
+        // (`compare::ranges`); one added, taken away or renamed in its changes tab.
+        Group::Changes if f.y == 'M' => crate::compare::open(ui, send, Src::Index(path.into()), Src::Live(path.into())),
+        Group::Staged if f.x == 'M' && f.from.is_none() => {
+            crate::compare::open(ui, send, Src::Head(path.into()), Src::Index(path.into()))
+        }
         Group::Changes => crate::editor::kinds::open(ui, &format!("{KIND}:w:{path}")),
         Group::Staged => crate::editor::kinds::open(ui, &format!("{KIND}:i:{path}")),
     }

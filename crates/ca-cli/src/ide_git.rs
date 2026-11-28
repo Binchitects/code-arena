@@ -89,6 +89,7 @@ impl Area for Here {
         ("git_discard", Rule::Side),
         ("git_commit", Rule::Side),
         ("git_show", Rule::Side),
+        ("git_stage_text", Rule::Side),
         ("git_init", Rule::Side),
         ("git_branches", Rule::Side),
         ("git_switch", Rule::Side),
@@ -597,6 +598,62 @@ pub(crate) fn commit(dir: &Path, message: &str, all: bool, amend: bool) -> Resul
     Ok(String::from_utf8_lossy(&hash).trim().to_string())
 }
 
+/// A file's index entry given this text, the working tree left alone (VS Code's Stage Selected Ranges): the entry's
+/// mode kept (a new entry takes the file's), and a byte order mark its text began with; git's clean filters (line
+/// ends) applied as `git add` applies them. Err: why not, and whether it is because the file is not text (a link,
+/// a submodule).
+pub(crate) fn stage_text(dir: &Path, path: &str, text: &str) -> Result<(), (String, bool)> {
+    if !path_ok(path) {
+        return Err((format!("{path} is not a path inside the project"), false));
+    }
+    let path = path.trim_start_matches("./");
+    let listed =
+        git(dir, &["--literal-pathspecs", "ls-files", "-s", "-z", "--", path], None).map_err(|e| (e, false))?;
+    let listed = String::from_utf8_lossy(&listed);
+    let mut mode = None;
+    for entry in listed.split('\0').filter(|e| !e.is_empty()) {
+        let meta = entry.split_once('\t').map_or(entry, |(m, _)| m);
+        let fields: Vec<&str> = meta.split(' ').collect();
+        if fields.get(2).is_some_and(|n| *n != "0") {
+            return Err((format!("{path} has merge conflicts: resolve them first"), false));
+        }
+        mode = fields.first().map(|m| m.to_string());
+    }
+    let file = std::fs::symlink_metadata(dir.join(path)).ok();
+    let mode = mode.unwrap_or_else(|| match file {
+        Some(m) if m.file_type().is_symlink() => "120000".into(),
+        Some(m) if executable(&m) => "100755".into(),
+        _ => "100644".into(),
+    });
+    if mode == "120000" || mode == "160000" {
+        return Err((format!("{path} is a link or a submodule, not a text file"), true));
+    }
+    let mut bytes = text.as_bytes().to_vec();
+    let bom = "\u{feff}".as_bytes();
+    if !bytes.starts_with(bom)
+        && git(dir, &["cat-file", "blob", &format!(":./{path}")], None).is_ok_and(|old| old.starts_with(bom))
+    {
+        bytes.splice(0..0, bom.iter().copied());
+    }
+    let hash = git(dir, &["hash-object", "-w", "--stdin", "--path", path], Some(&bytes)).map_err(|e| (e, false))?;
+    let hash = String::from_utf8_lossy(&hash).trim().to_string();
+    // The entry's path is from the repository's top, not from the folder git runs in.
+    let prefix = git(dir, &["rev-parse", "--show-prefix"], None).map_err(|e| (e, false))?;
+    let info = format!("{mode},{hash},{}{path}", String::from_utf8_lossy(&prefix).trim());
+    git(dir, &["update-index", "--add", "--cacheinfo", &info], None).map(|_| ()).map_err(|e| (e, false))
+}
+
+#[cfg(unix)]
+fn executable(m: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn executable(_m: &std::fs::Metadata) -> bool {
+    false
+}
+
 /// A file as a revision has it (`rev` empty: the index), as `git_shown` says it (without its type and keys).
 pub(crate) fn show(dir: &Path, path: &str, rev: &str) -> Value {
     if rev.starts_with('-') || rev.contains([':', ' ', '\0']) || !path_ok(path) {
@@ -847,6 +904,17 @@ fn answer(
                 v["key"] = json!(key);
             }
             send(out, v);
+        }
+        "git_stage_text" => {
+            let path = m["path"].as_str().unwrap_or("");
+            if let Err((e, not_text)) = stage_text(dir, path, m["text"].as_str().unwrap_or("")) {
+                send(
+                    out,
+                    json!({"type": "git_failed", "repo": repo, "of": of, "path": path, "error": e, "not_text": not_text,
+                        "key": m["key"]}),
+                );
+            }
+            push_status(kept, out, repo, dir);
         }
         "git_merge_info" => {
             let path = m["path"].as_str().unwrap_or("");
@@ -1473,6 +1541,35 @@ mod tests {
             git(d.path(), args, None).expect("git");
         }
         Some(d)
+    }
+
+    #[test]
+    fn a_files_chosen_text_is_staged_without_touching_the_working_tree() {
+        let Some(d) = repo() else { return };
+        let top = d.path();
+        std::fs::create_dir(top.join("sub")).expect("dir");
+        // The project is a folder under the repository's top.
+        let dir = top.join("sub");
+        std::fs::write(dir.join("a.txt"), "\u{feff}one\ntwo\n").expect("w");
+        stage(&dir, &["a.txt".into()]).expect("stage");
+        commit(&dir, "First", false, false).expect("commit");
+        std::fs::write(dir.join("a.txt"), "\u{feff}ONE\ntwo\nthree\n").expect("w");
+        // The text without its mark: the mark is kept.
+        stage_text(&dir, "a.txt", "ONE\ntwo\n").expect("stage text");
+        assert_eq!(show(&dir, "a.txt", "")["text"], "\u{feff}ONE\ntwo\n");
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).expect("r"), "\u{feff}ONE\ntwo\nthree\n");
+        let staged = git(top, &["show", ":sub/a.txt"], None).expect("show");
+        assert_eq!(String::from_utf8_lossy(&staged), "\u{feff}ONE\ntwo\n");
+        // A file not in the index yet is added; a path out of the project is refused.
+        std::fs::write(dir.join("new.txt"), "a\nb\n").expect("w");
+        stage_text(&dir, "new.txt", "a\n").expect("new");
+        assert_eq!(show(&dir, "new.txt", "")["text"], "a\n");
+        assert!(stage_text(&dir, "../x.txt", "x").is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("a.txt", dir.join("link")).expect("link");
+            assert_eq!(stage_text(&dir, "link", "x").map_err(|e| e.1), Err(true));
+        }
     }
 
     #[test]
