@@ -64,12 +64,11 @@ pub fn read(text: &str, language: Option<&str>, source: Source) -> Result<Vec<Sn
     let mut out = Vec::new();
     for (name, s) in all {
         let Value::Object(s) = s else { continue };
-        let prefixes: Vec<String> = strings(s.get("prefix").unwrap_or(&Value::Null)).into_iter().filter(|p| !p.is_empty()).collect();
+        let prefixes: Vec<String> =
+            strings(s.get("prefix").unwrap_or(&Value::Null)).into_iter().filter(|p| !p.is_empty()).collect();
         let body = match &s.get("body") {
             Some(Value::String(b)) => b.clone(),
-            Some(Value::Array(lines)) => {
-                lines.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n")
-            }
+            Some(Value::Array(lines)) => lines.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"),
             _ => continue,
         };
         if prefixes.is_empty() {
@@ -150,8 +149,8 @@ mod tests {
 
     #[test]
     fn a_language_file_is_for_its_language_alone() {
-        let all = read(r#"{"main": {"prefix": "main", "body": "fn main() {}"}}"#, Some("rust"), Source::User)
-            .expect("read");
+        let all =
+            read(r#"{"main": {"prefix": "main", "body": "fn main() {}"}}"#, Some("rust"), Source::User).expect("read");
         assert_eq!(all[0].scope, ["rust"]);
         assert!(!applies(&all[0], "python", "a.py"));
         assert_eq!(Source::of("user").label(), "User Snippet");

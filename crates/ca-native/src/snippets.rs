@@ -244,8 +244,7 @@ fn insert(ui: Ui, path: &str, editor: &Editor, range: Range<usize>, body_text: &
         && let Some(doc) = doc
     {
         SESSION.with(|s| {
-            *s.borrow_mut() =
-                Some(Session { path: path.to_string(), doc, editor: editor.clone(), stops, at: 0, whole })
+            *s.borrow_mut() = Some(Session { path: path.to_string(), doc, editor: editor.clone(), stops, at: 0, whole })
         });
     }
     editor.cursor.update(|c| c.set_insert(first));
@@ -352,7 +351,8 @@ fn suggestions(ui: Ui, ask: &complete::Ask) -> Vec<Item> {
         let docs = format!("```{lang}\n{}\n```", body::plain(&s.body));
         for prefix in &s.prefixes {
             let (ui, path, body_text) = (ui, ask.path.to_string(), s.body.clone());
-            let detail = format!("{} ({})", if s.description.is_empty() { &s.name } else { &s.description }, s.source.label());
+            let detail =
+                format!("{} ({})", if s.description.is_empty() { &s.name } else { &s.description }, s.source.label());
             out.push(
                 Item::new(prefix.clone(), Kind::Snippet)
                     .detail(detail)
@@ -447,7 +447,8 @@ fn configure(ui: Ui, send: &Send) {
     let folder = folder.rsplit('/').next().unwrap_or("").to_string();
     let mut items = vec![
         quick::item("global", "New Global Snippets file...").description("for every project"),
-        quick::item("project", &format!("New Snippets file for '{folder}'...")).description(".vscode/NAME.code-snippets"),
+        quick::item("project", &format!("New Snippets file for '{folder}'..."))
+            .description(".vscode/NAME.code-snippets"),
     ];
     for f in files.iter() {
         let name = f.path.rsplit('/').next().unwrap_or(&f.path);
@@ -460,9 +461,11 @@ fn configure(ui: Ui, send: &Send) {
     let own: HashSet<&str> = files.iter().filter_map(|f| f.language.as_deref()).collect();
     let mut langs: Vec<_> = crate::language::LANGUAGES.iter().filter(|l| !own.contains(l.id)).collect();
     langs.sort_by_key(|l| l.id);
-    items.extend(langs.into_iter().map(|l| {
-        quick::item(&format!("l:{}", l.id), l.id).description(l.name).group("new snippets for a language")
-    }));
+    items.extend(
+        langs.into_iter().map(|l| {
+            quick::item(&format!("l:{}", l.id), l.id).description(l.name).group("new snippets for a language")
+        }),
+    );
     let send = send.clone();
     quick::pick("Configure Snippets").placeholder("Select a snippets file, or make one").items(items).open(
         ui,
@@ -539,7 +542,8 @@ pub fn register(ui: Ui, _send: &Send) {
     complete::provide("snippets", &[], suggestions);
     use crate::commands::{add, command};
     let editor_shown = |ui: Ui| ui.live.with_untracked(Option::is_some);
-    add(command("editor.action.insertSnippet", "Snippets", "Insert Snippet", |ui, _| pick(ui, false)).when(editor_shown));
+    add(command("editor.action.insertSnippet", "Snippets", "Insert Snippet", |ui, _| pick(ui, false))
+        .when(editor_shown));
     add(command("editor.action.surroundWithSnippet", "Snippets", "Surround With Snippet...", |ui, _| pick(ui, true))
         .when(editor_shown));
     add(command("workbench.action.openSnippets", "Snippets", "Configure Snippets", configure));

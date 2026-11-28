@@ -135,7 +135,9 @@ fn place(config: &Path, root: &Path, name: &str) -> Result<PathBuf, String> {
     }
     let base = name.strip_prefix(".vscode/").and_then(|n| n.strip_suffix(".code-snippets"));
     match base {
-        Some(b) if !b.is_empty() && !b.starts_with('.') && b.chars().all(|c| c.is_alphanumeric() || "._-".contains(c)) => {
+        Some(b)
+            if !b.is_empty() && !b.starts_with('.') && b.chars().all(|c| c.is_alphanumeric() || "._-".contains(c)) =>
+        {
             Ok(root.join(name))
         }
         _ => Err(format!("{name} is not a snippets file")),
@@ -302,12 +304,17 @@ mod tests {
         assert_eq!(parsed, json!({}));
         std::fs::write(r.path().join(".vscode/team.code-snippets"), "{\"mine\": 1}").expect("write");
         assert_eq!(make(c.path(), r.path(), ".vscode/team.code-snippets")["made"], false);
-        assert_eq!(std::fs::read_to_string(r.path().join(".vscode/team.code-snippets")).expect("kept"), "{\"mine\": 1}");
+        assert_eq!(
+            std::fs::read_to_string(r.path().join(".vscode/team.code-snippets")).expect("kept"),
+            "{\"mine\": 1}"
+        );
         let lang = make(c.path(), r.path(), "snippets/rust.json");
         assert_eq!((lang["made"].clone(), lang["path"].clone()), (json!(true), json!("snippets/rust.json")));
         let text = std::fs::read_to_string(c.path().join("snippets/rust.json")).expect("made");
         assert!(!text.contains("scope"));
-        for bad in [".vscode/../x.code-snippets", ".vscode/a/b.code-snippets", ".vscode/x.json", "snippets/../k.json", "x"] {
+        for bad in
+            [".vscode/../x.code-snippets", ".vscode/a/b.code-snippets", ".vscode/x.json", "snippets/../k.json", "x"]
+        {
             assert!(make(c.path(), r.path(), bad).get("error").is_some(), "{bad}");
         }
     }

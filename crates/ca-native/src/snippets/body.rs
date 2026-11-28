@@ -11,9 +11,18 @@ use std::ops::Range;
 pub enum Node {
     Text(String),
     /// A tab stop: its number, its placeholder (empty: none), its choices, and its transform (a mirror's).
-    Stop { index: u32, inner: Vec<Node>, choices: Vec<String>, transform: Option<Transform> },
+    Stop {
+        index: u32,
+        inner: Vec<Node>,
+        choices: Vec<String>,
+        transform: Option<Transform>,
+    },
     /// A variable: its name, its default (`${NAME:default}`), its transform.
-    Var { name: String, inner: Option<Vec<Node>>, transform: Option<Transform> },
+    Var {
+        name: String,
+        inner: Option<Vec<Node>>,
+        transform: Option<Transform>,
+    },
 }
 
 /// `/regex/format/flags`.
