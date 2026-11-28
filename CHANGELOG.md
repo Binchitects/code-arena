@@ -818,6 +818,8 @@ Sections used:
   all of it.
 - **The notes under the chat box and on a diagram are readable.** 'No file dialog was found…' and
   'Nothing here draws diagrams…' wrap with normal line spacing instead of lines pressed together.
+- **The Problems view's empty message fits the side bar.** 'No problems have been detected in the
+  workspace.' wraps in a narrow side bar instead of being cut off.
 
 ## v0.5.0 (2026-11-26)
 
