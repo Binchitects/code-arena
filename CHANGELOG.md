@@ -693,6 +693,17 @@ Sections used:
   opens that menu. Before, the first menu just closed.
 - **Ctrl+P then Enter goes back to the previous file.** With nothing typed, Quick Open now picks the
   file opened before the current one, as in VS Code. Before, it picked the file already shown.
+- **The palette works while the breadcrumbs have the keys.** After Focus Breadcrumbs or closing a
+  breadcrumb list, Ctrl+Shift+P and every other binding work again; only the bar's own keys stop
+  there.
+- **The Outline filter stays readable.** Pointing at the filter box no longer turns it near white
+  with light grey text.
+- **Wrapped lines no longer overlap in the Context view and the compaction settings.** The usage
+  line and the field labels take the lines they need.
+- **The plan review's prompts say Press Enter once.** Change Step, Another Way and Reject ask their
+  question with the input's own hint after it.
+- **A long notice or error in the chat wraps.** "Reading the plan again with fresh eyes before your
+  review" and errors no longer run past the chat panel's edge.
 
 ## v0.5.0 (2026-11-26)
 
