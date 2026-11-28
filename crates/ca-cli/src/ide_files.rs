@@ -715,6 +715,13 @@ impl Side {
         *w = next;
     }
 
+    /// Every terminal closed (another folder was opened: the window lets them go).
+    pub fn close_terminals(&self) {
+        if let Ok(mut t) = self.terms.lock() {
+            t.clear();
+        }
+    }
+
     /// Looks at what is watched once a second, and tells the page what changed: a file's new stamp (or that it is
     /// gone), a folder listed again. Only what the page shows is looked at, so it costs little whatever the project.
     pub fn start_watching(self: &Arc<Self>) {

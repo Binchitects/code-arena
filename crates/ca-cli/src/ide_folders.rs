@@ -92,7 +92,11 @@ async fn open(ctx: &mut Ctx<'_>, path: &str) -> Result<String, String> {
     if dir == ctx.p.agent.ctx.workspace.cwd() {
         return Err(format!("{} is open already.", dir.display()));
     }
+    // The window lets its terminals go: their shells end, whether the side stays (a folder under the same root)
+    // or another takes its place.
+    let side = ctx.side.clone();
     crate::ide_sessions::switch_in(ctx, Resume::New, Some(dir)).await?;
+    side.close_terminals();
     Ok(ctx.p.folder.clone())
 }
 

@@ -274,6 +274,10 @@ fn open(ui: Ui, send: &Send, path: String) {
 }
 
 fn really_open(ui: Ui, send: &Send, path: &str) {
+    // A turn may have begun while the question was up.
+    if busy(ui) {
+        return;
+    }
     if ui.loaded.get_untracked() {
         send(json!({"type": "keep_view_state", "state": ui.view_state()}));
     }
