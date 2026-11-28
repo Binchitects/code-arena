@@ -2347,3 +2347,98 @@ async fn what_the_ide_is_sent_is_kept_for_the_folder_and_listed_newest_first_wit
         assert_eq!(std::fs::metadata(&kept[0]).expect("kept").permissions().mode() & 0o777, 0o600);
     }
 }
+
+#[tokio::test]
+async fn lines_of_files_sent_from_the_ide_are_read_for_the_model_and_named_under_the_question() {
+    use futures_util::{SinkExt, StreamExt};
+    use std::io::BufRead;
+    use tokio_tungstenite::tungstenite::Message;
+    let said = sse(json!({"choices": [{"delta": {"content": "Seen."}, "finish_reason": "stop"}]}));
+    let gateway = MockServer::start().await;
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(Script(vec![said], AtomicUsize::new(0)))
+        .mount(&gateway)
+        .await;
+    let home = tempfile::tempdir().expect("home");
+    std::fs::create_dir_all(home.path().join("config")).expect("config");
+    std::fs::write(
+        home.path().join("config/settings.json"),
+        json!({"mcp.arenaTools": false, "mcp.codeIntelTools": false, "arena.syncChats": false}).to_string(),
+    )
+    .expect("settings");
+    let folder = tempfile::tempdir().expect("folder");
+    std::fs::create_dir(folder.path().join(".git")).expect("a repository");
+    let body: String = (1..=20).map(|i| format!("let line{i} = {i};\n")).collect();
+    std::fs::write(folder.path().join("cart.rs"), body).expect("a file");
+    let mut child = code_arena(home.path())
+        .args(["ide", "--no-open", "-C"])
+        .arg(folder.path())
+        .env("ARENA_URL", "https://arena.example")
+        .env("ARENA_API_KEY", "sk-test-only")
+        .env("ARENA_GATEWAY_URL", gateway.uri())
+        .env("ARENA_MODEL", "qwen")
+        .stderr(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("runs");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let stderr = child.stderr.take().expect("stderr");
+    let _child = Kill(child);
+    let url = std::io::BufReader::new(stderr)
+        .lines()
+        .map_while(Result::ok)
+        .find_map(|l| l.split("The IDE: ").nth(1).map(str::to_string))
+        .expect("the address");
+    let (base, key) = url.split_once("/?k=").expect("key in it");
+    let mut request = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(
+        format!("ws://{}/ws", base.trim_start_matches("http://")).as_str(),
+    )
+    .expect("request");
+    request.headers_mut().insert("cookie", format!("code_arena={key}").parse().expect("h"));
+    request.headers_mut().insert("origin", base.parse().expect("h"));
+    let (mut page, _) = tokio_tungstenite::connect_async(request).await.expect("the page connects");
+    let until = async |page: &mut tokio_tungstenite::WebSocketStream<_>, end: &dyn Fn(&Value) -> bool| -> Vec<Value> {
+        let mut seen = Vec::new();
+        loop {
+            let m = tokio::time::timeout(std::time::Duration::from_secs(20), page.next())
+                .await
+                .expect("in time")
+                .expect("open")
+                .expect("ok");
+            let Message::Text(t) = m else { continue };
+            let v: Value = serde_json::from_str(t.as_str()).expect("json");
+            let done = end(&v);
+            seen.push(v);
+            if done {
+                return seen;
+            }
+        }
+    };
+    until(&mut page, &|v| v["type"] == "state").await;
+    let sent = json!({"type": "send", "text": "Explain this", "key": "p1",
+        "context": [{"path": "cart.rs", "start": 10, "end": 11}, {"path": "../outside.rs", "start": 1, "end": 1}]});
+    page.send(Message::text(sent.to_string())).await.expect("send");
+    let turn = until(&mut page, &|v| v["type"] == "turn_end").await;
+    // The question shows the words, its lines named under it; the file outside the folder was not sent.
+    let asked = turn.iter().find(|v| v["type"] == "user").expect("the question");
+    assert_eq!(asked["text"], "Explain this", "{asked}");
+    assert_eq!(asked["files"], json!([{"path": "cart.rs", "start": 10, "end": 11}]), "{asked}");
+    // The model read them with three lines around.
+    let requests = gateway.received_requests().await.expect("requests");
+    let read = String::from_utf8_lossy(&requests.last().expect("a request").body).to_string();
+    assert!(read.contains("<file path=\\\"cart.rs\\\">"), "{read}");
+    assert!(read.contains("let line7 = 7;") && read.contains("let line14 = 14;"), "{read}");
+    assert!(!read.contains("let line6 = 6;") && !read.contains("let line15 = 15;"), "{read}");
+    // Kept with the question: the session's state gives them back.
+    page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
+    let state = until(&mut page, &|v| v["type"] == "state").await;
+    let messages = &state.last().expect("state")["messages"];
+    let question = messages.as_array().into_iter().flatten().find(|m| m["role"] == "user").expect("kept");
+    assert_eq!(question["files"][0]["path"], "cart.rs", "{question}");
+}
