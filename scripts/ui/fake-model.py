@@ -5,7 +5,8 @@
 #   python3 scripts/ui/fake-model.py 18733
 #
 # The last user message decides: "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a
-# command that needs an approval in ask mode, "think" thinks for some seconds before it answers (with its usage),
+# command that needs an approval in ask mode, "picture" runs a command that makes a picture in .code-arena/media/,
+# "think" thinks for some seconds before it answers (with its usage),
 # anything else streams a Markdown answer with a code block. A tool's
 # result is answered with a short line, so each turn ends.
 import http.server
@@ -14,6 +15,18 @@ import sys
 import time
 
 n = [0]
+
+# A command that draws a 160 x 120 picture (a blue to orange fade) as a PNG in the project's media folder.
+PICTURE = """mkdir -p .code-arena/media && python3 - <<'PY'
+import struct, zlib
+w, h = 160, 120
+rows = b"".join(b"\\0" + bytes(c for x in range(w) for c in (40 + x, 90 + y, 220 - x)) for y in range(h))
+chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d))
+png = b"\\x89PNG\\r\\n\\x1a\\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+png += chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+open(".code-arena/media/fade.png", "wb").write(png)
+PY
+echo made .code-arena/media/fade.png"""
 
 ANSWER = """## What I found
 
@@ -115,6 +128,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 {"title": "Run the tests", "status": "todo", "check": "true"},
             ]
             call("plan", {"title": "A friendlier greeting", "steps": steps})
+        elif "picture" in text:
+            ev({"content": "Drawing it."})
+            call("run_shell", {"command": PICTURE})
         elif "edit" in text:
             ev({"content": "Changing the greeting."})
             call("edit_file", {"path": "src/main.rs", "old_string": "\"hello\"", "new_string": "\"hello, world\""})

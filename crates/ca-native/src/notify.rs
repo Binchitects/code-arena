@@ -140,6 +140,8 @@ pub struct Notices {
     attention: RwSignal<bool>,
     /// A view of the window's, which knows the window.
     watcher: RwSignal<Option<ViewId>>,
+    /// The bubbles a reply is being written in (its field has the keys, or words): they wait while it is.
+    kept: RwSignal<HashSet<u64>>,
     next: RwSignal<u64>,
 }
 
@@ -151,6 +153,7 @@ impl crate::ext::State for Notices {
             focused: ui.scope.create_rw_signal(true),
             attention: ui.scope.create_rw_signal(false),
             watcher: ui.scope.create_rw_signal(None),
+            kept: ui.scope.create_rw_signal(HashSet::new()),
             next: ui.scope.create_rw_signal(1),
         }
     }
@@ -167,6 +170,33 @@ pub fn drop_notice(ui: Ui, id: u64) {
     let s = ui.state::<Notices>();
     if s.list.with_untracked(|l| l.iter().any(|n| n.id == id)) {
         s.list.update(|l| l.retain(|n| n.id != id));
+    }
+    keep(ui, id, false);
+}
+
+/// A bubble's reply being written in it, or not.
+fn keep(ui: Ui, id: u64, kept: bool) {
+    let s = ui.state::<Notices>();
+    if s.kept.with_untracked(|k| k.contains(&id)) != kept {
+        s.kept.update(|k| {
+            if kept {
+                k.insert(id);
+            } else {
+                k.remove(&id);
+            }
+        });
+    }
+}
+
+/// A quiet bubble's time up: it goes, unless a reply is being written in it, when it waits as long again.
+fn fade(ui: Ui, id: u64) {
+    let s = ui.state::<Notices>();
+    if !s.list.with_untracked(|l| l.iter().any(|n| n.id == id)) {
+        keep(ui, id, false);
+    } else if s.kept.with_untracked(|k| k.contains(&id)) {
+        floem::action::exec_after(QUIET, move |_| fade(ui, id));
+    } else {
+        drop_notice(ui, id);
     }
 }
 
@@ -200,7 +230,7 @@ fn tell(ui: Ui, what: What, title: String, detail: String) {
     let quiet = !matches!(what, What::Waiting { .. });
     s.list.update(|l| put(l, Notice { id, what, title: title.clone(), detail: detail.clone() }));
     if quiet {
-        floem::action::exec_after(QUIET, move |_| drop_notice(ui, id));
+        floem::action::exec_after(QUIET, move |_| fade(ui, id));
     }
     tell_desktop(ui, &title, &detail);
 }
@@ -332,6 +362,10 @@ fn bubble(ui: Ui, send: Send, n: Notice) -> impl IntoView {
                     }
                     // The reply's keys are its own, none the workbench's.
                     EventPropagation::Stop
+                })
+                .on_event_cont(EventListener::FocusGained, move |_| keep(ui, id, true))
+                .on_event_cont(EventListener::FocusLost, move |_| {
+                    keep(ui, id, !text.with_untracked(|t| t.trim().is_empty()))
                 })
                 .style(move |s| {
                     let c = t.get();
@@ -539,6 +573,21 @@ mod tests {
         take(ui, &json!({"type": "ask", "id": 4, "tool": "edit_file", "subject": "a.rs"}), &send);
         take(ui, &json!({"type": "turn_end", "ok": true}), &send);
         assert_eq!(bubbles(ui).iter().map(|n| n.what.clone()).collect::<Vec<_>>(), [What::Ready]);
+    }
+
+    #[test]
+    fn a_finished_turns_bubble_waits_while_a_reply_is_written_in_it() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        layout_hidden(ui);
+        take(ui, &json!({"type": "turn_end", "ok": true}), &send);
+        let id = bubbles(ui)[0].id;
+        keep(ui, id, true);
+        fade(ui, id);
+        assert_eq!(bubbles(ui).len(), 1);
+        keep(ui, id, false);
+        fade(ui, id);
+        assert!(bubbles(ui).is_empty());
     }
 
     #[test]
