@@ -168,7 +168,8 @@ fn next(ui: Ui, asks: Vec<Ask>, at: usize, mut answers: Map<String, Value>, done
     let Some(ask) = asks.get(at).cloned() else { return done(Some(answers)) };
     match ask {
         Ask::Text { id, prompt, value, password } => {
-            let mut q = quick::input(&prompt).value(&value).prompt(&prompt);
+            // As VS Code's: no title, the input's description said under the box.
+            let mut q = quick::input("").value(&value).prompt(&prompt);
             if password {
                 q = q.password();
             }
