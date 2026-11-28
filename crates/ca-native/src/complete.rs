@@ -495,33 +495,6 @@ fn enter_takes(setting: &str, typed: &str, inserted: &str) -> bool {
     }
 }
 
-/// VS Code's language id of a file, by its name, for the languages it is plain to tell.
-pub(crate) fn lang_of(path: &str) -> Option<&'static str> {
-    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase())?;
-    Some(match ext.as_str() {
-        "rs" => "rust",
-        "py" => "python",
-        "ts" | "mts" | "cts" => "typescript",
-        "tsx" => "typescriptreact",
-        "js" | "mjs" | "cjs" => "javascript",
-        "jsx" => "javascriptreact",
-        "md" => "markdown",
-        "json" => "json",
-        "go" => "go",
-        "c" | "h" => "c",
-        "cc" | "cpp" | "cxx" | "hpp" => "cpp",
-        "cs" => "csharp",
-        "java" => "java",
-        "rb" => "ruby",
-        "sh" | "bash" => "shellscript",
-        "toml" => "toml",
-        "yaml" | "yml" => "yaml",
-        "html" | "htm" => "html",
-        "css" => "css",
-        _ => return None,
-    })
-}
-
 // ---- The widget's state. ----
 
 /// Where the widget is drawn, in the window: its top left, and whether it is above the line.
@@ -595,7 +568,7 @@ fn word_items(ui: Ui, path: &str, lang: Option<&str>, editor: &Editor, offset: u
         });
         let mut seen: HashSet<String> = words.iter().cloned().collect();
         for (p, doc) in tabs {
-            if how == "matchingDocuments" && lang_of(&p) != lang_of(path) {
+            if how == "matchingDocuments" && crate::language::now(ui, &p) != crate::language::now(ui, path) {
                 continue;
             }
             let rev = doc.cache_rev().get_untracked();
@@ -632,7 +605,7 @@ fn open(ui: Ui, explicit: bool, trigger: Option<char>) {
         s.set(s.get() + 1);
         s.get()
     });
-    let lang = lang_of(&path);
+    let lang = crate::language::of(ui, &path);
     let ask = Ask { path: &path, lang, line, col, offset, word: &prefix, trigger, explicit, seq };
     let providers =
         PROVIDERS.with(|p| p.borrow().iter().map(|p| (p.id, p.triggers.clone(), p.items.clone())).collect::<Vec<_>>());
@@ -791,7 +764,7 @@ fn refresh(ui: Ui) {
     };
     let (line, col) = editor.offset_to_line_col(offset);
     let text = editor.rope_text().line_content(line).to_string();
-    let lang = lang_of(&path);
+    let lang = crate::language::of(ui, &path);
     let trigger = |c: char| PROVIDERS.with(|p| p.borrow().iter().any(|p| p.triggers.contains(&c)));
     let flags = (
         crate::settings::now(ui, "editor.quickSuggestions", lang).as_bool() != Some(false),
@@ -851,7 +824,7 @@ fn put(editor: &Editor, start: usize, item: &Item) {
 /// or the best snippet ("onlySnippets").
 fn tab_complete(ui: Ui) -> bool {
     let Some((path, editor)) = live(ui) else { return false };
-    let lang = lang_of(&path);
+    let lang = crate::language::of(ui, &path);
     let how = crate::settings::now(ui, "editor.tabCompletion", lang);
     let how = how.as_str().unwrap_or("off");
     if how == "off" {
@@ -889,7 +862,7 @@ fn tab_complete(ui: Ui) -> bool {
 /// Shows an inline suggestion at a place of a file (line and column from 0, the column a byte in the line), in place
 /// of the one shown; only its first line is drawn, Tab takes it whole.
 pub fn ghost(ui: Ui, path: &str, line: usize, col: usize, text: &str) {
-    if crate::settings::now(ui, "editor.inlineSuggest.enabled", lang_of(path)).as_bool() == Some(false)
+    if crate::settings::now(ui, "editor.inlineSuggest.enabled", crate::language::of(ui, path)).as_bool() == Some(false)
         || text.is_empty()
     {
         return ghost_clear(ui, path);
@@ -983,7 +956,7 @@ pub fn key(ui: Ui, key: &Key, mods: Modifiers) -> bool {
             let row = s.rows.with_untracked(|r| r.get(s.at.get_untracked()).cloned());
             let (path, typed) =
                 SESSION.with(|s| s.borrow().as_ref().map(|s| (s.path.clone(), s.prefix.clone()))).unwrap_or_default();
-            let how = crate::settings::now(ui, "editor.acceptSuggestionOnEnter", lang_of(&path));
+            let how = crate::settings::now(ui, "editor.acceptSuggestionOnEnter", crate::language::of(ui, &path));
             if row.is_some_and(|r| enter_takes(how.as_str().unwrap_or("on"), &typed, r.item.inserted())) {
                 accept(ui, None);
                 return true;
@@ -1357,8 +1330,6 @@ mod tests {
         }
         assert_eq!(Kind::from_lsp(2), Kind::Method);
         assert_eq!(Kind::from_lsp(15), Kind::Snippet);
-        assert_eq!(lang_of("src/a.tsx"), Some("typescriptreact"));
-        assert_eq!(lang_of("Makefile"), None);
     }
 
     #[test]

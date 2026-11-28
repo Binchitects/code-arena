@@ -224,58 +224,6 @@ pub fn line_highlight(v: &Value) -> (bool, bool) {
     }
 }
 
-/// VS Code's language id of a file, by its name, as a `[lang]` block of the settings names it.
-pub fn language(path: &str) -> Option<&'static str> {
-    if path.starts_with("user:") {
-        // The person's settings, keybindings and snippets: JSON with comments.
-        return Some("jsonc");
-    }
-    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
-    match name.as_str() {
-        "dockerfile" => return Some("dockerfile"),
-        "makefile" | "gnumakefile" => return Some("makefile"),
-        "cmakelists.txt" => return Some("cmake"),
-        "settings.json" | "keybindings.json" | "tsconfig.json" | "jsconfig.json" => return Some("jsonc"),
-        _ => {}
-    }
-    let ext = name.rsplit_once('.').map(|(_, e)| e)?;
-    Some(match ext {
-        "rs" => "rust",
-        "py" | "pyi" => "python",
-        "ts" | "mts" | "cts" => "typescript",
-        "tsx" => "typescriptreact",
-        "js" | "mjs" | "cjs" => "javascript",
-        "jsx" => "javascriptreact",
-        "json" => "json",
-        "jsonc" | "code-snippets" | "code-workspace" => "jsonc",
-        "md" | "markdown" => "markdown",
-        "html" | "htm" => "html",
-        "css" => "css",
-        "scss" => "scss",
-        "less" => "less",
-        "go" => "go",
-        "java" => "java",
-        "c" | "h" => "c",
-        "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => "cpp",
-        "cs" => "csharp",
-        "sh" | "bash" | "zsh" => "shellscript",
-        "ps1" => "powershell",
-        "yaml" | "yml" => "yaml",
-        "toml" => "toml",
-        "xml" | "svg" => "xml",
-        "sql" => "sql",
-        "rb" => "ruby",
-        "php" => "php",
-        "swift" => "swift",
-        "kt" | "kts" => "kotlin",
-        "lua" => "lua",
-        "dart" => "dart",
-        "vue" => "vue",
-        "txt" => "plaintext",
-        _ => return None,
-    })
-}
-
 /// The window's font zoom and the files Toggle Word Wrap turned (neither is a setting: as VS Code's, they last
 /// while the window is open).
 #[derive(Clone, Copy)]
@@ -302,7 +250,7 @@ pub fn zoom(ui: Ui, step: i32) {
 /// The options of a file's editor (none: an editor of no file), followed: read again when the settings, the zoom
 /// or the file's toggled wrap change.
 pub fn read(ui: Ui, path: Option<&str>) -> Options {
-    let lang = path.and_then(language);
+    let lang = path.map(|p| crate::language::id(ui, p));
     let z = ui.state::<Zoom>();
     let level = z.level.get();
     let size = font_size(&settings::setting(ui, "editor.fontSize", lang));
@@ -621,16 +569,6 @@ mod tests {
         assert_eq!(read(ui, None).font.size, 16.0);
         zoom(ui, -1);
         assert_eq!(read(ui, None).font.size, 14.0);
-    }
-
-    #[test]
-    fn a_file_is_named_by_its_language_as_a_settings_block_names_it() {
-        assert_eq!(language("src/main.rs"), Some("rust"));
-        assert_eq!(language("web/App.TSX"), Some("typescriptreact"));
-        assert_eq!(language("Makefile"), Some("makefile"));
-        assert_eq!(language(".vscode/settings.json"), Some("jsonc"));
-        assert_eq!(language("user:keybindings.json"), Some("jsonc"));
-        assert_eq!(language("notes"), None);
     }
 
     #[test]

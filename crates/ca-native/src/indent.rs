@@ -268,7 +268,7 @@ pub fn tab(before: impl Fn(usize) -> String, sels: &[Sel], indent: Indent) -> Op
 
 /// What the settings say for a file, by its language.
 pub fn said(ui: Ui, path: &str) -> Said {
-    let l = crate::complete::lang_of(path);
+    let l = crate::language::of(ui, path);
     Said {
         size: crate::settings::now(ui, "editor.tabSize", l).as_u64().unwrap_or(4).clamp(1, 32) as usize,
         spaces: crate::settings::now(ui, "editor.insertSpaces", l).as_bool().unwrap_or(true),
@@ -278,7 +278,7 @@ pub fn said(ui: Ui, path: &str) -> Said {
 
 /// The line ending of a new file (`files.eol`), for its language.
 pub fn new_eol(ui: Ui, path: &str) -> Eol {
-    match crate::settings::now(ui, "files.eol", crate::complete::lang_of(path)).as_str() {
+    match crate::settings::now(ui, "files.eol", crate::language::of(ui, path)).as_str() {
         Some("\r\n") => Eol::CrLf,
         Some("\n") => Eol::Lf,
         _ if cfg!(windows) => Eol::CrLf,

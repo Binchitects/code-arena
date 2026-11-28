@@ -498,7 +498,7 @@ pub fn value(ui: Ui, key: &str) -> Value {
                 .unwrap_or_default()
         ),
         "resourceLangId" | "editorLangId" => {
-            json!(file().and_then(|p| crate::editor::options::language(&p)).unwrap_or(""))
+            json!(file().map_or("", |p| crate::language::now(ui, &p)))
         }
         "resourceFilename" => json!(file().map_or(String::new(), |p| p.rsplit('/').next().unwrap_or("").into())),
         "resourceExtname" => json!(file().map_or(String::new(), |p| {

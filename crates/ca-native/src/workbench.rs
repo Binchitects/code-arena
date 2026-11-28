@@ -566,12 +566,6 @@ fn register_status() {
             .style(move |s| item(t, s).apply_if(!crate::editor::kinds::text_shown(ui), |s| s.hide()))
             .into_any()
     });
-    add("status.language", Side::Right, 240, |ui, _| {
-        let t = ui.colors;
-        label(move || ui.active.get().and_then(|p| ui.tab(&p)).map(|t| t.colours.language()).unwrap_or_default())
-            .style(move |s| item(t, s).apply_if(!crate::editor::kinds::text_shown(ui), |s| s.hide()))
-            .into_any()
-    });
     add("status.model", Side::Right, 291, |ui, _| {
         let t = ui.colors;
         h_stack((

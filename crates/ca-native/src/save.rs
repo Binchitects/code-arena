@@ -136,7 +136,7 @@ type Step = fn(&str) -> String;
 
 /// What is done to a file as it is saved, in VS Code's order, each by its setting (a language's own value wins).
 fn participants(ui: Ui, tab: &Tab) {
-    let lang = crate::editor::options::language(&tab.file);
+    let lang = crate::language::of(ui, &tab.file);
     let steps: [(bool, Step); 3] = [
         (settings::now(ui, "files.trimTrailingWhitespace", lang) == true, trim_trailing_whitespace),
         (settings::now(ui, "files.insertFinalNewline", lang) == true, insert_final_newline),

@@ -881,8 +881,8 @@ fn floem_command(e: &Editor, cmd: EdCommand) {
 }
 
 /// VS Code's language id of a file, for its settings.
-fn lang(path: &str) -> Option<&'static str> {
-    crate::complete::lang_of(path)
+fn lang(ui: Ui, path: &str) -> Option<&'static str> {
+    Some(crate::language::now(ui, path))
 }
 
 /// One indent of the file (`indent.rs`): a tab, or as many spaces as it is wide.
@@ -890,8 +890,8 @@ fn unit(ui: Ui, path: &str) -> (String, usize) {
     crate::indent::unit(ui, path)
 }
 
-fn colon(path: &str) -> bool {
-    matches!(lang(path), Some("python"))
+fn colon(ui: Ui, path: &str) -> bool {
+    matches!(lang(ui, path), Some("python"))
 }
 
 /// A command's work on the editor: what it changes, worked out from the text and selections.
@@ -1012,11 +1012,11 @@ fn all_commands() -> Vec<commands::Command> {
         c(DELETE_LINES, "Delete Line", |ui| edit_with(ui, EditType::Delete, |_, t, s| delete_lines(t, s)))
             .keys("Ctrl+Shift+K"),
         c(LINE_BELOW, "Insert Line Below", |ui| {
-            edit_with(ui, EditType::InsertNewline, |p, t, s| insert_line(t, s, true, &unit(ui, p).0, colon(p)))
+            edit_with(ui, EditType::InsertNewline, |p, t, s| insert_line(t, s, true, &unit(ui, p).0, colon(ui, p)))
         })
         .keys("Ctrl+Enter"),
         c(LINE_ABOVE, "Insert Line Above", |ui| {
-            edit_with(ui, EditType::InsertNewline, |p, t, s| insert_line(t, s, false, &unit(ui, p).0, colon(p)))
+            edit_with(ui, EditType::InsertNewline, |p, t, s| insert_line(t, s, false, &unit(ui, p).0, colon(ui, p)))
         })
         .keys("Ctrl+Shift+Enter"),
         c(INDENT, "Indent Line", |ui| edit_with(ui, EditType::Indent, |p, t, s| indent(t, s, &unit(ui, p).0)))
@@ -1160,13 +1160,13 @@ pub fn key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
                 return false;
             }
             let auto =
-                crate::settings::now(ui, "editor.autoIndent", lang(&path)).as_str().unwrap_or("full").to_string();
-            edit_with(ui, EditType::InsertNewline, |p, t, s| newline(t, s, &unit(ui, p).0, &auto, colon(p)));
+                crate::settings::now(ui, "editor.autoIndent", lang(ui, &path)).as_str().unwrap_or("full").to_string();
+            edit_with(ui, EditType::InsertNewline, |p, t, s| newline(t, s, &unit(ui, p).0, &auto, colon(ui, p)));
             true
         }
         Key::Named(NamedKey::Backspace) if mods.is_empty() => {
             let Some((path, e)) = editor_of(ui) else { return false };
-            let l = lang(&path);
+            let l = lang(ui, &path);
             let off = crate::settings::now(ui, "editor.autoClosingBrackets", l).as_str() == Some("never");
             if off || e.read_only.get_untracked() {
                 return false;
@@ -1198,7 +1198,7 @@ pub fn receive_char(ed: &Editor, path: &str, c: &str) -> bool {
     if ed.read_only.get_untracked() || ed.cursor.with_untracked(|c| c.get_mode()) != Mode::Insert {
         return false;
     }
-    let l = lang(path);
+    let l = lang(ui, path);
     let brackets = Close::of(crate::settings::now(ui, "editor.autoClosingBrackets", l).as_str().unwrap_or(""));
     let quotes = Close::of(crate::settings::now(ui, "editor.autoClosingQuotes", l).as_str().unwrap_or(""));
     let (sels, _) = sels_of(ed);
