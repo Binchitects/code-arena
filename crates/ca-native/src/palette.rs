@@ -547,7 +547,10 @@ pub fn accept_in(ui: Ui, send: &Send, at: usize, side: bool) {
             crate::quick_modes::ran(ui, send, &id);
             // The keys back where they were (the editor), then the command: one that gives them to a view keeps them.
             crate::quick_modes::give_back(ui);
-            crate::commands::run(ui, send, &id);
+            // Run from the palette, a git command asks which repository first (`scm::repos`).
+            crate::scm::repos::from_palette(ui, || {
+                crate::commands::run(ui, send, &id);
+            });
         }
         Pick::Theme(id) => {
             ui.quick_theme.set(None);

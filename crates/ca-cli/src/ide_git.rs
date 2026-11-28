@@ -43,6 +43,10 @@
 //! - `git_commit_files{repo, hash, key}` → `git_commit_files{repo, key, hash, parents, subject, author, at, files,
 //!   truncated, error}`: a commit and the files it changed against its first parent (a first commit's are all
 //!   added), each `{path, status, from}`; at most 2000 (`truncated` says there were more).
+//! - `git_repositories{detect, depth, ignored, open, key}` → `git_repositories{repo, key, items}`: the repositories
+//!   Source Control shows, each `{path, name}` (`path` is what the other messages take as `repo`): the project's own
+//!   first when it is in one, then (as `git.autoRepositoryDetection` says in `detect`) those in its folders down to
+//!   `depth` levels, skipping the folder names in `ignored`, and those the `open` files are in. At most 100.
 //!
 //! Once a face has asked a repository's status it is told again by itself whenever git's own files change (the
 //! index, HEAD, its log): a commit, a checkout or staging made in a terminal. The faces ask again after a file is
@@ -100,6 +104,7 @@ impl Area for Here {
         ("git_merge_complete", Rule::Side),
         ("git_log", Rule::Side),
         ("git_commit_files", Rule::Side),
+        ("git_repositories", Rule::Side),
     ];
 
     fn start(sh: &Shared) {
@@ -894,6 +899,24 @@ fn answer(
             }
             send(out, v);
         }
+        "git_repositories" => {
+            let ignored: Vec<String> =
+                m["ignored"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+            let open: Vec<String> =
+                m["open"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+            let detect = match &m["detect"] {
+                Value::Bool(b) => b.to_string(),
+                Value::String(s) => s.clone(),
+                _ => "true".to_string(),
+            };
+            let depth = m["depth"].as_i64().unwrap_or(1);
+            let top = matches!(where_is(dir), Ok(Some(_)));
+            let items: Vec<Value> = repositories(dir, top, &detect, depth, &ignored, &open)
+                .into_iter()
+                .map(|(path, name)| json!({"path": path, "name": name}))
+                .collect();
+            send(out, json!({"type": "git_repositories", "repo": repo, "key": m["key"], "items": items}));
+        }
         _ => remote_answer(of, m, repo, dir, out, kept),
     }
 }
@@ -1009,6 +1032,92 @@ fn commit_files(dir: &Path, hash: &str) -> Value {
         .collect();
     json!({"hash": full, "parents": parents, "subject": subject, "author": author,
         "at": at.trim().parse::<u64>().unwrap_or(0), "files": files, "truncated": truncated})
+}
+
+/// The most repositories Source Control shows, as VS Code's.
+const MOST_REPOSITORIES: usize = 100;
+
+/// The deepest a scan goes when `git.repositoryScanMaxDepth` is -1.
+const DEEPEST_SCAN: i64 = 10;
+
+/// Whether a folder is a repository's top: it has git's folder (or, a submodule's or a worktree's, git's file).
+fn is_top(dir: &Path) -> bool {
+    std::fs::symlink_metadata(dir.join(".git")).is_ok_and(|m| m.is_dir() || m.is_file())
+}
+
+/// The repositories Source Control shows, each `(folder from the project's top, name)`: the project's own first
+/// (`top`: the project is in one), then, as `detect` (`git.autoRepositoryDetection`: "true", "subFolders",
+/// "openEditors", "false") says, those in its folders down to `depth` levels (skipping `ignored` names and
+/// hidden folders) and those the `open` files are in. At most 100, in the order found.
+pub(crate) fn repositories(
+    root: &Path,
+    top: bool,
+    detect: &str,
+    depth: i64,
+    ignored: &[String],
+    open: &[String],
+) -> Vec<(String, String)> {
+    let mut found: Vec<String> = Vec::new();
+    if top {
+        found.push(String::new());
+    }
+    let depth = if depth < 0 { DEEPEST_SCAN } else { depth.min(DEEPEST_SCAN) };
+    if matches!(detect, "true" | "subFolders") && depth > 0 {
+        let mut level = vec![PathBuf::new()];
+        for _ in 0..depth {
+            let mut next = Vec::new();
+            for rel in level {
+                let Ok(entries) = std::fs::read_dir(root.join(&rel)) else { continue };
+                let mut dirs: Vec<(String, PathBuf)> = entries
+                    .filter_map(Result::ok)
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                    .filter_map(|e| e.file_name().to_str().map(|n| (n.to_string(), rel.join(n))))
+                    .filter(|(n, _)| !n.starts_with('.') && !ignored.iter().any(|i| i == n))
+                    .collect();
+                dirs.sort();
+                for (_, d) in dirs {
+                    if is_top(&root.join(&d)) {
+                        found.push(d.to_string_lossy().replace('\\', "/"));
+                        if found.len() >= MOST_REPOSITORIES {
+                            return named(root, found);
+                        }
+                    }
+                    next.push(d);
+                }
+            }
+            level = next;
+        }
+    }
+    if matches!(detect, "true" | "openEditors") {
+        for file in open.iter().filter(|p| path_ok(p)) {
+            let mut at = Path::new(file.trim_start_matches("./")).parent();
+            while let Some(d) = at.filter(|d| !d.as_os_str().is_empty()) {
+                if is_top(&root.join(d)) {
+                    let d = d.to_string_lossy().replace('\\', "/");
+                    if !found.contains(&d) && found.len() < MOST_REPOSITORIES {
+                        found.push(d);
+                    }
+                    break;
+                }
+                at = d.parent();
+            }
+        }
+    }
+    named(root, found)
+}
+
+/// Each repository's folder with its name: its last folder's, the project's own the project's folder's.
+fn named(root: &Path, found: Vec<String>) -> Vec<(String, String)> {
+    found
+        .into_iter()
+        .map(|p| {
+            let name = match p.rsplit('/').next().filter(|n| !n.is_empty()) {
+                Some(n) => n.to_string(),
+                None => root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+            };
+            (p, name)
+        })
+        .collect()
 }
 
 /// The longest a fetch, pull, push or sync may take before it is stopped.
@@ -1314,6 +1423,38 @@ mod tests {
         assert_eq!(from_project("sub/", "sub/a.rs"), "a.rs");
         assert_eq!(from_project("", "a.rs"), "a.rs");
         assert_eq!(from_project("sub/", "other/a.rs"), "../other/a.rs");
+    }
+
+    #[test]
+    fn repositories_are_found_in_folders_and_open_files() {
+        let d = tempfile::tempdir().expect("temp");
+        let root = d.path();
+        for dir in ["lib/.git", "apps/web/.git", "node_modules/x/.git", ".hidden/y/.git", "deep/a/b/.git", "plain/src"]
+        {
+            std::fs::create_dir_all(root.join(dir)).expect("dir");
+        }
+        // A submodule's git is a file.
+        std::fs::create_dir_all(root.join("sub")).expect("dir");
+        std::fs::write(root.join("sub/.git"), "gitdir: ../.git/modules/sub\n").expect("w");
+        let ignored = vec!["node_modules".to_string()];
+        let paths = |v: Vec<(String, String)>| v.into_iter().map(|(p, _)| p).collect::<Vec<_>>();
+        assert_eq!(paths(repositories(root, true, "true", 1, &ignored, &[])), ["", "lib", "sub"]);
+        assert_eq!(paths(repositories(root, false, "subFolders", 2, &ignored, &[])), ["lib", "sub", "apps/web"]);
+        assert_eq!(paths(repositories(root, false, "true", -1, &[], &[])).len(), 5);
+        let open = vec!["deep/a/b/c/d.rs".to_string(), "plain/src/x.rs".to_string(), "../out.rs".to_string()];
+        assert_eq!(paths(repositories(root, true, "openEditors", 1, &ignored, &open)), ["", "deep/a/b"]);
+        assert_eq!(paths(repositories(root, true, "false", 3, &ignored, &open)), [""]);
+        let named = repositories(root, false, "true", 2, &ignored, &[]);
+        assert_eq!(named[2], ("apps/web".to_string(), "web".to_string()));
+    }
+
+    #[test]
+    fn at_most_a_hundred_repositories_are_found() {
+        let d = tempfile::tempdir().expect("temp");
+        for i in 0..120 {
+            std::fs::create_dir_all(d.path().join(format!("r{i:03}/.git"))).expect("dir");
+        }
+        assert_eq!(repositories(d.path(), true, "true", 1, &[], &[]).len(), MOST_REPOSITORIES);
     }
 
     /// A repository made for a test, with a name and an address of its own; none when git is not there.

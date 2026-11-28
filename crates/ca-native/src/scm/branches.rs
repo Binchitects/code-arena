@@ -223,14 +223,16 @@ fn branch(ui: Ui) -> (Option<String>, Option<String>) {
 fn ask_refs(ui: Ui, send: &Send, what: &str) {
     let me = state(ui);
     me.asked.update(|n| *n += 1);
-    send(json!({"type": "git_branches", "repo": "", "key": format!("{what}:{}", me.asked.get_untracked())}));
+    send(
+        json!({"type": "git_branches", "repo": super::repos::selected(ui), "key": format!("{what}:{}", me.asked.get_untracked())}),
+    );
 }
 
 /// A fetch, pull, push or sync asked of the driver: the sync item turns until it is done.
 fn network(ui: Ui, send: &Send, mut m: Value) {
     let me = state(ui);
     let of = m["type"].as_str().unwrap_or("").to_string();
-    m["repo"] = json!("");
+    m["repo"] = json!(super::repos::selected(ui));
     if me.busy.with_untracked(Option::is_none) {
         me.busy.set(Some(of));
         turn(me);
@@ -345,7 +347,7 @@ fn undo(ui: Ui, send: &Send) {
         .button("Undo Last Commit")
         .open(ui, move |a| {
             if a.yes() {
-                send(json!({"type": "git_undo_commit", "repo": ""}));
+                send(json!({"type": "git_undo_commit", "repo": super::repos::selected(ui)}));
             }
         });
 }
@@ -360,7 +362,7 @@ fn create(ui: Ui, send: &Send, refs: &[Ref], from: Option<String>) {
         .validate(move |v| name_problem(v, &taken.iter().map(String::as_str).collect::<Vec<_>>()))
         .open(ui, move |name| {
             if let Some(name) = name.map(|n| tidy(&n)).filter(|n| !n.is_empty()) {
-                let mut m = json!({"type": "git_branch_create", "repo": "", "name": name});
+                let mut m = json!({"type": "git_branch_create", "repo": super::repos::selected(ui), "name": name});
                 if let Some(from) = from {
                     m["from"] = json!(from);
                 }
@@ -384,7 +386,7 @@ fn rename(ui: Ui, send: &Send, refs: &[Ref]) {
         .validate(move |v| name_problem(v, &taken.iter().map(String::as_str).collect::<Vec<_>>()))
         .open(ui, move |name| {
             if let Some(name) = name.map(|n| tidy(&n)).filter(|n| !n.is_empty() && *n != was) {
-                send(json!({"type": "git_branch_rename", "repo": "", "to": name}));
+                send(json!({"type": "git_branch_rename", "repo": super::repos::selected(ui), "to": name}));
             }
         });
 }
@@ -403,7 +405,7 @@ fn delete(ui: Ui, send: &Send, refs: &[Ref]) {
     let send = send.clone();
     quick::pick("Delete Branch").placeholder("Select a branch to delete").items(rows).open(ui, move |item| {
         if let Some((_, name)) = item.as_ref().and_then(|i| ref_of(&i.id)) {
-            send(json!({"type": "git_branch_delete", "repo": "", "name": name, "force": false, "key": name}));
+            send(json!({"type": "git_branch_delete", "repo": super::repos::selected(ui), "name": name, "force": false, "key": name}));
         }
     });
 }
@@ -419,7 +421,7 @@ fn checkout(ui: Ui, send: &Send, refs: Vec<Ref>) {
                 "+from" => pick_from(ui, &send, refs),
                 id => {
                     if let Some((kind, name)) = ref_of(id) {
-                        send(json!({"type": "git_switch", "repo": "", "name": name, "kind": kind}));
+                        send(json!({"type": "git_switch", "repo": super::repos::selected(ui), "name": name, "kind": kind}));
                     }
                 }
             }
@@ -699,7 +701,10 @@ pub fn register(_ui: Ui, _send: &Send) {
     use crate::commands::{add, command};
     use crate::layout::View;
     use crate::menus::{Menu, item};
-    let git = |id: &str, title: &str, run: fn(Ui, &Send)| command(id, "Git", title, run).when(has_repo);
+    // With several repositories, the one each is run on is asked first.
+    let git = |id: &str, title: &str, run: fn(Ui, &Send)| {
+        command(id, "Git", title, move |ui, send| super::repos::choose(ui, send, run)).when(has_repo)
+    };
     add(git(CHECKOUT, "Checkout to...", |ui, send| ask_refs(ui, send, "checkout")));
     add(git(BRANCH, "Create Branch...", |ui, send| ask_refs(ui, send, "create")));
     add(git(BRANCH_FROM, "Create Branch From...", |ui, send| ask_refs(ui, send, "from")));
@@ -750,7 +755,7 @@ fn done(ui: Ui, m: &Value, send: &Send) {
                 .open(ui, move |a| {
                     if a.yes() {
                         send(
-                            json!({"type": "git_branch_delete", "repo": "", "name": name, "force": true, "key": name}),
+                            json!({"type": "git_branch_delete", "repo": super::repos::selected(ui), "name": name, "force": true, "key": name}),
                         );
                     }
                 });
@@ -797,8 +802,8 @@ fn autofetch(ui: Ui, send: &Send) {
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     let me = state(ui);
     match m["type"].as_str().unwrap_or("") {
-        "git_status" if m["repo"].as_str().unwrap_or("").is_empty() && m["root"].is_string() => autofetch(ui, send),
-        "git_branches" if m["repo"].as_str().unwrap_or("").is_empty() => {
+        "git_status" if super::repos::is_selected(ui, m) && m["root"].is_string() => autofetch(ui, send),
+        "git_branches" if super::repos::is_selected(ui, m) => {
             let Some((what, n)) = m["key"].as_str().and_then(|k| k.split_once(':')) else { return false };
             if n != me.asked.get_untracked().to_string() {
                 return false;

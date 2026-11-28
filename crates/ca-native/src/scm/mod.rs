@@ -80,16 +80,19 @@ pub struct Status {
 }
 
 impl Status {
+    /// A status as the driver says it, its files named from the project's top (the driver names them from their
+    /// repository's).
     pub fn of(m: &Value) -> Status {
         let s = |v: &Value| v.as_str().map(str::to_string);
+        let repo = m["repo"].as_str().unwrap_or("");
         let letter = |v: &Value| v.as_str().and_then(|t| t.chars().next()).unwrap_or(' ');
         let files: Vec<File> = m["files"]
             .as_array()
             .into_iter()
             .flatten()
             .map(|f| File {
-                path: f["path"].as_str().unwrap_or("").to_string(),
-                from: s(&f["from"]),
+                path: repos::full(repo, f["path"].as_str().unwrap_or("")),
+                from: f["from"].as_str().map(|p| repos::full(repo, p)),
                 x: letter(&f["x"]),
                 y: letter(&f["y"]),
                 staged: f["staged"].as_bool().unwrap_or(false),
@@ -439,9 +442,13 @@ fn state(ui: Ui) -> Scm {
     ui.state::<Scm>()
 }
 
-/// The repository's status asked for now.
-fn refresh(send: &Send) {
-    send(json!({"type": "git_status", "repo": ""}));
+/// Every repository's status asked for now, and the repositories again when what they are found by changed
+/// (`force`: anyway).
+fn refresh(ui: Ui, send: &Send, force: bool) {
+    for repo in repos::all(ui) {
+        send(json!({"type": "git_status", "repo": repo}));
+    }
+    repos::ask(ui, send, force);
 }
 
 /// The status asked for a moment from now: several reasons at once ask once.
@@ -452,7 +459,7 @@ fn refresh_soon(ui: Ui, send: &Send) {
     let send = send.clone();
     floem::action::exec_after(std::time::Duration::from_millis(300), move |_| {
         if me.asks.get_untracked() == n {
-            refresh(&send);
+            refresh(ui, &send, true);
         }
     });
 }
@@ -463,16 +470,20 @@ fn files_of(ui: Ui, g: Group) -> Vec<File> {
         .with_untracked(|s| s.as_ref().map(|s| s.of_group(g).into_iter().cloned().collect()).unwrap_or_default())
 }
 
-fn stage(send: &Send, files: &[File]) {
+/// Files of the picked repository's status sent to git, named from its top.
+fn send_files(ui: Ui, send: &Send, of: &str, files: &[File], from: bool) {
     if !files.is_empty() {
-        send(json!({"type": "git_stage", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>(), false)}));
+        let (repo, paths) = repos::of_selected(ui, &paths_of(&files.iter().collect::<Vec<_>>(), from));
+        send(json!({"type": of, "repo": repo, "paths": paths}));
     }
 }
 
-fn unstage(send: &Send, files: &[File]) {
-    if !files.is_empty() {
-        send(json!({"type": "git_unstage", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>(), true)}));
-    }
+fn stage(ui: Ui, send: &Send, files: &[File]) {
+    send_files(ui, send, "git_stage", files, false);
+}
+
+fn unstage(ui: Ui, send: &Send, files: &[File]) {
+    send_files(ui, send, "git_unstage", files, true);
 }
 
 fn name_of(path: &str) -> &str {
@@ -512,9 +523,7 @@ fn discard(ui: Ui, send: &Send, files: Vec<File>) {
     }
     ask.open(ui, move |a| {
         if a.yes() {
-            send(
-                json!({"type": "git_discard", "repo": "", "paths": paths_of(&files.iter().collect::<Vec<_>>(), false)}),
-            );
+            send_files(ui, &send, "git_discard", &files, false);
         }
     });
 }
@@ -539,7 +548,9 @@ pub(crate) fn commit(ui: Ui, send: &Send, amend: bool) -> bool {
         return false;
     }
     me.busy.set(true);
-    send(json!({"type": "git_commit", "repo": "", "message": message, "all": staged == 0 && !amend, "amend": amend}));
+    send(
+        json!({"type": "git_commit", "repo": repos::selected(ui), "message": message, "all": staged == 0 && !amend, "amend": amend}),
+    );
     true
 }
 
@@ -566,19 +577,25 @@ fn open_row(ui: Ui, send: &Send, id: &str) {
 
 /// A changes tab's sides asked of the driver.
 fn ask_sides(ui: Ui, send: &Send, rest: &str) {
-    let Some((before, after)) = state(ui).status.with_untracked(|s| s.as_ref().and_then(|s| sides(s, rest))) else {
-        return;
-    };
+    let Some((before, after)) = sides_of(ui, rest) else { return };
     for (rev, working, path) in [before, after].into_iter().flatten() {
-        send(json!({"type": "git_show", "repo": "", "path": path, "rev": rev, "working": working}));
+        let (repo, path) = repos::split(ui, &path);
+        send(json!({"type": "git_show", "repo": repo, "path": path, "rev": rev, "working": working}));
     }
     compare(ui, rest);
+}
+
+/// A changes tab's sides, as the status of the repository its file is in says.
+fn sides_of(ui: Ui, rest: &str) -> Option<(Side, Side)> {
+    let file = rest.get(2..).unwrap_or("");
+    let (repo, _) = repos::split(ui, file);
+    ui.state::<repos::Repos>().statuses.with_untracked(|m| m.get(&repo).and_then(|s| sides(s, rest)))
 }
 
 /// A changes tab's lines worked out, off the window's thread, once both its sides have come.
 fn compare(ui: Ui, rest: &str) {
     let me = state(ui);
-    let Some((before, after)) = me.status.with_untracked(|s| s.as_ref().and_then(|s| sides(s, rest))) else { return };
+    let Some((before, after)) = sides_of(ui, rest) else { return };
     let side = |s: &Side| -> Option<Shown> {
         match s {
             None => Some(Shown::Missing),
@@ -644,7 +661,12 @@ fn note(ui: Ui, text: &'static str) -> floem::AnyView {
 
 /// The count at a group's right, as VS Code's.
 fn count(t: crate::widgets::Theme, n: usize) -> impl IntoView {
-    label(move || n.to_string()).style(move |s| {
+    count_of(t, move || n)
+}
+
+/// The count at a row's right, followed as it changes.
+pub(crate) fn count_of(t: crate::widgets::Theme, n: impl Fn() -> usize + 'static) -> impl IntoView {
+    label(move || n().to_string()).style(move |s| {
         let c = t.get();
         s.font_size(11.0)
             .min_width(18.0)
@@ -750,13 +772,13 @@ fn row_actions(ui: Ui, send: &Send, node: &wt::Node) -> Vec<wt::Action> {
         Some(Row::Group(g)) => {
             let files = move || files_of(ui, g);
             match g {
-                Group::Merge => vec![wt::act("add", "Stage All Merge Changes", move || stage(&s, &files()))],
-                Group::Staged => vec![wt::act("remove", "Unstage All Changes", move || unstage(&s, &files()))],
+                Group::Merge => vec![wt::act("add", "Stage All Merge Changes", move || stage(ui, &s, &files()))],
+                Group::Staged => vec![wt::act("remove", "Unstage All Changes", move || unstage(ui, &s, &files()))],
                 Group::Changes => {
                     let d = s.clone();
                     vec![
                         wt::act("discard", "Discard All Changes", move || discard(ui, &d, files())),
-                        wt::act("add", "Stage All Changes", move || stage(&s, &files())),
+                        wt::act("add", "Stage All Changes", move || stage(ui, &s, &files())),
                     ]
                 }
             }
@@ -766,13 +788,13 @@ fn row_actions(ui: Ui, send: &Send, node: &wt::Node) -> Vec<wt::Action> {
             let folder = path.to_string();
             let files = move || files_under(ui, g, &folder);
             match g {
-                Group::Merge => vec![wt::act("add", "Stage Changes", move || stage(&s, &files()))],
-                Group::Staged => vec![wt::act("remove", "Unstage Changes", move || unstage(&s, &files()))],
+                Group::Merge => vec![wt::act("add", "Stage Changes", move || stage(ui, &s, &files()))],
+                Group::Staged => vec![wt::act("remove", "Unstage Changes", move || unstage(ui, &s, &files()))],
                 Group::Changes => {
                     let (d, f2) = (s.clone(), files.clone());
                     vec![
                         wt::act("discard", "Discard Changes", move || discard(ui, &d, f2())),
-                        wt::act("add", "Stage Changes", move || stage(&s, &files())),
+                        wt::act("add", "Stage Changes", move || stage(ui, &s, &files())),
                     ]
                 }
             }
@@ -800,16 +822,16 @@ fn row_actions(ui: Ui, send: &Send, node: &wt::Node) -> Vec<wt::Action> {
                     vec![
                         open,
                         wt::act("git-merge", "Resolve in Merge Editor", move || crate::merge_editor::open(ui, &m, &p)),
-                        wt::act("add", "Stage Changes", move || stage(&s, &file())),
+                        wt::act("add", "Stage Changes", move || stage(ui, &s, &file())),
                     ]
                 }
-                Group::Staged => vec![open, wt::act("remove", "Unstage Changes", move || unstage(&s, &file()))],
+                Group::Staged => vec![open, wt::act("remove", "Unstage Changes", move || unstage(ui, &s, &file()))],
                 Group::Changes => {
                     let (d, f2) = (s.clone(), file.clone());
                     vec![
                         open,
                         wt::act("discard", "Discard Changes", move || discard(ui, &d, f2())),
-                        wt::act("add", "Stage Changes", move || stage(&s, &file())),
+                        wt::act("add", "Stage Changes", move || stage(ui, &s, &file())),
                     ]
                 }
             }
@@ -1052,9 +1074,11 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     )
     .style(|s| s.width_full());
     let last = history::view(ui, send.clone());
+    let send_section = send.clone();
     let boxed = commit_box(ui, send)
         .style(move |s| s.apply_if(!matches!(what.get(), Empty::Clean | Empty::Changes), |s| s.hide()));
-    let root = v_stack((boxed, words, changes, last)).style(|s| s.size_full().min_height(0.0));
+    let root = v_stack((repos::section(ui, send_section), boxed, words, changes, last))
+        .style(|s| s.size_full().min_height(0.0));
     me.root.set(Some(root.id()));
     root.into_any()
 }
@@ -1074,22 +1098,28 @@ pub fn register(_ui: Ui, _send: &Send) {
     use crate::commands::{add, command};
     use crate::menus::{Menu, item};
     add(command("git.commit", "Git", "Commit", |ui, send| {
-        commit(ui, send, false);
+        repos::choose(ui, send, |ui, send| {
+            commit(ui, send, false);
+        })
     })
     .when(has_repo));
     add(command("git.commitAmend", "Git", "Commit (Amend)", |ui, send| {
-        commit(ui, send, true);
+        repos::choose(ui, send, |ui, send| {
+            commit(ui, send, true);
+        })
     })
     .when(has_repo));
-    add(command("git.refresh", "Git", "Refresh", |_, send| refresh(send)));
-    add(command("git.stageAll", "Git", "Stage All Changes", |ui, send| stage(send, &files_of(ui, Group::Changes)))
-        .when(has_repo));
+    add(command("git.refresh", "Git", "Refresh", |ui, send| refresh(ui, send, true)));
+    add(command("git.stageAll", "Git", "Stage All Changes", |ui, send| {
+        repos::choose(ui, send, |ui, send| stage(ui, send, &files_of(ui, Group::Changes)))
+    })
+    .when(has_repo));
     add(command("git.unstageAll", "Git", "Unstage All Changes", |ui, send| {
-        unstage(send, &files_of(ui, Group::Staged))
+        repos::choose(ui, send, |ui, send| unstage(ui, send, &files_of(ui, Group::Staged)))
     })
     .when(has_repo));
     add(command("git.cleanAll", "Git", "Discard All Changes", |ui, send| {
-        discard(ui, send, files_of(ui, Group::Changes))
+        repos::choose(ui, send, |ui, send| discard(ui, send, files_of(ui, Group::Changes)))
     })
     .when(has_repo));
     add(command("git.init", "Git", "Initialize Repository", |_, send| send(json!({"type": "git_init", "repo": ""})))
@@ -1127,20 +1157,42 @@ fn open_tabs(ui: Ui) -> Vec<String> {
 pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     let me = state(ui);
     match m["type"].as_str().unwrap_or("") {
-        "git_status" if m["repo"].as_str().unwrap_or("").is_empty() => {
+        "git_status" => {
             let s = Status::of(m);
+            let repo = m["repo"].as_str().unwrap_or("");
+            let (changed, total) = repos::record(ui, repo, &s);
+            crate::badges::set(ui, View::Scm, total);
+            if !repos::is_selected(ui, m) {
+                // What the open changes tabs of another repository compare may be another now.
+                if changed {
+                    for rest in open_tabs(ui) {
+                        if repos::split(ui, rest.get(2..).unwrap_or("")).0 == repo {
+                            ask_sides(ui, send, &rest);
+                        }
+                    }
+                }
+                return false;
+            }
             if let Some(b) = &s.branch
                 && ui.branch.with_untracked(|was| was != b)
             {
                 ui.branch.set(b.clone());
             }
-            crate::badges::set(ui, View::Scm, s.total);
             if me.status.with_untracked(|was| was.as_ref() != Some(&s)) {
                 me.status.set(Some(s));
                 // What the open changes tabs compare may be another now.
                 for rest in open_tabs(ui) {
                     ask_sides(ui, send, &rest);
                 }
+            }
+        }
+        "git_committed" if !repos::is_selected(ui, m) => {
+            me.busy.set(false);
+            match m["error"].as_str() {
+                Some(e) => {
+                    toast::error(ui, e);
+                }
+                None => repos::committed_elsewhere(ui, m["repo"].as_str().unwrap_or("")),
             }
         }
         "git_committed" => {
@@ -1160,8 +1212,8 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
         }
         // Only the changes tabs ask without a key: one asked with a key is its part's (quick diff's, the history's).
         "git_shown" if m["key"].is_null() => {
-            let path = m["path"].as_str().unwrap_or("");
-            let key = shown_key(m["rev"].as_str().unwrap_or(""), m["working"].as_bool().unwrap_or(false), path);
+            let path = repos::full(m["repo"].as_str().unwrap_or(""), m["path"].as_str().unwrap_or(""));
+            let key = shown_key(m["rev"].as_str().unwrap_or(""), m["working"].as_bool().unwrap_or(false), &path);
             let shown = Shown::of(m);
             if me.shown.with_untracked(|s| s.get(&key) != Some(&shown)) {
                 me.shown.update(|s| {
