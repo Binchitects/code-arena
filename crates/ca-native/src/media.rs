@@ -542,6 +542,34 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     false
 }
 
+/// A small picture given as a data URL (a file attached to a message), decoded off the window's thread: `done` is
+/// given it, or none when it is not a picture. `key` is what the renderer keeps its copy by.
+pub fn small_picture(ui: Ui, url: &str, key: &str, done: impl FnOnce(Option<Rc<Picture>>) + 'static) {
+    let data = url.split_once(";base64,").map(|(_, d)| d.to_string()).unwrap_or_default();
+    let c = ui.colors.get_untracked();
+    let rgb = |c: peniko::Color| [c.r, c.g, c.b];
+    let checker = [rgb(c.input_bg), if c.dark { [20, 20, 20] } else { [230, 230, 230] }];
+    let hash = format!("attached\0{key}\0{}", c.dark).into_bytes();
+    let back = floem::ext_event::create_ext_action(ui.scope, move |made: Result<Decoded, String>| {
+        done(made.ok().map(|d| {
+            let image = peniko::Image::new(Blob::new(Arc::new(d.rgba)), peniko::Format::Rgba8, d.drawn.0, d.drawn.1);
+            Rc::new(Picture { width: d.width, height: d.height, size: 0, image, hash })
+        }));
+    });
+    std::thread::spawn(move || {
+        let made = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| decode(&bytes, "attached.png", checker));
+        back(made);
+    });
+}
+
+/// A picture drawn as large as fits its place, never larger than itself.
+pub fn drawn(picture: Rc<Picture>) -> impl IntoView {
+    Drawn { id: ViewId::new(), picture }
+}
+
 fn decode_off_thread(ui: Ui, st: State, path: String, m: &Value, size: u64) {
     let data = m["data"].as_str().unwrap_or("").to_string();
     let modified = m["modified"].as_u64().unwrap_or(0);

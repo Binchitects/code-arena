@@ -190,6 +190,11 @@ fn pending_of(list: &[(Picker, String)], which: Picker) -> Option<String> {
 }
 
 /// What a picker has in force, or what was chosen for it while a turn ran.
+/// Whether the session said the model sees pictures (one it did not describe does not, as the driver has it).
+pub fn sees(ui: Ui, model: &str) -> bool {
+    ui.state::<Pickers>().infos.with(|i| i.iter().any(|m| m.id == model && m.vision))
+}
+
 fn current(ui: Ui, which: Picker) -> String {
     let me = ui.state::<Pickers>();
     if let Some(v) = me.pending.with(|p| pending_of(p, which)) {

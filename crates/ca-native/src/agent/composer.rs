@@ -379,7 +379,7 @@ fn say(ui: Ui, send: &Send, words: &str, typed: &str) -> bool {
 /// What is in the box is sent (while an answer is written: it waits for it), and the box emptied.
 fn submit(ui: Ui, send: &Send) {
     let typed = text(ui).trim().to_string();
-    if typed.is_empty() && !chat_bridge::more(ui) {
+    if (typed.is_empty() && !chat_bridge::more(ui)) || !chat_bridge::ready(ui) {
         return;
     }
     if say(ui, send, &typed, &typed) {
@@ -654,7 +654,9 @@ pub(super) fn input(ui: Ui, send: Send, anchor: RwSignal<Rect>) -> (AnyView, Vie
     });
     // Whether there is something to send: words, or what a part of the chat sends without any. And whether an
     // answer is being written, told only when that changes (the session says it with every status).
-    let can_send = create_memo(move |_| ui.draft.with(|d| !d.trim().is_empty()) || chat_bridge::more(ui));
+    let can_send = create_memo(move |_| {
+        (ui.draft.with(|d| !d.trim().is_empty()) || chat_bridge::more(ui)) && chat_bridge::ready(ui)
+    });
     let running = create_memo(move |_| ui.running.get());
 
     let map = KeypressMap::default();
@@ -813,7 +815,15 @@ pub(super) fn input(ui: Ui, send: Send, anchor: RwSignal<Rect>) -> (AnyView, Vie
     tools.push(stop.into_any());
     tools.push(go.into_any());
     let toolbar = h_stack_from_iter(tools).style(|s| s.gap(2.0).items_center().width_full().min_width(0.0));
-    let frame = v_stack_from_iter([text, toolbar.into_any()]).style(move |s| {
+    let dropping = send.clone();
+    let frame = v_stack_from_iter([text, toolbar.into_any()]);
+    // Files dropped on the box from the system go to the part that attaches them.
+    let frame = frame.on_event_cont(floem::event::EventListener::DroppedFile, move |e| {
+        if let floem::event::Event::DroppedFile(f) = e {
+            chat_bridge::dropped(ui, &dropping, &f.path);
+        }
+    });
+    let frame = frame.style(move |s| {
         let c = t.get();
         s.flex_grow(1.0_f32)
             .min_width(0.0)
