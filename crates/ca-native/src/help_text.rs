@@ -553,14 +553,14 @@ pub const KEYS: &[(&[&str], &str, &str)] = &[
         "Ctrl+B, Ctrl+J",
         "Show or hide the side bar, the panel",
     ),
-    (&["workbench.action.openSettings"], "Ctrl+,", "Settings (settings.json, as VS Code's)"),
+    (&[crate::manage::OPEN_SETTINGS], "Ctrl+,", "Settings (settings.json, as VS Code's)"),
     (
         &["workbench.action.openGlobalKeybindings"],
         "Ctrl+K Ctrl+S",
         "Keyboard shortcuts (keybindings.json, as VS Code's)",
     ),
     (&["workbench.action.selectTheme"], "Ctrl+K Ctrl+T", "The colour theme"),
-    (&["workbench.view.extensions"], "Ctrl+Shift+X", "Extensions (VS Code's themes, icons, snippets, languages)"),
+    (&[crate::manage::SHOW_EXTENSIONS], "Ctrl+Shift+X", "Extensions (VS Code's themes, icons, snippets, languages)"),
     (&["workbench.action.splitEditor"], "Ctrl+\\, Ctrl+1…8", "Split the editor, focus an editor group"),
     (&[], "Ctrl+L", "In the editor: the lines chosen go with the next message"),
     (
