@@ -504,7 +504,7 @@ fn body(ui: Ui, send: Send, w: Window, d: Option<Detail>) -> AnyView {
                             label(move || name).style(|s| s.text_ellipsis()),
                             label(move || start.clone()).style(move |s| s.text_ellipsis().color(t.get().desc)),
                         ))
-                        .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
+                        .style(|s| s.flex_grow(1.0_f32).min_width(0.0).gap(1.0).line_height(1.3)),
                         label(move || short(tokens)).style(move |s| s.color(t.get().desc)),
                     ))
                     .style(|s| s.items_center().gap(6.0).font_size(12.0).width_full())
@@ -513,7 +513,7 @@ fn body(ui: Ui, send: Send, w: Window, d: Option<Detail>) -> AnyView {
                 .collect();
             if !big.is_empty() {
                 rows.push(label(|| "Biggest").style(|s| s.font_size(12.0).font_weight(Weight::SEMIBOLD)).into_any());
-                rows.push(v_stack_from_iter(big).style(|s| s.gap(4.0).width_full()).into_any());
+                rows.push(v_stack_from_iter(big).style(|s| s.gap(6.0).width_full()).into_any());
             }
         }
         None => rows.push(note(t, "Reading what fills the window…".into()).into_any()),
