@@ -241,24 +241,58 @@ pub fn write_into(dir: &Path, skills: &[Folder], replace: bool) -> std::io::Resu
 /// A skill's folder (where its SKILL.md is) as a `.zip` at `to`, its folder's name at the top; a file that looks like it
 /// holds a secret is left out. Gives what was left out.
 pub fn export_zip(skill_dir: &Path, name: &str, to: &Path) -> Result<Vec<String>, String> {
-    let mut all = BTreeMap::new();
-    let mut left = Vec::new();
-    tree(skill_dir, &mut all, &mut left);
+    export_many(&[(skill_dir.to_path_buf(), name.to_string())], to)
+}
+
+/// Several skills' folders (each where its SKILL.md is, with the name it has at the top of the `.zip`) as one `.zip`
+/// at `to`, as [`read`] brings them in again; a file that looks like it holds a secret is left out. Gives what was
+/// left out.
+pub fn export_many(skills: &[(PathBuf, String)], to: &Path) -> Result<Vec<String>, String> {
     let file = std::fs::File::create(to).map_err(|e| format!("{}: {e}", to.display()))?;
     let mut z = zip::ZipWriter::new(file);
     let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    for (rel, bytes) in all {
-        if let Ok(t) = std::str::from_utf8(&bytes)
-            && let Some(what) = secret_in(t)
-        {
-            left.push(format!("{rel}: it looks like it holds {what}"));
-            continue;
+    let mut left = Vec::new();
+    for (skill_dir, name) in skills {
+        let mut all = BTreeMap::new();
+        tree(skill_dir, &mut all, &mut left);
+        for (rel, bytes) in all {
+            if let Ok(t) = std::str::from_utf8(&bytes)
+                && let Some(what) = secret_in(t)
+            {
+                left.push(format!("{name}/{rel}: it looks like it holds {what}"));
+                continue;
+            }
+            z.start_file(format!("{name}/{rel}"), opts).map_err(|e| e.to_string())?;
+            z.write_all(&bytes).map_err(|e| e.to_string())?;
         }
-        z.start_file(format!("{name}/{rel}"), opts).map_err(|e| e.to_string())?;
-        z.write_all(&bytes).map_err(|e| e.to_string())?;
     }
     z.finish().map_err(|e| e.to_string())?;
     Ok(left)
+}
+
+/// A skill brought in under another name: its folder's, and the `name:` of its SKILL.md's front matter (the name
+/// the library knows it by), which is added when the file has none.
+pub fn renamed(skill: &Folder, name: &str) -> Folder {
+    let mut files = skill.files.clone();
+    if let Some(text) = files.get_mut(SKILL_MD) {
+        *text = with_name(text, name);
+    }
+    Folder { name: name.to_string(), files }
+}
+
+/// A SKILL.md's text with its front matter's `name:` said as `name`.
+fn with_name(text: &str, name: &str) -> String {
+    let t = text.trim_start_matches('\u{feff}');
+    let bare = || format!("---\nname: {name}\n---\n{t}");
+    let Some(rest) = t.strip_prefix("---\n").or_else(|| t.strip_prefix("---\r\n")) else { return bare() };
+    let Some(end) = rest.find("\n---") else { return bare() };
+    let (head, tail) = rest.split_at(end);
+    let mut lines: Vec<String> = head.lines().map(str::to_string).collect();
+    match lines.iter_mut().find(|l| l.trim_start().starts_with("name:")) {
+        Some(l) => *l = format!("name: {name}"),
+        None => lines.insert(0, format!("name: {name}")),
+    }
+    format!("---\n{}{tail}", lines.join("\n"))
 }
 
 /// Where an export goes when no place is given: `NAME.zip` in `cwd`.
@@ -303,6 +337,26 @@ mod tests {
         assert_eq!(write_into(&into, &back.skills, false).expect("w").0, vec!["release"]);
         assert_eq!(write_into(&into, &back.skills, false).expect("w").1, vec!["release"]);
         assert!(into.join("release/notes.md").is_file());
+    }
+
+    #[test]
+    fn several_skills_go_out_as_one_zip_and_one_comes_in_renamed() {
+        let d = tempfile::tempdir().expect("temp");
+        skill(d.path(), "release", "Tag it.");
+        skill(d.path(), "review", "Look.");
+        let z = d.path().join("both.zip");
+        let both = [(d.path().join("release"), "release".to_string()), (d.path().join("review"), "review".to_string())];
+        assert!(export_many(&both, &z).expect("zip").is_empty());
+        let back = read(&z).expect("read");
+        assert_eq!(back.skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["release", "review"]);
+        let other = renamed(&back.skills[0], "release-2");
+        assert_eq!(other.name, "release-2");
+        let (fm, body) = crate::library::front_matter(&other.files[SKILL_MD]);
+        assert_eq!(fm.get("name").map(String::as_str), Some("release-2"));
+        assert!(body.contains("Tag it."), "{body}");
+        let bare = Folder { name: "x".into(), files: BTreeMap::from([(SKILL_MD.to_string(), "Do it.".to_string())]) };
+        let (fm, _) = crate::library::front_matter(&renamed(&bare, "y").files[SKILL_MD]);
+        assert_eq!(fm.get("name").map(String::as_str), Some("y"));
     }
 
     #[test]

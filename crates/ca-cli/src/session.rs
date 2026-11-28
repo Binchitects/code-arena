@@ -245,7 +245,7 @@ pub fn library_sources(app: &App, root: &std::path::Path) -> Vec<ca_agent::libra
 }
 
 /// Built-in skills an Arena admin turned off, as Arena last said.
-fn arena_off(data: &std::path::Path) -> Vec<String> {
+pub(crate) fn arena_off(data: &std::path::Path) -> Vec<String> {
     std::fs::read_to_string(ca_agent::library::arena_dir(data).join("off.json"))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
@@ -336,9 +336,18 @@ impl ca_agent::CommandCheck for ArenaLaya {
     }
 }
 
-async fn keep_arena_skills(arena: ca_arena::ArenaClient, data: std::path::PathBuf, builtin: bool, notices: Notices) {
+/// Arena's skills read and kept (with the names of those that are the person's own, in `mine.json`, for the Skills
+/// view), and the built-in ones written again without those an admin turned off.
+pub(crate) async fn keep_arena_skills(
+    arena: ca_arena::ArenaClient,
+    data: std::path::PathBuf,
+    builtin: bool,
+    notices: Notices,
+) {
     {
         let Ok(Ok(got)) = tokio::time::timeout(Duration::from_secs(15), arena.skills()).await else { return };
+        let mine: Vec<&str> = got.skills.iter().filter(|k| k.mine).map(|k| k.name.as_str()).collect();
+        let mine = serde_json::to_string(&mine).unwrap_or_default();
         let skills: Vec<(String, std::collections::BTreeMap<String, String>)> =
             got.skills.into_iter().map(|k| (k.name, k.files)).collect();
         match ca_agent::library::keep_arena(&data, &skills) {
@@ -357,6 +366,7 @@ async fn keep_arena_skills(arena: ca_arena::ArenaClient, data: std::path::PathBu
             ca_agent::library::arena_dir(&data).join("off.json"),
             serde_json::to_string(&got.off).unwrap_or_default(),
         );
+        let _ = std::fs::write(ca_agent::library::arena_dir(&data).join("mine.json"), mine);
         let _ = ca_agent::library::keep_builtin(&data, &got.off, builtin);
     }
 }
