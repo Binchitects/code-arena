@@ -77,11 +77,11 @@ pub struct Doc {
 
 /// A document's blocks drawn as an answer's are: read off the window's thread by whoever has it, each block laid
 /// out again only when it changes.
-pub fn document(ui: Ui, blocks: Memo<Vec<Rc<Block>>>, doc: Doc) -> impl IntoView {
+pub fn document(ui: Ui, blocks: Memo<Vec<Rc<Block>>>, doc: Doc) -> impl View {
     blocks_view(ui, blocks, None, Some(Rc::new(doc)))
 }
 
-fn blocks_view(ui: Ui, blocks: Memo<Vec<Rc<Block>>>, quoting: Option<Quoting>, doc: Option<Rc<Doc>>) -> impl IntoView {
+fn blocks_view(ui: Ui, blocks: Memo<Vec<Rc<Block>>>, quoting: Option<Quoting>, doc: Option<Rc<Doc>>) -> impl View {
     dyn_stack(
         move || blocks.get().into_iter().enumerate().collect::<Vec<_>>(),
         |(n, b): &(usize, Rc<Block>)| (*n, shape(b)),
@@ -1053,6 +1053,15 @@ mod tests {
         assert_eq!(shape(&code("rust", "fn")), shape(&code("rust", "fn main() {}")));
         assert_ne!(shape(&code("rust", "fn")), shape(&code("sh", "fn")));
         assert_ne!(shape(&Block::Heading(1, inline("a"))), shape(&Block::Heading(2, inline("a"))));
+        assert_ne!(shape(&para("![a](a.png)")), shape(&para("![a](b.png)")), "a picture changed is drawn again");
+    }
+
+    #[test]
+    fn a_paragraph_of_pictures_alone_is_drawn_as_them() {
+        let both = vec![("a.png".to_string(), "one".to_string()), ("b.svg".to_string(), "b.svg".to_string())];
+        assert_eq!(pictures_only(&inline("![one](a.png) ![](b.svg)")), Some(both));
+        assert_eq!(pictures_only(&inline("See ![one](a.png)")), None, "words beside it: a paragraph");
+        assert_eq!(pictures_only(&inline("[one](a.png)")), None, "a link is no picture");
     }
 
     fn rows(cells: &[&[&str]]) -> Vec<Vec<Text>> {
