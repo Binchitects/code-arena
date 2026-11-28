@@ -603,13 +603,6 @@ fn popover(ui: Ui, send: &Send) -> AnyView {
     // Built again only when what it shows changes (not with every status).
     let what = create_memo(move |_| st.open.get().then(|| (st.window.get(), st.detail.get())));
     let asked = send.clone();
-    create_effect(move |was: Option<bool>| {
-        let open = st.open.get();
-        if open && was != Some(true) {
-            ask(&asked);
-        }
-        open
-    });
     let panel = dyn_container(
         move || what.get(),
         move |shown| match shown {
@@ -644,7 +637,18 @@ fn popover(ui: Ui, send: &Send) -> AnyView {
             .box_shadow_color(c.shadow)
             .selectable(false)
     });
-    container(panel)
+    let layer = container(panel).keyboard_navigable();
+    let id = layer.id();
+    // Opened: what fills the window asked, and the keys taken (Escape closes it).
+    create_effect(move |was: Option<bool>| {
+        let open = st.open.get();
+        if open && was != Some(true) {
+            ask(&asked);
+            id.request_focus();
+        }
+        open
+    });
+    layer
         .on_event_stop(floem::event::EventListener::PointerDown, move |_| st.open.set(false))
         .on_event_stop(floem::event::EventListener::KeyDown, move |e| {
             if let floem::event::Event::KeyDown(k) = e

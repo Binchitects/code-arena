@@ -47,7 +47,10 @@ pub enum When {
 pub fn validate(when: When, at: &str, target: &str, account: Option<i64>) -> Result<(Value, u64), String> {
     let a = match when {
         When::Off => 0,
-        When::Account => account.map_or(DEFAULT_AT, |n| n.clamp(0, 95) as u64),
+        When::Account => match account.unwrap_or(DEFAULT_AT as i64) {
+            n if n <= 0 => 0,
+            n => n.clamp(20, 95) as u64,
+        },
         When::Share => match at.trim().parse::<u64>() {
             Ok(n) if (20..=95).contains(&n) => n,
             _ => return Err("The threshold is from 20% to 95% of the window.".into()),
@@ -90,6 +93,8 @@ struct Settings {
     target: RwSignal<String>,
     error: RwSignal<Option<String>>,
     saving: RwSignal<bool>,
+    /// The Context view's parts that are open, by their kinds.
+    opened: RwSignal<Vec<String>>,
 }
 
 impl crate::ext::State for Settings {
@@ -101,6 +106,7 @@ impl crate::ext::State for Settings {
             target: ui.scope.create_rw_signal(String::new()),
             error: ui.scope.create_rw_signal(None),
             saving: ui.scope.create_rw_signal(false),
+            opened: ui.scope.create_rw_signal(Vec::new()),
         }
     }
 }
@@ -149,7 +155,11 @@ fn heading(text: &'static str) -> impl IntoView {
 /// One part of the window: its row (a chevron, its swatch, its name, tokens and share), opening to its pieces.
 fn part(ui: Ui, p: ring::Part, size: u64) -> AnyView {
     let t = ui.colors;
-    let open = create_rw_signal(false);
+    // Kept in the window's state: the view is built again with every step of a turn, and a part opened stays so.
+    let opened = ui.state::<Settings>().opened;
+    let mine = p.kind.clone();
+    let open = create_memo(move |_| opened.with(|o| o.contains(&mine)));
+    let toggled = p.kind.clone();
     let color = kind_color(&t.get_untracked(), &p.kind);
     let (kind, tokens, share) = (p.kind.clone(), p.tokens, p.tokens * 100 / size.max(1));
     let has = !p.pieces.is_empty();
@@ -165,7 +175,12 @@ fn part(ui: Ui, p: ring::Part, size: u64) -> AnyView {
     ))
     .on_click_stop(move |_| {
         if has {
-            open.update(|o| *o = !*o);
+            opened.update(|o| match o.iter().position(|k| *k == toggled) {
+                Some(at) => {
+                    o.remove(at);
+                }
+                None => o.push(toggled.clone()),
+            });
         }
     })
     .style(move |s| {
@@ -303,7 +318,8 @@ pub fn view(ui: Ui, send: Send) -> AnyView {
         .style(|s| s.width_full());
     scroll(body)
         .on_resize(move |r| {
-            let w = r.width().round();
+            // In steps: what is drawn is built again only when the width has changed by a step.
+            let w = (r.width() / 40.0).floor() * 40.0;
             if (width.get_untracked() - w).abs() >= 1.0 {
                 width.set(w);
             }
@@ -568,6 +584,8 @@ mod tests {
         assert_eq!(validate(When::Share, "80", "25", None), Ok((json!(80), 25)));
         assert_eq!(validate(When::Off, "", "85", None), Ok((json!(0), 85)));
         assert_eq!(validate(When::Account, "", "25", Some(60)), Ok((json!("account"), 25)));
+        assert_eq!(validate(When::Account, "", "10", Some(5)), Ok((json!("account"), 10)), "an account's 5% is 20%");
+        assert_eq!(validate(When::Account, "", "85", Some(0)), Ok((json!("account"), 85)));
         assert_eq!(
             validate(When::Share, "19", "5", None),
             Err("The threshold is from 20% to 95% of the window.".into())
