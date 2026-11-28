@@ -145,6 +145,9 @@ pub struct Line {
     pub runs: Vec<Run>,
 }
 
+/// A line's minimap blocks, and whether they are of the line as it is now.
+type MiniLine = (bool, Rc<[Block]>);
+
 /// A run of a line's characters as the minimap draws it: its first column and the column after its last (a tab
 /// counted as the columns it is drawn as), and its colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -157,7 +160,13 @@ pub struct Block {
 /// A line's runs as the minimap draws them, as VS Code's: each character that is not white space by its column (a
 /// tab goes to its next stop), in its run's colour (`plain` outside the runs), those side by side in one colour as
 /// one block, and nothing from column `most` on.
-pub fn blocks(text: &str, runs: &[(std::ops::Range<usize>, Color)], tab: usize, most: usize, plain: Color) -> Vec<Block> {
+pub fn blocks(
+    text: &str,
+    runs: &[(std::ops::Range<usize>, Color)],
+    tab: usize,
+    most: usize,
+    plain: Color,
+) -> Vec<Block> {
     let tab = tab.max(1);
     let (mut out, mut col, mut r) = (Vec::<Block>::new(), 0usize, 0usize);
     for (i, ch) in text.char_indices() {
@@ -294,7 +303,7 @@ pub struct Colours {
     /// The file's path, by which its decorations are found (`decor.rs`).
     path: String,
     /// The minimap's runs of each line worked out, and whether they are of the line as it is now (`minimap`).
-    mini: RefCell<Vec<Option<(bool, Rc<[Block]>)>>>,
+    mini: RefCell<Vec<Option<MiniLine>>>,
 }
 
 impl Colours {

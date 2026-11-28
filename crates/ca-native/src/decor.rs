@@ -758,7 +758,11 @@ impl Margin {
         let lines = e.last_line() + 1;
         let rows = map.as_ref().map_or(lines, |m| m.rows(lines)) as f64;
         let vp = e.viewport.get_untracked();
-        let beyond = if e.es.with_untracked(|s| s.scroll_beyond_last_line()) { (vp.height() - line_height).max(0.0) } else { 0.0 };
+        let beyond = if e.es.with_untracked(|s| s.scroll_beyond_last_line()) {
+            (vp.height() - line_height).max(0.0)
+        } else {
+            0.0
+        };
         let scroll_height = (rows * line_height + beyond).max(vp.height()).max(1.0);
         let ratio = height / scroll_height;
         let y_of = |line: usize| map.as_ref().map_or(line, |m| m.row_of_line(line)) as f64 * line_height * ratio;

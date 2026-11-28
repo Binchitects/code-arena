@@ -186,7 +186,10 @@ pub fn pinned(
 
 /// A region that ends right before its closing bracket (at its first line's indentation) ends on it, as a symbol's
 /// range does: its first line stays pinned while the bracket is under it.
-fn with_closer(text: &floem::views::editor::core::buffer::rope_text::RopeTextVal, (start, end): (usize, usize)) -> (usize, usize) {
+fn with_closer(
+    text: &floem::views::editor::core::buffer::rope_text::RopeTextVal,
+    (start, end): (usize, usize),
+) -> (usize, usize) {
     if end + 1 > text.last_line() {
         return (start, end);
     }
@@ -196,6 +199,9 @@ fn with_closer(text: &floem::views::editor::core::buffer::rope_text::RopeTextVal
     let closes = next.trim_start().starts_with(['}', ')', ']']);
     if closes && indent(&first) == indent(&next) { (start, end + 1) } else { (start, end) }
 }
+
+/// Symbols by their line (from 0) and depth.
+type Lines = Rc<Vec<(usize, usize)>>;
 
 // ==== The room under the minimap ====
 
@@ -227,12 +233,6 @@ pub fn room(editor: &Editor) -> f64 {
 
 // ==== The views ====
 
-/// The minimap's and the sticky scroll's settings for a file, followed for its language.
-fn setting(ui: Ui, path: &str, key: &'static str) -> Memo<Value> {
-    let path = path.to_string();
-    create_memo(move |_| crate::settings::setting(ui, key, Some(crate::language::id(ui, &path))))
-}
-
 /// The rows the editor draws (by the folds) and the minimap's rows, and the height scrolled over.
 fn rows(editor: &Editor, path: &str) -> (Option<Rc<crate::editor::folding::FoldMap>>, usize, f64) {
     let map = crate::editor::folding::followed(path, editor);
@@ -256,13 +256,13 @@ fn beyond(editor: &Editor) -> bool {
 /// An editor with its minimap and its sticky scroll over it (`view` is the editor with its margin and ruler,
 /// `decor::around`).
 pub fn around(ui: Ui, view: impl IntoView + 'static, editor: &Editor, colours: Rc<Colours>, path: &str) -> AnyView {
-    let on = setting(ui, path, "editor.minimap.enabled");
-    let chars = setting(ui, path, "editor.minimap.renderCharacters");
-    let side = setting(ui, path, "editor.minimap.side");
-    let sticky_on = setting(ui, path, "editor.stickyScroll.enabled");
-    let on = create_memo(move |_| on.with(|v| v.as_bool() == Some(true)));
-    let left = create_memo(move |_| side.with(|v| v.as_str() == Some("left")));
-    let chars = create_memo(move |_| chars.with(|v| v.as_bool() == Some(true)));
+    // The settings, followed for the file's language.
+    let file = path.to_string();
+    let lang = create_memo(move |_| crate::language::id(ui, &file));
+    let on = create_memo(move |_| crate::settings::flag(ui, "editor.minimap.enabled", Some(lang.get())));
+    let chars = create_memo(move |_| crate::settings::flag(ui, "editor.minimap.renderCharacters", Some(lang.get())));
+    let left = create_memo(move |_| crate::settings::text(ui, "editor.minimap.side", Some(lang.get())) == "left");
+    let sticky_on = create_memo(move |_| crate::settings::flag(ui, "editor.stickyScroll.enabled", Some(lang.get())));
     // Its width, by the width of the text beside it.
     let (viewport, cw_colours, eid) = (editor.viewport, colours.clone(), editor.id());
     let char_width = create_memo(move |_| {
@@ -300,7 +300,8 @@ pub fn around(ui: Ui, view: impl IntoView + 'static, editor: &Editor, colours: R
             .apply_if(pinned.with(Vec::is_empty), |s| s.hide())
     });
     let id = editor.id();
-    let body = floem::views::container(view).style(move |s| s.size_full().padding_left(if left.get() { wide.get() } else { 0.0 }));
+    let body = floem::views::container(view)
+        .style(move |s| s.size_full().padding_left(if left.get() { wide.get() } else { 0.0 }));
     floem::views::stack((body, pins, map))
         .on_resize(move |r| {
             if total.get_untracked() != r.width() {
@@ -333,10 +334,16 @@ fn heights(chars: bool) -> (f64, f64) {
     if chars { (2.0, 2.0) } else { (3.0, 2.0) }
 }
 
-fn frame_of(editor: &Editor, path: &str, chars: bool, height: f64) -> (Frame, Option<Rc<crate::editor::folding::FoldMap>>, usize) {
+fn frame_of(
+    editor: &Editor,
+    path: &str,
+    chars: bool,
+    height: f64,
+) -> (Frame, Option<Rc<crate::editor::folding::FoldMap>>, usize) {
     let (map, rows, scroll_height) = rows(editor, path);
     let vp = editor.viewport.get_untracked();
-    let f = frame(rows, f64::from(editor.line_height(0)), heights(chars).0, height, vp.y0, scroll_height, beyond(editor));
+    let f =
+        frame(rows, f64::from(editor.line_height(0)), heights(chars).0, height, vp.y0, scroll_height, beyond(editor));
     (f, map, rows)
 }
 
@@ -345,7 +352,14 @@ fn scroll_to(editor: &Editor, top: f64) {
     editor.scroll_to.set(Some(Vec2::new(x, top.max(0.0))));
 }
 
-fn minimap(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, chars: Memo<bool>, on: Memo<bool>) -> impl IntoView {
+fn minimap(
+    ui: Ui,
+    editor: &Editor,
+    colours: Rc<Colours>,
+    path: &str,
+    chars: Memo<bool>,
+    on: Memo<bool>,
+) -> impl IntoView {
     let (hovered, drag) = (create_rw_signal(false), create_rw_signal(None::<(f64, f64)>));
     let view = Map {
         id: ViewId::new(),
@@ -512,7 +526,7 @@ struct Sticky {
 }
 
 /// The lines of the scopes the top line is in, pinned over the editor's top.
-fn sticky(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, on: Memo<Value>) -> Sticky {
+fn sticky(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, on: Memo<bool>) -> Sticky {
     // The file's regions, found again a moment after the last edit (not on every key).
     let regions = create_rw_signal(crate::editor::folding::regions_of(path, editor));
     {
@@ -538,7 +552,7 @@ fn sticky(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, on: Memo<Va
     }
     // The outline's symbols of the file, the last ones read while it was the Outline's.
     let at = path.to_string();
-    let symbols = create_memo(move |before: Option<&Option<Rc<Vec<(usize, usize)>>>>| {
+    let symbols = create_memo(move |before: Option<&Option<Lines>>| {
         ui.symbols.with(|(p, s)| {
             if *p == at {
                 Some(Rc::new(s.iter().map(|s| (s.line.saturating_sub(1), s.depth)).collect()))
@@ -558,7 +572,7 @@ fn sticky(ui: Ui, editor: &Editor, colours: Rc<Colours>, path: &str, on: Memo<Va
     });
     let (e, viewport, screen) = (editor.clone(), editor.viewport, editor.screen_lines);
     let pins = create_memo(move |_| {
-        if on.with(|v| v.as_bool() != Some(true)) {
+        if !on.get() {
             return Vec::new();
         }
         let vp = viewport.get();
@@ -694,7 +708,7 @@ impl View for Pins {
                 cx.fill(&Rect::new(0.0, top, size.width, top + height), c.sticky_bg, 0.0);
             }
             let mut number = TextLayout::new();
-            number.set_text(&(pin.line + 1).to_string(), AttrsList::new(attrs.clone()));
+            number.set_text(&(pin.line + 1).to_string(), AttrsList::new(attrs));
             let w = number.size().width;
             cx.save();
             cx.clip(&Rect::new(0.0, 0.0, size.width, bottom));
