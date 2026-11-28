@@ -142,7 +142,11 @@ pub fn launch(hub: Hub) {
                         break;
                     }
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                // The session's messages have ended: the window says so (`banners.rs`) and stays as it is.
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    let _ = tx.send(json!({"type": "driver_stopped"}));
+                    break;
+                }
             }
         }
     });

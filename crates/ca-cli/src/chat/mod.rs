@@ -810,6 +810,7 @@ async fn command(
                 thinking: None,
                 interactive: true,
                 carry_plan: false,
+                modelless: false,
             };
             let approver = p.agent.approver.clone();
             let inbox = p.agent.inbox.clone();
@@ -855,6 +856,7 @@ async fn command(
                     thinking: None,
                     interactive: true,
                     carry_plan: false,
+                    modelless: false,
                 };
                 let approver = p.agent.approver.clone();
                 let inbox = p.agent.inbox.clone();
@@ -895,6 +897,7 @@ async fn command(
                 thinking: None,
                 interactive: true,
                 carry_plan: false,
+                modelless: false,
             };
             let approver = p.agent.approver.clone();
             let inbox = p.agent.inbox.clone();
@@ -921,6 +924,7 @@ async fn command(
                 thinking: None,
                 interactive: true,
                 carry_plan: false,
+                modelless: false,
             };
             let approver = p.agent.approver.clone();
             let inbox = p.agent.inbox.clone();
@@ -1458,6 +1462,7 @@ async fn web(rest: &str, p: &mut Prepared, app: &mut App, ui: Ui) -> anyhow::Res
         thinking: None,
         interactive: true,
         carry_plan: false,
+        modelless: false,
     };
     let approver = p.agent.approver.clone();
     let inbox = p.agent.inbox.clone();

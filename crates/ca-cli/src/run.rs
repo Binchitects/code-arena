@@ -213,6 +213,7 @@ pub async fn run_once(app: &mut App, args: RunArgs) -> anyhow::Result<i32> {
         thinking: args.thinking,
         interactive: false,
         carry_plan: args.carry_plan,
+        modelless: false,
     };
     let mut p = session::prepare(app, &opts, Arc::new(NoAsking), args.resume).await?;
     let model = p.agent.model.clone();

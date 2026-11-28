@@ -28,6 +28,9 @@ pub struct Opts {
     pub interactive: bool,
     /// `--plan`: carry on the plan an earlier session of this folder left.
     pub carry_plan: bool,
+    /// The IDE's: a session with no model when there is none to ask (not signed in, or the gateway lists none), its
+    /// model empty, instead of no session; the editor, the terminal, git and the tasks work without one.
+    pub modelless: bool,
 }
 
 /// Which session to work in.
@@ -268,10 +271,20 @@ pub fn watch_arena_settings(app: &App, notices: &Notices) -> Option<tokio::task:
         return None;
     }
     let arena = app.arena().ok()?;
-    let data = app.paths.data.clone();
     let builtin = app.settings.bool(&schema::BUILTIN_SKILLS);
-    let notices = notices.clone();
-    Some(tokio::spawn(async move {
+    Some(watch_settings(arena, app.paths.data.clone(), builtin, notices.clone(), || {}))
+}
+
+/// The watch of [`watch_arena_settings`] for one Arena, `changed` called once its skills are read again (the IDE
+/// then tells its windows, and gives them the models and the library as they are now).
+pub fn watch_settings(
+    arena: ca_arena::ArenaClient,
+    data: std::path::PathBuf,
+    builtin: bool,
+    notices: Notices,
+    changed: impl Fn() + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
         let mut last = arena.settings_stamp().await;
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -286,11 +299,12 @@ pub fn watch_arena_settings(app: &App, notices: &Notices) -> Option<tokio::task:
                         ));
                     }
                     keep_arena_skills(arena.clone(), data.clone(), builtin, notices.clone()).await;
+                    changed();
                 }
                 last = now;
             }
         }
-    }))
+    })
 }
 
 /// Laya as Arena has it: a reading in 3 seconds or none, and none from then on once the server says it has no
@@ -766,7 +780,11 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         _ => (String::new(), history, None),
     };
 
-    let mut gateway = app.gateway()?;
+    let mut gateway = match app.gateway() {
+        Ok(g) => g,
+        Err(_) if o.modelless => ca_llm::Gateway::standalone(Vec::new(), app.ca())?,
+        Err(e) => return Err(e),
+    };
     // Managed: Arena's admins decide whether the person's own providers are used (its chat config's
     // codeArenaProviders; not said: they are).
     if app.edition() == ca_settings::Edition::Managed && gateway.providers().next().is_some() {
@@ -789,6 +807,7 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         if session.is_empty() { None } else { store.summary(&session).ok().map(|s| s.model).filter(|m| !m.is_empty()) };
     let model = match o.model.clone().or(stored_model).or_else(|| app.settings.string(&schema::MODEL)) {
         Some(m) => m,
+        None if o.modelless => listed.first().map(|m| m.id.clone()).unwrap_or_default(),
         None => listed.first().map(|m| m.id.clone()).context("the gateway lists no model for your key")?,
     };
     let info = listed.iter().find(|m| m.id == model);
