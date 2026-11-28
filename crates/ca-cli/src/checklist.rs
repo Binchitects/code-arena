@@ -61,7 +61,7 @@ fn pick<'a>(lists: &'a [Checklist], which: &str) -> Option<&'a Checklist> {
 /// `new NAME: item; item`, `edit N: item; item`, `delete N` (on an Arena that has them). The text to show.
 pub async fn command(rest: &str, p: &mut Prepared) -> String {
     let Some(sync) = p.sync.clone() else {
-        return "Checklists are kept in Arena: sign in to it first (code-arena login), so this session is kept in a chat there.".into();
+        return SIGN_IN.into();
     };
     let arena = sync.arena().clone();
     let root = p.agent.ctx.workspace.root().to_path_buf();
@@ -129,27 +129,9 @@ pub async fn command(rest: &str, p: &mut Prepared) -> String {
                 let lists = arena.checklists().await.map_err(e)?;
                 let chosen: Checklist = match pick(&lists, which) {
                     Some(c) => c.clone(),
-                    None => {
-                        // The repository's: kept as one of the person's of that name, its items as the repository has them.
-                        let repo = checklists::repo_checklists(&root);
-                        let r = repo
-                            .iter()
-                            .find(|c| c.name.eq_ignore_ascii_case(which))
-                            .ok_or(format!("You have no checklist named {which}: /checklist lists yours."))?;
-                        let id = lists.iter().find(|c| c.name.eq_ignore_ascii_case(&r.name)).map(|c| c.id.clone());
-                        arena.save_checklist(id.as_deref(), &r.name, &r.items).await.map_err(e)?
-                    }
+                    None => repo_as_mine(&arena, &lists, &root, which).await?,
                 };
-                let chat = sync
-                    .ensure_chat()
-                    .await
-                    .ok_or("This session has no chat in Arena yet: say something first, then turn the checklist on.")?;
-                let run: Run = arena
-                    .start_checklist(&chat, &chosen.id)
-                    .await
-                    .map_err(e)?
-                    .ok_or("Arena did not turn it on.")?;
-                p.agent.note(format!("(Code Arena: {INSTRUCTIONS})\n\n{}", run.text()));
+                let run = turn_on(p, &chosen.id).await?;
                 Ok(format!("{}\nThe model goes through it, and ticks each item as it does it.", run.text()))
             }
         }
@@ -158,6 +140,41 @@ pub async fn command(rest: &str, p: &mut Prepared) -> String {
     match result {
         Ok(t) | Err(t) => t,
     }
+}
+
+/// Why there are no checklists: the session is not kept in Arena.
+pub const SIGN_IN: &str =
+    "Checklists are kept in Arena: sign in to it first (code-arena login), so this session is kept in a chat there.";
+
+/// The repository's checklist of that name, kept as one of the person's of that name (made, or its items made the
+/// repository's), so that Arena can turn it on.
+pub async fn repo_as_mine(
+    arena: &ca_arena::ArenaClient,
+    lists: &[Checklist],
+    root: &std::path::Path,
+    name: &str,
+) -> Result<Checklist, String> {
+    let repo = checklists::repo_checklists(root);
+    let r = repo
+        .iter()
+        .find(|c| c.name.eq_ignore_ascii_case(name))
+        .ok_or(format!("You have no checklist named {name}: /checklist lists yours."))?;
+    let id = lists.iter().find(|c| c.name.eq_ignore_ascii_case(&r.name)).map(|c| c.id.clone());
+    arena.save_checklist(id.as_deref(), &r.name, &r.items).await.map_err(|e| e.to_string())
+}
+
+/// Turns one of the person's checklists on in the session's chat (made in Arena first, when the session has none
+/// there yet), and tells the model what to do with it.
+pub async fn turn_on(p: &mut Prepared, id: &str) -> Result<Run, String> {
+    let sync = p.sync.clone().ok_or(SIGN_IN)?;
+    let chat = sync
+        .ensure_chat()
+        .await
+        .ok_or("This session has no chat in Arena yet: say something first, then turn the checklist on.")?;
+    let run: Run =
+        sync.arena().start_checklist(&chat, id).await.map_err(|e| e.to_string())?.ok_or("Arena did not turn it on.")?;
+    p.agent.note(format!("(Code Arena: {INSTRUCTIONS})\n\n{}", run.text()));
+    Ok(run)
 }
 
 /// A resumed session whose chat has a checklist on: the model is told again.

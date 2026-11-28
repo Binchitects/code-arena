@@ -260,12 +260,13 @@ fn undo_step(ui: Ui, send: &Send, n: u64) {
 pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     let (t, st) = (ui.colors, state(ui));
     let has = create_memo(move |_| st.plan.with(Option::is_some));
-    dyn_container(
+    let checklist = crate::checklists::card(ui, send.clone());
+    let plan = dyn_container(
         move || has.get(),
         move |has| if has { body(ui, send.clone()).into_any() } else { nothing(ui, send.clone()).into_any() },
     )
-    .style(move |s| s.size_full().min_height(0.0).color(t.get().side_fg))
-    .into_any()
+    .style(|s| s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0));
+    v_stack((checklist, plan)).style(move |s| s.size_full().min_height(0.0).color(t.get().side_fg)).into_any()
 }
 
 /// Wrapped words, in the description's colour.
