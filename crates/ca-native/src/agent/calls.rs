@@ -118,7 +118,8 @@ pub fn main_argument(t: &Tool) -> String {
         .unwrap_or_default()
 }
 
-/// A part of an answer's calls as drawn: one call's card, or a run of calls folded into one line.
+/// A part of an answer's calls as drawn: one call's card, a run of calls folded into one line, or a run of `task`
+/// calls under their line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
     One(usize),
@@ -127,10 +128,16 @@ pub enum Group {
         start: usize,
         len: usize,
     },
+    /// Two or more `task` calls in a row, from `start`.
+    Crew {
+        start: usize,
+        len: usize,
+    },
 }
 
 /// An answer's calls in groups: two or more ended calls in a row (a task's excepted, which has a card of its own,
-/// and an edit with its diff, shown under it) fold into a line; a call that waits or runs is drawn by itself.
+/// and an edit with its diff, shown under it) fold into a line; a call that waits or runs is drawn by itself; two or
+/// more `task` calls in a row are one group.
 pub fn groups(tools: &[Tool], running: bool) -> Vec<Group> {
     let folds = |t: &Tool| {
         t.name != "task" && !(t.ok && t.diff.is_some()) && !matches!(state(t, running), State::Waiting | State::Running)
@@ -138,6 +145,12 @@ pub fn groups(tools: &[Tool], running: bool) -> Vec<Group> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tools.len() {
+        let tasks = tools[i..].iter().take_while(|t| t.name == "task").count();
+        if tasks >= 2 {
+            out.push(Group::Crew { start: i, len: tasks });
+            i += tasks;
+            continue;
+        }
         let len = tools[i..].iter().take_while(|t| folds(t)).count();
         if len >= 2 {
             out.push(Group::Fold { start: i, len });
@@ -444,6 +457,11 @@ mod tests {
         assert_eq!(
             groups(&tools, true),
             [Group::Fold { start: 0, len: 2 }, Group::One(2), Group::One(3), Group::One(4)]
+        );
+        tools[3].name = "task".into();
+        assert_eq!(
+            groups(&tools, true),
+            [Group::Fold { start: 0, len: 2 }, Group::Crew { start: 2, len: 2 }, Group::One(4)]
         );
     }
 
