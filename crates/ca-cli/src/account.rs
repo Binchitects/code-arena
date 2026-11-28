@@ -284,93 +284,97 @@ fn keep_capabilities(app: &App, arena: &ca_arena::ArenaClient, stamp: Option<Str
 }
 
 pub async fn doctor(app: &App) -> anyhow::Result<()> {
-    let ui = app.ui;
-    println!("{}", ui.bold(&format!("{} {}", ca_core::PRODUCT, ca_core::VERSION)));
-    println!("  settings  {}", app.paths.config.display());
-    println!("  data      {}", app.paths.data.display());
-    println!("  edition   {}", app.edition().name());
+    doctor_to(app, app.ui, &mut |line| println!("{line}")).await
+}
+
+/// What `doctor` finds, each line given to `say` as it is found.
+pub async fn doctor_to(app: &App, ui: Ui, say: &mut (dyn FnMut(String) + Send)) -> anyhow::Result<()> {
+    say(format!("{}", ui.bold(&format!("{} {}", ca_core::PRODUCT, ca_core::VERSION))));
+    say(format!("  settings  {}", app.paths.config.display()));
+    say(format!("  data      {}", app.paths.data.display()));
+    say(format!("  edition   {}", app.edition().name()));
     let c = &app.connection;
     let providers = app.providers();
     if !providers.is_empty() {
-        println!("\n{}", ui.bold("Your providers"));
+        say(format!("\n{}", ui.bold("Your providers")));
         for (p, _) in &providers {
             let key = providers.iter().find(|x| x.0.name == p.name).map(|x| x.1.clone()).unwrap_or_default();
             let one = ca_llm::Gateway::standalone(vec![(p.clone(), key)], app.ca())?;
             match one.models().await {
-                Ok(m) => println!("  {:<10}{} ({} models)", p.name, p.url, m.len()),
-                Err(e) => println!("  {:<10}{}", p.name, ui.red(&e.to_string())),
+                Ok(m) => say(format!("  {:<10}{} ({} models)", p.name, p.url, m.len())),
+                Err(e) => say(format!("  {:<10}{}", p.name, ui.red(&e.to_string()))),
             }
         }
     }
     let Some(url) = &c.url else {
         if providers.is_empty() {
-            println!(
+            say(format!(
                 "\nNothing to ask a model of yet: code-arena login --url https://YOUR-ARENA (the managed edition), or code-arena login --provider NAME (standalone: your own key)."
-            );
+            ));
         } else {
-            println!(
+            say(format!(
                 "\n{}",
                 ui.dim("Standalone: what needs Farzan Arena (chats on the web, its memory, skills, checklists, projects, its tools) is off. code-arena login --url https://YOUR-ARENA turns it on.")
-            );
+            ));
         }
         return Ok(());
     };
-    println!("\n{}", ui.bold("Arena"));
-    println!("  address   {url}");
-    println!("  gateway   {}", c.gateway_url().unwrap_or_else(|| "(none: give one with login --gateway)".into()));
-    println!("  tools     {}", c.mcp_url().unwrap_or_default());
+    say(format!("\n{}", ui.bold("Arena")));
+    say(format!("  address   {url}"));
+    say(format!("  gateway   {}", c.gateway_url().unwrap_or_else(|| "(none: give one with login --gateway)".into())));
+    say(format!("  tools     {}", c.mcp_url().unwrap_or_default()));
     if let Some(ca) = &c.ca {
-        println!("  CA        {}", ca.display());
+        say(format!("  CA        {}", ca.display()));
     }
     let arena = match app.arena() {
         Ok(a) => a,
         Err(e) => {
-            println!("\n{}", ui.red(&format_chain(&e)));
+            say(format!("\n{}", ui.red(&format_chain(&e))));
             return Ok(());
         }
     };
     match arena.info().await {
-        Ok(info) => println!(
+        Ok(info) => say(format!(
             "  server    {} {}",
             info.name.unwrap_or_else(|| "Arena".into()),
             info.version
                 .map(|v| format!("(says it is {v}; features are read from its answers, not this)"))
                 .unwrap_or_default()
-        ),
-        Err(e) => println!("  server    {}", ui.red(&e.to_string())),
+        )),
+        Err(e) => say(format!("  server    {}", ui.red(&e.to_string()))),
     }
     if !c.signed_in() {
-        println!("\nNo API key: code-arena login");
+        say(format!("\nNo API key: code-arena login"));
         return Ok(());
     }
     match arena.me().await {
         Ok(me) => {
-            println!(
+            say(format!(
                 "  account   {}{}",
                 me.display_name.unwrap_or(me.user_name),
                 if me.denied.is_empty() { String::new() } else { format!(" (denied: {})", me.denied.join(", ")) }
-            );
+            ));
         }
-        Err(e) => println!("  account   {}", ui.red(&e.to_string())),
+        Err(e) => say(format!("  account   {}", ui.red(&e.to_string()))),
     }
     match app.gateway()?.models().await {
-        Ok(m) => println!("  models    {}", m.len()),
-        Err(e) => println!("  models    {}", ui.red(&e.to_string())),
+        Ok(m) => say(format!("  models    {}", m.len())),
+        Err(e) => say(format!("  models    {}", ui.red(&e.to_string()))),
     }
     match arena_tools(c, c.api_key.as_ref().unwrap_or(&Secret::default())).await {
-        Ok(n) => println!("  MCP       {n} of Arena's tools"),
-        Err(e) => println!("  MCP       {}", ui.yellow(&e)),
+        Ok(n) => say(format!("  MCP       {n} of Arena's tools")),
+        Err(e) => say(format!("  MCP       {}", ui.yellow(&e))),
     }
-    println!("\n{}", ui.bold("What this Arena has"));
+    say(format!("\n{}", ui.bold("What this Arena has")));
     let stamp = arena.settings_stamp().await;
     match arena.capabilities().await {
         Ok(caps) => {
             for f in Feature::ALL {
-                println!("  {:<22}{}", f.name(), state_words(&ui, &caps.state(*f)));
+                say(format!("  {:<22}{}", f.name(), state_words(&ui, &caps.state(*f))));
             }
             keep_capabilities(app, &arena, stamp, &caps);
         }
-        Err(e) => println!("  {}", ui.red(&e.to_string())),
+        Err(e) => say(format!("  {}", ui.red(&e.to_string()))),
     }
     Ok(())
 }

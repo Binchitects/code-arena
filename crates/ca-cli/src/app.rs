@@ -8,6 +8,7 @@ use ca_settings::{Connection, Env, Settings};
 
 use crate::ui::Ui;
 
+#[derive(Clone)]
 pub struct App {
     pub paths: Paths,
     pub settings: Settings,
