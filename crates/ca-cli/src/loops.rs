@@ -3,7 +3,7 @@
 //! next message, and the person sees a line of it at the prompt. Nobody is there to answer a question, so a loop only
 //! reads, or with `--edits` edits files too (its commands are refused). Loops end with the session.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -19,6 +19,8 @@ pub struct Loop {
     pub edits: bool,
     pub runs: Arc<AtomicU32>,
     pub skipped: Arc<AtomicU32>,
+    /// How its last run ended: 0 none has, 1 it did its work, 2 it failed.
+    pub last: Arc<AtomicU8>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -56,10 +58,7 @@ pub fn command(rest: &str, p: &mut Prepared) -> String {
                 .join("\n")
         }
         ["stop", n] => match n.parse::<u32>() {
-            Ok(n) if p.loops.iter().any(|l| l.id == n) => {
-                p.loops.retain(|l| l.id != n);
-                format!("Loop {n} stopped.")
-            }
+            Ok(n) if stop(p, n) => format!("Loop {n} stopped."),
             _ => format!("No loop {n}: /loop lists them."),
         },
         [every, rest @ ..] => {
@@ -74,11 +73,7 @@ pub fn command(rest: &str, p: &mut Prepared) -> String {
             if prompt.is_empty() {
                 return "/loop 30m PROMPT: and what it does.".into();
             }
-            let id = p.loops.iter().map(|l| l.id).max().unwrap_or(0) + 1;
-            let runs = Arc::new(AtomicU32::new(0));
-            let skipped = Arc::new(AtomicU32::new(0));
-            let task = start(p, id, secs, prompt.clone(), edits, runs.clone(), skipped.clone());
-            p.loops.push(Loop { id, every: secs, prompt: prompt.clone(), edits, runs, skipped, task });
+            let id = add(p, secs, prompt.clone(), edits);
             format!(
                 "Loop {id}: every {}, {}: {prompt}. Its first run starts now; /loop stop {id} ends it.",
                 interval_words(secs),
@@ -88,14 +83,31 @@ pub fn command(rest: &str, p: &mut Prepared) -> String {
     }
 }
 
+/// A loop added (its first run starts now): its number. The crew is the session's as it is now
+/// (`session::refresh_crew` first).
+pub fn add(p: &mut Prepared, secs: u64, prompt: String, edits: bool) -> u32 {
+    let id = p.loops.iter().map(|l| l.id).max().unwrap_or(0) + 1;
+    let (runs, skipped, last) = (Arc::new(AtomicU32::new(0)), Arc::new(AtomicU32::new(0)), Arc::new(AtomicU8::new(0)));
+    let task = start(p, id, secs, prompt.clone(), edits, [runs.clone(), skipped.clone()], last.clone());
+    p.loops.push(Loop { id, every: secs, prompt, edits, runs, skipped, last, task });
+    id
+}
+
+/// Loop `id` stopped; false when there is none of that number.
+pub fn stop(p: &mut Prepared, id: u32) -> bool {
+    let had = p.loops.len();
+    p.loops.retain(|l| l.id != id);
+    p.loops.len() != had
+}
+
 fn start(
     p: &Prepared,
     id: u32,
     secs: u64,
     prompt: String,
     edits: bool,
-    runs: Arc<AtomicU32>,
-    skipped: Arc<AtomicU32>,
+    [runs, skipped]: [Arc<AtomicU32>; 2],
+    last: Arc<AtomicU8>,
 ) -> tokio::task::JoinHandle<()> {
     let crew = p.crew.clone();
     let ctx = p.agent.ctx.clone();
@@ -122,11 +134,12 @@ fn start(
                 continue;
             };
             let (r, n, b, prompt, ctx) = (reports.clone(), notices.clone(), busy.clone(), prompt.clone(), ctx.clone());
-            let runs = runs.clone();
+            let (runs, last) = (runs.clone(), last.clone());
             tokio::spawn(async move {
                 let t = ca_agent::task::TaskTool::new(Arc::new(Mutex::new(Some(own))));
                 let o = t.run(serde_json::json!({"description": format!("loop {id}"), "prompt": prompt}), &ctx).await;
                 let k = runs.fetch_add(1, Ordering::Relaxed) + 1;
+                last.store(if o.is_error { 2 } else { 1 }, Ordering::Relaxed);
                 let first = o.text.lines().nth(1).unwrap_or("").chars().take(120).collect::<String>();
                 if let Ok(mut q) = r.lock() {
                     q.push(format!("(Code Arena: loop {id}'s run {k} ({prompt}) reports:\n{})", o.text));
