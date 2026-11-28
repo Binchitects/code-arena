@@ -258,11 +258,16 @@ pub fn shift(folds: &mut Vec<(usize, usize)>, from: usize, to_old: usize, to_new
 
 // ==== The fold map ====
 
-/// Which lines the folds hide, and where each line that is not hidden is drawn (its row, from 0).
+/// Which lines the folds hide, and where each line that is not hidden is drawn (its row, from 0); with the empty
+/// rows (fillers) another part puts above some lines (the compare editor, for the lines of its two sides to stand
+/// beside each other).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FoldMap {
     /// Each run of hidden lines (first, last), in order and apart, with how many lines are hidden before it.
     hidden: Vec<(usize, usize, usize)>,
+    /// Each run of empty rows: the line it is above, how many, the row it begins on, and how many empty rows are
+    /// above it; in the order of their lines.
+    fillers: Vec<(usize, usize, usize, usize)>,
 }
 
 impl FoldMap {
@@ -286,11 +291,43 @@ impl FoldMap {
                 }
             }
         }
-        FoldMap { hidden }
+        FoldMap { hidden, fillers: Vec::new() }
+    }
+
+    /// The map with empty rows above lines: (the line, how many rows); the line may be the line count (under the
+    /// last). A hidden line's rows are above the line its fold starts on.
+    pub fn with_fillers(mut self, fillers: &[(usize, usize)]) -> FoldMap {
+        let mut runs: Vec<(usize, usize)> = fillers.iter().copied().filter(|f| f.1 > 0).collect();
+        runs.sort();
+        runs.dedup_by(|b, a| {
+            let same = a.0 == b.0;
+            if same {
+                a.1 += b.1;
+            }
+            same
+        });
+        self.fillers.clear();
+        let mut before = 0;
+        for (line, count) in runs {
+            let row = self.folded_row(line) + before;
+            self.fillers.push((line, count, row, before));
+            before += count;
+        }
+        self
     }
 
     pub fn is_empty(&self) -> bool {
-        self.hidden.is_empty()
+        self.hidden.is_empty() && self.fillers.is_empty()
+    }
+
+    /// How many empty rows there are.
+    pub fn filled(&self) -> usize {
+        self.fillers.last().map_or(0, |f| f.1 + f.3)
+    }
+
+    /// The empty rows, each its first row and how many.
+    pub fn filler_rows(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.fillers.iter().map(|f| (f.2, f.1))
     }
 
     /// How many lines are hidden.
@@ -310,6 +347,12 @@ impl FoldMap {
 
     /// The row a line is drawn on; a hidden line's is that of the line its fold starts on.
     pub fn row_of_line(&self, line: usize) -> usize {
+        let i = self.fillers.partition_point(|f| f.0 <= line);
+        self.folded_row(line) + self.fillers[..i].last().map_or(0, |f| f.1 + f.3)
+    }
+
+    /// The row a line is drawn on by the folds alone.
+    fn folded_row(&self, line: usize) -> usize {
         let i = self.hidden.partition_point(|h| h.0 <= line);
         match self.hidden[..i].last() {
             None => line,
@@ -318,15 +361,34 @@ impl FoldMap {
         }
     }
 
-    /// The line drawn on a row.
+    /// The line drawn on a row; on an empty row, the line under it.
     pub fn line_of_row(&self, row: usize) -> usize {
+        let i = self.fillers.partition_point(|f| f.2 <= row);
+        match self.fillers[..i].last() {
+            Some(f) if row < f.2 + f.1 => f.0,
+            Some(f) => self.folded_line(row - f.1 - f.3),
+            None => self.folded_line(row),
+        }
+    }
+
+    /// The line drawn on a row; none on an empty row.
+    pub fn line_at_row(&self, row: usize) -> Option<usize> {
+        let i = self.fillers.partition_point(|f| f.2 <= row);
+        match self.fillers[..i].last() {
+            Some(f) if row < f.2 + f.1 => None,
+            _ => Some(self.line_of_row(row)),
+        }
+    }
+
+    /// The line drawn on a row by the folds alone.
+    fn folded_line(&self, row: usize) -> usize {
         let i = self.hidden.partition_point(|h| h.0 - h.2 <= row);
         row + self.hidden[..i].last().map_or(0, |h| h.2 + h.1 - h.0 + 1)
     }
 
     /// How many rows a text of so many lines is drawn on.
     pub fn rows(&self, lines: usize) -> usize {
-        lines.saturating_sub(self.count())
+        lines.saturating_sub(self.count()) + self.filled()
     }
 }
 
@@ -334,6 +396,8 @@ impl FoldMap {
 
 struct File {
     folds: Vec<(usize, usize)>,
+    /// The empty rows another part puts above lines (`set_fillers`).
+    fillers: Vec<(usize, usize)>,
     map: Rc<FoldMap>,
     /// Set when the folds change: the editors of the file draw their lines again.
     rev: RwSignal<u64>,
@@ -372,6 +436,7 @@ pub fn attach(ui: Ui, path: &str, doc: &Rc<TextDocument>) {
     }
     let file = File {
         folds: Vec::new(),
+        fillers: Vec::new(),
         map: Rc::new(FoldMap::default()),
         rev: ui.scope.create_rw_signal(0u64),
         text: doc.text(),
@@ -414,7 +479,7 @@ fn edited<'a>(
         }
         file.text = now;
         (file.folds != before).then(|| {
-            file.map = Rc::new(FoldMap::new(&file.folds));
+            file.map = Rc::new(FoldMap::new(&file.folds).with_fillers(&file.fillers));
         })
     });
     if changed.is_some() {
@@ -453,6 +518,23 @@ fn told(ui: Ui, path: &str) {
     }
 }
 
+/// The empty rows above lines of an editor's text, (the line, how many rows), in place of those said before: its
+/// editors draw them. Nothing before the text is `attach`ed under that path.
+pub fn set_fillers(path: &str, fillers: Vec<(usize, usize)>) {
+    let rev = FILES.with(|files| {
+        let mut files = files.borrow_mut();
+        let file = files.get_mut(path).filter(|f| f.fillers != fillers)?;
+        file.fillers = fillers;
+        file.map = Rc::new(FoldMap::new(&file.folds).with_fillers(&file.fillers));
+        Some(file.rev)
+    });
+    if let Some(rev) = rev
+        && rev.try_get_untracked().is_some()
+    {
+        rev.update(|r| *r += 1);
+    }
+}
+
 /// A file's folds changed by a command.
 fn change(ui: Ui, path: &str, f: impl FnOnce(&mut Vec<(usize, usize)>)) {
     let changed = FILES.with(|files| {
@@ -462,7 +544,7 @@ fn change(ui: Ui, path: &str, f: impl FnOnce(&mut Vec<(usize, usize)>)) {
         f(&mut file.folds);
         file.folds.sort();
         file.folds.dedup_by_key(|f| f.0);
-        (file.folds != before).then(|| file.map = Rc::new(FoldMap::new(&file.folds)))
+        (file.folds != before).then(|| file.map = Rc::new(FoldMap::new(&file.folds).with_fillers(&file.fillers)))
     });
     if changed.is_some() {
         told(ui, path);
@@ -509,7 +591,7 @@ pub fn screen_lines(editor: &Editor, base: RwSignal<ScreenLinesBase>, path: &str
     let mut lines = Vec::new();
     let mut info = HashMap::new();
     for row in (y0 / height).floor() as usize..(y1 / height).ceil() as usize {
-        let line = map.line_of_row(row);
+        let Some(line) = map.line_at_row(row) else { continue };
         if line > last {
             break;
         }
@@ -674,7 +756,10 @@ fn content<K: Fn(RwSignal<Editor>, &KeyPress, Modifiers) -> CommandExecuted + 's
             let Event::KeyDown(key_event) = event else { return };
             let key_text = key_event.key.text.clone();
             let Ok(press) = KeyPress::try_from(key_event) else { return };
-            keys(sig, &press, key_event.modifiers);
+            // A key a command took (a chord's second key, Ctrl+K D) is not typed too.
+            if keys(sig, &press, key_event.modifiers) == CommandExecuted::Yes {
+                return;
+            }
             let mut mods = key_event.modifiers;
             mods.set(Modifiers::SHIFT, false);
             mods.set(Modifiers::ALTGR, false);
@@ -965,6 +1050,24 @@ mod tests {
         assert_eq!(FoldMap::new(&[(0, 3), (1, 5)]).count(), 5);
         assert!(FoldMap::new(&[]).is_empty());
         assert_eq!(FoldMap::new(&[]).line_of_row(4), 4);
+    }
+
+    #[test]
+    fn empty_rows_put_the_lines_under_them_lower() {
+        let map = FoldMap::default().with_fillers(&[(2, 2), (5, 1), (2, 1), (9, 0)]);
+        let rows: Vec<Option<usize>> = (0..10).map(|r| map.line_at_row(r)).collect();
+        assert_eq!(rows, [Some(0), Some(1), None, None, None, Some(2), Some(3), Some(4), None, Some(5)]);
+        for line in 0..7 {
+            assert_eq!(map.line_at_row(map.row_of_line(line)), Some(line));
+        }
+        assert_eq!(map.line_of_row(3), 2, "an empty row's line is the one under it");
+        assert_eq!(map.rows(7), 11);
+        assert_eq!(map.filler_rows().collect::<Vec<_>>(), [(2, 3), (8, 1)]);
+        // With a fold above them.
+        let map = FoldMap::new(&[(0, 2)]).with_fillers(&[(4, 2)]);
+        let rows: Vec<Option<usize>> = (0..5).map(|r| map.line_at_row(r)).collect();
+        assert_eq!(rows, [Some(0), Some(3), None, None, Some(4)]);
+        assert_eq!(map.row_of_line(5), 5);
     }
 
     #[test]

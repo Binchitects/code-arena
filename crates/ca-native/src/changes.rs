@@ -476,11 +476,13 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             badges::set(ui, View::Changes, now.len());
             let gone: Vec<String> = ui.tabs.with_untracked(|tabs| {
                 tabs.iter()
-                    .filter_map(|t| t.path.strip_prefix("changes:").map(|p| (t.path.clone(), p.to_string())))
+                    .filter_map(|t| crate::compare::before_of(&t.path).map(|p| (t.path.clone(), p)))
                     .filter(|(_, p)| !now.iter().any(|c| c.path == *p))
                     .map(|(id, _)| id)
                     .collect()
             });
+            // The compares of the agent's changes show what it wrote since.
+            crate::compare::changes_said(ui, &now);
             if ui.changes.with_untracked(|was| *was != now) {
                 ui.changes.set(now);
             }
@@ -582,12 +584,13 @@ mod tests {
         let ui = Ui::new();
         let send: Send = Rc::new(|_| {});
         let (a, b) = (change("a.rs", Some("a"), Some("b")), change("b.rs", None, Some("new")));
+        crate::compare::register(ui, &send);
         ui.open_changes(&a);
         ui.open_changes(&b);
         // Accepted or reverted elsewhere: a.rs is no longer listed.
         take(ui, &json!({"type": "changes", "files": [{"path": "b.rs", "before": null, "after": "new"}]}), &send);
         let open: Vec<String> = ui.tabs.with_untracked(|t| t.iter().map(|t| t.path.clone()).collect());
-        assert_eq!(open, ["changes:b.rs"]);
+        assert_eq!(open, ["compare:before:b.rs ↔ file:b.rs"]);
         assert_eq!(mention("src/my cart.rs"), "@\"src/my cart.rs\"");
         assert_eq!(mention("a.rs"), "@a.rs");
     }

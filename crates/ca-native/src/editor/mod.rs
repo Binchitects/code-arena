@@ -88,7 +88,7 @@ fn go_to_line(editor: &Editor, path: &str, line: usize) {
 
 /// The file editor's colours and gutter, as Floem's `TextEditor::editor_style` sets them: the line numbers with
 /// their padding (the chevrons right of them), the current line, the selection, the caret, the guides.
-fn editor_look(s: floem::style::Style, c: &crate::colors::Colors, focused: bool) -> floem::style::Style {
+pub(crate) fn editor_look(s: floem::style::Style, c: &crate::colors::Colors, focused: bool) -> floem::style::Style {
     use floem::views::editor::gutter::{DimColor, GutterClass, LeftOfCenterPadding, RightOfCenterPadding};
     use floem::views::editor::view::EditorViewClass;
     use floem::views::editor::*;
@@ -118,7 +118,7 @@ fn editor_look(s: floem::style::Style, c: &crate::colors::Colors, focused: bool)
 }
 
 /// What the session's driver is told from the editor group's own keys and buttons.
-pub(super) fn tell(ui: Ui, what: impl FnOnce(&Send)) {
+pub(crate) fn tell(ui: Ui, what: impl FnOnce(&Send)) {
     if let Some(send) = ui.out.get_untracked() {
         what(&send);
     }

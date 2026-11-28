@@ -416,24 +416,10 @@ impl Ui {
         }
     }
 
-    /// A file's changes in a tab of their own (made again from what the session said last).
+    /// A file's changes in the compare editor: what it was before the agent beside the file (`compare`).
     pub fn open_changes(&self, c: &Change) {
-        let id = format!("changes:{}", c.path);
-        let lines = crate::diff::lines(c.before.as_deref().unwrap_or(""), c.after.as_deref().unwrap_or(""));
-        let tab = Tab {
-            path: id.clone(),
-            file: c.path.clone(),
-            colours: crate::highlight::Colours::new(Rc::new(TextDocument::new(self.scope, "")), ""),
-            doc: Rc::new(TextDocument::new(self.scope, "")),
-            dirty: self.scope.create_rw_signal(false),
-            diff: Some(Rc::new(lines)),
-            kind: None,
-        };
-        self.tabs.update(|t| match t.iter_mut().find(|t| t.path == id) {
-            Some(old) => *old = tab,
-            None => t.push(tab),
-        });
-        self.active.set(Some(id));
+        let send: Send = self.out.get_untracked().unwrap_or_else(|| Rc::new(|_| {}));
+        crate::compare::open_change(*self, &send, c);
     }
 
     /// A file opened at a line (a search's hit).
