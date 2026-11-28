@@ -478,7 +478,7 @@ fn run_row(ui: Ui, send: &Send, id: &'static str, title: &str) -> popup::Item {
 
 /// The view's "…" menu: VS Code's, the parts this window has.
 fn more(ui: Ui, send: &Send) {
-    let Some(view) = super::list_view(ui) else { return };
+    let Some(view) = super::view_id(ui) else { return };
     let r = |id, title| run_row(ui, send, id, title);
     let rows = vec![
         r(PULL, "Pull"),
@@ -537,8 +537,9 @@ fn more(ui: Ui, send: &Send) {
         )
         .into(),
     ];
+    // Under the title's "…", at the view's top right.
     let rect = view.layout_rect();
-    popup::open(ui, popup::At::point(view, rect.x1 - 8.0, rect.y0), rows);
+    popup::open(ui, popup::At::point(view, rect.x1 - 44.0, rect.y0), rows);
 }
 
 /// The button under Commit while there is nothing to commit and the branch is not where its upstream is: "Sync

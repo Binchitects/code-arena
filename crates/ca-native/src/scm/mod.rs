@@ -338,6 +338,8 @@ pub struct Scm {
     compared: RwSignal<HashMap<String, Compared>>,
     /// How many times a status was asked for a moment later (only the last is sent).
     asks: RwSignal<u64>,
+    /// The view drawn, where the title's menus open.
+    root: RwSignal<Option<floem::ViewId>>,
 }
 
 impl crate::ext::State for Scm {
@@ -351,6 +353,7 @@ impl crate::ext::State for Scm {
             shown: ui.scope.create_rw_signal(HashMap::new()),
             compared: ui.scope.create_rw_signal(HashMap::new()),
             asks: ui.scope.create_rw_signal(0),
+            root: ui.scope.create_rw_signal(None),
         }
     }
 }
@@ -463,9 +466,9 @@ pub(crate) fn commit(ui: Ui, send: &Send, amend: bool) -> bool {
     true
 }
 
-/// The changes' list, where the title's menus open.
-pub(crate) fn list_view(ui: Ui) -> Option<floem::ViewId> {
-    state(ui).tree.view()
+/// The view drawn, where the title's menus open.
+pub(crate) fn view_id(ui: Ui) -> Option<floem::ViewId> {
+    state(ui).root.get_untracked()
 }
 
 /// A file's row opened: its changes in a tab, or the file itself (one git does not track yet, one in conflict).
@@ -935,7 +938,9 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     .style(|s| s.width_full());
     let boxed = commit_box(ui, send)
         .style(move |s| s.apply_if(!matches!(what.get(), Empty::Clean | Empty::Changes), |s| s.hide()));
-    v_stack((boxed, words, changes)).style(|s| s.size_full().min_height(0.0)).into_any()
+    let root = v_stack((boxed, words, changes)).style(|s| s.size_full().min_height(0.0));
+    me.root.set(Some(root.id()));
+    root.into_any()
 }
 
 /// The actions in its title: they are the registry's (`menus::add` under the view's title), so none here.
