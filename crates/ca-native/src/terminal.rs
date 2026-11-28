@@ -912,13 +912,15 @@ fn shell_name(ui: Ui, id: u64) -> String {
     format!("{s} {}", id + 1 - FIRST_ID)
 }
 
-/// The panel's line for a terminal the session started (a task's) once its program has ended, as VS Code's.
+/// The panel's line for a terminal the session started (a task's) once its program has ended, as VS Code's: the
+/// exit code only when the program failed.
 pub fn task_ended_text(code: Option<i64>) -> String {
-    let ended = match code {
-        Some(code) => format!("The terminal process terminated with exit code: {code}."),
-        None => "The terminal process terminated.".to_string(),
-    };
-    format!("{ended} Terminal will be reused by tasks, press any key to close it.")
+    let reuse = "Terminal will be reused by tasks, press any key to close it.";
+    match code {
+        Some(0) => reuse.to_string(),
+        Some(code) => format!("The terminal process terminated with exit code: {code}. {reuse}"),
+        None => format!("The terminal process terminated. {reuse}"),
+    }
 }
 
 /// What the panel says of a terminal that ended.
