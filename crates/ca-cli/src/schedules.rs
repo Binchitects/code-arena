@@ -30,6 +30,9 @@ pub struct Schedule {
     /// "ok", "failed (exit code N)", "running".
     #[serde(default)]
     pub last_status: Option<String>,
+    /// Turned off: kept, but not run when due (it may still be run by hand).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub off: bool,
 }
 
 /// A run marked running this long ago ended without saying so (its process was killed): it may run again.
@@ -87,10 +90,12 @@ impl Schedule {
     }
 
     pub fn due(&self, now: i64) -> bool {
-        if self.last_status.as_deref() == Some("running") && self.last_run.is_some_and(|r| now - r < STALE_SECS) {
-            return false;
-        }
-        self.next() <= now
+        !self.off && !self.running(now) && self.next() <= now
+    }
+
+    /// Whether its run is marked running, and not so long ago that it ended without saying so.
+    pub fn running(&self, now: i64) -> bool {
+        self.last_status.as_deref() == Some("running") && self.last_run.is_some_and(|r| now - r < STALE_SECS)
     }
 
     pub fn line(&self) -> String {
@@ -127,7 +132,7 @@ pub fn save(config: &Path, all: &[Schedule]) -> anyhow::Result<()> {
 }
 
 /// One schedule changed in the file (by its name), whatever else changed it meanwhile.
-fn change(config: &Path, name: &str, f: impl FnOnce(&mut Schedule)) -> anyhow::Result<()> {
+pub(crate) fn change(config: &Path, name: &str, f: impl FnOnce(&mut Schedule)) -> anyhow::Result<()> {
     let mut all = load(config);
     if let Some(s) = all.iter_mut().find(|s| s.name == name) {
         f(s);
@@ -135,8 +140,62 @@ fn change(config: &Path, name: &str, f: impl FnOnce(&mut Schedule)) -> anyhow::R
     save(config, &all)
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     chrono::Utc::now().timestamp()
+}
+
+/// What a new schedule needs, as `code-arena schedule add` and the IDE's New schedule take it.
+pub struct New {
+    pub name: String,
+    pub prompt: String,
+    pub folder: PathBuf,
+    pub every: u64,
+    pub at: Option<String>,
+    pub mode: String,
+    pub model: Option<String>,
+}
+
+/// A new schedule checked against those there are: its name (its log's name too), how often, its time of day, its
+/// mode, what it does and its folder. Why not, when it cannot be.
+pub fn checked(all: &[Schedule], n: New) -> anyhow::Result<Schedule> {
+    let name = n.name.trim();
+    if name.is_empty() {
+        bail!("a schedule needs a name");
+    }
+    if name.starts_with('.') || name.contains(['/', '\\']) || name.chars().any(char::is_control) {
+        bail!("a schedule's name has no / or \\ and does not start with a dot");
+    }
+    if n.every < 60 {
+        bail!("a schedule runs at most every minute");
+    }
+    let at = n.at.map(|a| a.trim().to_string()).filter(|a| !a.is_empty());
+    if at.as_deref().is_some_and(|a| hhmm(a).is_none()) {
+        bail!("the time of day is like 09:00");
+    }
+    if ca_agent::Mode::parse(&n.mode).is_none() {
+        bail!("the mode is plan, ask, auto-edit or yolo");
+    }
+    let prompt = n.prompt.trim();
+    if prompt.is_empty() {
+        bail!("what it does: the prompt");
+    }
+    let folder = std::fs::canonicalize(&n.folder).with_context(|| format!("the folder {}", n.folder.display()))?;
+    if all.iter().any(|s| s.name == name) {
+        bail!("there is a schedule {name} already: remove it first");
+    }
+    Ok(Schedule {
+        name: name.to_string(),
+        prompt: prompt.to_string(),
+        folder,
+        every: n.every,
+        at,
+        mode: n.mode,
+        model: n.model.filter(|m| !m.trim().is_empty()),
+        added: now(),
+        last_run: None,
+        last_status: None,
+        off: false,
+    })
 }
 
 /// Runs it now, in its folder, as its own session; its output kept in `schedules/NAME.log`. The exit code.
@@ -223,29 +282,14 @@ pub fn command(config: &Path, home: Option<&Path>, cwd: &Path, args: &[String]) 
                 i += 1;
             }
             let Some(every) = every else { bail!("how often: --every 2h") };
-            if every < 60 {
-                bail!("a schedule runs at most every minute");
-            }
             if prompt.is_empty() {
                 bail!("what it does: the prompt, after the options");
             }
-            let folder = std::fs::canonicalize(&folder).with_context(|| format!("the folder {}", folder.display()))?;
             let mut all = load(config);
-            if all.iter().any(|s| s.name == *name) {
-                bail!("there is a schedule {name} already: remove it first");
-            }
-            let s = Schedule {
-                name: name.to_string(),
-                prompt: prompt.join(" "),
-                folder,
-                every,
-                at,
-                mode,
-                model,
-                added: now(),
-                last_run: None,
-                last_status: None,
-            };
+            let s = checked(
+                &all,
+                New { name: name.to_string(), prompt: prompt.join(" "), folder, every, at, mode, model },
+            )?;
             println!("Added: {}", s.line());
             all.push(s);
             save(config, &all)?;
@@ -401,7 +445,50 @@ mod tests {
             added,
             last_run: None,
             last_status: None,
+            off: false,
         }
+    }
+
+    #[test]
+    fn an_older_file_without_off_still_loads_and_off_is_never_due() {
+        let old = r#"[{"name":"n","prompt":"p","folder":"/r","every":3600,"mode":"plan","added":1000}]"#;
+        let all: Vec<Schedule> = serde_json::from_str(old).expect("old file");
+        assert!(!all[0].off);
+        assert!(!serde_json::to_string(&all[0]).expect("json").contains("off"), "on is not written");
+        let mut x = all[0].clone();
+        x.off = true;
+        assert!(!x.due(1000 + 7200));
+    }
+
+    #[test]
+    fn a_new_one_is_checked() {
+        let dir = tempfile::tempdir().expect("dir");
+        let n = |name: &str, every: u64, at: Option<&str>, mode: &str, prompt: &str| New {
+            name: name.into(),
+            prompt: prompt.into(),
+            folder: dir.path().into(),
+            every,
+            at: at.map(str::to_string),
+            mode: mode.into(),
+            model: None,
+        };
+        let ok = checked(&[], n(" nightly ", 86_400, Some("09:00"), "plan", " tests ")).expect("ok");
+        assert_eq!((ok.name.as_str(), ok.prompt.as_str(), ok.at.as_deref()), ("nightly", "tests", Some("09:00")));
+        for (bad, why) in [
+            (n("", 3600, None, "plan", "p"), "name"),
+            (n("../x", 3600, None, "plan", "p"), "/"),
+            (n(".x", 3600, None, "plan", "p"), "dot"),
+            (n("x", 30, None, "plan", "p"), "minute"),
+            (n("x", 86_400, Some("25:00"), "plan", "p"), "09:00"),
+            (n("x", 3600, None, "fast", "p"), "mode"),
+            (n("x", 3600, None, "plan", " "), "prompt"),
+        ] {
+            let e = checked(&[], bad).expect_err(why).to_string();
+            assert!(e.contains(why), "{e}");
+        }
+        assert!(
+            checked(&[ok], n("nightly", 3600, None, "plan", "p")).expect_err("twice").to_string().contains("already")
+        );
     }
 
     #[test]
