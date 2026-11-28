@@ -244,7 +244,7 @@ fn picture_or(ui: Ui, id: String, other: impl Fn() -> floem::AnyView + 'static) 
     dyn_container(
         move || has.get(),
         move |_| match me.pictures.with_untracked(|p| p.get(&id).cloned()) {
-            Some(p) => drawn(p).style(|s| s.width(PICTURE).height(PICTURE)).into_any(),
+            Some(p) => drawn(p, false).style(|s| s.width(PICTURE).height(PICTURE)).into_any(),
             None => other(),
         },
     )

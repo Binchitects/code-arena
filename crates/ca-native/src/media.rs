@@ -602,11 +602,6 @@ pub fn small_picture(ui: Ui, url: &str, key: &str, done: impl FnOnce(Option<Rc<P
     });
 }
 
-/// A picture drawn as large as fits its place, never larger than itself.
-pub fn drawn(picture: Rc<Picture>) -> impl IntoView {
-    Drawn { id: ViewId::new(), picture }
-}
-
 fn decode_off_thread(ui: Ui, st: State, path: String, m: &Value, size: u64) {
     let data = m["data"].as_str().unwrap_or("").to_string();
     let modified = m["modified"].as_u64().unwrap_or(0);
