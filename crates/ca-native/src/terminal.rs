@@ -1101,7 +1101,8 @@ fn close(ui: Ui, send: &Send, id: u64) {
 
 /// Every terminal let go of, as when another folder is opened: their shells were the side's that is gone, so
 /// nothing is sent.
-pub fn forget_all(ui: Ui) {
+/// One new shell is begun in their place (in the new folder), not given the keys.
+pub fn forget_all(ui: Ui, send: &Send) {
     if ui.terms.with_untracked(Vec::is_empty) {
         return;
     }
@@ -1109,6 +1110,7 @@ pub fn forget_all(ui: Ui) {
     ui.terms.set(Vec::new());
     ui.term.set(State::None);
     redraw(ui);
+    open(ui, send, None);
 }
 
 /// VS Code's Terminal: Clear, on the terminal shown.

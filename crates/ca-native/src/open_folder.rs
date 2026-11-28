@@ -38,6 +38,8 @@ struct OpenFolder {
     good: RwSignal<String>,
     /// The folders opened before, the latest first.
     recent: RwSignal<Vec<String>>,
+    /// The home folder, said with the recent folders.
+    home: RwSignal<Option<String>>,
 }
 
 impl crate::ext::State for OpenFolder {
@@ -47,6 +49,7 @@ impl crate::ext::State for OpenFolder {
             asked: s.create_rw_signal(String::new()),
             good: s.create_rw_signal(String::new()),
             recent: s.create_rw_signal(Vec::new()),
+            home: s.create_rw_signal(None),
         }
     }
 }
@@ -55,9 +58,9 @@ fn state(ui: Ui) -> OpenFolder {
     ui.state::<OpenFolder>()
 }
 
-/// This computer's home folder, for `~` in what is shown.
-fn home() -> Option<String> {
-    std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok().filter(|h| !h.is_empty())
+/// This computer's home folder as the session said it, for `~` in what is shown.
+fn home(ui: Ui) -> Option<String> {
+    state(ui).home.get_untracked()
 }
 
 /// A path as shown: the home folder as `~`.
@@ -88,11 +91,20 @@ pub fn is_path(typed: &str) -> bool {
         || typed == "~"
         || typed.starts_with("~/")
         || typed.starts_with("~\\")
-        || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b.len() == 2 || b[2] == b'\\' || b[2] == b'/'))
+        || (b.len() >= 2
+            && b[0].is_ascii_alphabetic()
+            && b[1] == b':'
+            && (b.len() == 2 || b[2] == b'\\' || b[2] == b'/'))
 }
 
 /// The dialog's rows for a folder listed: Open it, `..`, its folders, then the recent folders not already there.
-pub fn rows(dir: &str, parent: Option<&str>, folders: &[String], recent: &[String], home: Option<&str>) -> Vec<quick::Item> {
+pub fn rows(
+    dir: &str,
+    parent: Option<&str>,
+    folders: &[String],
+    recent: &[String],
+    home: Option<&str>,
+) -> Vec<quick::Item> {
     let mut rows = vec![
         quick::item(&format!("open:{dir}"), &format!("Open {}", name_of(dir)))
             .description(&tilde(dir, home))
@@ -122,7 +134,9 @@ pub fn recent_rows(recent: &[String], current: &str, all: bool, home: Option<&st
     let shown = if all { others.len() } else { others.len().min(FIRST) };
     let mut rows: Vec<quick::Item> = others[..shown]
         .iter()
-        .map(|f| quick::item(&format!("open:{f}"), name_of(f)).description(&tilde(f, home)).icon("folder").group("folders"))
+        .map(|f| {
+            quick::item(&format!("open:{f}"), name_of(f)).description(&tilde(f, home)).icon("folder").group("folders")
+        })
         .collect();
     if shown < others.len() {
         rows.push(quick::item("more", "More...").icon("ellipsis"));
@@ -137,7 +151,7 @@ pub fn open_folder(ui: Ui, send: &Send) {
     }
     send(json!({"type": "recent_folders", "key": KEY}));
     let start = ui.folder.get_untracked();
-    go(ui, send, if start.is_empty() { home().unwrap_or_else(|| "/".into()) } else { start });
+    go(ui, send, if start.is_empty() { home(ui).unwrap_or_else(|| "/".into()) } else { start });
 }
 
 /// A folder asked to be listed for the dialog.
@@ -151,7 +165,7 @@ fn dialog_over(ui: Ui, send: &Send, m: &Value) {
     let st = state(ui);
     let dir = m["dir"].as_str().unwrap_or("").to_string();
     if let Some(e) = m["error"].as_str() {
-        toast::error(ui, &format!("{}: {e}", tilde(&dir, home().as_deref())));
+        toast::error(ui, &format!("{}: {e}", tilde(&dir, home(ui).as_deref())));
         let good = st.good.get_untracked();
         if !good.is_empty() && good != dir && st.asked.get_untracked() != good {
             go(ui, send, good);
@@ -166,13 +180,15 @@ fn dialog_over(ui: Ui, send: &Send, m: &Value) {
         .filter(|e| e["dir"] == true)
         .filter_map(|e| e["name"].as_str().map(str::to_string))
         .collect();
-    let h = home();
+    let h = home(ui);
     let items = st.recent.with_untracked(|r| rows(&dir, m["parent"].as_str(), &folders, r, h.as_deref()));
     let send = send.clone();
     quick::pick("Open Folder")
         .placeholder(&format!("{}: type to narrow, or a whole path", tilde(&dir, h.as_deref())))
         .items(items)
-        .free(|typed| is_path(typed).then(|| quick::item(&format!("go:{typed}"), &format!("Go to {typed}")).icon("arrow-right")))
+        .free(|typed| {
+            is_path(typed).then(|| quick::item(&format!("go:{typed}"), &format!("Go to {typed}")).icon("arrow-right"))
+        })
         .most(500)
         .open(ui, move |item| {
             let Some(item) = item else { return };
@@ -192,7 +208,7 @@ pub fn open_recent(ui: Ui, send: &Send) {
 }
 
 fn recent_pick(ui: Ui, send: &Send, all: bool) {
-    let h = home();
+    let h = home(ui);
     let items = state(ui).recent.with_untracked(|r| recent_rows(r, &ui.folder.get_untracked(), all, h.as_deref()));
     if items.is_empty() {
         toast::info(ui, "No folder was opened before this one.");
@@ -224,7 +240,8 @@ fn open(ui: Ui, send: &Send, path: String) {
     if busy(ui) {
         return;
     }
-    let dirty: Vec<String> = ui.tabs.with_untracked(|t| t.iter().filter(|t| t.dirty.get_untracked()).map(|t| t.name()).collect());
+    let dirty: Vec<String> =
+        ui.tabs.with_untracked(|t| t.iter().filter(|t| t.dirty.get_untracked()).map(|t| t.name()).collect());
     let send = send.clone();
     if dirty.is_empty() {
         really_open(ui, &send, &path);
@@ -241,9 +258,9 @@ fn open(ui: Ui, send: &Send, path: String) {
                 really_open(ui, &send, &path);
             }
             Some(1) => {
-                let paths: Vec<String> = ui.tabs.with_untracked(|t| {
-                    t.iter().filter(|t| t.dirty.get_untracked()).map(|t| t.path.clone()).collect()
-                });
+                let paths: Vec<String> = ui
+                    .tabs
+                    .with_untracked(|t| t.iter().filter(|t| t.dirty.get_untracked()).map(|t| t.path.clone()).collect());
                 for p in paths {
                     crate::save::discarded(ui, &p, &send);
                     if let Some(tab) = ui.tab(&p) {
@@ -260,7 +277,7 @@ fn really_open(ui: Ui, send: &Send, path: &str) {
     if ui.loaded.get_untracked() {
         send(json!({"type": "keep_view_state", "state": ui.view_state()}));
     }
-    crate::banners::opening(ui, &tilde(path, home().as_deref()));
+    crate::banners::opening(ui, &tilde(path, home(ui).as_deref()));
     send(json!({"type": "folder_open", "path": path, "key": KEY}));
 }
 
@@ -271,7 +288,7 @@ pub fn another_folder(shown: &str, loaded: bool, m: &Value) -> bool {
 
 /// What was the folder's let go of before another's `state` is taken in: the tabs (their changes were answered
 /// for), the groups, the Explorer's tree and the terminals. The window then restores the new folder's layout.
-fn let_go(ui: Ui) {
+fn let_go(ui: Ui, send: &Send) {
     ui.loaded.set(false);
     let paths: Vec<String> = ui.tabs.with_untracked(|t| t.iter().map(|t| t.path.clone()).collect());
     for p in &paths {
@@ -285,7 +302,7 @@ fn let_go(ui: Ui) {
     ui.tree.set(Default::default());
     ui.expanded.set(Default::default());
     ui.selected.set(String::new());
-    crate::terminal::forget_all(ui);
+    crate::terminal::forget_all(ui, send);
 }
 
 /// What it adds to the window's registries, once at start.
@@ -320,8 +337,12 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     let st = state(ui);
     match m["type"].as_str().unwrap_or("") {
         "state" => {
+            // The recent folders and the home folder, known before the dialog is asked for.
+            if st.home.with_untracked(Option::is_none) {
+                send(json!({"type": "recent_folders", "key": KEY}));
+            }
             if another_folder(&ui.folder.get_untracked(), ui.loaded.get_untracked(), m) {
-                let_go(ui);
+                let_go(ui, send);
             }
         }
         "folders" if m["key"] == KEY => {
@@ -331,10 +352,18 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
             }
         }
         "recent_folders" => {
-            let list: Vec<String> =
-                m["items"].as_array().into_iter().flatten().filter_map(|i| i["path"].as_str().map(str::to_string)).collect();
+            let list: Vec<String> = m["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|i| i["path"].as_str().map(str::to_string))
+                .collect();
             if st.recent.with_untracked(|r| *r != list) {
                 st.recent.set(list);
+            }
+            let home = m["home"].as_str().filter(|h| !h.is_empty()).map(str::to_string);
+            if st.home.with_untracked(|h| *h != home) {
+                st.home.set(home);
             }
             if m["key"] == RECENT_KEY {
                 recent_pick(ui, send, false);

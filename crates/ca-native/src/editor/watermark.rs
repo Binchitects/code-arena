@@ -33,7 +33,13 @@ fn welcome(ui: Ui) -> impl IntoView {
         h_stack((
             label(move || what).style(|s| s.width(170.0).justify_end().font_size(13.0)),
             h_stack((dyn_stack(
-                move || keys.split(' ').flat_map(|chord| chord.split('+')).map(str::to_string).enumerate().collect::<Vec<_>>(),
+                move || {
+                    keys.split(' ')
+                        .flat_map(|chord| chord.split('+'))
+                        .map(str::to_string)
+                        .enumerate()
+                        .collect::<Vec<_>>()
+                },
                 |(i, _): &(usize, String)| *i,
                 move |(_, k): (usize, String)| {
                     label(move || k.clone()).style(move |s| {

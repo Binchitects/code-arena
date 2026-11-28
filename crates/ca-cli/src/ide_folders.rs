@@ -9,7 +9,7 @@
 //!   another. The driver then sends `state` (with the folder's own `view_state`) and `tasks` itself. Always
 //!   answered by `folder_opened{path, key, folder?, error?}`: `folder` the folder now worked in, `error` why
 //!   nothing changed (not a folder, already open, not prepared).
-//! - `recent_folders{key?}` -> `recent_folders{key, items: [{path, workspace}]}`: the folders opened, the latest
+//! - `recent_folders{key?}` -> `recent_folders{key, home, items: [{path, workspace}]}`: the folders opened, the latest
 //!   first, those not there any more left out; answered while a turn runs too. `workspace` is always false (a
 //!   workspace of several folders is not opened yet).
 //! - `recent_clear{key?}`: Clear Recently Opened; the folder worked in stays. Answered by `recent_folders`.
@@ -56,16 +56,17 @@ impl Area for Here {
             _ => return false,
         };
         let (data, folder, out, key) = (sh.paths.data.clone(), sh.folder.clone(), sh.out.clone(), m["key"].clone());
+        let home = sh.home.as_ref().map(|h| h.display().to_string());
         tokio::task::spawn_blocking(move || {
             if clear {
-                let _ = write(&data, &[folder.clone()]);
+                let _ = write(&data, std::slice::from_ref(&folder));
             }
             let items: Vec<Value> = read(&data)
                 .into_iter()
                 .filter(|f| Path::new(f).is_dir())
                 .map(|f| json!({"path": f, "workspace": false}))
                 .collect();
-            send(&out, json!({"type": "recent_folders", "key": key, "items": items}));
+            send(&out, json!({"type": "recent_folders", "key": key, "items": items, "home": home}));
         });
         true
     }
@@ -158,22 +159,22 @@ mod tests {
 
     #[test]
     fn the_list_is_kept_and_read_back_and_a_missing_file_reads_as_none() {
-        let data = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().expect("ok");
         assert!(read(data.path()).is_empty());
-        write(data.path(), &["/x".into(), "/y".into()]).unwrap();
+        write(data.path(), &["/x".into(), "/y".into()]).expect("ok");
         assert_eq!(read(data.path()), ["/x", "/y"]);
     }
 
     #[test]
     fn only_a_whole_path_to_a_folder_can_be_opened() {
-        let home = tempfile::tempdir().unwrap();
-        std::fs::create_dir(home.path().join("proj")).unwrap();
-        std::fs::write(home.path().join("a.txt"), "x").unwrap();
-        let found = folder_of("~/proj", Some(home.path())).unwrap();
-        assert_eq!(found, std::fs::canonicalize(home.path().join("proj")).unwrap());
-        assert!(folder_of("~/a.txt", Some(home.path())).unwrap_err().contains("is not a folder"));
-        assert!(folder_of("proj", Some(home.path())).unwrap_err().contains("not a whole path"));
-        assert!(folder_of("~/gone", Some(home.path())).unwrap_err().contains("cannot be opened"));
-        assert_eq!(folder_of("  ", None).unwrap_err(), "Which folder to open?");
+        let home = tempfile::tempdir().expect("ok");
+        std::fs::create_dir(home.path().join("proj")).expect("ok");
+        std::fs::write(home.path().join("a.txt"), "x").expect("ok");
+        let found = folder_of("~/proj", Some(home.path())).expect("ok");
+        assert_eq!(found, std::fs::canonicalize(home.path().join("proj")).expect("ok"));
+        assert!(folder_of("~/a.txt", Some(home.path())).expect_err("refused").contains("is not a folder"));
+        assert!(folder_of("proj", Some(home.path())).expect_err("refused").contains("not a whole path"));
+        assert!(folder_of("~/gone", Some(home.path())).expect_err("refused").contains("cannot be opened"));
+        assert_eq!(folder_of("  ", None).expect_err("refused"), "Which folder to open?");
     }
 }
