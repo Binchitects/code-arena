@@ -829,6 +829,16 @@ Sections used:
   down vote can carry a reason (Wrong, Incomplete, Too long, Unsafe, Ignored instructions, Other).
   Either vote can carry some words and 'Share this chat with the admins'. Take back removes the
   rating, and the thumb you gave is still shown after a reload.
+- **Virtual machines for the agent.** The agent can list your VirtualBox, VMware, libvirt and
+  Hyper-V machines, start and stop them, take and restore snapshots, save the screen, run commands
+  in the guest, copy files in and out, and run a whole test in one go with vm_test (restore a
+  snapshot, copy in, run, bring back logs and the screen into .code-arena/vm, then restore the
+  snapshot). The tools appear only when a hypervisor is installed.
+- **Sign in to a VM.** When a VM tool needs the guest's user and password, a 'Sign in to VM' dialog
+  asks for them. It says so when the guest refused the last sign-in, offers 'Keep it in the keyring'
+  when a keyring is available, and closes when another window answers. A corner bubble tells you it
+  is waiting. The password never shows in the chat, and it is saved to the keyring only after the
+  guest accepts it.
 
 
 ### :bug: Bugs fixed
