@@ -1068,6 +1068,16 @@ Sections used:
   commands may do. Plugins lets you install one from a folder or a git URL, turn it on or off, or
   remove it. Output Style picks how the agent talks, from the next message. Run Doctor opens what
   `code-arena doctor` finds in an editor tab.
+- **Language servers in the driver.** The IDE now knows typescript-language-server, Pyright,
+  basedpyright, the Python LSP Server, gopls, rust-analyzer, clangd, csharp-ls, the JSON, CSS and
+  HTML servers, yaml-language-server and bash-language-server. It finds them in the project's
+  .venv, on PATH, in GOBIN or ~/go/bin, ~/.cargo/bin, ~/.dotnet/tools, or as clangd-NN, and says
+  how to install one that is missing. The new languageServers setting adds your own servers or
+  changes a built-in one, and the codeArena.languageServers.* settings turn them off.
+- **A language server runs only in a trusted folder.** It runs in the folder, sandboxed, without
+  the network and without your keys. It stops when the trust is taken back or another folder is
+  opened. At most six run at once, and the last 200 lines of each one's log are kept. A server
+  that ends by itself is offered a restart up to three times in three minutes.
 
 
 ### :bug: Bugs fixed
