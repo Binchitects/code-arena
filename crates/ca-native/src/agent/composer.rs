@@ -373,6 +373,7 @@ fn say(ui: Ui, send: &Send, words: &str, typed: &str) -> bool {
         }
     });
     send(msg);
+    super::thread::follow(ui);
     true
 }
 

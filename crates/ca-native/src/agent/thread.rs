@@ -154,6 +154,12 @@ impl Follow {
     }
 }
 
+/// What is sent from the box is read where it is answered: the thread goes to its end and follows again (a command's
+/// answer, which has no question in the thread, is seen too).
+pub(super) fn follow(ui: Ui) {
+    ui.state::<Follow>().follow_on();
+}
+
 pub(super) fn thread(ui: Ui, send: Send) -> impl IntoView {
     let f = ui.state::<Follow>();
     // Whether there is a thread at all, told only when that changes: the thread is built once, not again at each
@@ -324,7 +330,7 @@ fn item(ui: Ui, i: Item, send: Send) -> impl IntoView {
         }
         Kind::Compaction { .. } => super::compaction::view(ui, send, &i),
         Kind::Notice(text) => label(move || text.clone())
-            .style(move |s| s.color(t.get().desc).font_size(12.0).text_overflow(TextOverflow::Wrap))
+            .style(move |s| s.color(t.get().desc).font_size(12.0).line_height(1.4).text_overflow(TextOverflow::Wrap))
             .into_any(),
         Kind::Error(text) => h_stack((
             icon("error", 16.0).style(move |s| s.color(t.get().error)),

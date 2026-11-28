@@ -79,6 +79,32 @@ pub fn action(t: Theme, name: &'static str, on: impl Fn() + 'static) -> impl Int
     })
 }
 
+/// The same, greyed out while `dim` says so (as VS Code draws a disabled action), still pressable to say why.
+pub fn action_dim(
+    t: Theme,
+    name: &'static str,
+    dim: impl Fn() -> bool + 'static,
+    on: impl Fn() + 'static,
+) -> impl IntoView {
+    let dim = std::rc::Rc::new(dim);
+    let shade = dim.clone();
+    // Mixed into the side bar's background, since a glyph's own transparency is not drawn by every renderer.
+    let glyph = icon(name, 16.0).style(move |s| {
+        let c = t.get();
+        s.color(if shade() { mix(c.icon, c.side_bg, 0.6) } else { c.icon })
+    });
+    container(glyph).on_click_stop(move |_| on()).style(move |s| {
+        let c = t.get();
+        s.width(22.0)
+            .height(22.0)
+            .items_center()
+            .justify_center()
+            .border_radius(5.0)
+            .cursor(CursorStyle::Pointer)
+            .apply_if(!dim(), |s| s.hover(|s| s.background(c.toolbar_hover)))
+    })
+}
+
 /// The same, drawn only while `on` is true (the action lit, as the layout buttons when their part is shown).
 pub fn action_lit(t: Theme, name: impl Fn() -> &'static str + 'static, on: impl Fn() + 'static) -> impl IntoView {
     let shown = floem::views::dyn_container(name, move |n| icon(n, 16.0));

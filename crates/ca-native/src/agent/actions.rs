@@ -251,7 +251,8 @@ fn row(ui: Ui, send: Send, id: u64, q: &Question) -> impl IntoView {
     let covered_now = move |asks: bool| asks && super::compaction::covers_now(ui, n);
     // Each of the others, dimmed while an answer is written (and saying why when pressed).
     let gated = move |name: &'static str, tip: &'static str, asks: bool, run: Rc<dyn Fn()>| {
-        let button = widgets::action(t, name, move || {
+        let dim = move || busy() || covered(asks);
+        let button = widgets::action_dim(t, name, dim, move || {
             if ui.running.get_untracked() {
                 busy_said(ui)
             } else if covered_now(asks) {
@@ -260,8 +261,7 @@ fn row(ui: Ui, send: Send, id: u64, q: &Question) -> impl IntoView {
                 run()
             }
         });
-        let dim = move || busy() || covered(asks);
-        tipped(container(button).style(move |s| s.apply_if(dim(), |s| s.color(t.get().desc))), move || {
+        tipped(button, move || {
             if ui.running.get_untracked() {
                 BUSY.into()
             } else if covered_now(asks) {
