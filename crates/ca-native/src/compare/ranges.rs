@@ -301,9 +301,9 @@ mod tests {
         assert_eq!(touched(&[h(1..2, 1..3)], &[(2, 9)]), vec![h(1..2, 2..3)]);
         // Lines taken away above line 4: touched from line 3 or 4, not 2 or 5.
         let gone = h(4..6, 4..4);
-        assert_eq!(touched(&[gone.clone()], &[(3, 3)]), vec![gone.clone()]);
-        assert_eq!(touched(&[gone.clone()], &[(4, 4)]), vec![gone.clone()]);
-        assert!(touched(&[gone.clone()], &[(2, 2)]).is_empty());
+        assert_eq!(touched(std::slice::from_ref(&gone), &[(3, 3)]), vec![gone.clone()]);
+        assert_eq!(touched(std::slice::from_ref(&gone), &[(4, 4)]), vec![gone.clone()]);
+        assert!(touched(std::slice::from_ref(&gone), &[(2, 2)]).is_empty());
         assert!(touched(&[gone], &[(5, 5)]).is_empty());
         // Nothing touched, and two selections in one hunk.
         assert!(touched(&[h(0..1, 0..1)], &[(3, 4)]).is_empty());
@@ -362,7 +362,7 @@ mod tests {
         super::super::open(ui, &send, Source::Index("a.rs".into()), Source::Live("a.rs".into()));
         let shown =
             json!({"type": "git_show", "repo": "", "path": "a.rs", "rev": "", "working": false, "key": "compare"});
-        assert_eq!(*asked.borrow(), [shown.clone()], "the index's text is asked of git");
+        assert_eq!(*asked.borrow(), std::slice::from_ref(&shown), "the index's text is asked of git");
         let e = super::super::entry("compare:index:a.rs ↔ live:a.rs").expect("open");
         assert!(!super::super::has_come(&e.left), "nothing is staged before the index's text has come");
         let reply = json!({"type": "git_shown", "repo": "", "path": "a.rs", "rev": "", "working": false,
