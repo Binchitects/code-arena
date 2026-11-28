@@ -353,7 +353,9 @@ impl Filter {
     fn keeps(&self, source: &str, p: &Problem) -> bool {
         let hay = || format!("{} {} {} {}", p.message, p.code, source, p.path).to_lowercase();
         let hay = if self.words.is_empty() && self.not_words.is_empty() { String::new() } else { hay() };
-        if self.not_words.iter().any(|w| hay.contains(w)) || self.not_globs.as_ref().is_some_and(|g| g.is_match(&p.path)) {
+        if self.not_words.iter().any(|w| hay.contains(w))
+            || self.not_globs.as_ref().is_some_and(|g| g.is_match(&p.path))
+        {
             return false;
         }
         if self.words.is_empty() && self.globs.is_none() {
@@ -522,7 +524,9 @@ fn quick_fix_at(ui: Ui, send: &Send, path: &str, line: usize) {
     let mut items: Vec<popup::Item> = vec![popup::entry(FIX_TITLE, move || fix(ui, &s1, &here)).into()];
     if all.len() > 1 {
         let n = all.len();
-        items.push(popup::entry(&format!("Fix All {n} Problems in File with Code Arena"), move || fix(ui, &s2, &all)).into());
+        items.push(
+            popup::entry(&format!("Fix All {n} Problems in File with Code Arena"), move || fix(ui, &s2, &all)).into(),
+        );
     }
     popup::open(ui, at, items);
 }
@@ -555,10 +559,8 @@ fn caret_line(ui: Ui) -> Option<(String, usize)> {
 fn fix_this(ui: Ui, send: &Send) {
     let Some(chip) = crate::agent::pieces::current(ui) else { return };
     let piece = &chip.piece;
-    let marked: Vec<(String, Problem)> = of_file(ui, &piece.path)
-        .into_iter()
-        .filter(|(_, p)| p.line >= piece.start && p.line <= piece.end)
-        .collect();
+    let marked: Vec<(String, Problem)> =
+        of_file(ui, &piece.path).into_iter().filter(|(_, p)| p.line >= piece.start && p.line <= piece.end).collect();
     let words = if marked.is_empty() {
         "Fix this".to_string()
     } else {
@@ -644,7 +646,12 @@ fn remark(ui: Ui, open: &[(String, String)]) {
                 .flat_map(|(s, l)| l.iter().filter(|p| p.path == *file).map(move |p| (s.clone(), p.clone())))
                 .collect::<Vec<_>>()
         });
-        let sum = stamp_of(problems.iter().map(|(s, p)| (s, &p.message, &p.code, p.line, p.col, p.end_line, p.end_col, rank(p.severity))).collect::<Vec<_>>());
+        let sum = stamp_of(
+            problems
+                .iter()
+                .map(|(s, p)| (s, &p.message, &p.code, p.line, p.col, p.end_line, p.end_col, rank(p.severity)))
+                .collect::<Vec<_>>(),
+        );
         if MARKED.with(|m| m.borrow().get(path) == Some(&sum)) {
             continue;
         }
@@ -707,9 +714,8 @@ fn severity_icon(ui: Ui, s: Severity) -> impl IntoView {
 fn row_view(ui: Ui, node: &Node) -> AnyView {
     let t = ui.colors;
     let desc = move |text: String| {
-        label(move || text.clone()).style(move |s| {
-            s.font_size(12.0).color(t.get().desc).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32)
-        })
+        label(move || text.clone())
+            .style(move |s| s.font_size(12.0).color(t.get().desc).text_ellipsis().min_width(0.0).flex_shrink(1.0_f32))
     };
     match row_of(&node.id) {
         Some(Row::Source(src)) => {
@@ -768,7 +774,8 @@ fn open_problem(ui: Ui, send: &Send, p: &Problem) {
 /// What Copy puts on the clipboard, as VS Code's: the marker as JSON.
 fn copied(ui: Ui, source: &str, p: &Problem) -> String {
     let folder = ui.folder.get_untracked();
-    let resource = if folder.is_empty() { p.path.clone() } else { format!("{}/{}", folder.trim_end_matches('/'), p.path) };
+    let resource =
+        if folder.is_empty() { p.path.clone() } else { format!("{}/{}", folder.trim_end_matches('/'), p.path) };
     let end_line = p.end_line.unwrap_or(p.line);
     let end_col = p.end_col.unwrap_or(p.col);
     let marker = json!({
@@ -882,8 +889,8 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         }
     })
     .style(move |st| st.color(t.get().desc));
-    let note = h_stack((said, clear.style(move |st| st.apply_if(hidden.get() == 0, |st| st.hide()))))
-        .style(move |st| {
+    let note =
+        h_stack((said, clear.style(move |st| st.apply_if(hidden.get() == 0, |st| st.hide())))).style(move |st| {
             st.gap(6.0)
                 .padding_horiz(20.0)
                 .padding_vert(6.0)
@@ -899,7 +906,11 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         }),
     ))
     .style(move |st| {
-        st.gap(6.0).padding_horiz(20.0).padding_vert(3.0).font_size(12.0).apply_if(hidden.get() == 0 || empty.get(), |st| st.hide())
+        st.gap(6.0)
+            .padding_horiz(20.0)
+            .padding_vert(3.0)
+            .font_size(12.0)
+            .apply_if(hidden.get() == 0 || empty.get(), |st| st.hide())
     });
     v_stack((note, hid, list.style(|st| st.flex_grow(1.0_f32).flex_basis(0.0).width_full().min_height(0.0))))
         .style(|st| st.size_full().min_height(0.0))
@@ -947,12 +958,11 @@ pub fn actions(ui: Ui, _send: Send) -> Option<floem::AnyView> {
     let t = ui.colors;
     let s = store(ui);
     let focused = create_rw_signal(false);
-    let input = text_input(s.filter).placeholder(FILTER_HINT).on_event_cont(
-        floem::event::EventListener::FocusGained,
-        move |_| focused.set(true),
-    );
-    let input = input.on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false)).style(
-        move |st| {
+    let input = text_input(s.filter)
+        .placeholder(FILTER_HINT)
+        .on_event_cont(floem::event::EventListener::FocusGained, move |_| focused.set(true));
+    let input =
+        input.on_event_cont(floem::event::EventListener::FocusLost, move |_| focused.set(false)).style(move |st| {
             let c = t.get();
             let st = st
                 .flex_grow(1.0_f32)
@@ -964,20 +974,16 @@ pub fn actions(ui: Ui, _send: Send) -> Option<floem::AnyView> {
                 .color(c.input_fg)
                 .cursor_color(floem::peniko::Brush::Solid(c.cursor));
             crate::widgets::steady_input(st, Color::TRANSPARENT, None)
-        },
-    );
-    let narrowed = create_memo(move |_| {
-        !(s.errors.get() && s.warnings.get() && s.infos.get()) || s.active_only.get()
-    });
-    let menu = container(icon("filter", 16.0))
-        .style(move |st| {
-            let c = t.get();
-            st.padding(2.0)
-                .border_radius(3.0)
-                .cursor(CursorStyle::Pointer)
-                .apply_if(narrowed.get(), |st| st.color(c.focus))
-                .hover(|st| st.background(c.toolbar_hover))
         });
+    let narrowed = create_memo(move |_| !(s.errors.get() && s.warnings.get() && s.infos.get()) || s.active_only.get());
+    let menu = container(icon("filter", 16.0)).style(move |st| {
+        let c = t.get();
+        st.padding(2.0)
+            .border_radius(3.0)
+            .cursor(CursorStyle::Pointer)
+            .apply_if(narrowed.get(), |st| st.color(c.focus))
+            .hover(|st| st.background(c.toolbar_hover))
+    });
     let id = floem::View::id(&menu);
     let menu = menu.on_click_stop(move |_| {
         let toggle = |on: RwSignal<bool>| move || on.update(|v| *v = !*v);
@@ -989,7 +995,9 @@ pub fn actions(ui: Ui, _send: Send) -> Option<floem::AnyView> {
                 popup::entry("Show Warnings", toggle(s.warnings)).checked(s.warnings.get_untracked()).into(),
                 popup::entry("Show Infos", toggle(s.infos)).checked(s.infos.get_untracked()).into(),
                 popup::line(),
-                popup::entry("Show Active File Only", toggle(s.active_only)).checked(s.active_only.get_untracked()).into(),
+                popup::entry("Show Active File Only", toggle(s.active_only))
+                    .checked(s.active_only.get_untracked())
+                    .into(),
             ],
         );
     });
