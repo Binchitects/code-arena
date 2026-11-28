@@ -19,7 +19,6 @@ const TABLE: &[(&str, &str, &str, Option<&str>)] = &[
     ("f1", "workbench.action.showCommands", "", None),
     ("ctrl+shift+p", "workbench.action.showCommands", "", None),
     ("ctrl+p", "workbench.action.quickOpen", "", None),
-    ("ctrl+e", "workbench.action.quickOpen", "", None),
     ("ctrl+b", "workbench.action.toggleSidebarVisibility", "", None),
     ("ctrl+alt+b", "workbench.action.toggleAuxiliaryBar", "", None),
     ("ctrl+j", "workbench.action.togglePanel", "", None),

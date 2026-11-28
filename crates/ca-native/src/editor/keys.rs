@@ -50,6 +50,18 @@ fn ctrl_shift_letter(press: &KeyPress) -> bool {
 /// Ctrl+W closes the tab.
 pub(crate) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
     let KeyInput::Keyboard(key, _) = &press.key else { return false };
+    // The second key of a chord begun is the workbench's, whatever the editor would do with it (Ctrl+K Ctrl+S is
+    // not a save, Ctrl+K Enter no new line, Ctrl+K X types no x), unless it ends one of the editor's own chords.
+    if crate::commands::waiting().is_some()
+        && !super::editing::editor_only(key, mods)
+        && !matches!(
+            key,
+            Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super | NamedKey::Meta)
+        )
+    {
+        tell(ui, |send| crate::workbench::key(ui, send, key, mods));
+        return true;
+    }
     // The suggest widget's and the ghost text's keys first (Enter, Tab, Escape, the arrows while it is open).
     if crate::complete::key(ui, key, mods) {
         return true;
@@ -59,17 +71,6 @@ pub(crate) fn editor_key(ui: Ui, press: &KeyPress, mods: Modifiers) -> bool {
     }
     // The editing commands' keys (`editing.rs`), and Tab, Enter and Backspace as VS Code's.
     if super::editing::key(ui, press, mods) {
-        return true;
-    }
-    // The second key of a chord begun is the workbench's, whatever the editor would do with it (Ctrl+K Ctrl+S is
-    // not a save, Ctrl+K X types no x).
-    if crate::commands::waiting().is_some()
-        && !matches!(
-            key,
-            Key::Named(NamedKey::Shift | NamedKey::Control | NamedKey::Alt | NamedKey::Super | NamedKey::Meta)
-        )
-    {
-        tell(ui, |send| crate::workbench::key(ui, send, key, mods));
         return true;
     }
     let shift = mods.contains(Modifiers::SHIFT);

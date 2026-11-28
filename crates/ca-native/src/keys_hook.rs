@@ -15,8 +15,10 @@ use floem::keyboard::{Key, Modifiers};
 use crate::settings;
 use crate::state::Ui;
 
-/// The commands whose keys the terminal leaves to the workbench, as VS Code's default list (those the window has
-/// or will have).
+/// The commands whose keys the terminal leaves to the workbench: the views, the panel and the side bars, the
+/// palette and Quick Open, the editors' and the groups' moves, the terminal's and the debugger's own. Saving,
+/// zooming, quitting and the like stay the shell's (Ctrl+S, Ctrl+-, Ctrl+Q are a shell's keys too) unless
+/// `terminal.integrated.commandsToSkipShell` names them.
 pub const SKIP_SHELL: &[&str] = &[
     "workbench.action.showCommands",
     "workbench.action.quickOpen",
@@ -26,9 +28,6 @@ pub const SKIP_SHELL: &[&str] = &[
     "workbench.action.togglePanel",
     "workbench.action.toggleMaximizedPanel",
     "workbench.action.closeActiveEditor",
-    "workbench.action.closeWindow",
-    "workbench.action.quit",
-    "workbench.action.newWindow",
     "workbench.action.nextEditor",
     "workbench.action.previousEditor",
     "workbench.action.focusActiveEditorGroup",
@@ -37,13 +36,6 @@ pub const SKIP_SHELL: &[&str] = &[
     "workbench.action.focusThirdEditorGroup",
     "workbench.action.navigateBack",
     "workbench.action.navigateForward",
-    "workbench.action.zoomIn",
-    "workbench.action.zoomOut",
-    "workbench.action.zoomReset",
-    "workbench.action.toggleFullScreen",
-    "workbench.action.files.save",
-    "workbench.action.files.newUntitledFile",
-    "workbench.action.openSettings",
     "workbench.action.selectTheme",
     "workbench.action.chat.open",
     "workbench.view.explorer",
