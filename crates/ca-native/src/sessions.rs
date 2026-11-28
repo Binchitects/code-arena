@@ -116,7 +116,7 @@ pub fn title_of(s: &Session) -> String {
 /// What the pointer resting on a row says: "title · N messages · id".
 pub fn tip(s: &Session) -> String {
     let n = if s.messages == 1 { "1 message".to_string() } else { format!("{} messages", s.messages) };
-    format!("{} · {n} · {}", title_of(s), s.id)
+    format!("{} · {n} · {}", crate::bidi::isolate(&title_of(s)), s.id)
 }
 
 /// The sessions with their headings, in the order they came (newest first).

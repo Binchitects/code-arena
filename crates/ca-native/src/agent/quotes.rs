@@ -421,7 +421,11 @@ fn chip(ui: Ui) -> impl IntoView {
         v_stack((
             label(|| "Quoted in your reply").style(move |s| s.font_size(11.0).color(t.get().desc)),
             label(move || now.with(|q| q.as_ref().map(|q| super::question::two_lines(&q.text)).unwrap_or_default()))
-                .style(move |s| s.font_size(12.0).line_height(1.4).color(t.get().fg).text_overflow(TextOverflow::Wrap)),
+                .style(move |s| {
+                    let rtl = now.with(|q| q.as_ref().is_some_and(|q| crate::bidi::rtl(&q.text)));
+                    let s = s.font_size(12.0).line_height(1.4).color(t.get().fg).text_overflow(TextOverflow::Wrap);
+                    crate::bidi::stand(s, rtl)
+                }),
             label(move || format!("Cut to {} characters.", super::answer::thousands(MOST as u64))).style(move |s| {
                 s.font_size(11.0)
                     .color(t.get().desc)

@@ -299,9 +299,12 @@ pub fn bubble(ui: Ui, send: Send, item: &Item) -> AnyView {
                 field(ui, send.clone(), me, number).into_any()
             } else {
                 let w = words.clone();
-                label(move || w.clone())
-                    .style(move |s| s.color(t.get().fg).line_height(1.5).text_overflow(TextOverflow::Wrap))
-                    .into_any()
+                let rtl = crate::bidi::rtl(&w);
+                let words = label(move || w.clone()).style(move |s| {
+                    let s = s.color(t.get().fg).line_height(1.5).text_overflow(TextOverflow::Wrap);
+                    crate::bidi::stand(s, rtl)
+                });
+                v_stack((words,)).style(|s| s.width_full().min_width(0.0)).into_any()
             }
         },
     )

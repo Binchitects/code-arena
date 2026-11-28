@@ -7,9 +7,8 @@
 
 use std::rc::Rc;
 
-use floem::View;
-use floem::style::AlignItems;
-use floem::views::{Decorators, container};
+use floem::style::{AlignItems, Style};
+use floem::unit::PxPctAuto;
 use serde_json::Value;
 use unicode_bidi::{Direction, get_base_direction, get_base_direction_full};
 
@@ -89,16 +88,10 @@ pub fn list_rtl(blocks: &[Rc<Block>], n: usize) -> bool {
     rtl(first)
 }
 
-/// A view put on the side its text's direction says: on the right for a right-to-left text, on the left otherwise.
-/// The view inside keeps its natural width up to the place's (it wraps there), so its style says `max_width_full`
-/// rather than `width_full`; its lines are laid out each by its own words.
-pub fn side<V: View + 'static>(rtl: impl Fn() -> bool + 'static, view: V) -> impl View {
-    container(view).style(move |s| {
-        s.width_full()
-            .min_width(0.0)
-            .flex_col()
-            .align_items(if rtl() { AlignItems::FlexEnd } else { AlignItems::FlexStart })
-    })
+/// A text's style in a column, stood on the right when it goes right to left: its natural width up to the column's
+/// (it wraps there). A left-to-right one is as its style was.
+pub fn stand(s: Style, rtl: bool) -> Style {
+    if rtl { s.width(PxPctAuto::Auto).max_width_full().align_self(Some(AlignItems::FlexEnd)) } else { s }
 }
 
 #[cfg(test)]
