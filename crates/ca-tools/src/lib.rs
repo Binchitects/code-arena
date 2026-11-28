@@ -119,6 +119,16 @@ pub trait Tool: Send + Sync {
     fn arena_tool(&self) -> Option<String> {
         None
     }
+    /// The tool as it is defined, when this one is it with the person's settings applied (Configure Tools); none
+    /// for a tool as it is defined.
+    fn own(&self) -> Option<Arc<dyn Tool>> {
+        None
+    }
+    /// The arguments a call runs with, from the model's: the person's fixed ones and defaults put in. Asked before
+    /// the question, so the person is asked about what runs.
+    fn given(&self, args: Value) -> Value {
+        args
+    }
 }
 
 /// Every built-in tool.

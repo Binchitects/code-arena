@@ -363,6 +363,10 @@ fn merge_project(setting: &Setting, user: Option<Value>, project: Value) -> Valu
         }
         return Value::Array(names);
     }
+    if setting.key == schema::TOOL_SETTINGS.key {
+        // Read level by level, the project's only for what it may say (ca_agent::tool_settings).
+        return user.unwrap_or_else(|| setting.default_value());
+    }
     if setting.key != schema::PERMISSIONS.key {
         return project;
     }

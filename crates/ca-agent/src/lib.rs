@@ -16,6 +16,7 @@ pub mod policy;
 pub mod skill_transfer;
 pub mod steps;
 pub mod task;
+pub mod tool_settings;
 mod turn;
 
 pub use context::Window;
