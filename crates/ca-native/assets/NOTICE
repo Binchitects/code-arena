@@ -1,3 +1,7 @@
 codicon.ttf is Microsoft's Codicons font (https://github.com/microsoft/vscode-codicons), the icons VS Code draws,
 taken from the monaco-editor package. The icons are licensed under the Creative Commons Attribution 4.0
 International licence (https://creativecommons.org/licenses/by/4.0/). Copyright (c) Microsoft Corporation.
+
+syntaxes/*.sublime-syntax (TypeScript, TypeScript JSX, JavaScript JSX, TOML, Dockerfile, Vue, Svelte, Kotlin,
+PowerShell, Terraform, GraphQL) are this project's own grammars, written for Code Arena under its licence; they
+take no text from other grammars.

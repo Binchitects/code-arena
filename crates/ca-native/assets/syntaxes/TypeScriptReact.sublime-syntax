@@ -1,0 +1,84 @@
+%YAML 1.2
+---
+# TypeScript with JSX, written for Code Arena: TypeScript's tokens, and the tags JSX writes among them.
+name: TypeScript JSX
+file_extensions: [tsx]
+scope: source.tsx
+variables:
+  tag: '[_$[:alpha:]][-_$.:[:alnum:]]*'
+contexts:
+  main:
+    - include: tag-open
+    - include: scope:source.ts#code
+
+  # A tag starts where a value may (not after a name, as `Array<string>` does), and is no generic function's
+  # parameters (`<T extends object>(x: T) => x`).
+  tag-open:
+    - match: '(?<![_$[:alnum:].)\]])(<)(?:({{tag}})(?=[\s/>]|$)(?!\s+extends\b)|(?=>))'
+      captures:
+        1: punctuation.definition.tag.begin.tsx
+        2: entity.name.tag.tsx
+      push: tag
+
+  tag:
+    - meta_scope: meta.tag.tsx
+    - match: '/>'
+      scope: punctuation.definition.tag.end.tsx
+      pop: true
+    - match: '>'
+      scope: punctuation.definition.tag.end.tsx
+      set: children
+    - include: attributes
+
+  attributes:
+    - include: scope:source.ts#comments
+    - match: '[_$[:alpha:]][-_$:[:alnum:]]*'
+      scope: entity.other.attribute-name.tsx
+    - match: '='
+      scope: keyword.operator.assignment.tsx
+    - match: '"'
+      scope: punctuation.definition.string.begin.tsx
+      push:
+        - meta_scope: string.quoted.double.tsx
+        - match: '"'
+          scope: punctuation.definition.string.end.tsx
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.tsx
+      push:
+        - meta_scope: string.quoted.single.tsx
+        - match: "'"
+          scope: punctuation.definition.string.end.tsx
+          pop: true
+    - include: expression
+
+  expression:
+    - match: '\{'
+      scope: punctuation.section.embedded.begin.tsx
+      push: expression-body
+
+  expression-body:
+    - meta_scope: meta.embedded.expression.tsx
+    - match: '\}'
+      scope: punctuation.section.embedded.end.tsx
+      pop: true
+    - match: '\{'
+      scope: punctuation.definition.block.tsx
+      push: expression-body
+    - include: main
+
+  children:
+    - match: '(</)({{tag}})?\s*(>)'
+      captures:
+        1: punctuation.definition.tag.begin.tsx
+        2: entity.name.tag.tsx
+        3: punctuation.definition.tag.end.tsx
+      pop: true
+    - match: '(<)(?:({{tag}})(?=[\s/>]|$)|(?=>))'
+      captures:
+        1: punctuation.definition.tag.begin.tsx
+        2: entity.name.tag.tsx
+      push: tag
+    - match: '&(?:[[:alpha:]]+|#\d+|#x\h+);'
+      scope: constant.character.entity.tsx
+    - include: expression

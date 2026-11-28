@@ -154,6 +154,10 @@ pub fn launch(hub: Hub) {
     // Which fonts this machine has, found before the first view is drawn (the font system is busy then).
     std::sync::LazyLock::force(&widgets::UI_FONT);
     std::sync::LazyLock::force(&widgets::MONO_FONT);
+    // The grammars linked off the window's thread, so the first file shown does not wait for them.
+    std::thread::spawn(|| {
+        std::sync::LazyLock::force(&highlight::SYNTAXES);
+    });
     // VS Code's own title bar, drawn by the app (the system's frame is off), as VS Code's "custom" title bar.
     let config = WindowConfig::default().title("Code Arena").size((1280.0, 800.0)).undecorated(true);
     floem::Application::new().window(move |_| app(out, rx), Some(config)).run();

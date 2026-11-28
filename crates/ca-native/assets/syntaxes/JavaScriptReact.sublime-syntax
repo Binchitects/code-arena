@@ -1,0 +1,9 @@
+%YAML 1.2
+---
+# JavaScript with JSX, written for Code Arena: TypeScript JSX's grammar, as JavaScript is TypeScript without types.
+name: JavaScript JSX
+file_extensions: [jsx]
+scope: source.js.jsx
+contexts:
+  main:
+    - include: scope:source.tsx

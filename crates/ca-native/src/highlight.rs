@@ -21,11 +21,38 @@ use syntect::highlighting::{
     FontStyle, HighlightState, Highlighter, RangedHighlightIterator, ScopeSelectors, StyleModifier, Theme, ThemeItem,
     ThemeSettings,
 };
-use syntect::parsing::{ParseState, ScopeStack, SyntaxReference, SyntaxSet};
+use syntect::parsing::{ParseState, ScopeStack, SyntaxDefinition, SyntaxReference, SyntaxSet};
 
 use crate::widgets::MONO_FONT;
 
-pub static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+/// The grammars the window adds to syntect's own, written for it (`assets/syntaxes`, NOTICE says so): the languages
+/// VS Code colours that syntect's set leaves plain.
+const GRAMMARS: &[(&str, &str)] = &[
+    ("TypeScript", include_str!("../assets/syntaxes/TypeScript.sublime-syntax")),
+    ("TypeScript JSX", include_str!("../assets/syntaxes/TypeScriptReact.sublime-syntax")),
+    ("JavaScript JSX", include_str!("../assets/syntaxes/JavaScriptReact.sublime-syntax")),
+    ("TOML", include_str!("../assets/syntaxes/TOML.sublime-syntax")),
+    ("Dockerfile", include_str!("../assets/syntaxes/Dockerfile.sublime-syntax")),
+    ("Vue", include_str!("../assets/syntaxes/Vue.sublime-syntax")),
+    ("Svelte", include_str!("../assets/syntaxes/Svelte.sublime-syntax")),
+    ("Kotlin", include_str!("../assets/syntaxes/Kotlin.sublime-syntax")),
+    ("PowerShell", include_str!("../assets/syntaxes/PowerShell.sublime-syntax")),
+    ("Terraform", include_str!("../assets/syntaxes/Terraform.sublime-syntax")),
+    ("GraphQL", include_str!("../assets/syntaxes/GraphQL.sublime-syntax")),
+];
+
+/// Every grammar: syntect's, then the window's (found first by a file ending both have). Linked once, the first
+/// time one is wanted; the window starts that off its own thread when it opens.
+pub static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(|| {
+    let mut set = SyntaxSet::load_defaults_newlines().into_builder();
+    for (_, text) in GRAMMARS {
+        // One that does not load is left out (a test loads each).
+        if let Ok(grammar) = SyntaxDefinition::load_from_str(text, true, None) {
+            set.add(grammar);
+        }
+    }
+    set.build()
+});
 
 /// A theme's `tokenColors` as syntect's theme (the rules without a scope are the editor's own colours).
 pub fn theme_of(json: &Value) -> Theme {
@@ -79,14 +106,7 @@ fn to_syntect(c: Color) -> syntect::highlighting::Color {
 pub fn syntax_for(path: &str, first_line: &str) -> Option<&'static SyntaxReference> {
     let name = path.rsplit('/').next().unwrap_or(path);
     let ext = name.rsplit_once('.').map(|(_, e)| e).unwrap_or(name);
-    let s = SYNTAXES
-        .find_syntax_by_extension(ext)
-        .or_else(|| match ext {
-            "ts" | "tsx" | "mts" | "cts" => SYNTAXES.find_syntax_by_name("JavaScript"),
-            "toml" => SYNTAXES.find_syntax_by_extension("ini"),
-            _ => None,
-        })
-        .or_else(|| SYNTAXES.find_syntax_by_first_line(first_line))?;
+    let s = SYNTAXES.find_syntax_by_extension(ext).or_else(|| SYNTAXES.find_syntax_by_first_line(first_line))?;
     (s.name != "Plain Text").then_some(s)
 }
 
@@ -94,7 +114,11 @@ pub fn syntax_for(path: &str, first_line: &str) -> Option<&'static SyntaxReferen
 pub fn syntax_named(lang: &str) -> Option<&'static SyntaxReference> {
     let lang = match lang {
         "" => return None,
-        "typescript" | "tsx" | "jsx" | "javascriptreact" | "typescriptreact" => "js",
+        "typescriptreact" => "tsx",
+        "javascriptreact" => "jsx",
+        "docker" | "containerfile" => "dockerfile",
+        "pwsh" | "ps" | "posh" => "ps1",
+        "hcl" | "terraform" => "tf",
         "shell" | "shellscript" | "zsh" | "console" => "sh",
         "golang" => "go",
         other => other,
@@ -430,8 +454,24 @@ mod tests {
         assert_eq!(name("rust"), Some("Rust"));
         assert_eq!(name("rs"), Some("Rust"));
         assert_eq!(name("python"), Some("Python"));
-        assert_eq!(name("ts"), Some("JavaScript"));
-        assert_eq!(name("typescript"), Some("JavaScript"));
+        assert_eq!(name("ts"), Some("TypeScript"));
+        assert_eq!(name("typescript"), Some("TypeScript"));
+        assert_eq!(name("tsx"), Some("TypeScript JSX"));
+        assert_eq!(name("typescriptreact"), Some("TypeScript JSX"));
+        assert_eq!(name("jsx"), Some("JavaScript JSX"));
+        assert_eq!(name("toml"), Some("TOML"));
+        assert_eq!(name("docker"), Some("Dockerfile"));
+        assert_eq!(name("dockerfile"), Some("Dockerfile"));
+        assert_eq!(name("kotlin"), Some("Kotlin"));
+        assert_eq!(name("kt"), Some("Kotlin"));
+        assert_eq!(name("powershell"), Some("PowerShell"));
+        assert_eq!(name("pwsh"), Some("PowerShell"));
+        assert_eq!(name("hcl"), Some("Terraform"));
+        assert_eq!(name("terraform"), Some("Terraform"));
+        assert_eq!(name("graphql"), Some("GraphQL"));
+        assert_eq!(name("gql"), Some("GraphQL"));
+        assert_eq!(name("vue"), Some("Vue"));
+        assert_eq!(name("svelte"), Some("Svelte"));
         assert_eq!(name("bash"), Some("Bourne Again Shell (bash)"));
         assert_eq!(name("shell"), Some("Bourne Again Shell (bash)"));
         assert_eq!(name("json"), Some("JSON"));
@@ -489,5 +529,303 @@ mod tests {
         // A macro (println!) is coloured as a function is, #DCDCAA.
         let mac = h.style_for_stack(scope("source.rust support.macro.rust").as_slice());
         assert_eq!((mac.foreground.r, mac.foreground.g, mac.foreground.b), (0xDC, 0xDC, 0xAA));
+    }
+
+    /// A line's runs and their colours.
+    type Spans = Vec<(std::ops::Range<usize>, u32)>;
+
+    /// A file's lines as its grammar colours them under Dark Modern (every line parses): the colour of a piece of a
+    /// line, by its first place in it.
+    fn coloured(path: &str, text: &str) -> impl Fn(usize, &str) -> u32 {
+        let all = ca_themes::built_in();
+        let theme = theme_of(&ca_themes::chosen(&all, "dark-modern", true).json);
+        let syntax = syntax_for(path, text.lines().next().unwrap_or("")).unwrap_or_else(|| panic!("{path}"));
+        let mut lines = syntect::easy::HighlightLines::new(syntax, &theme);
+        let mut out: Vec<(String, Spans)> = Vec::new();
+        for line in text.split_inclusive('\n') {
+            let runs = lines.highlight_line(line, &SYNTAXES).unwrap_or_else(|e| panic!("{path}: {line}: {e}"));
+            let mut at = 0;
+            let mut spans = Vec::new();
+            for (style, piece) in runs {
+                let c = style.foreground;
+                spans.push((at..at + piece.len(), u32::from_be_bytes([0, c.r, c.g, c.b])));
+                at += piece.len();
+            }
+            out.push((line.to_string(), spans));
+        }
+        let path = path.to_string();
+        move |line, needle| {
+            let (text, spans) = &out[line];
+            let at = text.find(needle).unwrap_or_else(|| panic!("{path}:{line} has no {needle}"));
+            spans.iter().find(|(r, _)| r.contains(&at)).map(|(_, c)| *c).expect("coloured")
+        }
+    }
+
+    // Dark Modern's colours, as VS Code's.
+    const COMMENT: u32 = 0x6A9955;
+    const STRING: u32 = 0xCE9178;
+    const REGEXP: u32 = 0xD16969;
+    const NUMBER: u32 = 0xB5CEA8;
+    const STORAGE: u32 = 0x569CD6;
+    const CONTROL: u32 = 0xC586C0;
+    const TYPE: u32 = 0x4EC9B0;
+    const FUNCTION: u32 = 0xDCDCAA;
+    const VARIABLE: u32 = 0x9CDCFE;
+    const CONSTANT: u32 = 0x4FC1FF;
+
+    #[test]
+    fn the_windows_own_grammars_load_and_link() {
+        for (name, text) in GRAMMARS {
+            let grammar = SyntaxDefinition::load_from_str(text, true, None);
+            assert!(grammar.as_ref().is_ok_and(|g| g.name == *name), "{name}: {:?}", grammar.err());
+            assert!(SYNTAXES.find_syntax_by_name(name).is_some(), "{name}");
+        }
+        // What they include (TypeScript's code, HTML, CSS) is found.
+        let theirs = SyntaxSet::load_defaults_newlines().find_unlinked_contexts();
+        let unlinked: Vec<String> = SYNTAXES.find_unlinked_contexts().difference(&theirs).cloned().collect();
+        assert!(unlinked.is_empty(), "{unlinked:?}");
+        for (path, name) in [
+            ("src/a.ts", "TypeScript"),
+            ("a.mts", "TypeScript"),
+            ("App.tsx", "TypeScript JSX"),
+            ("App.jsx", "JavaScript JSX"),
+            ("Cargo.toml", "TOML"),
+            ("Dockerfile", "Dockerfile"),
+            ("app.dockerfile", "Dockerfile"),
+            ("a.kts", "Kotlin"),
+            ("a.psm1", "PowerShell"),
+            ("main.tf", "Terraform"),
+            ("a.hcl", "Terraform"),
+            ("schema.gql", "GraphQL"),
+            ("App.vue", "Vue"),
+            ("App.svelte", "Svelte"),
+        ] {
+            assert_eq!(syntax_for(path, "").map(|s| s.name.as_str()), Some(name), "{path}");
+        }
+        assert_eq!(syntax_for("run", "#!/usr/bin/env -S deno run").map(|s| s.name.as_str()), Some("TypeScript"));
+        assert_eq!(syntax_for("run", "#!/usr/bin/env pwsh").map(|s| s.name.as_str()), Some("PowerShell"));
+    }
+
+    #[test]
+    fn typescript_is_coloured_as_vs_code_colours_it() {
+        let c = coloured(
+            "a.ts",
+            concat!(
+                "// note\n",
+                "import { a } from \"./b\";\n",
+                "/** Doc @param x */\n",
+                "export interface Shape { area(): number }\n",
+                "const re = /a[/]b/g, t = `x ${ {k: 1}.k } y`;\n",
+                "class Box<T> extends Base implements Shape {\n",
+                "  private size: number = 0x1F;\n",
+                "  area(): number { return this.size * 2; }\n",
+                "}\n",
+                "type Id = string | number;\n",
+                "const go = async (x: Id) => x;\n",
+                "export default function make(): Box<string> { return new Box(); }\n",
+            ),
+        );
+        assert_eq!(c(0, "note"), COMMENT);
+        assert_eq!(c(1, "import"), CONTROL);
+        assert_eq!(c(1, "./b"), STRING);
+        assert_eq!(c(2, "Doc"), COMMENT);
+        assert_eq!(c(3, "interface"), STORAGE);
+        assert_eq!(c(3, "Shape"), TYPE);
+        assert_eq!(c(4, "a[/]b"), REGEXP);
+        assert_eq!(c(4, "1}"), NUMBER);
+        // The template goes on after its `${…}`, an object in it and all.
+        assert_eq!(c(4, " y`"), STRING);
+        assert_eq!(c(5, "class"), STORAGE);
+        assert_eq!(c(5, "Box"), TYPE);
+        assert_eq!(c(5, "Base"), TYPE);
+        assert_eq!(c(6, "0x1F"), NUMBER);
+        assert_eq!(c(6, "number"), TYPE);
+        assert_eq!(c(7, "area"), FUNCTION);
+        assert_eq!(c(7, "return"), CONTROL);
+        assert_eq!(c(9, "Id"), TYPE);
+        assert_eq!(c(10, "go"), FUNCTION);
+        assert_eq!(c(10, "=>"), STORAGE);
+        assert_eq!(c(11, "function"), STORAGE);
+        assert_eq!(c(11, "make"), FUNCTION);
+        assert_eq!(c(11, "return"), CONTROL);
+    }
+
+    #[test]
+    fn jsx_tags_are_coloured_among_the_code() {
+        let c = coloured(
+            "a.tsx",
+            concat!(
+                "const el = <div className=\"a\" onClick={() => go({x: 1})}>\n",
+                "  Hi &amp; {name} <br/>\n",
+                "  <Item />\n",
+                "</div>;\n",
+                "const n = a < b ? 1 : 2;\n",
+                "export function App() { return null; }\n",
+                "const id = <T extends object>(x: T) => x;\n",
+                "export const k = 1;\n",
+            ),
+        );
+        assert_eq!(c(0, "div"), STORAGE);
+        assert_eq!(c(0, "className"), VARIABLE);
+        assert_eq!(c(0, "\"a\""), STRING);
+        assert_eq!(c(0, "go"), FUNCTION);
+        assert_eq!(c(2, "Item"), STORAGE);
+        assert_eq!(c(4, "const"), STORAGE);
+        assert_eq!(c(4, "1"), NUMBER);
+        assert_eq!(c(5, "function"), STORAGE);
+        assert_eq!(c(5, "App"), FUNCTION);
+        // A generic function's parameters are no tag.
+        assert_eq!(c(6, "object"), TYPE);
+        assert_eq!(c(7, "export"), CONTROL);
+        let c = coloured("a.jsx", "const a = <A b=\"c\" />;\nexport default a;\n");
+        assert_eq!(c(0, "A "), STORAGE);
+        assert_eq!(c(1, "export"), CONTROL);
+    }
+
+    #[test]
+    fn toml_and_dockerfiles_are_coloured() {
+        let c = coloured(
+            "Cargo.toml",
+            concat!(
+                "# c\n[package]\nname = \"ca\" # x\nversion = 1_000\n[[bin]]\ninline = { a = true, b = [1, 2] }\n",
+                "text = \"\"\"\nmany\n\"\"\"\nlast = 'lit'\n",
+            ),
+        );
+        assert_eq!(c(0, "c"), COMMENT);
+        assert_eq!(c(1, "package"), VARIABLE);
+        assert_eq!(c(2, "ca"), STRING);
+        assert_eq!(c(2, "x"), COMMENT);
+        assert_eq!(c(3, "1_000"), NUMBER);
+        assert_eq!(c(5, "true"), STORAGE);
+        assert_eq!(c(5, "2"), NUMBER);
+        assert_eq!(c(7, "many"), STRING);
+        assert_eq!(c(9, "last"), VARIABLE);
+        assert_eq!(c(9, "lit"), STRING);
+        let c = coloured(
+            "Dockerfile",
+            concat!(
+                "# syntax=docker/dockerfile:1\nFROM rust:1 AS build\nRUN cargo build --release && \\\n",
+                "    echo \"done $MODE\"\nCOPY --from=build /a /b\nCMD [\"/b\"]\n",
+            ),
+        );
+        assert_eq!(c(1, "FROM"), STORAGE);
+        assert_eq!(c(1, "AS"), CONTROL);
+        assert_eq!(c(2, "release"), VARIABLE);
+        assert_eq!(c(3, "done"), STRING);
+        assert_eq!(c(4, "COPY"), STORAGE);
+        assert_eq!(c(4, "from"), VARIABLE);
+        assert_eq!(c(5, "/b"), STRING);
+        // As a fenced block in an answer draws it: each instruction its own.
+        let all = ca_themes::built_in();
+        let theme = Rc::new(theme_of(&ca_themes::chosen(&all, "dark-modern", true).json));
+        let lines = Snippet::new("docker").lines("FROM a\nRUN b\nCOPY c d", &theme);
+        let at = |l: &Line| l.runs.iter().find(|r| r.range.contains(&0)).map(|r| r.colour);
+        assert!(lines.iter().all(|l| at(l) == Some(Color::rgb8(0x56, 0x9C, 0xD6))), "{lines:?}");
+    }
+
+    #[test]
+    fn kotlin_powershell_terraform_and_graphql_are_coloured() {
+        let c = coloured(
+            "a.kt",
+            concat!(
+                "package app.core\n/* a /* nested */ still */\ndata class User(val name: String)\n",
+                "fun String.shout(): String = \"${this.uppercase()}!\"\n",
+                "fun main() { if (true) println(\"hi $x\") }\n",
+                "fun size(): Int {\n",
+                "class A : Base { init { run { } } }\n",
+            ),
+        );
+        assert_eq!(c(1, "still"), COMMENT);
+        assert_eq!(c(2, "class"), STORAGE);
+        assert_eq!(c(2, "User"), TYPE);
+        assert_eq!(c(3, "shout"), FUNCTION);
+        assert_eq!(c(3, "!"), STRING);
+        assert_eq!(c(4, "if"), CONTROL);
+        assert_eq!(c(4, "main"), FUNCTION);
+        assert_eq!(c(4, "hi"), STRING);
+        // A type before a `{` is a type, a lower-case name a call with a lambda.
+        assert_eq!(c(5, "Int"), TYPE);
+        assert_eq!(c(6, "Base"), TYPE);
+        assert_eq!(c(6, "run"), FUNCTION);
+        let c = coloured(
+            "a.ps1",
+            concat!(
+                "<# .SYNOPSIS\n  Help #>\nfunction Get-Thing { param([string]$Name) }\n",
+                "$x = \"a $($Name.Length) b\"\nif ($x) { Write-Host 'yes' }\n",
+            ),
+        );
+        assert_eq!(c(1, "Help"), COMMENT);
+        assert_eq!(c(2, "function"), STORAGE);
+        assert_eq!(c(2, "Get-Thing"), FUNCTION);
+        assert_eq!(c(2, "$Name"), VARIABLE);
+        assert_eq!(c(3, " b"), STRING);
+        assert_eq!(c(4, "if"), CONTROL);
+        assert_eq!(c(4, "Write-Host"), FUNCTION);
+        assert_eq!(c(4, "yes"), STRING);
+        let c = coloured(
+            "main.tf",
+            concat!(
+                "# c\nresource \"aws_s3_bucket\" \"logs\" {\n  bucket = \"x-${var.env}\"\n  count  = 2\n}\n",
+                "output \"o\" {\n  value = <<EOT\nhi ${local.a}\nEOT\n}\nlocals { on = true }\n",
+            ),
+        );
+        assert_eq!(c(0, "c"), COMMENT);
+        assert_eq!(c(1, "resource"), STORAGE);
+        assert_eq!(c(1, "logs"), STRING);
+        assert_eq!(c(2, "bucket"), VARIABLE);
+        assert_eq!(c(2, "x-"), STRING);
+        assert_eq!(c(3, "2"), NUMBER);
+        assert_eq!(c(7, "hi"), STRING);
+        assert_eq!(c(10, "locals"), STORAGE);
+        assert_eq!(c(10, "true"), STORAGE);
+        let c = coloured(
+            "a.graphql",
+            concat!(
+                "# c\nquery Get($id: ID!) { user(id: $id) { ...F @include(if: true) } }\n",
+                "fragment F on User { name }\n\"\"\"Doc\"\"\"\ntype User implements Node { id: ID! name: String }\n",
+            ),
+        );
+        assert_eq!(c(0, "c"), COMMENT);
+        assert_eq!(c(1, "query"), STORAGE);
+        assert_eq!(c(1, "Get"), FUNCTION);
+        assert_eq!(c(1, "ID"), TYPE);
+        assert_eq!(c(1, "$id"), VARIABLE);
+        assert_eq!(c(2, "F"), FUNCTION);
+        assert_eq!(c(3, "Doc"), STRING);
+        assert_eq!(c(4, "User"), TYPE);
+        assert_eq!(c(4, "String"), TYPE);
+    }
+
+    #[test]
+    fn vue_and_svelte_colour_their_template_script_and_style() {
+        let c = coloured(
+            "App.vue",
+            concat!(
+                "<template>\n  <p class=\"a\">{{ count + 1 }}</p>\n</template>\n<script lang=\"ts\">\n",
+                "const count: number = 1;\n</script>\n<style>\np { color: red; }\n</style>\n<div>end</div>\n",
+            ),
+        );
+        assert_eq!(c(1, "p "), STORAGE);
+        assert_eq!(c(1, "class"), VARIABLE);
+        assert_eq!(c(1, "1"), NUMBER);
+        assert_eq!(c(4, "const"), STORAGE);
+        assert_eq!(c(4, "count"), CONSTANT);
+        assert_eq!(c(4, "number"), TYPE);
+        assert_eq!(c(7, "color"), VARIABLE);
+        assert_eq!(c(9, "div"), STORAGE);
+        let c = coloured(
+            "App.svelte",
+            concat!(
+                "<script lang=\"ts\">\n  let n = 0;\n</script>\n{#if n > 1}\n  <b>{n}</b>\n{:else}\n  <i>none</i>\n",
+                "{/if}\n<style>b { color: red; }</style>\n",
+            ),
+        );
+        assert_eq!(c(1, "let"), STORAGE);
+        assert_eq!(c(3, "if"), CONTROL);
+        assert_eq!(c(3, "1"), NUMBER);
+        assert_eq!(c(4, "b"), STORAGE);
+        assert_eq!(c(5, "else"), CONTROL);
+        assert_eq!(c(7, "if"), CONTROL);
+        assert_eq!(c(8, "color"), VARIABLE);
     }
 }

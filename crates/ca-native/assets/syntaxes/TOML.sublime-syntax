@@ -1,0 +1,109 @@
+%YAML 1.2
+---
+# TOML, written for Code Arena, with the scopes VS Code's TOML grammars give: tables, keys, strings, numbers, dates.
+name: TOML
+file_extensions: [toml]
+scope: source.toml
+variables:
+  bare: '[A-Za-z0-9_-]+'
+  key: '(?:{{bare}}|"(?:[^"\\]|\\.)*"|''[^'']*'')'
+contexts:
+  main:
+    - include: comments
+    - match: '^\s*(\[\[)\s*({{key}}(?:\s*\.\s*{{key}})*)\s*(\]\])'
+      captures:
+        1: punctuation.definition.array.table.toml
+        2: meta.array.table.toml entity.name.section.toml support.type.property-name.table.toml
+        3: punctuation.definition.array.table.toml
+    - match: '^\s*(\[)\s*({{key}}(?:\s*\.\s*{{key}})*)\s*(\])'
+      captures:
+        1: punctuation.definition.table.toml
+        2: meta.table.toml entity.name.section.toml support.type.property-name.table.toml
+        3: punctuation.definition.table.toml
+    - include: key
+    - include: value
+
+  comments:
+    - match: '(#).*$\n?'
+      scope: comment.line.number-sign.toml
+      captures:
+        1: punctuation.definition.comment.toml
+
+  key:
+    - match: '({{key}}(?:\s*\.\s*{{key}})*)\s*(=)'
+      captures:
+        1: support.type.property-name.toml
+        2: punctuation.eq.toml
+
+  value:
+    - match: '"""'
+      scope: punctuation.definition.string.begin.toml
+      push:
+        - meta_scope: string.quoted.triple.basic.block.toml
+        - match: '"""(?!")'
+          scope: punctuation.definition.string.end.toml
+          pop: true
+        - include: escapes
+    - match: "'''"
+      scope: punctuation.definition.string.begin.toml
+      push:
+        - meta_scope: string.quoted.triple.literal.block.toml
+        - match: "'''(?!')"
+          scope: punctuation.definition.string.end.toml
+          pop: true
+    - match: '"'
+      scope: punctuation.definition.string.begin.toml
+      push:
+        - meta_scope: string.quoted.single.basic.line.toml
+        - match: '"'
+          scope: punctuation.definition.string.end.toml
+          pop: true
+        - match: '\n'
+          scope: invalid.illegal.newline.toml
+          pop: true
+        - include: escapes
+    - match: "'"
+      scope: punctuation.definition.string.begin.toml
+      push:
+        - meta_scope: string.quoted.single.literal.line.toml
+        - match: "'"
+          scope: punctuation.definition.string.end.toml
+          pop: true
+        - match: '\n'
+          scope: invalid.illegal.newline.toml
+          pop: true
+    - match: '\d{4}-\d{2}-\d{2}(?:[Tt ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})?)?|\d{2}:\d{2}:\d{2}(?:\.\d+)?'
+      scope: constant.other.time.datetime.toml
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.toml
+    - match: '[+-]?\b(?:0x[\h_]+|0o[0-7_]+|0b[01_]+|\d[\d_]*(?:\.[\d_]+)?(?:[eE][+-]?\d+)?)\b|[+-]?\b(?:inf|nan)\b'
+      scope: constant.numeric.toml
+    - match: '\{'
+      scope: punctuation.definition.table.inline.toml
+      push:
+        - meta_scope: meta.table.inline.toml
+        - match: '\}'
+          scope: punctuation.definition.table.inline.toml
+          pop: true
+        - match: ','
+          scope: punctuation.separator.table.inline.toml
+        - include: comments
+        - include: key
+        - include: value
+    - match: '\['
+      scope: punctuation.definition.array.toml
+      push:
+        - meta_scope: meta.array.toml
+        - match: '\]'
+          scope: punctuation.definition.array.toml
+          pop: true
+        - match: ','
+          scope: punctuation.separator.array.toml
+        - include: comments
+        - include: value
+
+  escapes:
+    - match: '\\(?:[btnfr"\\]|u\h{4}|U\h{8})'
+      scope: constant.character.escape.toml
+    - match: '\\\s*$'
+      scope: constant.character.escape.toml

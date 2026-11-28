@@ -1,0 +1,80 @@
+%YAML 1.2
+---
+# GraphQL, written for Code Arena: operations, fragments, types and their fields, arguments, variables, directives
+# and strings, with the scopes VS Code's GraphQL grammar gives.
+name: GraphQL
+file_extensions: [graphql, graphqls, gql]
+scope: source.graphql
+variables:
+  id: '[_A-Za-z][_0-9A-Za-z]*'
+contexts:
+  main:
+    - match: '(#).*$\n?'
+      scope: comment.line.number-sign.graphql
+      captures:
+        1: punctuation.definition.comment.graphql
+    - match: '"""'
+      scope: punctuation.definition.string.begin.graphql
+      push:
+        - meta_scope: string.quoted.block.graphql
+        - match: '"""'
+          scope: punctuation.definition.string.end.graphql
+          pop: true
+    - match: '"'
+      scope: punctuation.definition.string.begin.graphql
+      push:
+        - meta_scope: string.quoted.double.graphql
+        - match: '"'
+          scope: punctuation.definition.string.end.graphql
+          pop: true
+        - match: '\\(?:u\h{4}|.)'
+          scope: constant.character.escape.graphql
+        - match: '\n'
+          pop: true
+    - match: '\b(query|mutation|subscription)\b(?:\s+({{id}}))?'
+      captures:
+        1: keyword.operation.graphql storage.type.graphql
+        2: entity.name.function.graphql
+    - match: '\b(fragment)\s+({{id}})(?:\s+(on)\s+({{id}}))?'
+      captures:
+        1: keyword.fragment.graphql storage.type.graphql
+        2: entity.name.function.fragment.graphql
+        3: keyword.control.on.graphql
+        4: support.type.graphql
+    - match: '\b(interface)\s+({{id}})'
+      captures:
+        1: keyword.type.graphql storage.type.graphql
+        2: entity.name.type.interface.graphql entity.name.interface.graphql
+    - match: '\b(enum)\s+({{id}})'
+      captures:
+        1: keyword.type.graphql storage.type.graphql
+        2: entity.name.type.enum.graphql entity.name.enum.graphql
+    - match: '\b(type|input|union|scalar)\s+({{id}})'
+      captures:
+        1: keyword.type.graphql storage.type.graphql
+        2: entity.name.type.graphql
+    - match: '\b(extend|schema|directive|implements|repeatable)\b'
+      scope: storage.modifier.graphql
+    - match: '\bon\b'
+      scope: keyword.control.on.graphql
+    - match: '\.\.\.'
+      scope: keyword.operator.spread.graphql
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.graphql
+    - match: '-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b'
+      scope: constant.numeric.graphql
+    - match: '(\$){{id}}'
+      scope: variable.parameter.graphql
+      captures:
+        1: punctuation.definition.variable.graphql
+    - match: '@{{id}}'
+      scope: entity.name.decorator.graphql
+    - match: '(?<=:)\s*\[*\s*({{id}})'
+      captures:
+        1: support.type.graphql
+    - match: '\b[A-Z][_0-9A-Za-z]*\b'
+      scope: support.type.graphql
+    - match: '{{id}}'
+      scope: variable.other.graphql
+    - match: '[!=|&]'
+      scope: keyword.operator.graphql
