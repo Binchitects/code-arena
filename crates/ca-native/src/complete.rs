@@ -667,6 +667,9 @@ fn show(ui: Ui, again: bool) {
     }
     let n = s.rows.with_untracked(im::Vector::len).clamp(1, MOST_ROWS);
     set_if(s.place, spot(&editor, start, line, n));
+    if is_open(ui) && ghost_shown().is_some() {
+        drop_ghost(ui);
+    }
 }
 
 /// Where the widget goes for a word starting at `start`: its label under the word's, below the line, or above it
@@ -860,10 +863,12 @@ fn tab_complete(ui: Ui) -> bool {
 // ---- Ghost text. ----
 
 /// Shows an inline suggestion at a place of a file (line and column from 0, the column a byte in the line), in place
-/// of the one shown; only its first line is drawn, Tab takes it whole.
+/// of the one shown; only its first line is drawn, Tab takes it whole. None is shown while the suggestions widget is
+/// open, as in VS Code: Tab there takes the widget's suggestion, not the ghost.
 pub fn ghost(ui: Ui, path: &str, line: usize, col: usize, text: &str) {
     if crate::settings::now(ui, "editor.inlineSuggest.enabled", crate::language::of(ui, path)).as_bool() == Some(false)
         || text.is_empty()
+        || is_open(ui)
     {
         return ghost_clear(ui, path);
     }
@@ -1302,6 +1307,23 @@ mod tests {
         ghost_clear(ui, path);
         assert!(ghost_shown().is_none());
         assert!(crate::decor::of(path).is_none_or(|m| m.lines.get(&1).is_none_or(|l| l.texts.is_empty())));
+    }
+
+    #[test]
+    fn no_ghost_text_is_shown_while_the_suggestions_widget_is_open() {
+        let ui = Ui::new();
+        let send: Send = Rc::new(|_| {});
+        let path = "/tmp/ghost-widget-test.rs";
+        ui.take(&serde_json::json!({"type": "file", "path": path, "text": "forr\n", "modified": 1}), &send);
+        let s = ui.state::<Suggest>();
+        s.rows.set(filtered([&item("for")], "fo").into_iter().collect());
+        s.place.set(Some(Spot { x: 0.0, y: 0.0, row: 20.0 }));
+        ghost(ui, path, 0, 4, " + 1");
+        assert!(ghost_shown().is_none(), "the widget's Tab is not the ghost's");
+        s.place.set(None);
+        ghost(ui, path, 0, 4, " + 1");
+        assert!(ghost_shown().is_some());
+        ghost_clear(ui, path);
     }
 
     #[test]
