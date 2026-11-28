@@ -553,6 +553,19 @@ Sections used:
   (Shift+Alt+F5, Alt+F5), the inline toggle, Show Whitespace Differences, Swap Sides and Open File.
 - **Agent changes open in the compare editor.** Opening a change from the Changes view shows the file
   before the agent beside the file itself, with Revert and Accept in the toolbar.
+- **Context ring.** A ring with the share used sits before Send in the chat's box, amber near the
+  compaction threshold and red at it. Click it to see what fills the window: a bar by kind with the
+  threshold, each kind with the room kept for the answer and what is free, the biggest messages, who
+  set the threshold, What fills it, and Compact now.
+- **Context view.** The Context tab lists what fills the next request part by part. Each part opens
+  to its pieces: each tool's definition, each message. It also says how the tokens were counted and
+  what could be freed, with Compact now. Agent: Show the Context and Agent: Compact Now are in the
+  palette.
+- **Compaction settings.** The status bar's Context item (USED / LIMIT, amber at the threshold)
+  opens the settings. Compact at a share of the window (20-95%, default 80), only when a request
+  would not fit, or as your Arena account says. Keep the recent part within 5% to ten points under
+  the threshold (default 25). The settings are checked, have Defaults, apply live and are kept in
+  settings.json (also: Agent: Compaction Settings...).
 
 
 ### :bug: Bugs fixed
