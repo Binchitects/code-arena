@@ -16,7 +16,7 @@ use std::rc::Rc;
 use floem::IntoView;
 use floem::event::EventListener;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal};
-use floem::style::CursorStyle;
+use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{
     Decorators, container, dyn_container, dyn_stack, empty, h_stack, label, scroll, text_input, tooltip, v_stack,
 };
@@ -578,7 +578,16 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
         move |none| {
             if none {
                 let words = move || format!("No extensions found for \u{201c}{}\u{201d}.", st.find.get().trim());
-                return container(label(words).style(move |s| s.font_size(13.0).color(t.get().desc)))
+                // It wraps in a narrow side bar, as VS Code's message does, instead of running off its edge.
+                let words = label(words).style(move |s| {
+                    s.font_size(13.0)
+                        .color(t.get().desc)
+                        .line_height(1.4)
+                        .min_width(0.0)
+                        .width_full()
+                        .text_overflow(TextOverflow::Wrap)
+                });
+                return container(words)
                     .style(|s| s.padding_horiz(20.0).padding_vert(6.0).width_full().min_width(0.0))
                     .into_any();
             }
