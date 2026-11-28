@@ -8,13 +8,13 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use floem::{AnyView, IntoView};
 use floem::prelude::*;
 use floem::reactive::Memo;
 use floem::views::editor::core::buffer::rope_text::RopeText;
 use floem::views::editor::core::editor::EditType;
 use floem::views::editor::core::selection::Selection;
 use floem::views::editor::text::Document;
+use floem::{AnyView, IntoView};
 use globset::{GlobBuilder, GlobMatcher};
 use serde_json::{Value, json};
 use syntect::parsing::SyntaxReference;
@@ -82,7 +82,14 @@ pub static LANGUAGES: &[Language] = &[
     lang("java", "Java", &[], &["java", "jav"], &[], "a.java"),
     lang("javascript", "JavaScript", &["jakefile"], &["js", "es6", "mjs", "cjs", "pac"], &["node"], "a.js"),
     lang("javascriptreact", "JavaScript JSX", &[], &["jsx"], &[], "a.js"),
-    lang("json", "JSON", &[".arcconfig", ".watchmanconfig"], &["json", "bowerrc", "jscsrc", "webmanifest", "har"], &[], "a.json"),
+    lang(
+        "json",
+        "JSON",
+        &[".arcconfig", ".watchmanconfig"],
+        &["json", "bowerrc", "jscsrc", "webmanifest", "har"],
+        &[],
+        "a.json",
+    ),
     lang(
         "jsonc",
         "JSON with Comments",
@@ -127,7 +134,24 @@ pub static LANGUAGES: &[Language] = &[
     lang("php", "PHP", &[], &["php", "php4", "php5", "phtml", "ctp"], &["php"], "a.php"),
     lang("plaintext", "Plain Text", &[], &["txt"], &[], ""),
     lang("powershell", "PowerShell", &[], &["ps1", "psm1", "psd1", "pssc", "psrc"], &["pwsh", "powershell"], ""),
-    lang("properties", "Properties", &[], &["properties", "cfg", "conf", "directory", "editorconfig", "gitattributes", "gitconfig", "gitmodules", "npmrc"], &[], ""),
+    lang(
+        "properties",
+        "Properties",
+        &[],
+        &[
+            "properties",
+            "cfg",
+            "conf",
+            "directory",
+            "editorconfig",
+            "gitattributes",
+            "gitconfig",
+            "gitmodules",
+            "npmrc",
+        ],
+        &[],
+        "",
+    ),
     lang("pug", "Pug", &[], &["pug", "jade"], &[], ""),
     lang(
         "python",
@@ -204,14 +228,21 @@ pub static LANGUAGES: &[Language] = &[
         "XML",
         &[],
         &[
-            "xml", "xsd", "ascx", "atom", "axml", "bpmn", "csl", "csproj", "dita", "dtd", "fsproj", "fxml", "iml", "isml",
-            "mxml", "nuspec", "opml", "plist", "props", "rdf", "resx", "rss", "svg", "targets", "tld", "vbproj",
-            "vcxproj", "wsdl", "xaml", "xlf", "xliff", "xsl", "xslt", "xul",
+            "xml", "xsd", "ascx", "atom", "axml", "bpmn", "csl", "csproj", "dita", "dtd", "fsproj", "fxml", "iml",
+            "isml", "mxml", "nuspec", "opml", "plist", "props", "rdf", "resx", "rss", "svg", "targets", "tld",
+            "vbproj", "vcxproj", "wsdl", "xaml", "xlf", "xliff", "xsl", "xslt", "xul",
         ],
         &[],
         "a.xml",
     ),
-    lang("yaml", "YAML", &[".clang-format", ".clang-tidy", ".clangd"], &["yml", "yaml", "eyaml", "eyml", "cff"], &[], "a.yaml"),
+    lang(
+        "yaml",
+        "YAML",
+        &[".clang-format", ".clang-tidy", ".clangd"],
+        &["yml", "yaml", "eyaml", "eyml", "cff"],
+        &[],
+        "a.yaml",
+    ),
 ];
 
 /// A language by its id.
@@ -411,8 +442,7 @@ pub fn rows(current: &str) -> Vec<quick::Item> {
     let mut all: Vec<&Language> = LANGUAGES.iter().collect();
     all.sort_by_key(|l| l.name.to_lowercase());
     rows.extend(all.into_iter().map(|l| {
-        let description =
-            if l.id == current { format!("({}) - current", l.id) } else { format!("({})", l.id) };
+        let description = if l.id == current { format!("({}) - current", l.id) } else { format!("({})", l.id) };
         quick::item(l.id, l.name).description(&description).group("languages (identifier)")
     }));
     rows
@@ -423,18 +453,14 @@ pub fn change(ui: Ui, send: &Send) {
     let Some(path) = file_shown(ui) else { return };
     let current = now(ui, &path);
     let send = send.clone();
-    quick::pick("")
-        .placeholder("Select Language Mode")
-        .items(rows(current))
-        .active(current)
-        .open(ui, move |picked| {
-            let Some(picked) = picked else { return };
-            match picked.id.as_str() {
-                "auto" => choose(ui, &path, None),
-                "configure" => configure(ui, &send, current),
-                id => choose(ui, &path, find(id).map(|l| l.id)),
-            }
-        });
+    quick::pick("").placeholder("Select Language Mode").items(rows(current)).active(current).open(ui, move |picked| {
+        let Some(picked) = picked else { return };
+        match picked.id.as_str() {
+            "auto" => choose(ui, &path, None),
+            "configure" => configure(ui, &send, current),
+            id => choose(ui, &path, find(id).map(|l| l.id)),
+        }
+    });
 }
 
 /// The person's `settings.json` with an empty block for `lang` (`"[rust]": {}`) after its other settings; none
@@ -653,7 +679,10 @@ mod tests {
         let file = json!({"type": "user_file", "name": "settings.json", "text": "{\n}\n", "modified": 1});
         take(ui, &file, &send);
         let saved = told.borrow().iter().find(|m| m["type"] == "save_user").cloned().expect("saved");
-        assert_eq!(ca_settings::jsonc::parse(saved["text"].as_str().unwrap()).unwrap(), json!({"[rust]": {}}));
+        assert_eq!(
+            ca_settings::jsonc::parse(saved["text"].as_str().unwrap_or("")).expect("JSON"),
+            json!({"[rust]": {}})
+        );
         assert!(ui.tab(&crate::settings::user_tab("settings.json")).is_some());
         // Said again unasked: nothing more is made.
         let n = told.borrow().len();
