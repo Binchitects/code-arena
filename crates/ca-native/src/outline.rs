@@ -352,11 +352,7 @@ fn rows(symbols: &[Symbol], closed: &HashSet<Name>, filter: &str) -> im::Vector<
 
 /// What Collapse All closes: every symbol others are nested in.
 fn all_parents(symbols: &[Symbol]) -> HashSet<Name> {
-    symbols
-        .windows(2)
-        .filter(|w| w[1].depth > w[0].depth)
-        .map(|w| (w[0].name.clone(), w[0].kind, w[0].depth))
-        .collect()
+    symbols.windows(2).filter(|w| w[1].depth > w[0].depth).map(|w| (w[0].name.clone(), w[0].kind, w[0].depth)).collect()
 }
 
 /// The symbol the caret is in (its line): the last one at or before its line.

@@ -25,7 +25,9 @@ use floem::action::remove_overlay;
 use floem::event::{Event, EventListener};
 use floem::keyboard::{Key, Modifiers, NamedKey};
 use floem::kurbo::Rect;
-use floem::reactive::{Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal};
+use floem::reactive::{
+    Memo, RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo, create_rw_signal,
+};
 use floem::style::CursorStyle;
 use floem::views::{
     Decorators, VirtualDirection, VirtualItemSize, container, dyn_container, dyn_stack, empty, h_stack, label, scroll,
@@ -66,11 +68,7 @@ pub fn path_crumbs(file: &str, folders: bool) -> Vec<Crumb> {
     let mut out = Vec::new();
     if folders {
         for n in 0..before.len() {
-            out.push(Crumb {
-                text: before[n].to_string(),
-                icon: "folder",
-                part: Part::Folder(before[..=n].join("/")),
-            });
+            out.push(Crumb { text: before[n].to_string(), icon: "folder", part: Part::Folder(before[..=n].join("/")) });
         }
     }
     out.push(Crumb {
@@ -95,13 +93,18 @@ pub fn files_in(folder: &str, entries: &[crate::state::Entry]) -> Vec<(String, S
         .collect()
 }
 
+/// Whether a right-end button is shown for a file.
+pub type When = Rc<dyn Fn(Ui, &str) -> bool>;
+/// What a right-end button does for the file shown.
+pub type Press = Rc<dyn Fn(Ui, &Send, &str)>;
+
 /// What another part puts at the bar's right end: an action shown while `when` holds for the file shown.
 #[derive(Clone)]
 pub struct End {
     pub icon: &'static str,
     pub tip: &'static str,
-    pub when: Rc<dyn Fn(Ui, &str) -> bool>,
-    pub run: Rc<dyn Fn(Ui, &Send, &str)>,
+    pub when: When,
+    pub run: Press,
 }
 
 thread_local! {
@@ -141,6 +144,8 @@ struct Crumbs {
     asked: RwSignal<(u64, bool)>,
     waiting: RwSignal<Option<(String, ViewId, Option<ViewId>)>>,
     open: RwSignal<Option<ViewId>>,
+    /// The part the open list is under.
+    from: RwSignal<Option<ViewId>>,
     typed: RwSignal<String>,
     lit: RwSignal<usize>,
 }
@@ -154,6 +159,7 @@ impl crate::ext::State for Crumbs {
             asked: ui.scope.create_rw_signal((0, false)),
             waiting: ui.scope.create_rw_signal(None),
             open: ui.scope.create_rw_signal(None),
+            from: ui.scope.create_rw_signal(None),
             typed: ui.scope.create_rw_signal(String::new()),
             lit: ui.scope.create_rw_signal(0),
         }
@@ -320,10 +326,9 @@ fn crumb(
     let id = part.id();
     ids.borrow_mut().insert(n, id);
     let bar_lit = move || lit.get() == Some(n);
-    let opened = move || c.open.get().is_some() && lit.get() == Some(n);
+    let opened = move || c.from.get() == Some(id);
     h_stack((
         part.on_click_stop(move |_| {
-            lit.set(Some(n));
             show_list(ui, &p, id, None);
         })
         .style(move |s| {
@@ -434,6 +439,7 @@ fn close_list(ui: Ui, back: Option<ViewId>) {
     let c = ui.state::<Crumbs>();
     if let Some(id) = c.open.get_untracked() {
         c.open.set(None);
+        c.from.set(None);
         remove_overlay(id);
         if let Some(b) = back {
             b.request_focus();
@@ -558,8 +564,8 @@ fn picker(ui: Ui, under: ViewId, picks: Vec<Pick>, none: &'static str, back: Opt
                 },
             )
             .style(|s| s.flex_col().width_full());
-            let empty_text = label(move || if c.typed.with(String::is_empty) { none } else { "No results." })
-                .style(move |s| {
+            let empty_text =
+                label(move || if c.typed.with(String::is_empty) { none } else { "No results." }).style(move |s| {
                     s.height(ROW)
                         .padding_horiz(8.0)
                         .items_center()
@@ -611,6 +617,7 @@ fn picker(ui: Ui, under: ViewId, picks: Vec<Pick>, none: &'static str, back: Opt
         },
     );
     c.open.set(Some(id));
+    c.from.set(Some(under));
 }
 
 /// Whether nothing is typed in the list open (read where it is followed).
