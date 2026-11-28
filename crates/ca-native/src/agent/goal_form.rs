@@ -304,13 +304,13 @@ mod tests {
     #[test]
     fn the_form_sends_the_goal_its_check_and_its_budget() {
         let mut f = Fields { text: " fix it ".into(), command: "cargo test".into(), ..Fields::default() };
-        let m = f.message(false).unwrap();
+        let m = f.message(false).expect("as written");
         assert_eq!(m["text"], "fix it");
         assert_eq!(m["check"], json!({"kind": "command", "text": "cargo test"}));
         assert_eq!(m["budget"], json!({"steps": 200, "minutes": 60, "tokens": 5_000_000, "until_met": false}));
         f.choice = Choice::Agent;
-        assert_eq!(f.message(true).unwrap()["check"], Value::Null);
-        assert_eq!(f.message(true).unwrap()["after"], true);
+        assert_eq!(f.message(true).expect("as written")["check"], Value::Null);
+        assert_eq!(f.message(true).expect("as written")["after"], true);
         f.choice = Choice::Condition;
         assert_eq!(f.message(false), Err(Wrong::Unready), "the condition is not written yet");
         f.text = " ".into();
@@ -335,6 +335,6 @@ mod tests {
         assert!(f.message(false).is_ok(), "no budget: until it is met");
         f.until_met = false;
         (f.steps, f.minutes, f.tokens) = ("100_000".into(), "43 200".into(), "10,000".into());
-        assert_eq!(f.message(false).unwrap()["budget"]["steps"], 100_000);
+        assert_eq!(f.message(false).expect("as written")["budget"]["steps"], 100_000);
     }
 }

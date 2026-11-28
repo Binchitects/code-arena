@@ -172,11 +172,11 @@ impl Area for Here {
     /// The whole goal, and the goals waiting after it.
     fn tasks(sh: &Shared, v: &mut Value) {
         let goals = sh.goals.get();
-        if let (Some(g), Some(o)) = (&goals.current, v["goal"].as_object_mut()) {
-            if let Value::Object(more) = goal_json(g) {
-                for (k, f) in more {
-                    o.entry(k).or_insert(f);
-                }
+        if let (Some(g), Some(o)) = (&goals.current, v["goal"].as_object_mut())
+            && let Value::Object(more) = goal_json(g)
+        {
+            for (k, f) in more {
+                o.entry(k).or_insert(f);
             }
         }
         v["next"] = Value::Array(goals.next.iter().map(goal_json).collect());
@@ -343,15 +343,16 @@ mod tests {
     fn a_goal_set_is_read_with_its_check_and_budget_and_refused_out_of_bounds() {
         let g = goal_of(&json!({"text": " fix it ", "check": {"kind": "command", "text": "cargo test"},
                                 "budget": {"steps": 5, "minutes": 2, "tokens": 20000}}))
-        .unwrap();
+        .expect("as written");
         assert_eq!(
-            (g.text.as_str(), g.check.unwrap().by.as_str(), g.budget.steps, g.budget.until_met),
+            (g.text.as_str(), g.check.expect("as written").by.as_str(), g.budget.steps, g.budget.until_met),
             ("fix it", "person", 5, false)
         );
-        let g = goal_of(&json!({"text": "x", "check": null, "budget": {"until_met": true, "steps": 0}})).unwrap();
+        let g = goal_of(&json!({"text": "x", "check": null, "budget": {"until_met": true, "steps": 0}}))
+            .expect("as written");
         assert!(g.check.is_none() && g.budget.until_met, "until_met is read as the plan names it");
-        assert_eq!(goal_of(&json!({"text": "x"})).unwrap().budget, Budget::default());
-        let out = |b: Value| goal_of(&json!({"text": "x", "budget": b})).unwrap_err();
+        assert_eq!(goal_of(&json!({"text": "x"})).expect("as written").budget, Budget::default());
+        let out = |b: Value| goal_of(&json!({"text": "x", "budget": b})).expect_err("refused");
         assert_eq!(out(json!({"steps": 0})), "The budget is out of bounds.");
         assert_eq!(out(json!({"steps": 100_001})), "The budget is out of bounds.");
         assert_eq!(out(json!({"minutes": 43_201})), "The budget is out of bounds.");
@@ -365,32 +366,34 @@ mod tests {
     fn the_goals_are_paused_resumed_cancelled_dropped_and_the_next_started() {
         let mut g = Goals::default();
         assert!(crate::goals::pause(&mut g).is_err());
-        g.set(Goal::new("one", None, Budget::default())).unwrap();
-        g.set(Goal::new("two", None, Budget::default())).unwrap();
-        g.set(Goal::new("three", None, Budget::default())).unwrap();
+        g.set(Goal::new("one", None, Budget::default())).expect("as written");
+        g.set(Goal::new("two", None, Budget::default())).expect("as written");
+        g.set(Goal::new("three", None, Budget::default())).expect("as written");
         assert_eq!(waiting(&g), ["two", "three"]);
         assert!(crate::goals::start_next(&mut g).is_err(), "not while one is worked on");
-        crate::goals::pause(&mut g).unwrap();
-        assert_eq!(g.current.as_ref().unwrap().status, goal::PAUSED);
+        crate::goals::pause(&mut g).expect("as written");
+        assert_eq!(g.current.as_ref().expect("as written").status, goal::PAUSED);
         assert!(g.prompt().is_none(), "a paused goal is not carried on");
-        crate::goals::resume(&mut g).unwrap();
+        crate::goals::resume(&mut g).expect("as written");
         assert!(g.prompt().is_some());
-        crate::goals::drop_waiting(&mut g, 2).unwrap();
+        crate::goals::drop_waiting(&mut g, 2).expect("as written");
         assert!(crate::goals::drop_waiting(&mut g, 2).is_err());
-        crate::goals::cancel(&mut g).unwrap();
-        assert!(g.current.as_ref().unwrap().outcome.as_deref().unwrap().starts_with("Cancelled"));
-        assert_eq!(crate::goals::start_next(&mut g).unwrap(), "Next goal: two");
-        assert_eq!(g.current.as_ref().unwrap().status, goal::WORKING);
+        crate::goals::cancel(&mut g).expect("as written");
+        assert!(
+            g.current.as_ref().expect("as written").outcome.as_deref().expect("as written").starts_with("Cancelled")
+        );
+        assert_eq!(crate::goals::start_next(&mut g).expect("as written"), "Next goal: two");
+        assert_eq!(g.current.as_ref().expect("as written").status, goal::WORKING);
         assert!(waiting(&g).is_empty());
     }
 
     #[test]
     fn a_loop_says_how_often_and_what_it_does() {
         assert_eq!(
-            loop_of(&json!({"every": "1h", "prompt": " run the tests ", "edits": true})).unwrap(),
+            loop_of(&json!({"every": "1h", "prompt": " run the tests ", "edits": true})).expect("as written"),
             (3600, "run the tests".into(), true)
         );
-        assert_eq!(loop_of(&json!({"every": "15m", "prompt": "x"})).unwrap().2, false);
+        assert!(!loop_of(&json!({"every": "15m", "prompt": "x"})).expect("as written").2);
         assert!(loop_of(&json!({"every": "30s", "prompt": "x"})).is_err());
         assert!(loop_of(&json!({"every": "often", "prompt": "x"})).is_err());
         assert!(loop_of(&json!({"every": "1d", "prompt": ""})).is_err());

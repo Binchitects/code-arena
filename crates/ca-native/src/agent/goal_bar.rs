@@ -142,7 +142,7 @@ pub fn grouped(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
     for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -404,7 +404,7 @@ mod tests {
         Goal::of(&json!({"text": "fix it", "status": "working", "turns": 2, "steps": 40, "tokens": 120_000,
                          "ms": 185_000, "budget": {"steps": 200, "minutes": 60, "tokens": 5_000_000, "until_met": false},
                          "check": {"kind": "command", "text": "cargo test", "by": "agent"}, "passed": false}))
-        .unwrap()
+        .expect("as written")
     }
 
     #[test]
