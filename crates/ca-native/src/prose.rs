@@ -118,6 +118,10 @@ fn block(ui: Ui, n: usize, first: &Block, blocks: Memo<Vec<Rc<Block>>>) -> AnyVi
                     _ => String::new(),
                 })
             };
+            if crate::diagrams::kind_of(lang).is_some() {
+                let closed = create_memo(move |_| now.with(|b| matches!(b.as_deref(), Some(Block::Code { closed: true, .. }))));
+                return crate::diagrams::block(ui, lang, name, text, closed).style(move |s| s.margin_top(over(8.0))).into_any();
+            }
             code(ui, lang, name, text).style(move |s| s.margin_top(over(8.0))).into_any()
         }
         Block::Table { .. } => table(ui, now).style(move |s| s.margin_top(over(8.0))).into_any(),
@@ -681,7 +685,7 @@ fn code_label(lang: &str, name: &str) -> String {
 }
 
 /// One of a code block's bar's actions: a 16 px codicon in a 22 px square, with its tooltip.
-fn bar_action(
+pub(crate) fn bar_action(
     ui: Ui,
     icon: &'static str,
     tip: impl Fn() -> String + 'static,
@@ -700,7 +704,32 @@ fn bar_action(
 /// off, it scrolls across with its line numbers), Save as a file (a path asked for under the bar), Copy (which says
 /// Copied a moment). Each of its lines is a view of its own, so a block being written lays out its last line only.
 pub(crate) fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static) -> impl IntoView {
+    code_with(ui, lang, name, text, None)
+}
+
+/// What a block drawn as a picture (a diagram) adds to its code's box: its actions on the bar (before Copy), the
+/// view under the bar (the picture, or what it says of it), and whether that picture stands in the lines' place.
+pub(crate) struct Drawing {
+    pub actions: AnyView,
+    pub over: AnyView,
+    pub drawn: Memo<bool>,
+}
+
+/// A fenced block's box (see [`code`]), with what a drawing of it adds.
+pub(crate) fn code_with(
+    ui: Ui,
+    lang: &str,
+    name: &str,
+    text: impl Fn() -> String + 'static,
+    drawing: Option<Drawing>,
+) -> impl IntoView {
     let t = ui.colors;
+    let drawn = drawing.as_ref().map(|d| d.drawn);
+    let is_drawn = move || drawn.is_some_and(|d| d.get());
+    let (actions, over) = match drawing {
+        Some(d) => (d.actions, d.over),
+        None => (empty().style(|s| s.hide()).into_any(), empty().style(|s| s.hide()).into_any()),
+    };
     let text = create_memo(move |_| text());
     let wrap = create_rw_signal(true);
     let copied = create_rw_signal(false);
@@ -755,7 +784,9 @@ pub(crate) fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + '
                 .apply_if(wrap.get(), |s| s.hide())
         });
     let body = h_stack((numbers, scroll(lines).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0))))
-        .style(|s| s.width_full().min_width(0.0).padding_horiz(12.0).padding_vert(8.0));
+        .style(move |s| {
+            s.width_full().min_width(0.0).padding_horiz(12.0).padding_vert(8.0).apply_if(is_drawn(), |s| s.hide())
+        });
     let label_text = code_label(lang, name);
     let name = name.to_string();
     let file = create_memo(move |_| {
@@ -809,12 +840,14 @@ pub(crate) fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + '
                 .color(t.get().desc)
         }),
         open,
-        bar_action(
+        actions,
+        container(bar_action(
             ui,
             "word-wrap",
             move || if wrap.get() { "Do Not Wrap Lines".into() } else { "Wrap Lines".into() },
             move || wrap.update(|w| *w = !*w),
-        ),
+        ))
+        .style(move |s| s.apply_if(is_drawn(), |s| s.hide())),
         bar_action(ui, "save", || "Save as a File...".into(), move || saving.update(|s| *s = !*s)),
         copy_button,
     ))
@@ -896,7 +929,7 @@ pub(crate) fn code(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + '
             .border_color(t.get().widget_border)
             .apply_if(!saving.get(), |s| s.hide())
     });
-    v_stack((bar, ask, body)).style(move |s| {
+    v_stack((bar, ask, over, body)).style(move |s| {
         let c = t.get();
         s.width_full()
             .min_width(0.0)
@@ -925,7 +958,7 @@ mod tests {
         let para = |s| Block::Paragraph(inline(s));
         assert_eq!(shape(&para("a")), shape(&para("a longer one")));
         assert_ne!(shape(&para("a")), shape(&Block::Quote(inline("a"))));
-        let code = |lang: &str, text: &str| Block::Code { lang: lang.into(), name: String::new(), text: text.into() };
+        let code = |lang: &str, text: &str| Block::Code { lang: lang.into(), name: String::new(), text: text.into(), closed: true };
         assert_eq!(shape(&code("rust", "fn")), shape(&code("rust", "fn main() {}")));
         assert_ne!(shape(&code("rust", "fn")), shape(&code("sh", "fn")));
         assert_ne!(shape(&Block::Heading(1, inline("a"))), shape(&Block::Heading(2, inline("a"))));

@@ -157,7 +157,7 @@ fn still(bytes: &[u8]) -> Result<image::DynamicImage, String> {
 /// An SVG drawn (twice its own size, for a sharp picture on a dense screen), with its own size.
 fn drawn_svg(bytes: &[u8]) -> Result<(u32, u32, image::DynamicImage), String> {
     use resvg::{tiny_skia, usvg};
-    let tree = usvg::Tree::from_data(bytes, &usvg::Options::default()).map_err(|e| e.to_string())?;
+    let tree = usvg::Tree::from_data(bytes, &svg_options()).map_err(|e| e.to_string())?;
     let size = tree.size();
     let (w, h) = (size.width().ceil().max(1.0), size.height().ceil().max(1.0));
     let scale = (MOST_DRAWN as f32 / w.max(h)).min(2.0);
@@ -206,6 +206,41 @@ pub struct Picture {
     image: peniko::Image,
     /// What the renderer keeps its copy by: the file and when it changed.
     hash: Vec<u8>,
+}
+
+impl Picture {
+    /// A decoded picture made ready to draw, kept by the renderer by this hash.
+    pub(crate) fn new(d: Decoded, size: u64, hash: Vec<u8>) -> Picture {
+        let image = peniko::Image::new(Blob::new(Arc::new(d.rgba)), peniko::Format::Rgba8, d.drawn.0, d.drawn.1);
+        Picture { width: d.width, height: d.height, size, image, hash }
+    }
+}
+
+/// The view that draws a picture into its place, as large as fits and never larger than itself.
+pub(crate) fn drawn(picture: Rc<Picture>) -> impl View {
+    Drawn { id: ViewId::new(), picture }
+}
+
+/// What an SVG's text is drawn with: the system's fonts, read once (on the first thread that draws one), its
+/// `sans-serif` one of them (an SVG naming only fonts that are not here is drawn in it, its text not left out).
+pub(crate) fn svg_options() -> resvg::usvg::Options<'static> {
+    static FONTS: std::sync::OnceLock<Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    let fonts = FONTS.get_or_init(|| {
+        let mut db = resvg::usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        let families: Vec<String> =
+            db.faces().filter_map(|f| f.families.first().map(|(name, _)| name.clone())).collect();
+        let sans = ["Arial", "Liberation Sans", "DejaVu Sans", "Noto Sans", "Ubuntu", "Cantarell", "Segoe UI"]
+            .into_iter()
+            .map(str::to_string)
+            .find(|want| families.iter().any(|f| f.eq_ignore_ascii_case(want)))
+            .or_else(|| families.first().cloned());
+        if let Some(sans) = sans {
+            db.set_sans_serif_family(sans);
+        }
+        Arc::new(db)
+    });
+    resvg::usvg::Options { fontdb: fonts.clone(), ..Default::default() }
 }
 
 /// What a media tab shows.
@@ -423,7 +458,7 @@ fn picture(st: State, path: &str, p: Rc<Picture>) -> AnyView {
         move |actual| {
             let (w, h) = (f64::from(p.width), f64::from(p.height));
             let on = path.clone();
-            let drawn = Drawn { id: ViewId::new(), picture: p.clone() }
+            let drawn = drawn(p.clone())
                 .on_click_stop(move |_| toggle(st, &on))
                 .style(|s| s.cursor(CursorStyle::Pointer));
             if actual {
@@ -556,10 +591,7 @@ fn decode_off_thread(ui: Ui, st: State, path: String, m: &Value, size: u64) {
         }
         match made {
             Ok(d) => {
-                let blob = Blob::new(Arc::new(d.rgba));
-                let image = peniko::Image::new(blob, peniko::Format::Rgba8, d.drawn.0, d.drawn.1);
-                let picture = Picture { width: d.width, height: d.height, size, image, hash };
-                st.set(&file, Item::Picture(Rc::new(picture)));
+                st.set(&file, Item::Picture(Rc::new(Picture::new(d, size, hash))));
             }
             Err(e) => st.set(&file, Item::Cannot(format!("{} could not be shown: {e}", name_of(&file)))),
         }
