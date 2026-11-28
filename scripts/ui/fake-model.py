@@ -1,4 +1,4 @@
-# A stand-in for Arena's gateway for UI tests: an OpenAI-compatible /v1/models and a streaming /v1/chat/completions
+# A stand-in for Arena's gateway for UI tests: an OpenAI-compatible /v1/models and a streaming /v1/chat/completions (and /v1/completions for code completion)
 # that answer by what the last message asks, so a test can make the agent stream Markdown, edit a file, run a
 # command or make a plan without a real model. No key is checked; nothing leaves the machine.
 #
@@ -110,6 +110,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path.endswith("/v1/completions"):
+            # Code completion: a short line to show as grey text.
+            out = json.dumps({"choices": [{"text": " + 1"}], "usage": {"prompt_tokens": 9, "completion_tokens": 3}})
+            out = out.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+            return
         n[0] += 1
         last = body["messages"][-1]
         text = last.get("content") or ""

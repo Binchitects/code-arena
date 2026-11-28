@@ -33,6 +33,9 @@ pub enum LlmError {
     Stalled(u64),
     #[error("{0}")]
     Parse(String),
+    /// A key past its limit (429), and how long to wait before asking again.
+    #[error("{message}")]
+    TooMany { message: String, again: Duration },
 }
 
 /// A model as the gateway describes it (`/v1/model/info`, when it shares it).
@@ -299,6 +302,61 @@ impl Gateway {
         }
     }
 
+    /// The editor's code completion: the text between `prefix` and `suffix` of a file, from the model's own
+    /// fill-in-the-middle tokens (`/v1/completions`, not streamed), tidied. Asked once: no tries again, no waiting
+    /// in a line, at most `FILL_LIMIT`; a key past its limit (429) says how long to wait.
+    pub async fn fill(
+        &self,
+        model: &str,
+        path: &str,
+        prefix: &str,
+        suffix: &str,
+        tags: &[String],
+    ) -> Result<(String, Usage), LlmError> {
+        let (url, key, name) = match self.route(model) {
+            Some((p, _, _)) if p.kind == Kind::Anthropic => {
+                return Err(LlmError::Refused(format!("{} has no code completion (/v1/completions)", p.name)));
+            }
+            Some((p, key, name)) => (format!("{}/v1/completions", p.url), key.clone(), name),
+            None if !self.primary => return Err(LlmError::Refused(format!("no provider has the model {model}"))),
+            None => (format!("{}/v1/completions", self.base), self.key.clone(), model),
+        };
+        let mut body = crate::fim::body(name, path, prefix, suffix);
+        if !tags.is_empty() && self.route(model).is_none() {
+            body["metadata"] = serde_json::json!({"tags": tags});
+        }
+        let res = self
+            .http
+            .post(&url)
+            .json(&body)
+            .bearer_auth(key.expose())
+            .timeout(FILL_LIMIT)
+            .send()
+            .await
+            .map_err(|e| LlmError::Net(ca_net::explain(&e)))?;
+        let status = res.status();
+        let again = res
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<u64>().ok());
+        let text = res.text().await.map_err(|e| LlmError::Net(ca_net::explain(&e)))?;
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            let message = match failure(status, &text, &url) {
+                LlmError::Refused(m) => m,
+                e => e.to_string(),
+            };
+            return Err(LlmError::TooMany { message, again: Duration::from_secs(again.unwrap_or(30)) });
+        }
+        if !status.is_success() {
+            return Err(failure(status, &text, &url));
+        }
+        let v: Value = serde_json::from_str(&text).map_err(|e| LlmError::Parse(format!("{url}: {e}")))?;
+        let said = v.pointer("/choices/0/text").and_then(Value::as_str).unwrap_or("");
+        let usage = read_usage(&v["usage"]);
+        Ok((crate::fim::tidy(name, said, suffix), usage))
+    }
+
     async fn stream_once(
         &self,
         url: &str,
@@ -421,6 +479,9 @@ enum Attempt {
 }
 
 /// How long Code Arena waits in a model's line before it gives up, as a person in the web chat would.
+/// How long a code completion may take: past it, the person has typed on.
+pub const FILL_LIMIT: Duration = Duration::from_secs(15);
+
 const LINE_WAIT: Duration = Duration::from_secs(15 * 60);
 
 /// Arena's words when a model's line is full: "… is busy: 2 answers of the chat wait for it. Try again in 30 seconds."
@@ -815,6 +876,38 @@ mod tests {
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
                 .set_body_string(sse(&[&ev.to_string(), "[DONE]"]))
+        }
+    }
+
+    #[tokio::test]
+    async fn code_is_filled_in_with_the_models_tokens_and_a_limit_says_how_long_to_wait() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/completions"))
+            .and(body_partial_json(serde_json::json!({"model": "qwen", "max_tokens": 96, "stream": false})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "choices": [{"text": "a + b)\n\n"}],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 4}
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/completions"))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "12")
+                    .set_body_json(serde_json::json!({"error": {"message": "Too many requests"}})),
+            )
+            .mount(&server)
+            .await;
+        let g = gateway(&server);
+        let (text, usage) = g.fill("qwen", "a.rs", "fn f() { g(", ");\n}", &["chat:1".into()]).await.expect("filled");
+        assert_eq!(text, "a + b");
+        assert_eq!((usage.prompt, usage.completion), (40, 4));
+        match g.fill("qwen", "a.rs", "x", "", &[]).await {
+            Err(LlmError::TooMany { again, .. }) => assert_eq!(again, Duration::from_secs(12)),
+            other => panic!("not a limit: {other:?}"),
         }
     }
 

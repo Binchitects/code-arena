@@ -358,6 +358,8 @@ pub struct Shared {
     /// The Arena's address, when there is one.
     pub arena_url: Option<String>,
     pub models: Arc<Vec<String>>,
+    /// How Arena's usage log knows where the session's requests count (`chat:<id>`, `project:<id>`).
+    pub tags: Arc<Vec<String>>,
     pub was: Was,
 }
 
@@ -406,6 +408,7 @@ impl Shared {
             arena: drv.arena.clone(),
             arena_url: app.connection.url.clone(),
             models: Arc::new(drv.models.clone()),
+            tags: Arc::new(p.agent.tags.clone()),
             was: Was {
                 model: p.agent.model.clone(),
                 mode: p.agent.policy.mode.name().to_string(),

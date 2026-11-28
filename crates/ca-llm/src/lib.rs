@@ -1,5 +1,6 @@
 //! The model, through Arena's gateway (OpenAI's chat completions, streamed) or another provider that speaks it.
 
+pub mod fim;
 mod gateway;
 pub mod overflow;
 pub mod providers;
