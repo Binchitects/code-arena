@@ -37,12 +37,30 @@ pub(super) fn list(ui: Ui, send: Send, tools: RwSignal<Vec<Tool>>) -> impl IntoV
     dyn_stack(
         move || groups.get(),
         |g: &Group| match g {
-            Group::One(n) => (*n, false),
-            Group::Fold { start, .. } => (*start, true),
+            Group::One(n) => (*n, 0u8),
+            Group::Fold { start, .. } => (*start, 1),
+            Group::Crew { start, .. } => (*start, 2),
         },
         move |g| match g {
+            // A sub-agent's call is a line of its own, that opens it in the Tasks view.
+            Group::One(n) if tools.with_untracked(|ts| ts.get(n).is_some_and(|t| t.name == "task")) => {
+                crate::tasks_panel::line(ui, send.clone(), tools, n).into_any()
+            }
             Group::One(n) => card(ui, send.clone(), tools, n, tick).into_any(),
             Group::Fold { start, .. } => fold(ui, send.clone(), tools, groups, start, tick).into_any(),
+            Group::Crew { start, .. } => {
+                let len = create_memo(move |_| {
+                    groups.with(|gs| {
+                        gs.iter()
+                            .find_map(|g| match g {
+                                Group::Crew { start: s, len } if *s == start => Some(*len),
+                                _ => None,
+                            })
+                            .unwrap_or(0)
+                    })
+                });
+                crate::tasks_panel::crew(ui, send.clone(), tools, start, len).into_any()
+            }
         },
     )
     .style(|s| s.flex_col().gap(6.0).width_full().min_width(0.0))

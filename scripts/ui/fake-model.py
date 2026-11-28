@@ -4,8 +4,9 @@
 #
 #   python3 scripts/ui/fake-model.py 18733
 #
-# The last user message decides: "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a
-# command that needs an approval in ask mode, "picture" runs a command that makes a picture in .code-arena/media/,
+# The last user message decides: "delegate" starts two sub-agents (each thinks, reads src/main.rs and reports),
+# "edit" edits src/main.rs, "run" runs `ls -la`, "plan" makes a plan, "ask" runs a command that needs an approval
+# in ask mode, "picture" runs a command that makes a picture in .code-arena/media/,
 # "think" thinks for some seconds before it answers (with its usage),
 # anything else streams a Markdown answer with a code block. A tool's
 # result is answered with a short line, so each turn ends.
@@ -107,9 +108,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         def call(name, args):
             ev({"tool_calls": [{"index": 0, "id": f"c{n[0]}", "function": {"name": name, "arguments": json.dumps(args)}}]}, "tool_calls")
 
-        if last["role"] == "tool":
+        if last["role"] == "tool" and "survey" in json.dumps(body["messages"][1:2]).lower():
+            # A sub-agent's call came back: it reports, slowly.
+            for word in "## Findings\nsrc/main.rs prints a greeting and nothing else.".split(" "):
+                ev({"content": word + " "})
+                time.sleep(0.2)
+            ev({}, "stop")
+        elif last["role"] == "tool":
             ev({"content": "Done."})
             ev({}, "stop")
+        elif "Survey" in text:
+            # A sub-agent: it thinks a while, then reads.
+            for word in ("Looking at the file first. " * 6).split(" ")[:-1]:
+                ev({"reasoning_content": word + " "})
+                time.sleep(0.15)
+            call("read_file", {"path": "src/main.rs"})
+        elif "delegate" in text:
+            ev({"content": "Two sub-agents will look."})
+            asks = [("Review the greeting", "Survey src/main.rs and report what it prints."),
+                    ("Check the tests", "Survey the tests and report what they cover.")]
+            ev({"tool_calls": [{"index": i, "id": f"c{n[0]}{i}", "function": {"name": "task", "arguments": json.dumps(
+                {"description": d, "prompt": p})}} for i, (d, p) in enumerate(asks)]}, "tool_calls")
         elif "think" in text:
             # Asked without thinking (Skip thinking asks again so): the answer at once.
             thinks = body.get("chat_template_kwargs", {}).get("enable_thinking") is not False

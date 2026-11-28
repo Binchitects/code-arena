@@ -1011,8 +1011,9 @@ impl Agent {
                 }
                 let ctx = self.ctx.clone();
                 // Each read's own time: they run at once, and end together.
-                let runs = ready.iter().map(|(_, m, t)| {
-                    let ctx = ctx.clone();
+                let runs = ready.iter().map(|(idx, m, t)| {
+                    let mut ctx = ctx.clone();
+                    ctx.call = Some(calls[*idx].id.clone());
                     let t = t.clone();
                     let args = m.args.clone();
                     async move {
@@ -1129,7 +1130,9 @@ impl Agent {
                         Ok(()) => {
                             events.tool_start(&said);
                             let began = std::time::Instant::now();
-                            let o = tool.run(m.args.clone(), &self.ctx).await;
+                            let mut ctx = self.ctx.clone();
+                            ctx.call = Some(call.id.clone());
+                            let o = tool.run(m.args.clone(), &ctx).await;
                             events.tool_end(&said, &o, began.elapsed());
                             let o = Self::post_tool(&self.hooks.clone(), &m.name, &m.args, o, events).await;
                             for w in &o.wrote {
