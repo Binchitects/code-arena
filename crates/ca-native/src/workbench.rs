@@ -15,7 +15,6 @@ use floem::views::{
 };
 use floem::window::ResizeDirection;
 
-use crate::dock::{EDITOR, Side};
 use crate::icons::icon;
 use crate::layout::View;
 use crate::menus::Row;
@@ -38,7 +37,6 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     let mut all = vec![
         v_stack_from_iter(rows).style(|s| s.size_full()).into_any(),
         menu_overlay(ui, send.clone()).into_any(),
-        view_menu(ui).into_any(),
         crate::docking::overlay(ui).into_any(),
         crate::docking::ghost(ui).into_any(),
         crate::palette::view(ui, send.clone()).into_any(),
@@ -400,97 +398,6 @@ fn menu_overlay(ui: Ui, send: Send) -> impl IntoView {
     )
     .style(move |s| {
         s.position(Position::Absolute).inset(0.0).apply_if(ui.menu.with(|m| m.is_none()), |s| s.hide()).z_index(100)
-    })
-}
-
-/// A view's menu opened where it was right-clicked (the event's point is the clicked view's own, so the place is
-/// the pointer's as the window's root last saw it).
-pub fn open_view_menu(ui: Ui, v: View) {
-    let (x, y) = ui.pointer.get_untracked();
-    ui.context.set(Some((v, x, y)));
-    ui.menu.set(None);
-}
-
-type ViewMenuItem = (usize, String, std::rc::Rc<dyn Fn()>);
-
-/// A view's own menu, as VS Code's: move it to another container, hide it, put every view back.
-fn view_menu(ui: Ui) -> impl IntoView {
-    let t = ui.colors;
-    dyn_container(
-        move || ui.context.get(),
-        move |open| {
-            let Some((v, x, y)) = open else { return empty().into_any() };
-            // Visual Studio's Dock: beside the editor on any side, or into the tabs of another group.
-            let mut items: Vec<(String, Box<dyn Fn()>)> = Vec::new();
-            for (side, name) in [
-                (Side::Left, "Dock Left of the Editor"),
-                (Side::Right, "Dock Right of the Editor"),
-                (Side::Bottom, "Dock Below the Editor"),
-                (Side::Top, "Dock Above the Editor"),
-            ] {
-                items.push((name.into(), Box::new(move || ui.dock_view(v, EDITOR, side))));
-            }
-            let mine = ui.dock.with_untracked(|d| d.group_of(v));
-            for other in [View::Files, View::Agent, View::Terminal] {
-                let to = ui.dock.with_untracked(|d| d.group_of(other));
-                if let Some(g) = to.filter(|g| Some(*g) != mine) {
-                    items.push((
-                        format!("Dock with {}", other.title()),
-                        Box::new(move || ui.dock_view(v, g, Side::Center)),
-                    ));
-                }
-            }
-            items.push(("Float".into(), Box::new(move || ui.float(v))));
-            items.push((format!("Hide {}", v.title()), Box::new(move || ui.toggle_group_of(v))));
-            items.push(("Reset View Locations".into(), Box::new(move || ui.reset_dock())));
-            let items: Vec<ViewMenuItem> =
-                items.into_iter().enumerate().map(|(i, (s, f))| (i, s, std::rc::Rc::from(f))).collect();
-            let list = dyn_stack(
-                move || items.clone(),
-                |(i, _, _)| *i,
-                move |(_, text, run)| {
-                    label(move || text.clone())
-                        .on_click_stop(move |_| {
-                            ui.context.set(None);
-                            run();
-                        })
-                        .style(move |s| {
-                            let c = t.get();
-                            s.height(26.0)
-                                .items_center()
-                                .padding_left(26.0)
-                                .padding_right(26.0)
-                                .border_radius(4.0)
-                                .margin_horiz(4.0)
-                                .color(c.menu_fg)
-                                .hover(|s| s.background(c.menu_selected).color(c.menu_selected_fg))
-                        })
-                },
-            )
-            .style(move |s| {
-                let c = t.get();
-                s.flex_col()
-                    .position(Position::Absolute)
-                    .inset_left(x)
-                    .inset_top(y)
-                    .min_width(220.0)
-                    .padding_vert(4.0)
-                    .border(1.0)
-                    .border_color(c.menu_border)
-                    .border_radius(6.0)
-                    .background(c.menu_bg)
-                    .box_shadow_blur(8.0)
-                    .box_shadow_color(c.shadow)
-                    .font_size(13.0)
-                    .selectable(false)
-            });
-            stack((empty().on_click_stop(move |_| ui.context.set(None)).style(|s| s.size_full()), list))
-                .style(|s| s.position(Position::Absolute).inset(0.0).size_full())
-                .into_any()
-        },
-    )
-    .style(move |s| {
-        s.position(Position::Absolute).inset(0.0).apply_if(ui.context.with(|m| m.is_none()), |s| s.hide()).z_index(100)
     })
 }
 
