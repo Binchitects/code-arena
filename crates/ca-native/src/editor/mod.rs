@@ -353,6 +353,15 @@ fn body(ui: Ui, shown: groups::Shown) -> impl IntoView {
                 });
                 // With its highlights (brackets, the word at the caret, links), the decorations' glyph margin and the
                 // overview ruler.
+                // Drawn with its language's grammar, again when another is picked or found.
+                {
+                    let (colours, here, path) = (tab.colours.clone(), editor.clone(), tab.path.clone());
+                    create_effect(move |_| {
+                        if colours.set_syntax(crate::language::syntax(ui, &path)) {
+                            here.update_styling(colours.clone());
+                        }
+                    });
+                }
                 let ed = options::follow(ui, ed, &editor, tab.colours.clone(), o);
                 let ed = highlights::follow(ui, ed, &editor, tab.doc.clone(), &tab.path);
                 crate::decor::around(ui, ed, &editor, &tab.path).into_any()

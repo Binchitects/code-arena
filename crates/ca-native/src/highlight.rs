@@ -220,7 +220,7 @@ impl Default for Look {
 /// The editor's styling: VS Code's font and sizes, and each line's colours from its grammar and the theme.
 pub struct Colours {
     doc: Rc<TextDocument>,
-    syntax: Option<&'static SyntaxReference>,
+    syntax: Cell<Option<&'static SyntaxReference>>,
     theme: RefCell<Theme>,
     parsed: RefCell<Parsed>,
     id: Cell<u64>,
@@ -234,7 +234,7 @@ impl Colours {
         let first = doc.rope_text().line_content(0).to_string();
         Rc::new(Colours {
             doc,
-            syntax: syntax_for(path, &first),
+            syntax: Cell::new(syntax_for(path, &first)),
             theme: RefCell::new(Theme::default()),
             parsed: RefCell::new(Parsed { after: Vec::new() }),
             id: Cell::new(1),
@@ -243,9 +243,15 @@ impl Colours {
         })
     }
 
-    /// The file's language as VS Code's status bar names it.
-    pub fn language(&self) -> String {
-        self.syntax.map(|s| s.name.clone()).unwrap_or_else(|| "Plain Text".into())
+    /// Another grammar (its language picked, or found again): every line coloured again. False: it was this one.
+    pub fn set_syntax(&self, syntax: Option<&'static SyntaxReference>) -> bool {
+        if self.syntax.get().map(std::ptr::from_ref) == syntax.map(std::ptr::from_ref) {
+            return false;
+        }
+        self.syntax.set(syntax);
+        self.parsed.borrow_mut().after.clear();
+        self.id.set(self.id.get() + 1);
+        true
     }
 
     /// Another theme: every line coloured again.
@@ -277,7 +283,7 @@ impl Colours {
 
     /// The runs of a line with their style: parsed from the last line kept up to it.
     fn runs(&self, line: usize) -> Vec<(std::ops::Range<usize>, syntect::highlighting::Style)> {
-        let Some(syntax) = self.syntax else { return Vec::new() };
+        let Some(syntax) = self.syntax.get() else { return Vec::new() };
         let theme = self.theme.borrow();
         let highlighter = Highlighter::new(&theme);
         let text = self.doc.rope_text();
