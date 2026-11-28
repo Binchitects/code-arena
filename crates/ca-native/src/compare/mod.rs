@@ -203,6 +203,25 @@ pub fn entry(path: &str) -> Option<Rc<Entry>> {
     OPEN.with(|o| o.borrow().get(path).cloned())
 }
 
+/// A compare whose tab is still open; one whose tab was closed is forgotten.
+fn living(ui: Ui, path: &str) -> Option<Rc<Entry>> {
+    let e = entry(path)?;
+    if ui.tab(path).is_some() {
+        return Some(e);
+    }
+    forget(ui, path);
+    None
+}
+
+/// A compare forgotten: its sides' marks and empty rows with it.
+fn forget(ui: Ui, path: &str) {
+    let Some(e) = OPEN.with(|o| o.borrow_mut().remove(path)) else { return };
+    for half in [&e.left, &e.right] {
+        crate::decor::clear(ui, OWNER, &half.key);
+        folding::set_fillers(&half.key, Vec::new());
+    }
+}
+
 /// The compare in the tab shown.
 pub fn shown(ui: Ui) -> Option<Rc<Entry>> {
     ui.active.get_untracked().and_then(|p| entry(&p))
@@ -230,6 +249,10 @@ pub fn open_with(ui: Ui, send: &Send, left: Source, right: Source, texts: (Optio
     };
     let (left, right) = (settle(left), settle(right));
     let path = path_of(&left, &right);
+    // One whose tab was closed is made again: the file's tab may be another since.
+    if ui.tab(&path).is_none() {
+        forget(ui, &path);
+    }
     if entry(&path).is_none() {
         let file = left.file().or(right.file()).unwrap_or("text").to_string();
         let make = |source: Source, side: &str, text: Option<String>| -> Half {
@@ -333,9 +356,9 @@ pub fn before_of(path: &str) -> Option<String> {
 
 /// The agent's changes said again: a compare of one shows what the agent wrote since (the file's side when it is
 /// not in an editor; one in an editor has it already).
-pub fn changes_said(_ui: Ui, now: &[Change]) {
+pub fn changes_said(ui: Ui, now: &[Change]) {
     let open: Vec<Rc<Entry>> = OPEN.with(|o| o.borrow().values().cloned().collect());
-    for e in open {
+    for e in open.into_iter().filter(|e| living(ui, &e.path).is_some()) {
         let Source::Before(p) = &e.left.source else { continue };
         let Some(c) = now.iter().find(|c| c.path == *p) else { continue };
         fill(&e.left.doc, c.before.as_deref().unwrap_or(""));
@@ -356,7 +379,7 @@ fn fill(doc: &TextDocument, text: &str) {
 
 /// The two texts compared again, once the edits have stopped for a moment.
 fn soon(ui: Ui, path: &str) {
-    let Some(e) = entry(path) else { return };
+    let Some(e) = living(ui, path) else { return };
     let n = e.edits.get() + 1;
     e.edits.set(n);
     let path = path.to_string();
@@ -390,6 +413,13 @@ pub fn run(ui: Ui, e: &Rc<Entry>) {
 
 /// A comparison shown: each side's lines and words marked, the revert arrows, the empty rows.
 fn apply(ui: Ui, e: &Rc<Entry>, c: Compared) {
+    // Its lines laid out again scroll each side to its caret: one off screen (the side not typed in, scrolled with
+    // the other) is put on the first line shown first, so neither side jumps.
+    if let Some((l, r)) = e.editors.borrow().clone() {
+        for (ed, half) in [(&l, &e.left), (&r, &e.right)] {
+            keep_in_view(ed, &half.key);
+        }
+    }
     let (mut left, mut right) = (Vec::new(), Vec::new());
     let word = |w: &align::Word, bg: fn(&crate::colors::Colors) -> floem::peniko::Color| Mark::Range {
         from: (w.line, w.cols.start),
@@ -422,6 +452,26 @@ fn apply(ui: Ui, e: &Rc<Entry>, c: Compared) {
         half.doc.cache_rev().update(|r| *r += 1);
     }
     e.compared.set(Rc::new(c));
+}
+
+/// An editor's caret put on its first line on screen when it is off screen.
+fn keep_in_view(ed: &Editor, key: &str) {
+    let height = f64::from(ed.line_height(0));
+    let vp = ed.viewport.get_untracked();
+    if height <= 0.0 || vp.height() <= 0.0 {
+        return;
+    }
+    let line = ed.offset_to_line_col(ed.cursor.with_untracked(|c| c.offset())).0;
+    let map = folding::map(key);
+    let row = map.as_ref().map_or(line, |m| m.row_of_line(line)) as f64;
+    let (first, last) = ((vp.y0 / height).ceil(), (vp.y1 / height).floor() - 1.0);
+    if row >= first && row <= last {
+        return;
+    }
+    let top = first as usize;
+    let to = map.as_ref().map_or(top, |m| m.line_of_row(top)).min(ed.last_line());
+    let at = ed.offset_of_line(to);
+    ed.cursor.update(|c| c.set_insert(Selection::caret(at)));
 }
 
 /// Revert Block: the hunk of the modified side that begins on a line given back the original's lines.
@@ -645,6 +695,9 @@ pub fn register(ui: Ui, _send: &Send) {
         trim.track();
         if first.is_some() {
             for e in OPEN.with(|o| o.borrow().values().cloned().collect::<Vec<_>>()) {
+                if living(ui, &e.path).is_none() {
+                    continue;
+                }
                 run(ui, &e);
             }
         }
@@ -663,7 +716,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                 return true;
             }
             let text = m["text"].as_str().unwrap_or("");
-            for e in waiting.iter().filter_map(|w| entry(w)) {
+            for e in waiting.iter().filter_map(|w| living(ui, w)) {
                 for half in [&e.left, &e.right] {
                     if !half.editable && half.source.on_disk() == Some(path) {
                         fill(&half.doc, text);
@@ -684,7 +737,7 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
                         .map(|e| e.path.clone())
                         .collect()
                 });
-                for compare in shown {
+                for compare in shown.into_iter().filter(|c| living(ui, c).is_some()) {
                     ask(send, path, &compare);
                 }
             }
@@ -748,5 +801,14 @@ mod tests {
         ui.save(&send);
         assert_eq!(asked.borrow()[0]["type"], "save");
         assert_eq!(asked.borrow()[0]["path"], "a.rs");
+        // Closed, the file closed and opened again, and compared again: the modified side is the new tab's text.
+        ui.close_now(path);
+        ui.close_now("a.rs");
+        ui.take(&json!({"type": "file", "path": "a.rs", "text": "fresh\n", "modified": 2}), &send);
+        let tab = ui.tab("a.rs").expect("the file is open again");
+        open(ui, &send, Source::Saved("a.rs".into()), Source::Live("a.rs".into()));
+        let e = entry(path).expect("the compare is open again");
+        assert!(Rc::ptr_eq(&e.right.doc, &tab.doc));
+        assert_eq!(e.left.doc.text().to_string(), "fresh\n", "a tab with no changes is what is saved");
     }
 }
