@@ -247,7 +247,7 @@ fn sign_in(ui: Ui, send: &Send) {
     let needed = |what: &'static str| move |v: &str| v.trim().is_empty().then(|| format!("{what} is needed."));
     quick::input(SIGN_IN_TITLE)
         .placeholder("https://arena.example.com")
-        .prompt("The Arena's address (Enter to go on)")
+        .prompt("The Arena's address")
         .value(if a.url.is_empty() { &a.host } else { &a.url })
         .validate(needed("The address"))
         .open(ui, move |url| {
