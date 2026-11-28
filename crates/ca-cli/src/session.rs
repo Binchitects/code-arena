@@ -1096,6 +1096,8 @@ pub async fn prepare(app: &mut App, o: &Opts, approver: Arc<dyn Approver>, resum
         loops: vec![],
         loop_reports: Arc::new(Mutex::new(Vec::new())),
     };
+    // Each tool's own settings (Configure Tools): off, how it asks, what the model is told of it.
+    crate::ide_tools::settings::first(&mut prepared, &app.paths, &ws_root);
     refresh_crew(&mut prepared, ui);
     // SessionStart: what the person's hooks say goes to the model first.
     if prepared.agent.hooks.has("SessionStart") {

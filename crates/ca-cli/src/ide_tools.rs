@@ -17,6 +17,8 @@
 //! - `servers_retry{name?}` [T] → `servers{...}`: tries one server again now (none: every one not connected).
 //!   Answered at once, a turn running or not: it only wakes the server's connecting.
 //!
+//! - `tool_settings`, `tool_settings_set`, `tool_enable`: Configure Tools, each tool's own settings ([`settings`]).
+//!
 //! A server's `url` is shown without its user, password and query, and a server run as a program shows its command
 //! only: what may hold a secret is never said.
 
@@ -32,6 +34,8 @@ use crate::ide_ext::{Area, Ctx, Rule, Shared, TurnEnd, kind, refuse, send};
 use crate::servers::{Servers, State};
 use crate::session::Prepared;
 
+pub mod settings;
+
 /// The group of Code Arena's own tools: always on.
 const OWN: &str = "Code Arena's own";
 
@@ -40,7 +44,15 @@ pub struct Here;
 
 impl Area for Here {
     const MESSAGES: &'static [(&'static str, Rule)] =
-        &[("tools", Rule::Turn), ("tools_set", Rule::Queue), ("servers", Rule::Turn), ("servers_retry", Rule::Turn)];
+    &[
+        ("tools", Rule::Turn),
+        ("tools_set", Rule::Queue),
+        ("servers", Rule::Turn),
+        ("servers_retry", Rule::Turn),
+        ("tool_settings", Rule::Turn),
+        ("tool_settings_set", Rule::Queue),
+        ("tool_enable", Rule::Queue),
+    ];
 
     fn start(sh: &Shared) {
         watch(sh);
@@ -50,6 +62,7 @@ impl Area for Here {
         match kind(m) {
             "tools" => send(&sh.out, tools_message(sh, &m["key"])),
             "servers" => send(&sh.out, servers_message(&sh.servers, &m["key"])),
+            "tool_settings" => send(&sh.out, settings::message(sh, &m["key"])),
             "servers_retry" => {
                 let name = m["name"].as_str();
                 for s in sh.servers.iter().filter(|s| name.is_none_or(|n| n == s.name)) {
@@ -67,8 +80,18 @@ impl Area for Here {
     }
 
     async fn idle(ctx: &mut Ctx<'_>, m: &Value) -> bool {
-        if kind(m) != "tools_set" {
-            return false;
+        match kind(m) {
+            "tools_set" => {}
+            "tool_settings_set" => {
+                joined(ctx);
+                settings::set(ctx, m);
+                return true;
+            }
+            "tool_enable" => {
+                settings::enable(ctx, m);
+                return true;
+            }
+            _ => return false,
         }
         let group = m["group"].as_str().unwrap_or("").to_string();
         let on = m["on"].as_bool().unwrap_or(true);
@@ -87,12 +110,16 @@ impl Area for Here {
         let off = ctx.sh.kept.of::<Off>();
         off.set(&ctx.sh.session, &group, on);
         if on {
-            let (back, still): (Vec<_>, Vec<_>) = ctx.p.disabled.drain(..).partition(|t| t.group() == group);
+            // A tool turned off by its own settings stays off.
+            let own_off = ctx.sh.kept.of::<settings::ToolOff>().of(&ctx.sh.session);
+            let (back, still): (Vec<_>, Vec<_>) =
+                ctx.p.disabled.drain(..).partition(|t| t.group() == group && !own_off.contains(&t.def().name));
             ctx.p.disabled = still;
             ctx.p.agent.tools.extend(back);
         } else {
             apply_off(ctx.p, &off.of(&ctx.sh.session));
         }
+        settings::apply(ctx.sh, ctx.p);
         keep(ctx.sh, ctx.p);
         let mut v = tools_message(ctx.sh, &json!(group));
         v["group"] = json!(group);
@@ -104,12 +131,14 @@ impl Area for Here {
         // What joined since is taken in first, so that a group turned off keeps its late tools off too.
         joined(ctx);
         apply_off(ctx.p, &ctx.sh.kept.of::<Off>().of(&ctx.sh.session));
+        settings::apply(ctx.sh, ctx.p);
         keep(ctx.sh, ctx.p);
     }
 
     async fn after_turn(ctx: &mut Ctx<'_>, _end: &TurnEnd) {
         // A server that joined during the turn brought its tools back even when its group was turned off.
         apply_off(ctx.p, &ctx.sh.kept.of::<Off>().of(&ctx.sh.session));
+        settings::apply(ctx.sh, ctx.p);
         keep(ctx.sh, ctx.p);
     }
 
@@ -151,15 +180,32 @@ struct Row {
     at: Where,
     /// It reads only (it never asks).
     reads: bool,
+    kind: Kind,
+    /// What its own definition tells the model of it.
+    about: String,
+    /// Its arguments as defined: (name, type, description).
+    args: Vec<(String, Option<String>, Option<String>)>,
 }
 
 /// The session's tools, each with its group.
 fn rows_of(p: &Prepared) -> Vec<Row> {
-    let row = |t: &std::sync::Arc<dyn ca_tools::Tool>, at| Row {
-        group: t.group(),
-        name: t.def().name,
-        at,
-        reads: t.kind() == Kind::Read,
+    let row = |t: &std::sync::Arc<dyn ca_tools::Tool>, at| {
+        let def = ca_agent::tool_settings::base(t).def();
+        let props = def.parameters.get("properties").and_then(Value::as_object);
+        let text = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).map(String::from);
+        Row {
+            group: t.group(),
+            name: def.name.clone(),
+            at,
+            reads: t.kind() == Kind::Read,
+            kind: t.kind(),
+            about: def.description.clone(),
+            args: props
+                .into_iter()
+                .flatten()
+                .map(|(k, v)| (k.clone(), text(v, "type"), text(v, "description")))
+                .collect(),
+        }
     };
     let mut rows: Vec<Row> = p.agent.tools.iter().map(|t| row(t, Where::On)).collect();
     rows.extend(p.agent.deferred.iter().map(|t| row(t, Where::Listed)));
@@ -360,7 +406,8 @@ mod tests {
     use super::*;
 
     fn row(group: &str, name: &str, at: Where, reads: bool) -> Row {
-        Row { group: group.into(), name: name.into(), at, reads }
+        let kind = if reads { Kind::Read } else { Kind::Edit };
+        Row { group: group.into(), name: name.into(), at, reads, kind, about: String::new(), args: vec![] }
     }
 
     fn server(name: &str, trusted: bool, connected: Option<usize>) -> ServerRow {
