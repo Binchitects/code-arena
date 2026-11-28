@@ -263,6 +263,25 @@ impl ChatSync {
         self.state.lock().ok()?.behind.take()
     }
 
+    /// The web added messages a send was refused for: they are taken in at the next take-in (left where they are).
+    pub fn behind(&self) -> bool {
+        self.state.lock().map(|s| s.behind.is_some()).unwrap_or(false)
+    }
+
+    /// Why Arena is not kept up now (out of reach, an error), until a send gets through again.
+    pub fn trouble(&self) -> Option<String> {
+        if self.unsupported.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        self.state.lock().ok()?.last_error.clone()
+    }
+
+    /// Kept here only: the person said so (`/sync off`), or this Arena keeps no chats.
+    pub fn kept_here(&self) -> bool {
+        self.unsupported.load(std::sync::atomic::Ordering::Relaxed)
+            || self.store.lock().ok().and_then(|s| s.chat_link(&self.session).ok()).is_some_and(|l| l.off)
+    }
+
     /// `/sync off` keeps the session here only; `/sync on` sends it again (to a new chat when its own was deleted).
     pub fn set_on(&self, on: bool) {
         if let Ok(s) = self.store.lock() {

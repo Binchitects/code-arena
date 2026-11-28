@@ -1236,6 +1236,10 @@ pub async fn run(app: &mut App, args: IdeArgs) -> anyhow::Result<i32> {
             }
         }
     }
+    // The window closed: what Arena lacks of the session goes before the driver ends (a few seconds at most).
+    if let Some(s) = &p.sync {
+        s.flush(std::time::Duration::from_secs(5)).await;
+    }
     Ok(0)
 }
 
