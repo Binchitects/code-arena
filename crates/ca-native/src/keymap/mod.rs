@@ -768,17 +768,17 @@ mod tests {
 
     #[test]
     fn keys_are_shown_as_each_system_shows_them_and_ctrl_is_cmd_on_a_mac() {
-        let p = parse_keys("Ctrl+Shift+P").unwrap();
+        let p = parse_keys("Ctrl+Shift+P").expect("keys");
         assert_eq!(label(&p, Os::Linux), "Ctrl+Shift+P");
         assert_eq!(label(&for_mac(&p), Os::Mac), "⇧⌘P");
-        assert_eq!(label(&parse_keys("ctrl+k ctrl+s").unwrap(), Os::Windows), "Ctrl+K Ctrl+S");
-        assert_eq!(label(&for_mac(&parse_keys("ctrl+k ctrl+s").unwrap()), Os::Mac), "⌘K ⌘S");
-        assert_eq!(label(&parse_keys("shift+alt+right").unwrap(), Os::Linux), "Shift+Alt+RightArrow");
-        assert_eq!(label(&parse_keys("ctrl+alt+shift+meta+f5").unwrap(), Os::Mac), "⌃⌥⇧⌘F5");
-        assert_eq!(label(&parse_keys("meta+e").unwrap(), Os::Linux), "Super+E");
-        assert_eq!(label(&parse_keys("meta+e").unwrap(), Os::Windows), "Win+E");
+        assert_eq!(label(&parse_keys("ctrl+k ctrl+s").expect("keys"), Os::Windows), "Ctrl+K Ctrl+S");
+        assert_eq!(label(&for_mac(&parse_keys("ctrl+k ctrl+s").expect("keys")), Os::Mac), "⌘K ⌘S");
+        assert_eq!(label(&parse_keys("shift+alt+right").expect("keys"), Os::Linux), "Shift+Alt+RightArrow");
+        assert_eq!(label(&parse_keys("ctrl+alt+shift+meta+f5").expect("keys"), Os::Mac), "⌃⌥⇧⌘F5");
+        assert_eq!(label(&parse_keys("meta+e").expect("keys"), Os::Linux), "Super+E");
+        assert_eq!(label(&parse_keys("meta+e").expect("keys"), Os::Windows), "Win+E");
         // A key with Cmd already keeps its Ctrl.
-        assert_eq!(label(&for_mac(&parse_keys("ctrl+cmd+f").unwrap()), Os::Mac), "⌃⌘F");
+        assert_eq!(label(&for_mac(&parse_keys("ctrl+cmd+f").expect("keys")), Os::Mac), "⌃⌘F");
     }
 
     #[test]
@@ -837,7 +837,7 @@ mod tests {
         let on = |key: &'static str| move |k: &str| serde_json::json!(k == key);
         let all = |_: &str| true;
         let of = |keys: &str, ctx: &dyn Fn(&str) -> Value, there: &dyn Fn(&str) -> bool| {
-            let keys = parse_keys(keys).unwrap();
+            let keys = parse_keys(keys).expect("keys");
             pick(rules.iter().filter(|r| r.keys == keys), ctx, there).map(|r| r.command.clone())
         };
         assert_eq!(of("ctrl+b", &on("none"), &all).as_deref(), Some("toggle"));
