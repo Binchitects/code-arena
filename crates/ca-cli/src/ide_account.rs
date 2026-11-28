@@ -4,8 +4,8 @@
 //! One of the IDE's areas: `ide_ext` says how an area joins the driver (its messages and their turn rules, its
 //! fields in `state` and `tasks`, its part around a turn).
 //!
-//! - `account` [T] → `account{signed_in, name, user, host, admin, problem}`: whether a key is kept, whose it is
-//!   (Arena's `GET /api/code-arena/me`) and on which Arena (`host`, the address without its scheme); `admin` when
+//! - `account` [T] → `account{signed_in, name, user, host, url, admin, problem}`: whether a key is kept, whose it
+//!   is (Arena's `GET /api/code-arena/me`) and on which Arena (`url`; `host`, without its scheme); `admin` when
 //!   the person may manage people; `problem` what went wrong asking (the key refused, Arena not reached).
 //! - `sign_in{url, user, password}` [R] → `sign_in{status, error, url, user}`: Arena's own sign-in, as
 //!   `code-arena login` does it (its lockout, its directory and its second factor hold). `status` is `"2fa"` when
@@ -128,7 +128,7 @@ fn host_of(url: &str) -> String {
 fn said(url: Option<&str>, me: Result<Option<Me>, ArenaError>) -> Value {
     let host = url.map(host_of);
     let mut v = json!({"type": "account", "signed_in": false, "name": null, "user": null, "host": host,
-        "admin": false, "problem": null});
+        "url": url, "admin": false, "problem": null});
     match me {
         Ok(None) => {}
         Ok(Some(me)) => {
