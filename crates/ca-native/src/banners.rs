@@ -9,10 +9,10 @@
 //!   critical one has none.
 //! - `settings_changed{models, model_info}`: Arena's settings moved; the pickers offer its models as they are now.
 
+use floem::IntoView;
 use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith};
 use floem::style::{CursorStyle, TextOverflow};
 use floem::views::{Decorators, container, dyn_stack, empty, h_stack, label, v_stack};
-use floem::IntoView;
 use serde_json::{Value, json};
 
 use crate::icons::icon;
@@ -231,7 +231,9 @@ fn broadcasts_banner(ui: Ui, send: Send) -> impl IntoView {
 fn skeleton(ui: Ui) -> impl IntoView {
     let t = ui.colors;
     let bar = move |w: f64| {
-        empty().style(move |s| s.height(10.0).width(w).margin_bottom(12.0).border_radius(3.0).background(t.get().list_hover))
+        empty().style(move |s| {
+            s.height(10.0).width(w).margin_bottom(12.0).border_radius(3.0).background(t.get().list_hover)
+        })
     };
     let side = v_stack((bar(150.0), bar(110.0), bar(170.0), bar(90.0), bar(130.0)))
         .style(move |s| s.width(260.0).height_full().padding(16.0).background(t.get().side_bg));
@@ -283,12 +285,22 @@ mod tests {
         let me = ui.state::<Banners>();
         assert!(!take(ui, &json!({"type": "state", "no_model": true, "signed_out": true}), &send));
         assert!(me.no_model.get_untracked().expect("said").starts_with("Not signed in to an Arena"));
-        take(ui, &json!({"type": "state", "no_model": false, "broadcasts": [
-            {"id": "a", "level": "critical", "text": "Down"}, {"id": "b", "level": "info", "text": "Up"}]}), &send);
+        take(
+            ui,
+            &json!({"type": "state", "no_model": false, "broadcasts": [
+            {"id": "a", "level": "critical", "text": "Down"}, {"id": "b", "level": "info", "text": "Up"}]}),
+            &send,
+        );
         assert_eq!(me.no_model.get_untracked(), None);
-        assert_eq!(me.broadcasts.get_untracked().iter().map(|b| b.level).collect::<Vec<_>>(), [Level::Critical, Level::Info]);
+        assert_eq!(
+            me.broadcasts.get_untracked().iter().map(|b| b.level).collect::<Vec<_>>(),
+            [Level::Critical, Level::Info]
+        );
         take(ui, &json!({"type": "broadcasts", "items": [{"id": "b", "level": "warning", "text": "Slow"}]}), &send);
-        assert_eq!(me.broadcasts.get_untracked(), [Shown { id: "b".into(), level: Level::Warning, text: "Slow".into() }]);
+        assert_eq!(
+            me.broadcasts.get_untracked(),
+            [Shown { id: "b".into(), level: Level::Warning, text: "Slow".into() }]
+        );
         take(ui, &json!({"type": "settings_changed", "models": ["m1", "m2"]}), &send);
         assert_eq!(ui.models.get_untracked(), ["m1", "m2"]);
     }

@@ -120,7 +120,10 @@ mod tests {
         assert_eq!(got[0].text, "Gateway down");
         assert_eq!(read(&json!([{"id": "x", "text": "bare"}]))[0].id, "x");
         assert!(read(&json!({"error": "nothing"})).is_empty());
-        assert_eq!(serde_json::to_value(&got[0]).expect("json"), json!({"id": "b", "level": "critical", "text": "Gateway down"}));
+        assert_eq!(
+            serde_json::to_value(&got[0]).expect("json"),
+            json!({"id": "b", "level": "critical", "text": "Gateway down"})
+        );
     }
 
     #[tokio::test]
