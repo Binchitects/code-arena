@@ -69,6 +69,11 @@ impl ArenaClient {
         &self.base
     }
 
+    /// Whether a key is sent: a client made with none still reads what Arena says to anyone (`/api/info`).
+    pub fn has_key(&self) -> bool {
+        self.key.is_some()
+    }
+
     /// A request as Code Arena sends every one: its key, `X-Requested-With` (which Arena asks of every call that
     /// changes something), JSON.
     fn request(&self, method: Method, path: &str) -> reqwest::RequestBuilder {
@@ -155,6 +160,23 @@ impl ArenaClient {
     }
 }
 
+impl ArenaClient {
+    /// What feedback is, in Arena's words for it: an idea, a problem, praise, or anything else.
+    pub const FEEDBACK_KINDS: [&'static str; 4] = ["idea", "problem", "praise", "other"];
+
+    /// `POST /api/feedback`: what the person says about Arena or Code Arena, kept for the admins (Admin → Feedback),
+    /// whose answer comes to the person's bell. `kind` is one of [`Self::FEEDBACK_KINDS`], `page` where it was sent from,
+    /// each screenshot a picture's bytes in base64 (at most 3, of 2 MB each, as Arena takes them).
+    pub async fn feedback(&self, kind: &str, text: &str, page: &str, screenshots: &[String]) -> Result<(), ArenaError> {
+        let mut body = serde_json::json!({"kind": kind, "text": text, "page": page});
+        if !screenshots.is_empty() {
+            body["images"] = screenshots.iter().map(|d| serde_json::json!({"data": d})).collect();
+        }
+        let raw = self.raw(Method::POST, "/api/feedback", Some(&body)).await?;
+        if raw.status.is_success() { Ok(()) } else { Err(refusal(&raw)) }
+    }
+}
+
 pub(crate) fn refusal(raw: &Raw) -> ArenaError {
     let problem = raw.problem();
     let message = problem
@@ -213,6 +235,37 @@ mod tests {
             Err(ArenaError::Refused(m)) => assert!(m.contains("ask an admin")),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn feedback_goes_to_arena_with_its_kind_and_page() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/feedback"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "kind": "idea", "text": "More themes", "page": "Code Arena", "images": [{"data": "iVBOR"}]
+            })))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({"id": "f-1"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/feedback"))
+            .and(wiremock::matchers::body_partial_json(serde_json::json!({"kind": "other"})))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .set_body_json(serde_json::json!({"status": "limit", "error": "At most 20 a day."})),
+            )
+            .mount(&server)
+            .await;
+        let c = ArenaClient::new(&server.uri(), Some(Secret::new("sk-x")), None).expect("client");
+        assert!(c.has_key());
+        c.feedback("idea", "More themes", "Code Arena", &["iVBOR".into()]).await.expect("sent");
+        match c.feedback("other", "x", "Code Arena", &[]).await {
+            Err(ArenaError::Status { status: 429, message, .. }) => assert_eq!(message, "At most 20 a day."),
+            other => panic!("{other:?}"),
+        }
+        assert!(!ArenaClient::new(&server.uri(), None, None).expect("client").has_key());
     }
 
     #[test]
