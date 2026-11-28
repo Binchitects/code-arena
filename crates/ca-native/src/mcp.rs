@@ -204,11 +204,14 @@ fn row(ui: Ui, send: Send, s: Server) -> AnyView {
     let st = ui.state::<Mcp>();
     let (title, name, status, url) = (s.title.clone(), s.name.clone(), s.status_line(), s.url.clone());
     let failed = s.state == Stands::Failed;
+    let same = s.title == s.name;
     let next = s.clone();
     let mut lines: Vec<AnyView> = vec![
         h_stack((
             label(move || title.clone()).style(|s| s.font_weight(*crate::widgets::SEMIBOLD).text_ellipsis()),
-            label(move || name.clone()).style(move |s| s.color(t.get().desc).font_size(12.0).text_ellipsis()),
+            // The name beside the title, unless it is the title (the person's own servers are titled by it).
+            label(move || name.clone())
+                .style(move |s| s.color(t.get().desc).font_size(12.0).text_ellipsis().apply_if(same, |s| s.hide())),
         ))
         .style(|s| s.gap(8.0).items_center().min_width(0.0))
         .into_any(),
