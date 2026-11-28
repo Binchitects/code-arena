@@ -1125,3 +1125,200 @@ pub fn take(ui: Ui, m: &Value, send: &Send) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    fn window() -> (Ui, Send, Rc<RefCell<Vec<Value>>>) {
+        let ui = Ui::new();
+        let told = Rc::new(RefCell::new(Vec::new()));
+        let send: Send = {
+            let to = told.clone();
+            Rc::new(move |v: Value| to.borrow_mut().push(v))
+        };
+        ui.out.set(Some(send.clone()));
+        super::super::register(ui, &send);
+        register(ui, &send);
+        (ui, send, told)
+    }
+
+    fn schema() -> Value {
+        json!({
+            "type": "settings_schema",
+            "entries": [
+                {"key": "editor.fontSize", "kind": "number", "min": 6, "max": 100, "default": 13, "description": "The font size in pixels.",
+                 "section": "Text Editor", "scope": "language", "value": 16, "source": "workspace",
+                 "written": {"user": 15, "workspace": 16}, "in": ["user", "workspace"]},
+                {"key": "editor.tabSize", "kind": "integer", "min": 1, "max": 100, "default": 4, "description": "The number of spaces a tab is.",
+                 "section": "Text Editor", "scope": "language", "value": 4, "source": "default", "written": {}, "in": []},
+                {"key": "workbench.editor.enablePreview", "kind": "bool", "default": true, "description": "Opens files in preview.",
+                 "section": "Workbench", "scope": "project", "value": true, "source": "default", "written": {}, "in": []},
+                {"key": "agent.mode", "kind": "enum", "enum": ["ask", "plan", "auto"], "default": "ask", "description": "How the agent works.",
+                 "section": "Agent", "scope": "user", "env": "CODE_ARENA_MODE", "value": "plan", "source": "env:CODE_ARENA_MODE", "written": {}, "in": []},
+                {"key": "mcpServers", "kind": "object", "default": {}, "description": "The MCP servers.",
+                 "section": "MCP servers", "scope": "user", "value": null, "source": "user", "written": {}, "in": ["user"]},
+                {"key": "arena.syncChats", "kind": "bool", "default": false, "description": "Keeps chats in Arena.",
+                 "section": "Arena", "scope": "user", "value": false, "source": "default", "written": {}, "in": [],
+                 "locked": "arena.syncChats needs Farzan Arena."}
+            ],
+            "problems": [{"key": "editor.tabSize", "file": "/home/me/.config/code-arena/settings.json", "error": "\"editor.tabSize\" takes a whole number."}],
+            "unknown": {"user": ["my.own"], "project": [], "workspace": []},
+            "files": {"user": "/home/me/.config/code-arena/settings.json"}
+        })
+    }
+
+    fn keys(rows: Vec<Row>) -> Vec<String> {
+        rows.into_iter()
+            .map(|r| match r {
+                Row::Heading(h) => format!("# {h}"),
+                Row::Setting(k) => k,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_search_reads_words_and_vs_codes_filters() {
+        assert_eq!(
+            query("@modified  Font @id:editor.fontSize,editor.tabSize @lang:Python size"),
+            Query {
+                words: vec!["font".into(), "size".into()],
+                modified: true,
+                ids: vec!["editor.fontSize".into(), "editor.tabSize".into()],
+                lang: Some("python".into()),
+            }
+        );
+        assert!(query("  ").is_empty());
+        assert_eq!(title("editor.fontSize"), ("Editor".into(), "Font Size".into()));
+        assert_eq!(title("workbench.editor.enablePreview"), ("Workbench › Editor".into(), "Enable Preview".into()));
+        assert_eq!(title("mcpServers"), (String::new(), "Mcp Servers".into()));
+        assert_eq!(title("editor.minimap.maxColumn"), ("Editor › Minimap".into(), "Max Column".into()));
+    }
+
+    #[test]
+    fn the_rows_are_the_section_picked_or_what_the_search_finds_under_their_sections() {
+        let s = Schema::from_json(&schema());
+        assert_eq!(s.entries.len(), 6);
+        let names: Vec<String> = sections(&s.entries).into_iter().map(|(n, d)| format!("{d}{n}")).collect();
+        assert_eq!(names, ["0Commonly Used", "0Text Editor", "0Workbench", "0Agent", "1Agent", "1MCP servers", "1Arena"]);
+        let none = |_: &str| None;
+        let rows_of = |q: &str, target: Target, section: &str| keys(rows(&s, &query(q), target, section, none));
+        // Commonly Used, in its own order.
+        assert_eq!(
+            rows_of("", Target::User, COMMON),
+            ["# Commonly Used", "editor.fontSize", "editor.tabSize", "workbench.editor.enablePreview", "agent.mode"]
+        );
+        assert_eq!(rows_of("", Target::User, "Workbench"), ["# Workbench", "workbench.editor.enablePreview"]);
+        // The agent's heading has every one of its sections.
+        assert_eq!(
+            rows_of("", Target::User, AGENT),
+            ["# Agent", "agent.mode", "# MCP servers", "mcpServers", "# Arena", "arena.syncChats"]
+        );
+        // A search looks in every section, by the title, the key and the description.
+        assert_eq!(rows_of("font size", Target::User, "Workbench"), ["# Text Editor", "editor.fontSize"]);
+        assert_eq!(rows_of("size", Target::User, "Workbench"), ["# Text Editor", "editor.fontSize", "editor.tabSize"]);
+        assert_eq!(rows_of("spaces", Target::User, COMMON), ["# Text Editor", "editor.tabSize"]);
+        assert_eq!(rows_of("@id:agent.mode", Target::User, COMMON), ["# Agent", "agent.mode"]);
+        // @modified: what the tab's file sets.
+        assert_eq!(
+            rows_of("@modified", Target::User, COMMON),
+            ["# Text Editor", "editor.fontSize", "# MCP servers", "mcpServers"]
+        );
+        // The Workspace tab has no setting that is the person's alone.
+        assert_eq!(rows_of("@modified", Target::Workspace, COMMON), ["# Text Editor", "editor.fontSize"]);
+        assert!(rows_of("agent", Target::Workspace, COMMON).is_empty());
+        // @lang: the settings a language may have, modified when it has its own.
+        let python = |k: &str| (k == "editor.tabSize").then(|| json!(2));
+        assert_eq!(
+            keys(rows(&s, &query("@lang:python"), Target::User, COMMON, python)),
+            ["# Text Editor", "editor.fontSize", "editor.tabSize"]
+        );
+        assert_eq!(
+            keys(rows(&s, &query("@lang:python @modified"), Target::User, COMMON, python)),
+            ["# Text Editor", "editor.tabSize"]
+        );
+        assert_eq!(s.unknown_in(Target::User), ["my.own"]);
+        assert!(s.unknown_in(Target::Workspace).is_empty());
+    }
+
+    #[test]
+    fn a_tab_shows_its_files_value_says_where_else_it_is_set_and_writes_its_file() {
+        let s = Schema::from_json(&schema());
+        let size = s.get("editor.fontSize").expect("font size");
+        assert_eq!(shown_value(size, Target::User, None), json!(15));
+        assert_eq!(shown_value(size, Target::Workspace, None), json!(16));
+        assert_eq!(shown_value(size, Target::User, Some(&json!(12))), json!(12));
+        let tab = s.get("editor.tabSize").expect("tab size");
+        assert_eq!(shown_value(tab, Target::Workspace, None), json!(4));
+        assert!(modified(size, Target::User, None, false) && !modified(tab, Target::User, None, false));
+        assert!(modified(tab, Target::User, Some(&json!(2)), true) && !modified(size, Target::User, None, true));
+        assert_eq!(also_in(size, Target::User), ["Workspace"]);
+        assert_eq!(also_in(size, Target::Workspace), ["User"]);
+        // Set back to its default: taken out of the person's file, kept in a project's (it wins over the person's).
+        assert_eq!(
+            set_message(size, &json!(13), Target::User, None),
+            json!({"type": "set_setting", "key": "editor.fontSize", "value": null, "where": "user"})
+        );
+        assert_eq!(
+            set_message(size, &json!(13), Target::Workspace, None),
+            json!({"type": "set_setting", "key": "editor.fontSize", "value": 13, "where": "workspace"})
+        );
+        assert_eq!(
+            set_message(tab, &json!(2), Target::User, Some("python")),
+            json!({"type": "set_setting", "key": "editor.tabSize", "value": 2, "where": "user", "lang": "python"})
+        );
+    }
+
+    #[test]
+    fn a_typed_value_is_refused_in_vs_codes_words() {
+        let s = Schema::from_json(&schema());
+        let (size, tab) = (s.get("editor.fontSize").expect("size"), s.get("editor.tabSize").expect("tab"));
+        assert_eq!(parse(size, "14"), Ok(json!(14)));
+        assert_eq!(parse(size, " 13.5 "), Ok(json!(13.5)));
+        assert_eq!(parse(size, "5"), Err("Value must be greater than or equal to 6.".into()));
+        assert_eq!(parse(size, "101"), Err("Value must be less than or equal to 100.".into()));
+        assert_eq!(parse(size, "big"), Err("Value must be a number.".into()));
+        assert_eq!(parse(tab, "2.5"), Err("Value must be an integer.".into()));
+        assert_eq!(parse(tab, "x"), Err("Value must be a number.".into()));
+        assert_eq!(parse(tab, "8"), Ok(json!(8)));
+        let text = Entry { kind: "string".into(), default: json!(""), value: json!(""), ..Entry::default() };
+        assert_eq!(parse(&text, "Fira Code"), Ok(json!("Fira Code")));
+        assert_eq!(as_text(&json!("on")), "on");
+        assert_eq!(as_text(&json!(4)), "4");
+        assert_eq!(as_text(&Value::Null), "");
+    }
+
+    #[test]
+    fn ctrl_comma_opens_the_editor_which_asks_for_its_schema_while_its_tab_is_open() {
+        let (ui, send, told) = window();
+        let last = || told.borrow().last().cloned();
+        assert!(commands::run(ui, &send, crate::manage::OPEN_SETTINGS));
+        assert_eq!(ui.active.get_untracked().as_deref(), Some(TAB));
+        assert_eq!(last(), Some(json!({"type": "settings_schema"})));
+        let tab = ui.tab(TAB).expect("its tab");
+        assert_eq!(kinds::title(ui, &tab), "Settings");
+        take(ui, &schema(), &send);
+        let s = ui.state::<Editor>();
+        assert_eq!(s.schema.get_untracked().entries.len(), 6);
+        // The same schema again changes nothing.
+        let was = s.schema.get_untracked();
+        take(ui, &schema(), &send);
+        assert!(Rc::ptr_eq(&was, &s.schema.get_untracked()));
+        // The settings said again: the schema is asked for again, while the tab is open.
+        told.borrow_mut().clear();
+        take(ui, &json!({"type": "settings", "values": {}}), &send);
+        assert_eq!(last(), Some(json!({"type": "settings_schema"})));
+        let _view = kinds::draw(ui, &tab);
+        // Open Workspace Settings, with a search.
+        open(ui, &send, Target::Workspace, "@modified");
+        assert_eq!((s.target.get_untracked(), s.search.get_untracked()), (Target::Workspace, "@modified".to_string()));
+        assert!(commands::run(ui, &send, OPEN_USER));
+        assert_eq!((s.target.get_untracked(), s.search.get_untracked()), (Target::User, String::new()));
+        ui.close(TAB);
+        told.borrow_mut().clear();
+        take(ui, &json!({"type": "settings", "values": {}}), &send);
+        assert!(told.borrow().is_empty());
+    }
+}
