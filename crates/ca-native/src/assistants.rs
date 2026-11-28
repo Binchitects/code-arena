@@ -311,7 +311,8 @@ fn entries(choices: Vec<Choice>, chosen: impl Fn(&str) + Clone + 'static) -> Vec
         }
         last = Some(c.group);
         let (go, id) = (chosen.clone(), c.id.clone());
-        let mut e = popup::entry(&c.label, move || go(&id)).keys(&short(&c.note, 48)).enabled(c.enabled);
+        // A menu is as wide as its widest row: long words (Arena's problem) are cut, the pick says them whole.
+        let mut e = popup::entry(&short(&c.label, 60), move || go(&id)).keys(&short(&c.note, 48)).enabled(c.enabled);
         if c.enabled {
             e = e.radio(c.on);
         }
