@@ -267,51 +267,51 @@ pub fn view(ui: Ui, send: Send) -> impl IntoView {
     refresh(ui, &send);
     let (acting, menu_send) = (send.clone(), send);
     let list = tree::tree(ui, r.tree, move || rows_now(ui))
-    .content(move |node| row(ui, node))
-    .decoration(move |node| row_letter(ui, node))
-    .actions(move |node| {
-        // A folder's act on every file under it.
-        if let Some(folder) = node.id.strip_prefix(FOLDER) {
-            let (folder, undoer, send) = (folder.to_string(), acting.clone(), acting.clone());
-            let undone = folder.clone();
-            return vec![
-                tree::act("discard", "Revert", move || ask_revert_folder(ui, &undoer, &undone)),
-                tree::act("check", "Accept (keep the agent's changes)", move || {
-                    for c in changes_under(ui, &folder) {
-                        accept(&send, &c.path);
-                    }
-                }),
-            ];
-        }
-        let Some(c) = change_of(ui, &node.id) else { return vec![] };
-        let mut out = Vec::new();
-        if c.after.is_some() {
+        .content(move |node| row(ui, node))
+        .decoration(move |node| row_letter(ui, node))
+        .actions(move |node| {
+            // A folder's act on every file under it.
+            if let Some(folder) = node.id.strip_prefix(FOLDER) {
+                let (folder, undoer, send) = (folder.to_string(), acting.clone(), acting.clone());
+                let undone = folder.clone();
+                return vec![
+                    tree::act("discard", "Revert", move || ask_revert_folder(ui, &undoer, &undone)),
+                    tree::act("check", "Accept (keep the agent's changes)", move || {
+                        for c in changes_under(ui, &folder) {
+                            accept(&send, &c.path);
+                        }
+                    }),
+                ];
+            }
+            let Some(c) = change_of(ui, &node.id) else { return vec![] };
+            let mut out = Vec::new();
+            if c.after.is_some() {
+                let (path, send) = (c.path.clone(), acting.clone());
+                out.push(tree::act("go-to-file", "Open File", move || ui.open(&path, &send)));
+            }
+            let (undone, undoer) = (c.clone(), acting.clone());
+            let says = format!("Revert ({})", revert_says(&c).trim_end_matches('.'));
+            out.push(tree::act("discard", &says, move || ask_revert(ui, &undoer, &undone)));
             let (path, send) = (c.path.clone(), acting.clone());
-            out.push(tree::act("go-to-file", "Open File", move || ui.open(&path, &send)));
-        }
-        let (undone, undoer) = (c.clone(), acting.clone());
-        let says = format!("Revert ({})", revert_says(&c).trim_end_matches('.'));
-        out.push(tree::act("discard", &says, move || ask_revert(ui, &undoer, &undone)));
-        let (path, send) = (c.path.clone(), acting.clone());
-        out.push(tree::act("check", "Accept (keep the agent's changes)", move || accept(&send, &path)));
-        out
-    })
-    .on_toggle(move |id| {
-        if let Some(path) = id.strip_prefix(FOLDER) {
-            scm_tree::toggle(ui, Which::Changes, path);
-        }
-    })
-    .on_open(move |id| {
-        if let Some(c) = change_of(ui, id) {
-            ui.open_changes(&c);
-        }
-    })
-    .on_menu(move |id, at| {
-        if let Some(c) = id.and_then(|id| change_of(ui, id)) {
-            open_menu(ui, &menu_send, c, at);
-        }
-    })
-    .view();
+            out.push(tree::act("check", "Accept (keep the agent's changes)", move || accept(&send, &path)));
+            out
+        })
+        .on_toggle(move |id| {
+            if let Some(path) = id.strip_prefix(FOLDER) {
+                scm_tree::toggle(ui, Which::Changes, path);
+            }
+        })
+        .on_open(move |id| {
+            if let Some(c) = change_of(ui, id) {
+                ui.open_changes(&c);
+            }
+        })
+        .on_menu(move |id, at| {
+            if let Some(c) = id.and_then(|id| change_of(ui, id)) {
+                open_menu(ui, &menu_send, c, at);
+            }
+        })
+        .view();
     v_stack((
         label(|| "The agent has changed no file in this session.").style(move |s| {
             s.padding_horiz(20.0)

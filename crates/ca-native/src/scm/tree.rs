@@ -282,7 +282,10 @@ mod tests {
             ["0 v tests [tests]", "1 v unit [tests/unit]", "2 tests/unit/a.rs"]
         );
         // A chain of three, and a folder that has files is where the chain ends.
-        assert_eq!(shown(&["a/b/c/d.rs", "a/x.rs"], true, &[]), ["0 v a [a]", "1 v b/c [a/b/c]", "2 a/b/c/d.rs", "1 a/x.rs"]);
+        assert_eq!(
+            shown(&["a/b/c/d.rs", "a/x.rs"], true, &[]),
+            ["0 v a [a]", "1 v b/c [a/b/c]", "2 a/b/c/d.rs", "1 a/x.rs"]
+        );
     }
 
     #[test]

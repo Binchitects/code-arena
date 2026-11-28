@@ -957,11 +957,10 @@ pub fn view(ui: Ui, send: Send) -> floem::AnyView {
     let t = ui.colors;
     let me = state(ui);
     let what = create_memo(move |_| me.status.with(|s| empty_of(s.as_ref())));
-    let rows_now =
-        create_memo(move |_| {
-            let look = look_of(ui);
-            me.status.with(|s| s.as_ref().map(|s| rows(s, &me.folded.get(), &look)).unwrap_or_default())
-        });
+    let rows_now = create_memo(move |_| {
+        let look = look_of(ui);
+        me.status.with(|s| s.as_ref().map(|s| rows(s, &me.folded.get(), &look)).unwrap_or_default())
+    });
     let (acting, opened) = (send.clone(), send.clone());
     let changes = wt::tree(ui, me.tree, move || rows_now.get())
         .content(move |n| row_content(ui, n))
@@ -1226,9 +1225,8 @@ mod tests {
     fn in_a_tree_each_group_has_its_files_under_their_folders_folded_apart() {
         let s = status(vec![file("src/ui/a.rs", 'M', 'M'), file("src/ui/b.rs", ' ', 'M'), file("top.rs", ' ', 'M')]);
         let mut look = Look { tree: true, compact: true, folded: BTreeSet::new() };
-        let both = |look: &Look| {
-            rows(&s, &[], look).iter().map(|n| format!("{} {}", n.depth, n.id)).collect::<Vec<_>>()
-        };
+        let both =
+            |look: &Look| rows(&s, &[], look).iter().map(|n| format!("{} {}", n.depth, n.id)).collect::<Vec<_>>();
         assert_eq!(
             both(&look),
             [
