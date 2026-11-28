@@ -785,6 +785,13 @@ Sections used:
   It also adds a loop: a prompt run every 15 minutes, 30 minutes, 1 hour, 4 hours or 1 day. A bar
   over the box says how many loops run, and each run's report goes to the agent with your next
   message.
+- **Skills view.** Every skill the agent reads, under This project, Yours, From Arena and Built in,
+  each group folding and saying its folders. A click opens the project's or your skill's SKILL.md
+  (others go into the chat's box as /name); Export (.zip) and Use in the Chat on hover. New Skill
+  makes one for this project, in Arena or on this computer, and opens it. Refresh and Collapse All
+  are in the title. Its More menu has Import Skills..., which previews what comes in, where it
+  goes, and Replace, Rename or Skip for a name already there, with secrets left out. It also has
+  Export the Project's and Yours..., Export All... and the Built-in Skills on/off.
 
 
 ### :bug: Bugs fixed
