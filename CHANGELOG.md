@@ -1111,6 +1111,21 @@ Sections used:
 - **Choose how the model is given its tools.** The Manage menu has '<model>'s tools': As Arena says,
   Direct (no run_code), As code (the servers' tools only as functions of a run_code program), or
   Both. The choice is kept as tools.mode in your settings.
+- **Configure Tools.** Agent: Configure Tools… (also Customize tools… in the tools picker) lists
+  every tool by where it comes from, with 'N of M on' per group and Find a tool. Each tool has a
+  switch, a tooltip saying what it does, where it comes from and how it asks, and a choice of As the
+  mode says, Always asks or Never asks. Never asks is greyed out for a tool that must always ask.
+  Settings are kept for you in every project, or with 'Only in this project' for this project only,
+  kept on this computer and never in the repository.
+- **A tool's advanced settings.** Under a tool's gear you can say what the model is told of it (left
+  empty, its own words are used) and, for each argument, whether the model gives it, it has a
+  default, or it is always a fixed value (typed: numbers, true/false, JSON). A fixed argument is not
+  offered to the model, a default fills one the model leaves out, and the approval question shows
+  the arguments that will run. Save and Reset.
+- **A project can only tighten its tools.** `tools.settings` in a project's
+  .code-arena/settings.json may turn a tool off ('Turned off by the project') or make it ask before
+  each call. It can never let a tool run unasked or change what the model is told. 'Always asks'
+  holds in every mode, yolo included.
 
 
 ### :bug: Bugs fixed
