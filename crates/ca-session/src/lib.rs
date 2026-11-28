@@ -489,6 +489,16 @@ impl Store {
         Ok(())
     }
 
+    /// The model's last message from `from` to before `to` (none: to the end): where the answer to a question
+    /// begun at `from` is kept, its rating with it.
+    pub fn last_answer(&self, id: &str, from: i64, to: Option<i64>) -> Result<Option<i64>> {
+        Ok(self.db.query_row(
+            "SELECT MAX(seq) FROM messages WHERE session = ?1 AND seq >= ?2 AND seq < ?3 AND role = 'assistant'",
+            params![id, from, to.unwrap_or(i64::MAX)],
+            |r| r.get(0),
+        )?)
+    }
+
     /// The ratings of the answers of messages `from` on, by the place of the message each is kept on.
     pub fn ratings(&self, id: &str, from: i64) -> Result<std::collections::HashMap<i64, serde_json::Value>> {
         let mut q = self
@@ -859,6 +869,10 @@ mod tests {
         let s = Store::in_memory().expect("store");
         let id = s.create("/w", "m", "ask").expect("create");
         turn(&s, &id, 1);
+        turn(&s, &id, 2);
+        assert_eq!(s.last_answer(&id, 0, Some(4)).expect("answer"), Some(3));
+        assert_eq!(s.last_answer(&id, 4, None).expect("answer"), Some(7));
+        assert_eq!(s.last_answer(&id, 0, Some(1)).expect("answer"), None);
         let down = serde_json::json!({"up": false, "reason": "wrong"});
         s.set_rating(&id, 3, Some(&down)).expect("rate");
         // The person's message takes none.

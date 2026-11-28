@@ -1828,6 +1828,18 @@ async fn the_ide_streams_a_turn_to_its_page_and_refuses_others() {
     let answer = answer.expect("the answer kept");
     assert_eq!(answer["reasoning"], "Say it kindly.", "{answer}");
     assert_eq!((answer["usage"]["prompt"].as_u64(), answer["usage"]["model"].as_str()), (Some(120), Some("qwen")));
+    // The answer rated down: said back with its key, and kept on it for a reload; taken back, it has none.
+    let rate = json!({"type": "rate", "q": 1, "up": false, "reason": "wrong", "key": 7});
+    page.send(Message::text(rate.to_string())).await.expect("send");
+    let rated = until(&mut page, "rated").await;
+    assert_eq!((rated["q"].as_u64(), rated["up"].as_bool(), rated["key"].as_u64()), (Some(1), Some(false), Some(7)));
+    page.send(Message::text(json!({"type": "state"}).to_string())).await.expect("send");
+    let st = until(&mut page, "state").await;
+    let rating = st["messages"].as_array().and_then(|l| l.iter().rev().find(|m| m["role"] == "assistant"))
+        .map(|m| m["rating"].clone());
+    assert_eq!(rating, Some(json!(false)), "{st}");
+    page.send(Message::text(json!({"type": "rate", "q": 1, "clear": true}).to_string())).await.expect("send");
+    assert_eq!(until(&mut page, "rated").await["up"], Value::Null);
     page.send(Message::text(json!({"type": "model", "model": "qwen-large"}).to_string())).await.expect("send");
     assert_eq!(until(&mut page, "status").await["model"], "qwen-large");
     page.send(Message::text(json!({"type": "thinking", "level": "high"}).to_string())).await.expect("send");
