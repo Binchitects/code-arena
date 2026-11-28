@@ -131,7 +131,7 @@ fn row(ui: Ui, send: Send, l: Loop) -> impl IntoView {
     h_stack((
         icon("sync", 16.0).style(move |s| s.color(t.get().desc).margin_top(1.0).flex_shrink(0.0_f32)),
         v_stack((
-            label(move || prompt.clone()).style(|s| s.text_overflow(TextOverflow::Wrap)),
+            label(move || prompt.clone()).style(|s| s.line_height(1.4).text_overflow(TextOverflow::Wrap)),
             label(move || line.clone()).style(move |s| s.font_size(12.0).color(t.get().desc)),
         ))
         .style(|s| s.gap(2.0).flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),

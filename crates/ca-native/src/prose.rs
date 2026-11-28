@@ -177,12 +177,25 @@ fn block(
             // The list's bullets stand on the side of its first item's direction (told when it changes, as its
             // first strong letter may come later in the stream); each item's words take their own.
             let rtl = create_memo(move |_| blocks.with(|b| crate::bidi::list_rtl(b, n)));
+            // A left-to-right item of a right-to-left list stands beside its marker (as a browser's), not across
+            // the row from it: its natural width, up to the row's.
+            let beside = create_memo(move |_| rtl.get() && !crate::bidi::any_rtl_line(&words().text));
             h_stack((
                 label(move || marker.clone()).style(move |s| {
                     let s = s.min_width(22.0).line_height(1.5).color(t.get().fg).selectable(false);
                     if rtl.get() { s.padding_left(6.0).justify_start() } else { s.padding_right(6.0).justify_end() }
                 }),
-                prose(ui, words, 13.0, false, q, doc).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0)),
+                prose(ui, words, 13.0, false, q, doc).style(move |s| {
+                    if beside.get() {
+                        s.width(floem::unit::PxPctAuto::Auto)
+                            .max_width_full()
+                            .flex_grow(0.0_f32)
+                            .flex_shrink(1.0_f32)
+                            .min_width(0.0)
+                    } else {
+                        s.flex_grow(1.0_f32).flex_basis(0.0)
+                    }
+                }),
             ))
             .style(move |s| {
                 let s = s.width_full().min_width(0.0).margin_top(over(4.0));

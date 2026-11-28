@@ -308,6 +308,7 @@ fn said(ui: Ui, words: &'static str, hint: &'static str) -> impl IntoView {
         label(move || words).style(|s| s.selectable(false)),
         label(move || hint).style(move |s| {
             s.font_size(12.0)
+                .line_height(1.4)
                 .color(t.get().desc)
                 .text_overflow(TextOverflow::Wrap)
                 .selectable(false)

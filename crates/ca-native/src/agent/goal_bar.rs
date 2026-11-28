@@ -225,7 +225,7 @@ pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
         label(move || format!("Goal · {}:", status_words(&status.get())))
             .style(|s| bold(s).font_size(12.0).flex_shrink(0.0_f32)),
         label(move || st.goal.with(|g| g.as_ref().map(|g| g.text.clone()).unwrap_or_default()))
-            .style(|s| s.font_size(12.0).min_width(0.0).text_overflow(TextOverflow::Wrap)),
+            .style(|s| s.font_size(12.0).line_height(1.4).min_width(0.0).text_overflow(TextOverflow::Wrap)),
     ))
     .style(|s| s.gap(4.0).flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).items_start());
     let say = {
@@ -251,7 +251,7 @@ pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
     .style(move |s| s.apply_if(matches!(status.get().as_str(), "working" | "paused"), |s| s.hide()));
     let top = h_stack((mark, words, pause, resume, cancel, put_away)).style(|s| s.gap(6.0).items_start().width_full());
     let usage = label(move || goal().usage())
-        .style(move |s| s.font_size(11.0).color(t.get().desc).text_overflow(TextOverflow::Wrap));
+        .style(move |s| s.font_size(11.0).line_height(1.4).color(t.get().desc).text_overflow(TextOverflow::Wrap));
     let fill = empty().style(move |s| {
         let most = st.goal.with(|g| g.as_ref().map_or(0.0, Goal::most));
         let c = t.get();
@@ -263,9 +263,10 @@ pub(super) fn view(ui: Ui, send: Send) -> impl IntoView {
         s.height(4.0).width_full().border_radius(2.0).background(mix(c.widget, c.fg, 0.15)).apply_if(off, |s| s.hide())
     });
     let check = label(move || goal().check_words())
-        .style(move |s| s.font_size(11.0).color(t.get().desc).text_overflow(TextOverflow::Wrap));
+        .style(move |s| s.font_size(11.0).line_height(1.4).color(t.get().desc).text_overflow(TextOverflow::Wrap));
     let outcome = label(move || goal().outcome.unwrap_or_default()).style(move |s| {
         s.font_size(11.0)
+            .line_height(1.4)
             .text_overflow(TextOverflow::Wrap)
             .apply_if(st.goal.with(|g| g.as_ref().is_none_or(|g| g.outcome.is_none())), |s| s.hide())
     });

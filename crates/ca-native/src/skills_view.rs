@@ -509,6 +509,8 @@ fn row_view(ui: Ui, node: &Node) -> floem::AnyView {
                 let tip = if description.is_empty() { tip.clone() } else { format!("{description}\n\n{tip}") };
                 label(move || tip.clone())
             })
+            // Else the row keeps its words' whole width: the description runs on under the row's buttons.
+            .style(|s| s.min_width(0.0))
             .into_any()
         }
         Some(Row::Note) | None => {

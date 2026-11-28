@@ -158,6 +158,23 @@ pub fn names(list: &[String]) -> String {
     }
 }
 
+/// What a tab says beside its name when another tab of the group has the same name (as VS Code's): the fewest of
+/// its folders, from the nearest, that tell it apart, after "…/" when more are above them. None for a name alone.
+pub fn told_apart(paths: &[String], path: &str) -> Option<String> {
+    let parts = |p: &str| p.split('/').filter(|s| !s.is_empty()).map(str::to_string).collect::<Vec<_>>();
+    let mine = parts(path);
+    let (name, dirs) = mine.split_last()?;
+    let others: Vec<Vec<String>> =
+        paths.iter().filter(|p| p.as_str() != path).map(|p| parts(p)).filter(|o| o.last() == Some(name)).collect();
+    if others.is_empty() {
+        return None;
+    }
+    let tail = |o: &[String], n: usize| o[..o.len() - 1].iter().rev().take(n).cloned().collect::<Vec<_>>();
+    let n = (1..=dirs.len()).find(|&n| others.iter().all(|o| tail(o, n) != tail(&mine, n))).unwrap_or(dirs.len());
+    let shown = dirs[dirs.len() - n..].join("/");
+    Some(if n < dirs.len() { format!("…/{shown}") } else { shown })
+}
+
 /// A tab dragged from a group put where it is dropped, in the groups (its place among the tabs is the window's
 /// order's, set after). False when nothing changes.
 pub fn put(m: &mut Model, from: u64, path: &str, to: &Drop, order: &[String]) -> bool {
@@ -591,6 +608,9 @@ fn one_tab(ui: Ui, group: Shown, tab: Tab) -> impl IntoView {
     // A tab of a kind has its kind's icon before its name, and its name from its kind (a file's has none).
     let kind_icon = super::kinds::icon(&tab);
     let named = tab.clone();
+    // A file's name the same as another tab's in the group: its folders tell them apart.
+    let (mine, plain) = (tab.path.clone(), kind_icon.is_empty());
+    let apart = create_memo(move |_| if plain { group.tabs.with(|t| told_apart(t, &mine)) } else { None });
     // What its button is: the pin (a click unpins), the dot of changes not saved, the close button, or nothing.
     let slot = create_memo(move |_| {
         let shown = hover.get() || is_active.get();
@@ -614,6 +634,9 @@ fn one_tab(ui: Ui, group: Shown, tab: Tab) -> impl IntoView {
             s.font_size(13.0)
                 .selectable(false)
                 .apply_if(preview.get() && *crate::widgets::ITALIC, |s| s.font_style(floem::text::Style::Italic))
+        }),
+        label(move || apart.get().unwrap_or_default()).style(move |s| {
+            s.font_size(12.0).color(t.get().desc).selectable(false).apply_if(apart.with(Option::is_none), |s| s.hide())
         }),
         dyn_container(
             move || slot.get(),
@@ -1136,6 +1159,17 @@ mod tests {
 
     fn set(v: &[&str]) -> HashSet<String> {
         v.iter().map(|p| p.to_string()).collect()
+    }
+
+    #[test]
+    fn a_name_twice_in_a_group_is_told_apart_by_its_nearest_folders() {
+        let tabs = s(&["/w/.a/skills/explain/SKILL.md", "/w/.a/skills/mine/SKILL.md", "/w/README.md", "/x/README.md"]);
+        assert_eq!(told_apart(&tabs, "/w/.a/skills/explain/SKILL.md").as_deref(), Some("…/explain"));
+        assert_eq!(told_apart(&tabs, "/w/README.md").as_deref(), Some("w"));
+        assert_eq!(told_apart(&tabs, "/x/README.md").as_deref(), Some("x"));
+        let deep = s(&["/p/a/src/lib.rs", "/p/b/src/lib.rs", "/p/main.rs"]);
+        assert_eq!(told_apart(&deep, "/p/a/src/lib.rs").as_deref(), Some("…/a/src"));
+        assert_eq!(told_apart(&deep, "/p/main.rs"), None);
     }
 
     #[test]
