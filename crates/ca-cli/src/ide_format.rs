@@ -66,13 +66,44 @@ impl Asked {
         let root = sh.workspace.root().to_path_buf();
         let given = m["path"].as_str().unwrap_or("");
         let p = Path::new(given);
-        let file = if p.is_absolute() { p.to_path_buf() } else { root.join(p) };
+        // `..` taken as it reads, so a path that leads out of the folder is known as outside it.
+        let mut file = PathBuf::new();
+        for c in (if p.is_absolute() { p.to_path_buf() } else { root.join(p) }).components() {
+            match c {
+                std::path::Component::ParentDir => {
+                    file.pop();
+                }
+                std::path::Component::CurDir => {}
+                c => file.push(c),
+            }
+        }
         let language = m["language"]
             .as_str()
             .filter(|l| crate::ide_settings::language_id(l))
             .map(String::from)
             .unwrap_or_else(|| formatters::language_of(&file).to_string());
         Asked { given: m["path"].clone(), id: m.get("id").cloned(), root, file, language }
+    }
+
+    /// Whether the file's programs may run: the folder is trusted, and so is the file's own folder when it is not
+    /// in the one open (what runs is found from the file, and its configuration is read from there).
+    fn trusted(&self, sh: &Shared) -> bool {
+        let data = &sh.paths.data;
+        let dir = self.file.parent().unwrap_or(&self.root);
+        crate::ide_trust::trusted(data, &self.root)
+            && (self.file.starts_with(&self.root) || crate::ide_trust::trusted(data, dir))
+    }
+
+    /// Where the file's formatters are looked for.
+    fn look<'a>(&'a self, custom: &'a Value, trusted: bool) -> Look<'a> {
+        Look {
+            root: &self.root,
+            file: &self.file,
+            language: &self.language,
+            custom,
+            path_var: std::env::var_os("PATH"),
+            trusted,
+        }
     }
 
     /// A reply of this area's, with the keys it answers.
@@ -89,7 +120,7 @@ impl Asked {
 fn listing(sh: &Shared, m: &Value) -> Value {
     let a = Asked::of(sh, m);
     let settings = crate::ide_settings::current(sh);
-    let trusted = crate::ide_trust::trusted(&sh.paths.data, &a.root);
+    let trusted = a.trusted(sh);
     let items = found(sh, &settings, &a, trusted);
     let configured = settings.ide("editor.defaultFormatter", Some(&a.language));
     let mut v = a.reply("formatters");
@@ -110,7 +141,7 @@ fn format(sh: &Shared, m: &Value) -> Value {
         v["kind"] = json!(e.kind);
         v
     };
-    if !crate::ide_trust::trusted(&sh.paths.data, &a.root) {
+    if !a.trusted(sh) {
         return fail(
             v,
             Failure::new(
@@ -119,8 +150,14 @@ fn format(sh: &Shared, m: &Value) -> Value {
             ),
         );
     }
+    let Some(text) = m["text"].as_str() else {
+        return fail(v, Failure::new("failed", "No text was given to format."));
+    };
     let settings = crate::ide_settings::current(sh);
-    let items = found(sh, &settings, &a, true);
+    // Looked for now and not asked their versions: a format waits on nothing but the formatter (format on save
+    // has a second and a half).
+    let custom = settings.ide("formatters", None);
+    let items = formatters::discover(&a.look(&custom, true));
     let wanted = match m["formatter"].as_str().map(formatters::canonical).filter(|f| !f.is_empty()) {
         Some(w) => Some(w),
         None => {
@@ -142,7 +179,7 @@ fn format(sh: &Shared, m: &Value) -> Value {
     v["name"] = json!(f.name);
     let options = &m["options"];
     let job = Job {
-        text: m["text"].as_str().unwrap_or("").to_string(),
+        text: text.to_string(),
         range: m.get("range").and_then(Span::of),
         tab_size: options["tabSize"].as_u64().map_or(4, |n| n.clamp(1, 64) as u32),
         insert_spaces: options["insertSpaces"].as_bool().unwrap_or(true),
@@ -178,15 +215,7 @@ fn found(sh: &Shared, settings: &Settings, a: &Asked, trusted: bool) -> Vec<Form
     let ext = a.file.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
     let key = format!("{}\n{}\n{ext}\n{}\n{trusted}\n{custom}", a.root.display(), dir.display(), a.language);
     sh.kept.of::<Cache>().get_or(&key, || {
-        let look = Look {
-            root: &a.root,
-            file: &a.file,
-            language: &a.language,
-            custom: &custom,
-            path_var: std::env::var_os("PATH"),
-            trusted,
-        };
-        let mut items = formatters::discover(&look);
+        let mut items = formatters::discover(&a.look(&custom, trusted));
         let gate = sh.kept.of::<Gate>();
         if trusted && let Ok(r) = runner(sh, settings, &gate) {
             formatters::versions(&mut items, &r, &a.root);

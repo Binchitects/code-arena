@@ -149,6 +149,14 @@ async fn the_persons_own_formatter_is_listed_runs_on_the_text_and_runs_only_in_a
     let f = until(page, |v| v["type"] == "formatted").await;
     assert_eq!(f["kind"], "not_found", "{f}");
 
+    // A file of a folder not trusted, though the one open is: nothing of it runs.
+    let elsewhere = tempfile::tempdir().expect("elsewhere");
+    for path in [elsewhere.path().join("notes.txt").display().to_string(), "../notes.txt".to_string()] {
+        say(page, json!({"type": "format", "path": path, "text": "hello"})).await;
+        let f = until(page, |v| v["type"] == "formatted").await;
+        assert_eq!((f["kind"].as_str(), f["path"].as_str()), (Some("not_trusted"), Some(path.as_str())), "{f}");
+    }
+
     // Not trusted: nothing runs.
     std::fs::write(data.join("trust.json"), trust(false)).expect("trust");
     say(page, json!({"type": "format", "path": "notes.txt", "text": "hello"})).await;

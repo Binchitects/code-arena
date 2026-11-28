@@ -216,7 +216,7 @@ pub fn discover(look: &Look) -> Vec<Formatter> {
     let mut out = Vec::new();
     for k in KNOWN.iter().filter(|k| k.languages.contains(&language)) {
         let found = match k.id {
-            "prettier" => node_bin(dir, k.program).map(|p| (p, "project")),
+            "prettier" => node_bin(dir, look.root, k.program).map(|p| (p, "project")),
             "ruff" | "black" => venv_bin(dir, look.root, k.program).map(|p| (p, "project")),
             _ => None,
         }
@@ -411,9 +411,20 @@ pub fn on_path(name: &str, path_var: Option<&OsString>) -> Option<PathBuf> {
 }
 
 /// The nearest `node_modules/.bin/NAME` from a folder up.
-fn node_bin(dir: &Path, name: &str) -> Option<PathBuf> {
+/// The nearest `node_modules/.bin/NAME` from a folder up to the root (for a file outside it, its own folder's
+/// only): a folder above is another's, which its trust does not cover.
+fn node_bin(dir: &Path, root: &Path, name: &str) -> Option<PathBuf> {
     let file = if cfg!(windows) { format!("{name}.cmd") } else { name.to_string() };
-    dir.ancestors().map(|d| d.join("node_modules").join(".bin").join(&file)).find(|p| p.is_file())
+    for d in dir.ancestors() {
+        let p = d.join("node_modules").join(".bin").join(&file);
+        if p.is_file() {
+            return Some(p);
+        }
+        if d == root || !d.starts_with(root) {
+            break;
+        }
+    }
+    None
 }
 
 /// `NAME` in the nearest virtual environment (`.venv`, `venv`) from a folder up to the root.
@@ -995,6 +1006,14 @@ impl Runner<'_> {
         let out = out.join().unwrap_or_default();
         let err = err.join().unwrap_or_default();
         if status.success() {
+            // Nothing back for a text that had something is a formatter that wrote elsewhere (a file in place), not
+            // an empty file: taken, it would empty the document.
+            if out.iter().all(u8::is_ascii_whitespace) && !text.trim().is_empty() && plan.mirror.is_none() {
+                return Err(Failure::new(
+                    "failed",
+                    format!("{} wrote nothing back on its standard output.", plan.name),
+                ));
+            }
             return String::from_utf8(out)
                 .map_err(|_| Failure::new("failed", format!("{} wrote what is not UTF-8 text.", plan.name)));
         }
@@ -1371,6 +1390,9 @@ mod tests {
         assert_eq!(out, "none 1\n");
         let e = r.run(&sh_plan("echo 'x.py:3:4: bad' >&2; exit 2", TIME_LIMIT), "").expect_err("fails");
         assert_eq!((e.message.as_str(), e.line, e.col, e.kind), ("Fake: x.py:3:4: bad", Some(3), Some(4), "failed"));
+        let e = r.run(&sh_plan("cat > /dev/null", TIME_LIMIT), "x = 1\n").expect_err("nothing back");
+        assert_eq!(e.message, "Fake wrote nothing back on its standard output.");
+        assert_eq!(r.run(&sh_plan("cat", TIME_LIMIT), "").expect("an empty text"), "");
         let started = Instant::now();
         let e = r.run(&sh_plan("sleep 5", Duration::from_millis(200)), "").expect_err("stopped");
         assert_eq!(e.kind, "timeout");
