@@ -183,6 +183,7 @@ pub fn block(ui: Ui, lang: &str, name: &str, text: impl Fn() -> String + 'static
                             .flex_basis(0.0)
                             .min_width(0.0)
                             .text_overflow(TextOverflow::Wrap)
+                            .line_height(1.4)
                             .color(if missing { t.get().desc } else { t.get().error })
                     }),
                 ))
