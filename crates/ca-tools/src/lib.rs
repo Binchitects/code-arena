@@ -75,6 +75,8 @@ pub struct Context {
     pub planning: bool,
     /// The id of the call this run answers, when the turn says it (a sub-agent's progress is told by it).
     pub call: Option<String>,
+    /// Who asks the person for a virtual machine's guest sign-in; `None` where nobody can be asked.
+    pub vm_login: Option<vm::Asker>,
 }
 
 impl Context {
@@ -97,6 +99,7 @@ impl Context {
             plan: Arc::new(plan::PlanBook::default()),
             planning: false,
             call: None,
+            vm_login: None,
         }
     }
 }
@@ -120,7 +123,7 @@ pub trait Tool: Send + Sync {
 
 /// Every built-in tool.
 pub fn builtin() -> Vec<Arc<dyn Tool>> {
-    vec![
+    let mut all: Vec<Arc<dyn Tool>> = vec![
         Arc::new(ReadFile),
         Arc::new(WriteFile),
         Arc::new(EditFile),
@@ -132,7 +135,10 @@ pub fn builtin() -> Vec<Arc<dyn Tool>> {
         Arc::new(StopCommand),
         Arc::new(Git),
         Arc::new(plan::PlanTool),
-    ]
+    ];
+    // The VM tools, only when a hypervisor is installed.
+    all.extend(vm::tools());
+    all
 }
 
 /// A string argument, or why not.
