@@ -223,11 +223,20 @@ async fn check(me: &Updates, sh: &Shared, asked: bool) {
             }
         },
     };
-    let version = version.filter(|v| newer(v, current));
-    me.found(version.clone());
-    if let Some(v) = &version {
-        crate::log::line(&said(v, current));
+    // A look that failed leaves what an earlier one found, and is said only to whoever asked.
+    if error.is_some() && !asked {
+        return;
     }
+    let version = if error.is_some() {
+        me.inner.lock().ok().and_then(|i| i.found.clone())
+    } else {
+        let v = version.filter(|v| newer(v, current));
+        me.found(v.clone());
+        if let Some(v) = &v {
+            crate::log::line(&said(v, current));
+        }
+        v
+    };
     let mut reply = json!({
         "type": "update_checked",
         "available": version.is_some(),
@@ -236,7 +245,7 @@ async fn check(me: &Updates, sh: &Shared, asked: bool) {
         "said": version.as_deref().map(|v| said(v, current)),
         "asked": asked,
     });
-    if let Some(e) = error.filter(|_| asked) {
+    if let Some(e) = error {
         reply["error"] = json!(e);
     }
     send(&sh.out, reply);

@@ -199,7 +199,10 @@ fn tell(ui: Ui, m: &Value, now: &Phase) {
     let me = ui.state::<Update>();
     match m["type"].as_str().unwrap_or("") {
         "state" | "update_checked" => {
-            if let Phase::Available { version, said } = now
+            let asked = m["asked"].as_bool() == Some(true);
+            if asked && let Some(e) = m["error"].as_str() {
+                toast::error(ui, e);
+            } else if let Phase::Available { version, said } = now
                 && !me.told.with_untracked(|t| t == version)
             {
                 me.told.set(version.clone());
@@ -210,11 +213,8 @@ fn tell(ui: Ui, m: &Value, now: &Phase) {
                         .action("Update Now", |_, send| install(send))
                         .action("Later", |_, _| {}),
                 );
-            } else if m["asked"].as_bool() == Some(true) && !matches!(now, Phase::Available { .. }) {
-                match m["error"].as_str() {
-                    Some(e) => toast::error(ui, e),
-                    None => toast::info(ui, "There are currently no updates available."),
-                };
+            } else if asked && !matches!(now, Phase::Available { .. }) {
+                toast::info(ui, "There are currently no updates available.");
             }
         }
         "update_done" => match m["error"].as_str() {
