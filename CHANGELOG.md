@@ -649,6 +649,19 @@ Sections used:
   The same marks show on the overview ruler. They are read again after a save, a stage or a commit.
   `scm.diffDecorations` (all/gutter/overview/none) picks where they are drawn. Alt+F3 / Shift+Alt+F3
   (and Alt+F5 / Shift+Alt+F5 outside a compare) go to the next or previous change.
+- **Problems view.** See every source's problems (project check, tasks, language servers, security
+  review, code review), each in its own section with per-file folds. Rows show the severity icon,
+  message, source(code) and [Ln, Col]; a click opens the file at that place. Filter by text, **/*.ts
+  or !exclude, and show or hide errors, warnings, infos or everything outside the active file. The
+  view counts what the filter hides and has Clear Filters and Collapse All. A row's menu has Copy,
+  Copy Message, Fix with Code Arena and Quick Fix....
+- **Problems in the editor.** Problems show as squiggles in open files and in files opened later,
+  with the message as the hover and a mark in the overview ruler. A light bulb on each marked line
+  (or Ctrl+.) offers Fix with Code Arena for that line or for the whole file.
+- **Problem counts.** The status bar shows real error, warning and info counts instead of 0, and a
+  click shows Problems. The Problems icon in the activity bar has a badge with the total.
+- **Fix this sends the problems.** The editor's 'Fix this' now sends the problems marked in the
+  selected lines along with them.
 
 
 ### :bug: Bugs fixed
