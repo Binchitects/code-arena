@@ -643,6 +643,15 @@ Sections used:
   you type. Before, a click on its right side did nothing and the typing was lost.
 - **Session search finds a word as you type it.** 'greet' now finds 'greeting'; before, only whole
   words matched, so the list said 'No results found.' while you were still typing.
+- **Escape twice leaves Zen mode.** Pressing Escape twice leaves Zen mode as in VS Code, from the
+  editor too. Before, only Ctrl+K Z left it.
+- **Title bar menus grey out what cannot run.** Rows such as Move Panel To Bottom (when the panel is
+  already there) or Start Debugging were drawn like live rows, and a click on them did nothing; now
+  they are greyed out.
+- **Moving between title bar menus.** With a menu open, moving the pointer onto another menu's title
+  opens that menu. Before, the first menu just closed.
+- **Ctrl+P then Enter goes back to the previous file.** With nothing typed, Quick Open now picks the
+  file opened before the current one, as in VS Code. Before, it picked the file already shown.
 
 ## v0.5.0 (2026-11-26)
 
