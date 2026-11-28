@@ -357,6 +357,8 @@ pub struct Shared {
     pub arena: Option<ca_arena::ArenaClient>,
     /// The Arena's address, when there is one.
     pub arena_url: Option<String>,
+    /// The CA this machine trusts for Arena (`ARENA_CA_CERT`, the connection's), when there is one.
+    pub ca: Option<PathBuf>,
     pub models: Arc<Vec<String>>,
     /// How Arena's usage log knows where the session's requests count (`chat:<id>`, `project:<id>`).
     pub tags: Arc<Vec<String>>,
@@ -407,6 +409,7 @@ impl Shared {
             edition: app.edition(),
             arena: drv.arena.clone(),
             arena_url: app.connection.url.clone(),
+            ca: app.connection.ca.clone(),
             models: Arc::new(drv.models.clone()),
             tags: Arc::new(p.agent.tags.clone()),
             was: Was {

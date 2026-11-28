@@ -10,6 +10,7 @@ pub mod capabilities;
 pub mod chats;
 pub mod checklists;
 mod client;
+pub mod downloads;
 pub mod laya;
 pub mod memory;
 pub mod projects;
